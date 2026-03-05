@@ -1,0 +1,71 @@
+# Codevira Context Graph — Node & Edge Schema Reference
+# ─────────────────────────────────────────────────────────────────────────────
+# This file is documentation only. It is NOT parsed by the MCP server.
+# Your project's graph files (e.g. graph.yaml, or per-layer files) follow this schema.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# NODE SCHEMA
+# -----------
+# nodes:
+#   <file_path>:                        # unique key — relative to project root
+#     role: str                         # one-line description of what this file does
+#     type: file|service|schema|event   # classification
+#     layer: str                        # which architectural layer (services, api, schemas, etc.)
+#     stability: low|medium|high        # how frequently this file changes
+#     key_functions:                    # list of most important public functions/classes
+#       - str
+#     connects_to:                      # outgoing edges
+#       - target: str                   # file_path of the connected node
+#         edge: <edge_type>             # see EDGE TYPES below
+#         via: [str]                    # function(s) or event(s) that create this connection
+#     events_published: [str]           # domain events this file publishes (e.g. "Order.Created")
+#     events_consumed: [str]            # domain events this file consumes
+#     rules: [str]                      # invariants that must never be violated
+#     tests: [str]                      # test files covering this node
+#     do_not_revert: bool               # true = this file has intentional decisions — never undo
+#     last_changed_by: str              # phase or changeset that last modified this file
+#     auto_generated: bool              # true = created by graph_generator, not hand-written
+
+# EDGE TYPES
+# ----------
+# consumed_by    — this file's output (return value / data) is read by target
+# depends_on     — this file imports or calls target
+# publishes_to   — this file emits events that target consumes
+# validates      — this file validates the output of target
+# parses         — this file parses the raw output of target into structured data
+# writes_to      — this file persists data into target (DB, file, collection)
+# orchestrates   — this file coordinates the execution of target
+
+# CHANGESET SCHEMA (.agents/graph/changesets/{id}.yaml)
+# -------------------------------------------------------
+# id: str
+# status: pending|in_progress|complete
+# created: YYYY-MM-DD
+# description: str
+# trigger: small_fix|medium_change|large_change
+# files_modified: [str]
+# files_pending: [str]
+# blocker: str|null
+# decisions: [str]           # written by documenter agent at completion
+
+# EXAMPLE NODE
+# ─────────────
+# nodes:
+#   src/services/generator.py:
+#     role: "LLM-based code generation service"
+#     type: service
+#     layer: services
+#     stability: medium
+#     key_functions:
+#       - generate
+#       - _build_prompt
+#     connects_to:
+#       - target: src/schemas/output.py
+#         edge: depends_on
+#         via: [generate]
+#     rules:
+#       - "Never drop the 'synonyms' field from LLM output — downstream indexer requires it"
+#     tests:
+#       - tests/unit/test_generator.py
+#     do_not_revert: false
+#     last_changed_by: "Phase 3 — synonym generation"

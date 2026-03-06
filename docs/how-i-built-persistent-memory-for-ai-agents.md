@@ -275,11 +275,11 @@ At that point, the overhead of maintaining the graph and running the session pro
 
 ## How to Try It
 
-The framework is now open source as **[Codevira MCP](https://github.com/Delcaper/codevira)** — MIT licensed, drop it into any project.
+The framework is now open source as **[Codevira MCP](https://github.com/sachinshelke/codevira)** — MIT licensed, drop it into any project.
 
 ```bash
 # Clone into your project's .agents/ directory
-git clone https://github.com/Delcaper/codevira .agents
+git clone https://github.com/sachinshelke/codevira .agents
 
 # Install dependencies
 pip install -r .agents/requirements.txt
@@ -372,4 +372,4 @@ That shift from supervision to collaboration — that's what the tooling actuall
 
 ---
 
-*Codevira MCP is open source under the MIT license. The [GitHub repo](https://github.com/Delcaper/codevira) has the full setup guide, 26-tool reference, agent persona definitions, and contribution guide. If you try it and have results — good or bad — share them in [GitHub Discussions](https://github.com/Delcaper/codevira/discussions). The numbers above are from one project; the more data points from different codebases, the better picture we all get.*
+*Codevira MCP is open source under the MIT license. The [GitHub repo](https://github.com/sachinshelke/codevira) has the full setup guide, 26-tool reference, agent persona definitions, and contribution guide. If you try it and have results — good or bad — share them in [GitHub Discussions](https://github.com/sachinshelke/codevira/discussions). The numbers above are from one project; the more data points from different codebases, the better picture we all get.*

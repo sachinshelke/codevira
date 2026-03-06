@@ -44,3 +44,7 @@ env/
 
 # macOS
 .DS_Store
+
+# Marketing / publishing content (blog, Medium, LinkedIn)
+docs/medium-*.md
+docs/linkedin-*.md

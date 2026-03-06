@@ -144,11 +144,11 @@ Or ask your agent to call `refresh_graph()` — it scans for unregistered files 
 
 ### How do I report a bug?
 
-Open a [bug report](https://github.com/Delcaper/codevira/issues/new?template=bug_report.md) on GitHub. Please include your OS, Python version, AI tool, and the full error message.
+Open a [bug report](https://github.com/sachinshelke/codevira/issues/new?template=bug_report.md) on GitHub. Please include your OS, Python version, AI tool, and the full error message.
 
 ### How do I request a feature?
 
-Open a [feature request](https://github.com/Delcaper/codevira/issues/new?template=feature_request.md). Describe the problem you're trying to solve — not just the solution.
+Open a [feature request](https://github.com/sachinshelke/codevira/issues/new?template=feature_request.md). Describe the problem you're trying to solve — not just the solution.
 
 ### I found a security vulnerability — what do I do?
 

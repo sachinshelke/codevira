@@ -9,7 +9,7 @@ description = "Persistent memory and project context for AI coding agents — MC
 readme = "README.md"
 license = { file = "LICENSE" }
 authors = [
-  { name = "Sachin", email = "sachin@prayog.io" }
+  { name = "Sachin Shelke", email = "sachin.worldnet@gmail.com" }
 ]
 requires-python = ">=3.10"
 keywords = [
@@ -49,10 +49,10 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Delcaper/codevira"
-Repository = "https://github.com/Delcaper/codevira"
-Issues = "https://github.com/Delcaper/codevira/issues"
-Changelog = "https://github.com/Delcaper/codevira/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/sachinshelke/codevira"
+Repository = "https://github.com/sachinshelke/codevira"
+Issues = "https://github.com/sachinshelke/codevira/issues"
+Changelog = "https://github.com/sachinshelke/codevira/blob/main/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
 where = ["."]

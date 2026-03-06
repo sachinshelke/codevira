@@ -31,7 +31,7 @@ By participating, you agree to uphold a respectful and welcoming environment for
 1. **Fork** the repository on GitHub
 2. **Clone** your fork locally:
    ```bash
-   git clone https://github.com/Delcaper/codevira.git
+   git clone https://github.com/sachinshelke/codevira.git
    cd Codevira
    ```
 3. **Install** dependencies:
@@ -115,8 +115,8 @@ This is the workflow Codevira is designed to enable. Contributing this way is th
 
 ## How to Report a Bug
 
-1. Check [existing issues](https://github.com/Delcaper/codevira/issues) first — it may already be reported.
-2. Open a [new bug report](https://github.com/Delcaper/codevira/issues/new?template=bug_report.md).
+1. Check [existing issues](https://github.com/sachinshelke/codevira/issues) first — it may already be reported.
+2. Open a [new bug report](https://github.com/sachinshelke/codevira/issues/new?template=bug_report.md).
 3. Fill in the template — the more detail, the faster we can fix it.
 
 **Good bug reports include:**
@@ -129,8 +129,8 @@ This is the workflow Codevira is designed to enable. Contributing this way is th
 
 ## How to Request a Feature
 
-1. Check [existing issues](https://github.com/Delcaper/codevira/issues) to avoid duplicates.
-2. Open a [feature request](https://github.com/Delcaper/codevira/issues/new?template=feature_request.md).
+1. Check [existing issues](https://github.com/sachinshelke/codevira/issues) to avoid duplicates.
+2. Open a [feature request](https://github.com/sachinshelke/codevira/issues/new?template=feature_request.md).
 3. Describe the problem you're trying to solve, not just the solution — this helps us find the best approach together.
 
 For large features, please open an issue for discussion **before** writing code. This avoids wasted effort if the approach doesn't fit the project direction.
@@ -142,7 +142,7 @@ For large features, please open an issue for discussion **before** writing code.
 ### 1. Fork and clone
 
 ```bash
-git clone https://github.com/Delcaper/codevira.git
+git clone https://github.com/sachinshelke/codevira.git
 cd Codevira
 ```
 
@@ -201,7 +201,7 @@ Go to GitHub and open a PR from your branch. Fill in the PR template — describ
 
 ```bash
 # Clone
-git clone https://github.com/Delcaper/codevira.git
+git clone https://github.com/sachinshelke/codevira.git
 cd Codevira
 
 # Install dependencies
@@ -265,7 +265,7 @@ refactor(graph): simplify _infer_graph_file logic
 
 ## Good First Issues
 
-New to the project? Look for issues tagged [`good first issue`](https://github.com/Delcaper/codevira/issues?q=label%3A%22good+first+issue%22).
+New to the project? Look for issues tagged [`good first issue`](https://github.com/sachinshelke/codevira/issues?q=label%3A%22good+first+issue%22).
 
 Areas particularly welcoming to new contributors:
 
@@ -279,5 +279,5 @@ Areas particularly welcoming to new contributors:
 
 ## Questions?
 
-Open a [Discussion](https://github.com/Delcaper/codevira/discussions) or comment on a relevant issue.
+Open a [Discussion](https://github.com/sachinshelke/codevira/discussions) or comment on a relevant issue.
 We're happy to help you get started.

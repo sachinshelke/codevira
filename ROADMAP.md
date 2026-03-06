@@ -2,7 +2,7 @@
 
 This is the public roadmap for Codevira MCP itself — what's been built, what's coming next, and what's being considered for the future.
 
-Have a suggestion? [Open a feature request](https://github.com/Delcaper/codevira/issues/new?template=feature_request.md).
+Have a suggestion? [Open a feature request](https://github.com/sachinshelke/codevira/issues/new?template=feature_request.md).
 
 ---
 

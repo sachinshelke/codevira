@@ -44,41 +44,91 @@ Codevira is a [Model Context Protocol](https://modelcontextprotocol.io) server y
 
 ## How It Works
 
-```
-Your codebase
-     │
-     ▼
-┌─────────────┐     ┌──────────────────────────────────────────┐
-│   Indexer   │────▶│  ChromaDB  (semantic code search)        │
-└─────────────┘     └──────────────────────────────────────────┘
-     │
-     ▼
-┌─────────────┐     ┌──────────────────────────────────────────┐
-│   Graph     │────▶│  YAML nodes  (rules, deps, stability)    │
-│  Generator  │     └──────────────────────────────────────────┘
-└─────────────┘
-     │
-     ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    MCP Server (26 tools)                     │
-│   graph · roadmap · changesets · search · code_reader       │
-└─────────────────────────────────────────────────────────────┘
-     │
-     ▼
-┌──────────────────────────────────────────────────────────────┐
-│          Your AI Agent  (Claude Code / Cursor / etc.)        │
-│   Session start → orient → code → review → log → done       │
-└──────────────────────────────────────────────────────────────┘
+## Agent Session Lifecycle
+
+```mermaid
+flowchart TB
+
+Start([Start Session])
+
+subgraph Orientation
+A[Check Open Changesets]
+B[Get Project Roadmap]
+C[Search Past Decisions]
+D[Load Graph Context\nget_node • get_impact]
+end
+
+subgraph Execution
+E[Plan Task]
+F[Implement Code]
+G[Run Tests / Validation]
+end
+
+subgraph Completion
+H[Update Graph Metadata]
+I[Write Session Log]
+J[Complete Changeset]
+end
+
+Start --> A
+A --> B
+B --> C
+C --> D
+D --> E
+E --> F
+F --> G
+G --> H
+H --> I
+I --> J
 ```
 
 ---
+
+
+### Code Intelligence Model
+
+```mermaid
+flowchart TB
+
+A[Source Code]
+
+subgraph Structural Analysis
+B[AST Parser]
+C[Function / Class Extraction]
+D[Dependency Analysis]
+end
+
+subgraph Knowledge Stores
+E[(Semantic Index<br/>ChromaDB)]
+F[(Context Graph<br/>YAML Nodes)]
+end
+
+subgraph Runtime Access
+G[MCP Query Layer<br/>search_codebase • get_node • get_impact]
+end
+
+H[AI Coding Agent<br/>Claude Code • Cursor]
+
+A --> B
+B --> C
+C --> E
+
+B --> D
+D --> F
+
+E --> G
+F --> G
+
+G --> H
+```
+
 
 ## Quick Start
 
 ### 1. Add to your project
 
 ```bash
-git clone https://github.com/Delcaper/codevira .agents
+git clone https://github.com/sachinshelke/codevira .agents
 pip install -r .agents/requirements.txt
 ```
 
@@ -330,9 +380,9 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide: forking, branch nami
 - IDE-specific setup guides
 - Bug reports and edge case fixes
 
-**Reporting a bug?** → [Open a bug report](https://github.com/Delcaper/codevira/issues/new?template=bug_report.md)
+**Reporting a bug?** → [Open a bug report](https://github.com/sachinshelke/codevira/issues/new?template=bug_report.md)
 
-**Requesting a feature?** → [Open a feature request](https://github.com/Delcaper/codevira/issues/new?template=feature_request.md)
+**Requesting a feature?** → [Open a feature request](https://github.com/sachinshelke/codevira/issues/new?template=feature_request.md)
 
 **Found a security issue?** → Read [SECURITY.md](SECURITY.md) — please don't use public issues for vulnerabilities.
 
@@ -350,7 +400,7 @@ Common questions about setup, usage, architecture, and troubleshooting — see [
 
 See what's built, what's coming next, and what's being considered — see [ROADMAP.md](ROADMAP.md).
 
-Want to influence priorities? [Open a feature request](https://github.com/Delcaper/codevira/issues/new?template=feature_request.md) or upvote existing ones.
+Want to influence priorities? [Open a feature request](https://github.com/sachinshelke/codevira/issues/new?template=feature_request.md) or upvote existing ones.
 
 ---
 

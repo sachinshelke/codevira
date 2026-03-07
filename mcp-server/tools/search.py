@@ -112,7 +112,7 @@ def search_codebase(query: str, limit: int = 5, layer: str | None = None) -> dic
     }
 
 
-def search_decisions(query: str, limit: int = 10) -> dict[str, Any]:
+def search_decisions(query: str, limit: int = 10, session_id: str | None = None) -> dict[str, Any]:
     """
     Search past decisions across all completed changesets, roadmap phases, and session logs.
     Gives agents institutional memory — answers "has anyone decided this before?"
@@ -120,6 +120,7 @@ def search_decisions(query: str, limit: int = 10) -> dict[str, Any]:
     Args:
         query: Keywords to search for (e.g. "threshold", "uuid", "retry")
         limit: Max results to return (default 10)
+        session_id: Optional — filter session log results to a specific session only
 
     Returns:
         Matching decisions with source (changeset/phase/log), date, context.
@@ -178,6 +179,8 @@ def search_decisions(query: str, limit: int = 10) -> dict[str, Any]:
             try:
                 with open(log_file) as f:
                     data = yaml.safe_load(f) or {}
+                if session_id and data.get("session_id") != session_id:
+                    continue
                 for decision in data.get("decisions", []):
                     if q in decision.lower():
                         results.append({
@@ -262,6 +265,36 @@ def get_history(file_path: str, n: int = 5) -> dict[str, Any]:
         return {"success": False, "error": str(e)}
 
 
+def _get_retention_days() -> int:
+    config_path = Path(__file__).parent.parent.parent / "config.yaml"
+    if config_path.exists():
+        try:
+            import yaml
+            with open(config_path) as f:
+                cfg = yaml.safe_load(f) or {}
+            return int(cfg.get("logs", {}).get("retention_days", 0))
+        except Exception:
+            pass
+    return 0
+
+
+def _cleanup_old_logs(logs_dir: Path, retention_days: int) -> None:
+    if retention_days <= 0:
+        return
+    from datetime import date, timedelta
+    import shutil
+    cutoff = date.today() - timedelta(days=retention_days)
+    for day_dir in logs_dir.iterdir():
+        if not day_dir.is_dir():
+            continue
+        try:
+            dir_date = date.fromisoformat(day_dir.name)
+        except ValueError:
+            continue
+        if dir_date < cutoff:
+            shutil.rmtree(day_dir)
+
+
 def write_session_log(
     session_id: str,
     task: str,
@@ -333,6 +366,8 @@ def write_session_log(
     log_path = log_dir / f"session-{session_id}.yaml"
     with open(log_path, "w") as f:
         yaml.dump(log_data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+
+    _cleanup_old_logs(LOGS_DIR, _get_retention_days())
 
     return {
         "success": True,

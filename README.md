@@ -251,7 +251,7 @@ This loop keeps every session fast, focused, and resumable.
 | Tool | Description |
 |---|---|
 | `search_codebase(description, top_k?)` | Semantic search over source code |
-| `search_decisions(query, top_k?)` | Search all past session decisions |
+| `search_decisions(query, limit?, session_id?)` | Search all past session decisions; optionally filter to a specific session |
 | `get_history(file_path)` | All sessions that touched a file |
 | `write_session_log(...)` | Write structured session record |
 

@@ -7,6 +7,15 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [Unreleased]
+
+### Added
+- `search_decisions()` accepts optional `session_id` parameter to scope results to a specific session — backwards compatible, defaults to `None`
+- `logs.retention_days` config option — auto-delete session logs older than N days on every `write_session_log()` call (`0` = keep forever, default)
+- `tests/test_search.py` — 9 tests covering log cleanup logic and `session_id` filter behaviour
+
+---
+
 ## [1.0.0] — 2026-03-06 — Initial Release
 
 ### Added

@@ -28,3 +28,8 @@ project:
   # Path to the roadmap file (relative to project root)
   # Default: .agents/roadmap.yaml
   roadmap_path: .agents/roadmap.yaml
+
+logs:
+  # Automatically delete session logs older than this many days.
+  # 0 = keep forever (default)
+  retention_days: 0

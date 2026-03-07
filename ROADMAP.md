@@ -60,6 +60,7 @@ Make the context graph richer and more automatic.
 
 Ideas being evaluated — not yet committed.
 
+- **JSONL interoperability for session logs** — enable cross-framework agent integrations (mmkr, hydra, netherbrain etc.) by writing a parallel `.jsonl` log alongside the existing YAML format
 - **Multi-repo support** — federated graph across multiple repositories in a workspace
 - **Remote ChromaDB** — option to share a single index across a team (instead of per-developer local)
 - **GitHub Actions integration** — run index + graph refresh in CI on every merge

@@ -388,6 +388,7 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "query": {"type": "string", "description": "Keywords to search (e.g. 'threshold', 'uuid', 'retry')"},
                     "limit": {"type": "integer", "description": "Max results (default 10)", "default": 10},
+                    "session_id": {"type": "string", "description": "Optional — filter results to a specific session only"},
                 },
                 "required": ["query"],
             },
@@ -644,7 +645,11 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 graph_file=arguments.get("graph_file"),
             )
         elif name == "search_decisions":
-            result = search_decisions(arguments["query"], limit=arguments.get("limit", 10))
+            result = search_decisions(
+                arguments["query"],
+                limit=arguments.get("limit", 10),
+                session_id=arguments.get("session_id"),
+            )
         elif name == "get_history":
             result = get_history(arguments["file_path"], n=arguments.get("n", 5))
         elif name == "write_session_log":

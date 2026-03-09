@@ -40,6 +40,7 @@ Make setup and daily use smoother.
 
 - **Progress bar for indexing** — visual feedback during `--full` builds on large codebases
 - **`codevira` CLI** — single entry point: `codevira init`, `codevira status`, `codevira index`
+- **Global Installation Support** — capability to install codevira globally (e.g., via `pipx` or `uv`) and use the MCP server across all projects without per-project setup
 - **Index health dashboard** — `codevira status` shows stale files, graph coverage, last indexed
 - **VS Code extension** — one-click MCP server setup without editing JSON config manually
 

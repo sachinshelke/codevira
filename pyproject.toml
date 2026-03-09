@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=68,<77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "codevira-mcp"
-version = "1.0.0"
+version = "1.1.0"
 description = "Persistent memory and project context for AI coding agents — MCP server with context graph, semantic search, roadmap, and session logging."
 readme = "README.md"
 license = { text = "MIT" }

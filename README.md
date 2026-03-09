@@ -150,35 +150,72 @@ This single command:
 
 ### 3. Connect to your AI tool
 
-Copy-paste the config printed by `codevira-mcp init`, or use the examples below:
+Depending on your IDE and environment, `codevira-mcp` may not automatically be in your `PATH`.
+You can use `uvx` (the easiest option) or provide the absolute path to your Python virtual environment.
 
-**Claude Code** — add to `.claude/settings.json`:
+**Option A: Using uvx (Recommended for all IDEs without local install)**
+If you use [`uv`](https://github.com/astral-sh/uv), you can run the MCP server seamlessly without managing virtual environments per project.
+
+**Claude Code** (`.claude/settings.json`), **Cursor / Windsurf** (Settings → MCP):
 ```json
 {
   "mcpServers": {
     "codevira": {
-      "command": "codevira-mcp",
-      "cwd": "/path/to/your-project"
+      "command": "uvx",
+      "args": ["codevira-mcp", "--project-dir", "/path/to/your-project"]
     }
   }
 }
 ```
 
-**Cursor / Windsurf** — Settings → MCP → Add Server:
-- Command: `codevira-mcp`
-- Working directory: your project root
+**Option B: Using Local Venv (Recommended, works everywhere)**
+Point your AI tool directly to the Python runtime inside your `.venv` where `codevira-mcp` is installed. 
+
+**Claude Code** (`.claude/settings.json`) or **Cursor / Windsurf** (Settings → MCP):
+```json
+{
+  "mcpServers": {
+    "codevira": {
+      "command": "/path/to/your-project/.venv/bin/python",
+      "args": ["-m", "mcp_server", "--project-dir", "/path/to/your-project"]
+    }
+  }
+}
+```
 
 **Google Antigravity** — add to `~/.gemini/antigravity/mcp_config.json`:
 ```json
 {
   "mcpServers": {
     "codevira": {
-      "command": "codevira-mcp",
-      "args": ["--project-dir", "/path/to/your-project"]
+      "command": "/path/to/your-project/.venv/bin/python",
+      "args": ["-m", "mcp_server", "--project-dir", "/path/to/your-project"]
     }
   }
 }
 ```
+
+> **⚠️ IMPORTANT: Using Global Clients (Antigravity / Claude Desktop) with Multiple Projects**
+> 
+> Unlike Cursor, which spins up isolated MCP servers per project automatically, global clients like Antigravity share a single `mcp_config.json` across all your open projects.
+> 
+> If you configure `codevira` once for `Project A`, and then ask a question about `Project B`, the agent will read the graph and roadmap from `Project A`.
+> 
+> **To fix this:** You must register uniquely named servers for each project in your global config. The AI will dynamically choose the right tool prefix based on your conversation context:
+> ```json
+> {
+>   "mcpServers": {
+>     "codevira-project-a": {
+>       "command": "uvx",
+>       "args": ["codevira-mcp", "--project-dir", "/path/to/project-a"]
+>     },
+>     "codevira-project-b": {
+>       "command": "uvx",
+>       "args": ["codevira-mcp", "--project-dir", "/path/to/project-b"]
+>     }
+>   }
+> }
+> ```
 
 ### 4. Verify
 

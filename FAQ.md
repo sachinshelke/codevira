@@ -58,6 +58,14 @@ Yes — commit your `graph/` directory to version control. The graph files are p
 
 Yes. If `roadmap.yaml` doesn't exist, `get_roadmap()` auto-creates a minimal Phase 1 stub on first call. You can use all graph, search, and changeset features without ever touching the roadmap. It's there when you need it, invisible when you don't.
 
+### Why is my agent reading the roadmap (or search results) from a different project?
+
+This happens when you are using a "Global" MCP client (like Google Antigravity or Claude Desktop) and have hardcoded a single `codevira` server in your global configuration. Global clients share their background processes across all your workspaces.
+
+If you have `Project A` configured in your `mcp_config.json`, but you open an Antigravity chat window for `Project B`, the tool requests will still route to `Project A`'s database.
+
+To fix this, you must declare **multiple unique servers** in your global config, one for each project. The LLM is intelligent enough to pick the right prefix (e.g., `codevira-project-b_get_roadmap` vs `codevira-project-a_get_roadmap`) based on your conversation context. See the **IMPORTANT** note in the [Quick Start Guide](README.md#3-connect-to-your-ai-tool) for the exact JSON snippet.
+
 ### Can I use this on an existing project that has no graph nodes yet?
 
 Yes. Run:

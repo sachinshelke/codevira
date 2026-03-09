@@ -48,3 +48,6 @@ env/
 # Marketing / publishing content (blog, Medium, LinkedIn)
 docs/medium-*.md
 docs/linkedin-*.md
+
+# Codevira — auto-generated, do not commit
+.codevira/

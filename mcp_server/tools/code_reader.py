@@ -11,15 +11,15 @@ Language support: Python only. For other languages, read the file directly.
 import ast
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).parent.parent.parent.parent  # project root
+from mcp_server.paths import get_project_root
 
 
 def _resolve(file_path: str) -> Path:
-    """Resolve relative file path to absolute using PROJECT_ROOT."""
+    """Resolve relative file path to absolute using the project root."""
     p = Path(file_path)
     if p.is_absolute():
         return p
-    return PROJECT_ROOT / p
+    return get_project_root() / p
 
 
 def _is_private(name: str) -> bool:

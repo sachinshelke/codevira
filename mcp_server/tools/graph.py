@@ -1,6 +1,6 @@
 """
 MCP tools for querying the project context graph.
-Reads .agents/graph/*.yaml files — no code files needed.
+Reads .codevira/graph/*.yaml files — no code files needed.
 """
 import subprocess
 import time
@@ -9,17 +9,27 @@ from typing import Any
 
 import yaml
 
-GRAPH_DIR = Path(__file__).parent.parent.parent / "graph"
-PROJECT_ROOT = GRAPH_DIR.parent.parent
-INDEX_DIR = GRAPH_DIR.parent / "codeindex"
-LAST_INDEXED_FILE = INDEX_DIR / ".last_indexed"
+from mcp_server.paths import get_data_dir, get_project_root
+
+
+def _graph_dir() -> Path:
+    return get_data_dir() / "graph"
+
+
+def _index_dir() -> Path:
+    return get_data_dir() / "codeindex"
+
+
+def _last_indexed_file() -> Path:
+    return _index_dir() / ".last_indexed"
 
 
 def _get_index_timestamp() -> float | None:
     """Return the last index build timestamp, or None."""
-    if LAST_INDEXED_FILE.exists():
+    lif = _last_indexed_file()
+    if lif.exists():
         try:
-            return float(LAST_INDEXED_FILE.read_text().strip())
+            return float(lif.read_text().strip())
         except ValueError:
             return None
     return None
@@ -27,7 +37,7 @@ def _get_index_timestamp() -> float | None:
 
 def _get_file_mtime(file_path: str) -> float | None:
     """Return mtime of a source file, or None if it doesn't exist."""
-    abs_path = PROJECT_ROOT / file_path
+    abs_path = get_project_root() / file_path
     if abs_path.exists():
         return abs_path.stat().st_mtime
     return None
@@ -51,7 +61,7 @@ def _check_staleness(file_path: str) -> dict[str, Any]:
     if index_ts is None:
         return {
             "stale": None,
-            "reason": "No index timestamp found — run: python .agents/indexer/index_codebase.py --full",
+            "reason": "No index timestamp found — run: codevira-mcp index --full",
         }
 
     if file_mtime is None:
@@ -64,7 +74,7 @@ def _check_staleness(file_path: str) -> dict[str, Any]:
     return {
         "stale": is_stale,
         "reason": (
-            "File modified after last index build — run: python .agents/indexer/index_codebase.py"
+            "File modified after last index build — run: codevira-mcp index"
             if is_stale else "Index is current for this file"
         ),
         "last_indexed": datetime.fromtimestamp(index_ts).strftime("%Y-%m-%d %H:%M:%S"),
@@ -75,7 +85,10 @@ def _check_staleness(file_path: str) -> dict[str, Any]:
 def _load_all_nodes() -> dict[str, Any]:
     """Load all nodes from all graph YAML files into a flat dict keyed by file_path."""
     nodes: dict[str, Any] = {}
-    for yaml_file in GRAPH_DIR.glob("*.yaml"):
+    graph_dir = _graph_dir()
+    if not graph_dir.exists():
+        return nodes
+    for yaml_file in graph_dir.glob("*.yaml"):
         if yaml_file.name.startswith("_"):
             continue
         try:
@@ -90,7 +103,10 @@ def _load_all_nodes() -> dict[str, Any]:
 
 def _find_graph_file_for_path(file_path: str) -> Path | None:
     """Return the graph YAML file that contains a given file_path node, or None."""
-    for yaml_file in GRAPH_DIR.glob("*.yaml"):
+    graph_dir = _graph_dir()
+    if not graph_dir.exists():
+        return None
+    for yaml_file in graph_dir.glob("*.yaml"):
         if yaml_file.name.startswith("_"):
             continue
         try:
@@ -108,7 +124,7 @@ def _infer_graph_file(file_path: str) -> Path:
     Infer which graph YAML file a new node should be added to.
     Falls back to graph.yaml for all files. Override by passing graph_file explicitly.
     """
-    return GRAPH_DIR / "graph.yaml"
+    return _graph_dir() / "graph.yaml"
 
 
 def list_nodes(
@@ -210,10 +226,11 @@ def add_node(
         }
 
     # Determine target graph file
+    graph_dir = _graph_dir()
     if graph_file:
-        target_yaml = GRAPH_DIR / graph_file
+        target_yaml = graph_dir / graph_file
         if not target_yaml.exists():
-            return {"success": False, "message": f"Graph file '{graph_file}' not found in {GRAPH_DIR}"}
+            return {"success": False, "message": f"Graph file '{graph_file}' not found in {graph_dir}"}
     else:
         target_yaml = _infer_graph_file(file_path)
 
@@ -299,7 +316,7 @@ def get_node(file_path: str) -> dict[str, Any]:
     return {
         "found": False,
         "message": f"No graph node found for '{file_path}'. The file may not be in the context graph yet.",
-        "hint": "Add it to .agents/graph/graph.yaml or call refresh_graph() to auto-generate a stub.",
+        "hint": "Call refresh_graph() to auto-generate a stub, or add it manually to .codevira/graph/graph.yaml.",
     }
 
 
@@ -317,20 +334,11 @@ def refresh_graph(file_paths: list[str] | None = None) -> dict[str, Any]:
     Returns:
         nodes_added, nodes_skipped, files_processed, files_added
     """
-    indexer_dir = PROJECT_ROOT / ".agents" / "indexer"
-    graph_generator_path = indexer_dir / "graph_generator.py"
-
-    if not graph_generator_path.exists():
-        return {
-            "success": False,
-            "error": "graph_generator.py not found. Run: python .agents/indexer/index_codebase.py --full first.",
-        }
-
-    import sys
-    sys.path.insert(0, str(indexer_dir))
+    project_root = get_project_root()
+    graph_dir = _graph_dir()
 
     try:
-        from graph_generator import generate_graph_nodes_for_files, generate_graph_yaml
+        from indexer.graph_generator import generate_graph_nodes_for_files, generate_graph_yaml
     except ImportError as e:
         return {"success": False, "error": f"Failed to import graph_generator: {e}"}
 
@@ -338,13 +346,13 @@ def refresh_graph(file_paths: list[str] | None = None) -> dict[str, Any]:
         if file_paths:
             result = generate_graph_nodes_for_files(
                 file_paths=file_paths,
-                project_root=str(PROJECT_ROOT),
-                graph_dir=str(GRAPH_DIR),
+                project_root=str(project_root),
+                graph_dir=str(graph_dir),
             )
         else:
             result = generate_graph_yaml(
-                project_root=str(PROJECT_ROOT),
-                graph_dir=str(GRAPH_DIR),
+                project_root=str(project_root),
+                graph_dir=str(graph_dir),
             )
         return {"success": True, **result}
     except Exception as e:

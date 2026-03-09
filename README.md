@@ -125,72 +125,87 @@ G --> H
 
 ## Quick Start
 
-### 1. Add to your project
+### 1. Install
 
 ```bash
-git clone https://github.com/sachinshelke/codevira .agents
-pip install -r .agents/requirements.txt
+pip install codevira-mcp
 ```
 
-### 2. Configure
+### 2. Initialize in your project
 
 ```bash
-cp .agents/config.example.yaml .agents/config.yaml
+cd your-project
+codevira-mcp init
 ```
 
-Edit `.agents/config.yaml` for your project:
+This single command:
+- Creates `.codevira/` with config, graph, and log directories
+- Adds `.codevira/` to `.gitignore` (index is auto-regenerated, no need to commit)
+- Prompts for project name, language, source directories (comma-separated), and file extensions
+- Builds the full code index
+- Auto-generates graph stubs for all source files
+- Bootstraps `.codevira/roadmap.yaml` from git history
+- Installs a `post-commit` git hook for automatic reindexing
+- Prints the MCP config block to paste into your AI tool
 
-```yaml
-project:
-  name: my-project
-  watched_dirs: ["src"]          # directories to index
-  language: python               # python | typescript | go | rust
-  file_extensions: [".py"]
-  collection_name: my_codebase
-```
+### 3. Connect to your AI tool
 
-### 3. Build the index
-
-```bash
-# Builds code index + graph stubs + roadmap in one command
-python .agents/indexer/index_codebase.py --full --generate-graph --bootstrap-roadmap
-
-# Auto-reindex on every git commit
-bash .agents/hooks/install-hooks.sh
-```
-
-### 4. Connect to your AI tool
+Copy-paste the config printed by `codevira-mcp init`, or use the examples below:
 
 **Claude Code** — add to `.claude/settings.json`:
 ```json
 {
   "mcpServers": {
-    "Codevira": {
-      "command": "python",
-      "args": [".agents/mcp-server/server.py"]
+    "codevira": {
+      "command": "codevira-mcp",
+      "cwd": "/path/to/your-project"
     }
   }
 }
 ```
 
-**Cursor** — Settings → MCP → Add Server:
-- Command: `python`
-- Args: `.agents/mcp-server/server.py`
-- Working directory: project root
+**Cursor / Windsurf** — Settings → MCP → Add Server:
+- Command: `codevira-mcp`
+- Working directory: your project root
 
-**Windsurf / Google Antigravity** — same as Cursor via the MCP settings panel.
+**Google Antigravity** — add to `~/.gemini/antigravity/mcp_config.json`:
+```json
+{
+  "mcpServers": {
+    "codevira": {
+      "command": "codevira-mcp",
+      "args": ["--project-dir", "/path/to/your-project"]
+    }
+  }
+}
+```
 
-### 5. Verify
+### 4. Verify
 
 Ask your agent to call `get_roadmap()` — it should return your current phase and next action.
 
-> **No roadmap yet?** No problem. `get_roadmap()` auto-creates a Phase 1 stub on first call. No setup required.
+### Project structure after init
+
+```
+your-project/
+├── src/                   ← your code (indexed)
+├── .codevira/             ← Codevira data directory (git-ignored)
+│   ├── config.yaml        ← project configuration
+│   ├── roadmap.yaml       ← project roadmap (auto-generated, human-enrichable)
+│   ├── codeindex/         ← ChromaDB index (auto-regenerated)
+│   ├── graph/             ← context graph YAML files
+│   │   └── changesets/    ← active multi-file change records
+│   └── logs/              ← session logs by date
+└── requirements.txt       ← add: codevira-mcp>=1.0.0
+```
+
+> **Roadmap lifecycle:** The roadmap is auto-generated during init and updated by the agent through MCP tool calls. See [docs/roadmap.md](docs/roadmap.md) for the full lifecycle guide, manual editing steps, and troubleshooting.
 
 ---
 
 ## Session Protocol
 
-Every agent session follows `.agents/PROTOCOL.md`. Read it once — then your agents handle the rest.
+Every agent session follows a simple protocol. Set it up once in your agent's system prompt — then your agents handle the rest.
 
 **Session start (mandatory):**
 ```

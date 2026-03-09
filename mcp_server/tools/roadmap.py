@@ -19,22 +19,26 @@ from typing import Any
 
 import yaml
 
-# Roadmap lives at .agents/roadmap.yaml (framework-owned path)
-ROADMAP_FILE = Path(__file__).parent.parent.parent / "roadmap.yaml"
+from mcp_server.paths import get_data_dir, get_project_root
+
+
+def _roadmap_file() -> Path:
+    return get_data_dir() / "roadmap.yaml"
 
 
 def _load_roadmap() -> dict:
-    if not ROADMAP_FILE.exists():
+    roadmap_file = _roadmap_file()
+    if not roadmap_file.exists():
         stub = _create_stub_roadmap()
         _save_roadmap(stub)
         return stub
-    with open(ROADMAP_FILE) as f:
+    with open(roadmap_file) as f:
         return yaml.safe_load(f) or {}
 
 
 def _create_stub_roadmap() -> dict:
     return {
-        "project": ROADMAP_FILE.parent.name,
+        "project": get_project_root().name,
         "version": "1.0",
         "current_phase": {
             "number": 1,
@@ -54,7 +58,7 @@ def _create_stub_roadmap() -> dict:
 
 
 def _save_roadmap(data: dict) -> None:
-    with open(ROADMAP_FILE, "w") as f:
+    with open(_roadmap_file(), "w") as f:
         yaml.dump(data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
 
 

@@ -1,0 +1,35 @@
+# Codevira configuration template
+# Copy this file to .agents/config.yaml and edit for your project.
+#
+# Usage:
+#   cp config.example.yaml config.yaml
+#   # Then edit config.yaml for your project
+
+project:
+  name: my-project
+
+  # Directories to index and generate graph nodes for (relative to project root)
+  watched_dirs: ["src"]
+
+  # Primary language for AST-based features (get_signature, get_code, graph generation)
+  # python       — full support (AST chunking, symbol extraction, graph auto-generation)
+  # typescript   — partial support (regex-based chunking; get_signature returns Python-only message)
+  # go           — partial support (regex-based chunking; get_signature returns Python-only message)
+  # rust         — partial support (regex-based chunking; get_signature returns Python-only message)
+  language: python
+
+  # File extensions to include in the code index
+  file_extensions: [".py"]
+
+  # ChromaDB collection name for the semantic code index
+  # Must be unique per project if you share a ChromaDB instance
+  collection_name: agent_codebase
+
+  # Path to the roadmap file (relative to project root)
+  # Default: .agents/roadmap.yaml
+  roadmap_path: .agents/roadmap.yaml
+
+logs:
+  # Automatically delete session logs older than this many days.
+  # 0 = keep forever (default)
+  retention_days: 0

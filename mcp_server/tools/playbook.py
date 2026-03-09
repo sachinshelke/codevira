@@ -4,7 +4,11 @@ Serves the right 2-3 rule files for a given task — not all of them.
 """
 from pathlib import Path
 
-RULES_DIR = Path(__file__).parent.parent.parent / "rules"
+from mcp_server.paths import get_package_data_dir
+
+
+def _rules_dir() -> Path:
+    return get_package_data_dir() / "rules"
 
 # Task type → relevant rule files (ordered by importance)
 PLAYBOOKS: dict[str, list[str]] = {
@@ -61,7 +65,7 @@ def get_playbook(task_type: str) -> dict:
     rules = []
 
     for filename in rule_files:
-        path = RULES_DIR / filename
+        path = _rules_dir() / filename
         if path.exists():
             rules.append({
                 "file": filename,

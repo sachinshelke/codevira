@@ -8,11 +8,15 @@ from typing import Any
 
 import yaml
 
-CHANGESETS_DIR = Path(__file__).parent.parent.parent / "graph" / "changesets"
+from mcp_server.paths import get_data_dir
+
+
+def _changesets_dir() -> Path:
+    return get_data_dir() / "graph" / "changesets"
 
 
 def _changeset_path(changeset_id: str) -> Path:
-    return CHANGESETS_DIR / f"{changeset_id}.yaml"
+    return _changesets_dir() / f"{changeset_id}.yaml"
 
 
 def start_changeset(
@@ -32,7 +36,7 @@ def start_changeset(
 
     Creates .agents/graph/changesets/{id}.yaml
     """
-    CHANGESETS_DIR.mkdir(exist_ok=True)
+    _changesets_dir().mkdir(parents=True, exist_ok=True)
     path = _changeset_path(changeset_id)
 
     if path.exists():
@@ -146,9 +150,9 @@ def get_changeset(changeset_id: str) -> dict[str, Any]:
 
 def list_open_changesets() -> dict[str, Any]:
     """List all in-progress changesets. Call at session start to check for unfinished work."""
-    CHANGESETS_DIR.mkdir(exist_ok=True)
+    _changesets_dir().mkdir(parents=True, exist_ok=True)
     open_cs = []
-    for yaml_file in CHANGESETS_DIR.glob("*.yaml"):
+    for yaml_file in _changesets_dir().glob("*.yaml"):
         try:
             with open(yaml_file) as f:
                 data = yaml.safe_load(f)

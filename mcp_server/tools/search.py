@@ -1,18 +1,22 @@
 """
 MCP tool for semantic code search via local ChromaDB.
-Searches .agents/codeindex/ — no server, no credentials needed.
+Searches .codevira/codeindex/ — no server, no credentials needed.
 """
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
-INDEX_DIR = Path(__file__).parent.parent.parent / "codeindex"
-INDEXER_PATH = Path(__file__).parent.parent.parent / "indexer" / "index_codebase.py"
+from mcp_server.paths import get_data_dir
+
+
+def _index_dir() -> Path:
+    return get_data_dir() / "codeindex"
+
 
 # Load collection name from config (default: agent_codebase)
 def _get_collection_name() -> str:
-    config_path = Path(__file__).parent.parent.parent / "config.yaml"
+    config_path = get_data_dir() / "config.yaml"
     if config_path.exists():
         try:
             import yaml
@@ -24,10 +28,8 @@ def _get_collection_name() -> str:
     return "agent_codebase"
 
 
-COLLECTION_NAME = _get_collection_name()
-
-# Roadmap path for search_decisions
-ROADMAP_FILE = Path(__file__).parent.parent.parent / "roadmap.yaml"
+def _roadmap_file() -> Path:
+    return get_data_dir() / "roadmap.yaml"
 
 
 def search_codebase(query: str, limit: int = 5, layer: str | None = None) -> dict[str, Any]:
@@ -48,26 +50,28 @@ def search_codebase(query: str, limit: int = 5, layer: str | None = None) -> dic
     except ImportError:
         return {
             "success": False,
-            "error": "chromadb not installed. Run: pip install -r .agents/requirements.txt",
+            "error": "chromadb not installed. Run: pip install codevira-mcp",
         }
 
-    if not INDEX_DIR.exists() or not any(INDEX_DIR.iterdir()):
+    index_dir = _index_dir()
+    collection_name = _get_collection_name()
+    if not index_dir.exists() or not any(index_dir.iterdir()):
         return {
             "success": False,
-            "error": "Code index not found. Run: python .agents/indexer/index_codebase.py --full",
+            "error": "Code index not found. Run: codevira-mcp index --full",
         }
 
     embed_fn = embedding_functions.SentenceTransformerEmbeddingFunction(
         model_name="all-MiniLM-L6-v2"
     )
-    client = chromadb.PersistentClient(path=str(INDEX_DIR))
+    client = chromadb.PersistentClient(path=str(index_dir))
 
     try:
-        collection = client.get_collection(COLLECTION_NAME, embedding_function=embed_fn)
+        collection = client.get_collection(collection_name, embedding_function=embed_fn)
     except Exception:
         return {
             "success": False,
-            "error": f"Collection '{COLLECTION_NAME}' not found. Run: python .agents/indexer/index_codebase.py --full",
+            "error": f"Collection '{collection_name}' not found. Run: codevira-mcp index --full",
         }
 
     limit = min(limit, 10)
@@ -125,8 +129,8 @@ def search_decisions(query: str, limit: int = 10, session_id: str | None = None)
     Returns:
         Matching decisions with source (changeset/phase/log), date, context.
     """
-    GRAPH_DIR = Path(__file__).parent.parent.parent / "graph"
-    LOGS_DIR = Path(__file__).parent.parent.parent / "logs"
+    GRAPH_DIR = get_data_dir() / "graph"
+    LOGS_DIR = get_data_dir() / "logs"
 
     try:
         import yaml
@@ -156,9 +160,9 @@ def search_decisions(query: str, limit: int = 10, session_id: str | None = None)
             pass
 
     # Search completed roadmap phases
-    if ROADMAP_FILE.exists():
+    if _roadmap_file().exists():
         try:
-            with open(ROADMAP_FILE) as f:
+            with open(_roadmap_file()) as f:
                 roadmap = yaml.safe_load(f) or {}
             for phase in roadmap.get("completed_phases", []):
                 for decision in phase.get("key_decisions", []):
@@ -337,7 +341,7 @@ def write_session_log(
     except ImportError:
         return {"success": False, "error": "pyyaml not installed"}
 
-    LOGS_DIR = Path(__file__).parent.parent.parent / "logs"
+    LOGS_DIR = get_data_dir() / "logs"
     today = date.today().isoformat()
     log_dir = LOGS_DIR / today
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -369,9 +373,10 @@ def write_session_log(
 
     _cleanup_old_logs(LOGS_DIR, _get_retention_days())
 
+    from mcp_server.paths import get_project_root
     return {
         "success": True,
-        "log_path": str(log_path.relative_to(Path(__file__).parent.parent.parent.parent)),
+        "log_path": str(log_path.relative_to(get_project_root())),
         "session_id": session_id,
     }
 
@@ -390,16 +395,14 @@ def refresh_index(file_paths: list[str] | None = None) -> dict[str, Any]:
     Returns:
         success, files_reindexed count, message.
     """
-    if not INDEXER_PATH.exists():
-        return {
-            "success": False,
-            "error": f"Indexer not found at {INDEXER_PATH}",
-        }
-
     if file_paths:
         try:
-            sys.path.insert(0, str(INDEXER_PATH.parent))
-            from index_codebase import _write_timestamp, _chunk_to_document, _get_chroma_client, _get_embedding_fn, PROJECT_ROOT
+            from indexer.index_codebase import (
+                _write_timestamp, _chunk_to_document,
+                _get_chroma_client, _get_embedding_fn,
+            )
+            from indexer.chunker import chunk_file
+            from mcp_server.paths import get_project_root
 
             try:
                 import chromadb
@@ -409,22 +412,22 @@ def refresh_index(file_paths: list[str] | None = None) -> dict[str, Any]:
 
             client = _get_chroma_client()
             embed_fn = _get_embedding_fn()
+            collection_name = _get_collection_name()
+            project_root = get_project_root()
 
             try:
-                collection = client.get_collection(COLLECTION_NAME, embedding_function=embed_fn)
+                collection = client.get_collection(collection_name, embedding_function=embed_fn)
             except Exception:
-                return {"success": False, "error": "No index found. Run --full first."}
-
-            from chunker import chunk_file
+                return {"success": False, "error": "No index found. Run codevira-mcp index --full first."}
 
             updated = 0
             for rel_path in file_paths:
-                abs_path = PROJECT_ROOT / rel_path
+                abs_path = project_root / rel_path
                 results = collection.get(where={"file_path": rel_path})
                 if results["ids"]:
                     collection.delete(ids=results["ids"])
                 if abs_path.exists():
-                    chunks = chunk_file(str(abs_path), str(PROJECT_ROOT))
+                    chunks = chunk_file(str(abs_path), str(project_root))
                     if chunks:
                         ids, docs, metas = [], [], []
                         for chunk in chunks:
@@ -447,7 +450,7 @@ def refresh_index(file_paths: list[str] | None = None) -> dict[str, Any]:
 
     else:
         result = subprocess.run(
-            [sys.executable, str(INDEXER_PATH), "--quiet"],
+            [sys.executable, "-m", "mcp_server.cli", "index", "--quiet"],
             capture_output=True,
             text=True,
         )

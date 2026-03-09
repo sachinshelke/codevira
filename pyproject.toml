@@ -50,7 +50,7 @@ dependencies = [
 ]
 
 [project.scripts]
-codevira-mcp = "mcp_server.server:main"
+codevira-mcp = "mcp_server.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/sachinshelke/codevira"
@@ -61,3 +61,6 @@ Changelog = "https://github.com/sachinshelke/codevira/blob/main/CHANGELOG.md"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["mcp_server*", "indexer*"]
+
+[tool.setuptools.package-data]
+mcp_server = ["data/**/*", "data/*"]

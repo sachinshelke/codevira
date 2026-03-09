@@ -21,8 +21,9 @@ import yaml
 
 
 def _load_config() -> dict:
-    """Load .agents/config.yaml if present."""
-    config_path = Path(__file__).parent.parent / "config.yaml"
+    """Load .codevira/config.yaml if present."""
+    from mcp_server.paths import get_data_dir
+    config_path = get_data_dir() / "config.yaml"
     if config_path.exists():
         try:
             with open(config_path) as f:
@@ -35,8 +36,8 @@ def _load_config() -> dict:
 _config = _load_config()
 _project_cfg = _config.get("project", {})
 
-# Graph YAML files location (relative to agent framework root)
-GRAPH_DIR_RELATIVE = ".agents/graph"
+# Graph YAML files location (relative to project root)
+GRAPH_DIR_RELATIVE = ".codevira/graph"
 
 # Default watched dirs from config
 DEFAULT_TARGET_DIRS: list[str] = _project_cfg.get("watched_dirs", ["src"])
@@ -487,8 +488,12 @@ def generate_roadmap_stub(project_root: str, roadmap_path: str | None = None) ->
     Returns:
         dict with created (bool), path, and reason if skipped.
     """
-    # Default: .agents/roadmap.yaml (framework-owned path)
-    roadmap_file = Path(roadmap_path) if roadmap_path else Path(__file__).parent.parent / "roadmap.yaml"
+    # Default: .codevira/roadmap.yaml
+    if roadmap_path:
+        roadmap_file = Path(roadmap_path)
+    else:
+        from mcp_server.paths import get_data_dir
+        roadmap_file = get_data_dir() / "roadmap.yaml"
 
     if roadmap_file.exists():
         return {

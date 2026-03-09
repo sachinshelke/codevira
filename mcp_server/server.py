@@ -23,8 +23,8 @@ Usage (Claude Code .claude/settings.json):
   {
     "mcpServers": {
       "codevira": {
-        "command": "python",
-        "args": [".agents/mcp-server/server.py"],
+        "command": "codevira-mcp",
+        "args": [],
         "cwd": "/path/to/your-project"
       }
     }
@@ -33,10 +33,6 @@ Usage (Claude Code .claude/settings.json):
 Usage (Cursor / Windsurf): configure via their MCP settings UI with same command.
 """
 import sys
-from pathlib import Path
-
-# Add tools directory to path
-sys.path.insert(0, str(Path(__file__).parent))
 
 try:
     import mcp.server.stdio
@@ -48,15 +44,15 @@ except ImportError:
     sys.exit(1)
 
 import json
-from tools.graph import get_node, get_impact, list_nodes, add_node, refresh_graph
-from tools.roadmap import (
+from mcp_server.tools.graph import get_node, get_impact, list_nodes, add_node, refresh_graph
+from mcp_server.tools.roadmap import (
     get_roadmap, get_full_roadmap, get_phase,
     add_phase, update_phase_status, defer_phase,
     complete_phase, update_next_action,
     add_open_changeset, remove_open_changeset,
 )
-from tools.search import search_codebase, refresh_index, search_decisions, get_history, write_session_log
-from tools.changesets import (
+from mcp_server.tools.search import search_codebase, refresh_index, search_decisions, get_history, write_session_log
+from mcp_server.tools.changesets import (
     start_changeset,
     update_changeset_progress,
     complete_changeset,
@@ -64,8 +60,8 @@ from tools.changesets import (
     list_open_changesets,
     update_node_after_change,
 )
-from tools.playbook import get_playbook
-from tools.code_reader import get_signature, get_code
+from mcp_server.tools.playbook import get_playbook
+from mcp_server.tools.code_reader import get_signature, get_code
 
 server = Server("codevira")
 

@@ -1,20 +1,19 @@
 """
 Codebase Indexer — builds/updates ChromaDB code index for semantic search.
 
-Usage:
-  python index_codebase.py              # incremental (files changed since last index build)
-  python index_codebase.py --full       # full rebuild from scratch
-  python index_codebase.py --status     # show current index stats
-  python index_codebase.py --watch      # watch for file changes and auto-reindex (dev mode)
+Usage (via CLI):
+  codevira-mcp index          # incremental (files changed since last index build)
+  codevira-mcp index --full   # full rebuild from scratch
+  codevira-mcp status         # show current index stats
 
 Change detection:
-  Incremental mode tracks changes using .agents/codeindex/.last_indexed timestamp file.
+  Incremental mode tracks changes using .codevira/codeindex/.last_indexed timestamp file.
   Any configured file (default: .py) in watched_dirs modified after that timestamp gets re-indexed.
   This catches ALL changes: saved edits, staged files, and committed diffs alike.
 
 Configuration:
-  Copy config.example.yaml → .agents/config.yaml to set watched_dirs, language, etc.
-  The index lives at .agents/codeindex/ and is git-ignored (auto-regenerated).
+  Run codevira-mcp init to create .codevira/config.yaml in your project.
+  The index lives at .codevira/codeindex/ and is git-ignored (auto-regenerated).
 """
 import argparse
 import os
@@ -22,16 +21,16 @@ import sys
 import time
 from pathlib import Path
 
-# Locate project root (two levels up from this script: .agents/indexer/ → .agents/ → project root)
-SCRIPT_DIR = Path(__file__).parent
-PROJECT_ROOT = SCRIPT_DIR.parent.parent
-INDEX_DIR = SCRIPT_DIR.parent / "codeindex"
+from mcp_server.paths import get_data_dir, get_project_root
+
+PROJECT_ROOT = get_project_root()
+INDEX_DIR = get_data_dir() / "codeindex"
 LAST_INDEXED_FILE = INDEX_DIR / ".last_indexed"
 
 
 def _load_config() -> dict:
-    """Load .agents/config.yaml if present, otherwise return empty dict."""
-    config_path = SCRIPT_DIR.parent / "config.yaml"
+    """Load .codevira/config.yaml if present, otherwise return empty dict."""
+    config_path = get_data_dir() / "config.yaml"
     if config_path.exists():
         try:
             import yaml
@@ -57,7 +56,7 @@ def _get_chroma_client():
     try:
         import chromadb
     except ImportError:
-        print("ERROR: chromadb not installed. Run: pip install -r .agents/requirements.txt")
+        print("ERROR: chromadb not installed. Run: pip install codevira-mcp[dev]")
         sys.exit(1)
     return chromadb.PersistentClient(path=str(INDEX_DIR))
 
@@ -69,7 +68,7 @@ def _get_embedding_fn():
             model_name="all-MiniLM-L6-v2"
         )
     except ImportError:
-        print("ERROR: sentence-transformers not installed. Run: pip install -r .agents/requirements.txt")
+        print("ERROR: sentence-transformers not installed. Run: pip install codevira-mcp")
         sys.exit(1)
 
 
@@ -140,8 +139,7 @@ def _chunk_to_document(chunk) -> tuple[str, str, dict]:
 
 def cmd_full_rebuild():
     """Full rebuild: delete existing collection and re-index everything."""
-    sys.path.insert(0, str(SCRIPT_DIR))
-    from chunker import chunk_project
+    from indexer.chunker import chunk_project
 
     print(f"Full rebuild of '{COLLECTION_NAME}' from {PROJECT_ROOT}")
     print(f"  Watching: {WATCHED_DIRS}")
@@ -184,7 +182,7 @@ def cmd_full_rebuild():
     _write_timestamp()
     print(f"Full rebuild complete. {len(ids)} chunks indexed to {INDEX_DIR}")
     print(f"\nTo commit the updated index:")
-    print(f"  git add .agents/codeindex/")
+    print(f"  Note: .codevira/codeindex/ is git-ignored (auto-regenerated on each dev machine)")
     print(f"  git commit -m 'chore(agents): refresh codebase index'")
 
 
@@ -195,8 +193,7 @@ def cmd_incremental(since: float | None = None, quiet: bool = False):
     Uses .last_indexed timestamp — catches all file saves, not just committed changes.
     Called automatically by the post-commit hook and watch mode.
     """
-    sys.path.insert(0, str(SCRIPT_DIR))
-    from chunker import chunk_file
+    from indexer.chunker import chunk_file
 
     baseline = since if since is not None else _read_timestamp()
     if baseline is None:
@@ -274,8 +271,7 @@ def cmd_watch():
         print("ERROR: watchdog not installed. Run: pip install watchdog")
         sys.exit(1)
 
-    sys.path.insert(0, str(SCRIPT_DIR))
-    from chunker import chunk_file
+    from indexer.chunker import chunk_file
 
     client = _get_chroma_client()
     embed_fn = _get_embedding_fn()
@@ -381,8 +377,7 @@ def cmd_generate_graph():
     Safe merge: existing enriched nodes are NEVER overwritten.
     New files get auto-generated stubs marked with auto_generated: true.
     """
-    sys.path.insert(0, str(SCRIPT_DIR))
-    from graph_generator import generate_graph_yaml
+    from indexer.graph_generator import generate_graph_yaml
 
     print(f"Generating context graph nodes from {PROJECT_ROOT}")
     result = generate_graph_yaml(str(PROJECT_ROOT))
@@ -407,8 +402,7 @@ def cmd_bootstrap_roadmap():
     Bootstrap a roadmap.yaml stub from git history.
     Only creates the file if it does not already exist — never overwrites.
     """
-    sys.path.insert(0, str(SCRIPT_DIR))
-    from graph_generator import generate_roadmap_stub
+    from indexer.graph_generator import generate_roadmap_stub
 
     print(f"Bootstrapping roadmap stub from git history at {PROJECT_ROOT}")
     result = generate_roadmap_stub(str(PROJECT_ROOT))
@@ -418,10 +412,10 @@ def cmd_bootstrap_roadmap():
         print(f"  Phases from git history: {result['completed_phases_from_git']}")
         print(f"  Current phase stub: Phase {result['current_phase']} — Getting Started")
         print(f"\nNext steps:")
-        print("  1. Edit .agents/roadmap.yaml — fill in actual phase names and decisions")
+        print("  1. Edit .codevira/roadmap.yaml — fill in actual phase names and decisions")
         print("  2. Run: get_roadmap() in MCP to verify")
     else:
-        print(f"  Skipped: {result['reason']}")
+        print(f"  Skipped: {result.get('reason', 'already exists')}")
 
 
 if __name__ == "__main__":

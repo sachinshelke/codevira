@@ -1,0 +1,8 @@
+include README.md
+include LICENSE
+include CHANGELOG.md
+include config.example.yaml
+recursive-include agents *.md
+recursive-include rules *.md
+recursive-include docs *.md
+recursive-include graph *.yaml

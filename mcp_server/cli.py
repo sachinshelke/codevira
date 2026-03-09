@@ -229,6 +229,20 @@ def cmd_init() -> None:
 
     # Step 9: Print MCP config
     project_path = str(cwd)
+
+    # Detect the full path to codevira-mcp so MCP hosts that don't inherit
+    # the user's PATH (Claude Desktop, Cursor, Windsurf on macOS) can find it.
+    import shutil as _shutil
+    import sys as _sys
+    exe_full = _shutil.which("codevira-mcp")
+    if exe_full:
+        cmd_name = exe_full          # e.g. /Users/sachin/Library/Python/3.12/bin/codevira-mcp
+    else:
+        cmd_name = "codevira-mcp"    # fallback — may not work in all MCP hosts
+
+    # python -m mcp_server always works as long as `python` resolves correctly.
+    python_exe = _sys.executable     # absolute path to the current interpreter
+
     print()
     print("  " + "─" * 60)
     print(f"  ✓  Codevira initialized in {data_dir}")
@@ -240,7 +254,7 @@ def cmd_init() -> None:
         '  {\n'
         '    "mcpServers": {\n'
         '      "codevira": {\n'
-        '        "command": "codevira-mcp",\n'
+        f'        "command": "{cmd_name}",\n'
         f'        "cwd": "{project_path}"\n'
         '      }\n'
         '    }\n'
@@ -251,8 +265,20 @@ def cmd_init() -> None:
         '  {\n'
         '    "mcpServers": {\n'
         '      "codevira": {\n'
-        '        "command": "codevira-mcp",\n'
+        f'        "command": "{cmd_name}",\n'
         f'        "args": ["--project-dir", "{project_path}"]\n'
+        '      }\n'
+        '    }\n'
+        '  }'
+    )
+
+    # python -m fallback (most reliable when PATH is not inherited)
+    python_fallback_config = (
+        '  {\n'
+        '    "mcpServers": {\n'
+        '      "codevira": {\n'
+        f'        "command": "{python_exe}",\n'
+        f'        "args": ["-m", "mcp_server", "--project-dir", "{project_path}"]\n'
         '      }\n'
         '    }\n'
         '  }'
@@ -266,6 +292,12 @@ def cmd_init() -> None:
     print()
     print("  ── Google Antigravity (~/.gemini/antigravity/mcp_config.json)")
     print(antigravity_config)
+    print()
+    if not exe_full:
+        print("  ⚠  codevira-mcp not found in PATH — use the python -m fallback below.")
+        print()
+    print("  ── Fallback (if codevira-mcp is not in your MCP host's PATH) " + "─" * 10)
+    print(python_fallback_config)
     print()
     print("  Verify: ask your agent to call get_roadmap()")
     print()

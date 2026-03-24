@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "mcp-server"))
 
 import pytest
 from datetime import date, timedelta
-from tools.search import _cleanup_old_logs, search_decisions
+from mcp_server.tools.search import _cleanup_old_logs, search_decisions
 
 
 # ---------------------------------------------------------------------------
@@ -80,15 +80,15 @@ def _write_log(logs_dir: Path, session_id: str, decision: str) -> None:
 
 
 def test_search_decisions_no_filter_returns_all(tmp_path, monkeypatch):
-    monkeypatch.setattr("tools.search.ROADMAP_FILE", tmp_path / "roadmap.yaml")
-    monkeypatch.setattr("tools.search.Path", lambda *a, **kw: _patched_path(tmp_path, *a, **kw))
+    monkeypatch.setattr("mcp_server.tools.search._roadmap_file", lambda: tmp_path / "roadmap.yaml")
+    monkeypatch.setattr("mcp_server.tools.search.Path", lambda *a, **kw: _patched_path(tmp_path, *a, **kw))
 
     logs_dir = tmp_path / "logs"
     _write_log(logs_dir, "sess-aaa", "used uuid v4 for ids")
     _write_log(logs_dir, "sess-bbb", "used uuid v4 for tracking")
 
     # Patch LOGS_DIR inside search_decisions
-    import tools.search as sm
+    import mcp_server.tools.search as sm
     original = sm.Path
     sm.Path = lambda *a, **kw: _mock_logs_path(tmp_path, original, *a, **kw)
 
@@ -101,7 +101,7 @@ def test_search_decisions_no_filter_returns_all(tmp_path, monkeypatch):
 
 
 def test_search_decisions_session_id_filter(tmp_path):
-    import tools.search as sm
+    import mcp_server.tools.search as sm
     import yaml
 
     logs_dir = tmp_path / "logs"
@@ -133,7 +133,7 @@ def _run_search_decisions_with_logs(tmp_path: Path, query: str, session_id=None)
     Monkey-patches the LOGS_DIR and GRAPH_DIR paths inside search_decisions
     to point at tmp_path so tests don't touch real project files.
     """
-    import tools.search as sm
+    import mcp_server.tools.search as sm
 
     # Stash originals
     orig_search = sm.search_decisions

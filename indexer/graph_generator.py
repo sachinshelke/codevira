@@ -7,6 +7,10 @@ Reduces first-time setup from 2–4 hours of manual YAML to one command:
 All auto-generated nodes are marked `auto_generated: true` so developers know
 which nodes need human enrichment (rules, do_not_revert, semantic edge types).
 
+Language support:
+  - Python: stdlib ast module
+  - TypeScript, Go, Rust: tree-sitter grammars via treesitter_parser
+
 Merge behavior: existing enriched nodes are NEVER overwritten — only new files
 get auto-generated stubs.
 """
@@ -18,6 +22,12 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+
+from indexer.treesitter_parser import (
+    parse_file as ts_parse_file,
+    get_language as ts_get_language,
+    EXTENSION_MAP as TS_EXTENSION_MAP,
+)
 
 
 def _load_config() -> dict:
@@ -41,6 +51,12 @@ GRAPH_DIR_RELATIVE = ".codevira/graph"
 
 # Default watched dirs from config
 DEFAULT_TARGET_DIRS: list[str] = _project_cfg.get("watched_dirs", ["src"])
+
+# Supported file extensions from config
+_FILE_EXTENSIONS: list[str] = _project_cfg.get("file_extensions", [".py"])
+
+# Tree-sitter supported extensions for dispatch
+_TS_SUPPORTED_EXTENSIONS = set(TS_EXTENSION_MAP.keys())
 
 # Rule-extraction patterns: lines/docstrings containing these signal a rule
 RULE_PATTERNS = [
@@ -76,7 +92,8 @@ def _infer_type(file_path: str) -> str:
         return "file"
     if "schemas/" in fp or "schema" in name:
         return "schema"
-    if name in {"consumer.py", "worker.py", "handler.py"}:
+    stem = Path(file_path).stem.lower()
+    if stem in {"consumer", "worker", "handler"}:
         return "service"
     return "file"
 
@@ -106,7 +123,18 @@ def _infer_layer(file_path: str) -> str:
 
 
 def _get_module_docstring(file_path: str) -> str:
-    """Extract module-level docstring from a Python file."""
+    """Extract module-level docstring from a source file."""
+    ext = Path(file_path).suffix.lower()
+
+    # Non-Python: use tree-sitter
+    if ext in _TS_SUPPORTED_EXTENSIONS:
+        try:
+            parsed = ts_parse_file(file_path)
+            return parsed.module_docstring or ""
+        except Exception:
+            return ""
+
+    # Python: existing ast-based extraction
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             source = f.read()
@@ -117,7 +145,18 @@ def _get_module_docstring(file_path: str) -> str:
 
 
 def _get_public_symbols(file_path: str) -> list[str]:
-    """Extract all public function and class names from a Python file."""
+    """Extract all public function and class names from a source file."""
+    ext = Path(file_path).suffix.lower()
+
+    # Non-Python: use tree-sitter
+    if ext in _TS_SUPPORTED_EXTENSIONS:
+        try:
+            parsed = ts_parse_file(file_path)
+            return [s.name for s in parsed.symbols if s.is_public]
+        except Exception:
+            return []
+
+    # Python: existing ast-based extraction
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             source = f.read()
@@ -350,7 +389,9 @@ def generate_graph_yaml(project_root: str, graph_dir: str | None = None) -> dict
         for root, dirs, files in os.walk(target_path):
             dirs[:] = [d for d in dirs if d not in skip_dirs]
             for fname in files:
-                if not fname.endswith(".py") or fname in skip_files:
+                ext = Path(fname).suffix.lower()
+                supported = ext == ".py" or ext in _TS_SUPPORTED_EXTENSIONS
+                if not supported or fname in skip_files:
                     continue
 
                 abs_path = Path(root) / fname
@@ -430,7 +471,9 @@ def generate_graph_nodes_for_files(
     files_added: list[str] = []
 
     for rel_path in file_paths:
-        if not rel_path.endswith(".py"):
+        ext = Path(rel_path).suffix.lower()
+        supported = ext == ".py" or ext in _TS_SUPPORTED_EXTENSIONS
+        if not supported:
             nodes_skipped += 1
             continue
 

@@ -59,7 +59,7 @@ Here's how a great AI-assisted contribution looks:
 ```bash
 # After cloning your fork, build the index so your agent has full context
 cp config.example.yaml config.yaml
-python indexer/index_codebase.py --full --generate-graph --bootstrap-roadmap
+codevira index --full
 ```
 
 Connect your AI tool to `.agents/mcp-server/server.py` as described in the README.
@@ -176,11 +176,11 @@ Branch prefixes:
 
 ```bash
 # Verify the MCP server starts and all tools register correctly
-python mcp-server/server.py
+python -m mcp_server
 
 # If you modified the indexer, test it on a small project
-python indexer/index_codebase.py --full
-python indexer/index_codebase.py --status
+codevira index --full
+codevira status
 ```
 
 ### 5. Commit and push
@@ -214,7 +214,7 @@ source .venv/bin/activate    # macOS/Linux
 pip install -r requirements.txt
 
 # Verify MCP server starts
-python mcp-server/server.py
+python -m mcp_server
 ```
 
 **Recommended Python version:** 3.10 or higher.
@@ -269,7 +269,7 @@ New to the project? Look for issues tagged [`good first issue`](https://github.c
 
 Areas particularly welcoming to new contributors:
 
-- **Language support** — tree-sitter chunker for TypeScript, Go, or Rust
+- **Graph visualization** — exporters for Dot or Mermaid graphs
 - **Playbook entries** — add new task types to `mcp-server/tools/playbook.py`
 - **IDE setup guides** — detailed setup for specific AI tools
 - **Documentation** — examples, tutorials, clarifications

@@ -51,3 +51,5 @@ docs/linkedin-*.md
 
 # Codevira — auto-generated, do not commit
 .codevira/
+
+.mcp.json

@@ -31,3 +31,20 @@ Reason: The user requested the roadmap, but the AI's MCP tool suite had not yet 
 Action: Discovered root cause of `--project-dir` ignoring bug
 Result: Success
 Reason: The Antigravity MCP config used `python -m mcp_server --project-dir`. The main module for `server.py` does not parse `sys.argv`, bypassing `argparse` completely. Only the `codevira-mcp` CLI (`cli.py`) handles `--project-dir`. As a result, global clients silently ignored the project argument and created fallback data folders. Switched `mcp_config.json` to use the `codevira-mcp` executable directly to ensure isolated directory resolution works correctly.
+2026-03-10
+Action: Commit and Push v1.1.2 Docs Update
+Result: Success
+Reason: The user requested not to bump the PyPI version to 1.1.3 since the changes were just documentation additions. Reverted pyproject.toml to 1.1.2, added all docs/FAQ updates, committed with a detailed message outlining the Global MCP configuration issue, and tagged the release `v1.1.2` directly on GitHub.
+2026-03-10
+Action: Update CHANGELOG.md for v1.1.2 Docs
+Result: Success
+Reason: The user requested tracking the `1.1.2` release in the changelog. Appended the multi-project global client guide and gitignore additions to the changelog and pushed to main.
+
+2026-03-10
+Action: Draft GitHub Reply and Update Roadmap
+Result: Success
+Reason: The user requested to draft a reply for Issue #3 and add global installation to tracking. Added to ROADMAP.md and pushed to main.
+2026-03-10
+Action: Begin Codevira Website Development
+Result: Success
+Reason: The user requested a website for Codevira to be published on github.io. Initiating planning phase for a static landing page with premium aesthetics.

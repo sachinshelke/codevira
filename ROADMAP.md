@@ -6,7 +6,7 @@ Have a suggestion? [Open a feature request](https://github.com/sachinshelke/code
 
 ---
 
-## ✅ v1.0 — Initial Release (current)
+## ✅ v1.0 — Initial Release
 
 The foundation. Everything needed to give AI agents persistent memory on any project.
 
@@ -23,7 +23,7 @@ The foundation. Everything needed to give AI agents persistent memory on any pro
 
 ---
 
-## 🔜 v1.1 — Language Expansion
+## ✅ v1.2 — Language Expansion (current)
 
 Extend full feature support beyond Python.
 
@@ -34,7 +34,7 @@ Extend full feature support beyond Python.
 
 ---
 
-## 🔜 v1.2 — Developer Experience
+## 🔜 v1.3 — Developer Experience
 
 Make setup and daily use smoother.
 
@@ -46,7 +46,7 @@ Make setup and daily use smoother.
 
 ---
 
-## 🔜 v1.3 — Smarter Graph
+## 🔜 v1.4 — Smarter Graph
 
 Make the context graph richer and more automatic.
 

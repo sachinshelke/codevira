@@ -12,13 +12,19 @@ project:
   watched_dirs: ["src"]
 
   # Primary language for AST-based features (get_signature, get_code, graph generation)
-  # python       — full support (AST chunking, symbol extraction, graph auto-generation)
-  # typescript   — partial support (regex-based chunking; get_signature returns Python-only message)
-  # go           — partial support (regex-based chunking; get_signature returns Python-only message)
-  # rust         — partial support (regex-based chunking; get_signature returns Python-only message)
+  # python       — full support (stdlib ast: chunking, symbol extraction, graph auto-generation)
+  # typescript   — full support (tree-sitter: chunking, symbol extraction, graph auto-generation)
+  # go           — full support (tree-sitter: chunking, symbol extraction, graph auto-generation)
+  # rust         — full support (tree-sitter: chunking, symbol extraction, graph auto-generation)
   language: python
 
   # File extensions to include in the code index
+  # Add extensions for your project's languages:
+  #   Python:     [".py"]
+  #   TypeScript: [".ts", ".tsx"]
+  #   Go:         [".go"]
+  #   Rust:       [".rs"]
+  #   Multi-lang: [".py", ".ts", ".tsx", ".go", ".rs"]
   file_extensions: [".py"]
 
   # ChromaDB collection name for the semantic code index

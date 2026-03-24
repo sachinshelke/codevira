@@ -58,7 +58,18 @@ def _get_chroma_client():
     except ImportError:
         print("ERROR: chromadb not installed. Run: pip install codevira-mcp[dev]")
         sys.exit(1)
-    return chromadb.PersistentClient(path=str(INDEX_DIR))
+    try:
+        return chromadb.PersistentClient(path=str(INDEX_DIR))
+    except Exception as e:
+        from rich.console import Console
+        console = Console()
+        console.print(f"\n[bold red]Database Corruption or OS Error Detected![/bold red]")
+        console.print(f"ChromaDB failed to initialize at: {INDEX_DIR}")
+        console.print(f"Error details: {e}\n")
+        console.print("To recover, please delete the index directly and rebuild:")
+        console.print(f"  [bold]rm -rf {INDEX_DIR}[/bold]")
+        console.print("  [bold]codevira index --full[/bold]\n")
+        sys.exit(1)
 
 
 def _get_embedding_fn():
@@ -140,16 +151,19 @@ def _chunk_to_document(chunk) -> tuple[str, str, dict]:
 def cmd_full_rebuild():
     """Full rebuild: delete existing collection and re-index everything."""
     from indexer.chunker import chunk_project
+    from rich.console import Console
+    from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 
-    print(f"Full rebuild of '{COLLECTION_NAME}' from {PROJECT_ROOT}")
-    print(f"  Watching: {WATCHED_DIRS}")
+    console = Console()
+    console.print(f"[bold cyan]Full rebuild[/bold cyan] of '[bold]{COLLECTION_NAME}[/bold]' from {PROJECT_ROOT}")
+    console.print(f"  Watching: [yellow]{WATCHED_DIRS}[/yellow]")
     client = _get_chroma_client()
     embed_fn = _get_embedding_fn()
 
     # Delete existing collection if present
     try:
         client.delete_collection(COLLECTION_NAME)
-        print("  Deleted existing collection.")
+        console.print("  [green]✓[/green] Deleted existing collection.")
     except Exception:
         pass
 
@@ -160,7 +174,7 @@ def cmd_full_rebuild():
     )
 
     chunks = chunk_project(str(PROJECT_ROOT))
-    print(f"  Found {len(chunks)} chunks across project.")
+    console.print(f"  [green]✓[/green] Found [bold]{len(chunks)}[/bold] chunks across project.")
 
     # Batch upsert (ChromaDB handles batches of ~5000)
     batch_size = 500
@@ -171,19 +185,27 @@ def cmd_full_rebuild():
         docs.append(document)
         metas.append(metadata)
 
-    for i in range(0, len(ids), batch_size):
-        collection.upsert(
-            ids=ids[i:i + batch_size],
-            documents=docs[i:i + batch_size],
-            metadatas=metas[i:i + batch_size],
-        )
-        print(f"  Indexed {min(i + batch_size, len(ids))}/{len(ids)} chunks...")
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task("[cyan]Indexing to ChromaDB...", total=len(ids))
+        for i in range(0, len(ids), batch_size):
+            collection.upsert(
+                ids=ids[i:i + batch_size],
+                documents=docs[i:i + batch_size],
+                metadatas=metas[i:i + batch_size],
+            )
+            progress.update(task, advance=min(batch_size, len(ids) - i))
 
     _write_timestamp()
-    print(f"Full rebuild complete. {len(ids)} chunks indexed to {INDEX_DIR}")
-    print(f"\nTo commit the updated index:")
-    print(f"  Note: .codevira/codeindex/ is git-ignored (auto-regenerated on each dev machine)")
-    print(f"  git commit -m 'chore(agents): refresh codebase index'")
+    console.print(f"\n[bold green]Full rebuild complete.[/bold green] {len(ids)} chunks indexed to [magenta]{INDEX_DIR}[/magenta]")
+    console.print("\nTo commit the updated index:")
+    console.print("  [dim]Note: .codevira/codeindex/ is git-ignored (auto-regenerated on each dev machine)[/dim]")
+    console.print("  [cyan]git commit -m 'chore(agents): refresh codebase index'[/cyan]")
 
 
 def cmd_incremental(since: float | None = None, quiet: bool = False):
@@ -194,20 +216,20 @@ def cmd_incremental(since: float | None = None, quiet: bool = False):
     Called automatically by the post-commit hook and watch mode.
     """
     from indexer.chunker import chunk_file
+    from rich.console import Console
+    console = Console(quiet=quiet)
 
     baseline = since if since is not None else _read_timestamp()
     if baseline is None:
-        print("No baseline found. Run --full to create the initial index.")
+        console.print("[red]No baseline found.[/red] Run --full to create the initial index.")
         sys.exit(1)
 
     changed = _get_changed_files(since=baseline)
     if not changed:
-        if not quiet:
-            print("No files changed since last index build. Index is up to date.")
+        console.print("[green]✓[/green] No files changed since last index build. Index is up to date.")
         return 0
 
-    if not quiet:
-        print(f"Incremental update: {len(changed)} changed file(s)")
+    console.print(f"[bold cyan]Incremental update:[/bold cyan] {len(changed)} changed file(s)")
 
     client = _get_chroma_client()
     embed_fn = _get_embedding_fn()
@@ -215,43 +237,52 @@ def cmd_incremental(since: float | None = None, quiet: bool = False):
     try:
         collection = client.get_collection(COLLECTION_NAME, embedding_function=embed_fn)
     except Exception:
-        print("No existing index found. Run --full to create one.")
+        console.print("[red]No existing index found.[/red] Run [cyan]codevira index --full[/cyan] to create one.")
         sys.exit(1)
 
     updated = 0
-    for rel_path in changed:
-        abs_path = PROJECT_ROOT / rel_path
-        if not abs_path.exists():
-            # File deleted — remove its chunks
+    from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        console=console,
+        disable=quiet,
+    ) as progress:
+        task = progress.add_task("[cyan]Re-indexing changed files...", total=len(changed))
+        for rel_path in changed:
+            abs_path = PROJECT_ROOT / rel_path
+            if not abs_path.exists():
+                # File deleted — remove its chunks
+                results = collection.get(where={"file_path": rel_path})
+                if results["ids"]:
+                    collection.delete(ids=results["ids"])
+                    console.print(f"  [red]-[/red] Removed {len(results['ids'])} chunks for deleted {rel_path}")
+                progress.update(task, advance=1)
+                continue
+
+            # Remove old chunks for this file
             results = collection.get(where={"file_path": rel_path})
             if results["ids"]:
                 collection.delete(ids=results["ids"])
-                if not quiet:
-                    print(f"  Removed {len(results['ids'])} chunks for deleted {rel_path}")
-            continue
 
-        # Remove old chunks for this file
-        results = collection.get(where={"file_path": rel_path})
-        if results["ids"]:
-            collection.delete(ids=results["ids"])
-
-        # Add new chunks
-        chunks = chunk_file(str(abs_path), str(PROJECT_ROOT))
-        if chunks:
-            ids, docs, metas = [], [], []
-            for chunk in chunks:
-                doc_id, document, metadata = _chunk_to_document(chunk)
-                ids.append(doc_id)
-                docs.append(document)
-                metas.append(metadata)
-            collection.upsert(ids=ids, documents=docs, metadatas=metas)
-            updated += 1
-            if not quiet:
-                print(f"  Updated {len(chunks)} chunks for {rel_path}")
+            # Add new chunks
+            chunks = chunk_file(str(abs_path), str(PROJECT_ROOT))
+            if chunks:
+                ids, docs, metas = [], [], []
+                for chunk in chunks:
+                    doc_id, document, metadata = _chunk_to_document(chunk)
+                    ids.append(doc_id)
+                    docs.append(document)
+                    metas.append(metadata)
+                collection.upsert(ids=ids, documents=docs, metadatas=metas)
+                updated += 1
+                console.print(f"  [green]+[/green] Updated {len(chunks)} chunks for {rel_path}")
+            progress.update(task, advance=1)
 
     _write_timestamp()
-    if not quiet:
-        print(f"Incremental update complete. {updated} file(s) re-indexed.")
+    console.print(f"[bold green]Incremental update complete.[/bold green] {updated} file(s) re-indexed.")
     return updated
 
 
@@ -339,35 +370,52 @@ def cmd_watch():
 
 def cmd_status():
     """Show current index statistics."""
+    from rich.console import Console
+    from rich.table import Table
+    from rich.panel import Panel
+
+    console = Console()
     client = _get_chroma_client()
     embed_fn = _get_embedding_fn()
+    
+    console.print("\n[bold]Codevira Context Engine — Health Dashboard[/bold]\n")
+
     try:
         collection = client.get_collection(COLLECTION_NAME, embedding_function=embed_fn)
         count = collection.count()
-        print(f"Index: {COLLECTION_NAME}")
-        print(f"Location: {INDEX_DIR}")
-        print(f"Total chunks: {count}")
+        
+        table = Table(show_header=False, box=None)
+        table.add_column("Property", style="bold cyan")
+        table.add_column("Value")
+        
+        table.add_row("Collection", COLLECTION_NAME)
+        table.add_row("Location", str(INDEX_DIR))
+        table.add_row("Total chunks", f"[bold green]{count}[/bold green]")
 
         ts = _read_timestamp()
         if ts:
             from datetime import datetime
             dt = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
-            print(f"Last indexed: {dt}")
+            table.add_row("Last indexed", dt)
+            
+            console.print(Panel(table, title="Index Information", expand=False, border_style="cyan"))
 
-            # Show files changed since last build
             changed = _get_changed_files()
             if changed:
-                print(f"\nFiles changed since last index ({len(changed)} file(s) — run without flags to update):")
+                console.print(f"\n[bold yellow]Files changed since last index[/bold yellow] ({len(changed)} file(s) pending):")
                 for f in changed[:10]:
-                    print(f"  {f}")
+                    console.print(f"  [dim]•[/dim] {f}")
                 if len(changed) > 10:
-                    print(f"  ... and {len(changed) - 10} more")
+                    console.print(f"  [dim]... and {len(changed) - 10} more[/dim]")
+                console.print("\n[dim]Run `codevira index` to sync changes.[/dim]")
             else:
-                print("Index is up to date.")
+                console.print("\n[bold green]✓ Index is fully up to date.[/bold green]")
         else:
-            print("Last indexed: unknown (no .last_indexed file)")
+            table.add_row("Last indexed", "[yellow]unknown (no .last_indexed file)[/yellow]")
+            console.print(Panel(table, title="Index Information", expand=False, border_style="cyan"))
     except Exception:
-        print(f"No index found at {INDEX_DIR}. Run --full to create one.")
+        console.print(f"[red]No index found at {INDEX_DIR}[/red]")
+        console.print("Run [bold cyan]`codevira index --full`[/bold cyan] to create one.")
 
 
 def cmd_generate_graph():

@@ -322,8 +322,7 @@ def cmd_status() -> None:
 def cmd_server(project_dir: Path | None = None) -> None:
     """Start the MCP server."""
     from mcp_server.server import main as server_main
-    import asyncio
-    asyncio.run(server_main())
+    server_main()
 
 
 def main() -> None:

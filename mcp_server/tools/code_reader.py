@@ -1,17 +1,25 @@
 """
-code_reader.py — MCP tools for reading Python source files
+code_reader.py — MCP tools for reading source files
 
 get_signature(file_path)       → skeleton: all public symbols, signatures, docstrings, line ranges
 get_code(file_path, symbol)    → full source of one named function or class from disk
 
 Always reads from disk. No index, no ChromaDB, no staleness risk.
 
-Language support: Python only. For other languages, read the file directly.
+Language support:
+  - Python: stdlib ast module (full support)
+  - TypeScript, Go, Rust: tree-sitter grammars via treesitter_parser
 """
 import ast
 from pathlib import Path
 
 from mcp_server.paths import get_project_root
+from indexer.treesitter_parser import (
+    parse_file as ts_parse_file,
+    get_symbol_source as ts_get_symbol_source,
+    get_language as ts_get_language,
+    EXTENSION_MAP as TS_EXTENSION_MAP,
+)
 
 
 def _resolve(file_path: str) -> Path:
@@ -39,10 +47,10 @@ def _signature_line(source_lines: list[str], node: ast.AST) -> str:
 
 def get_signature(file_path: str) -> dict:
     """
-    Get the skeleton of a Python file: all public function and class names,
+    Get the skeleton of a source file: all public function and class names,
     their signatures, docstrings, and line ranges.
 
-    Python files only. For non-Python files, read the file directly.
+    Supports Python, TypeScript, Go, and Rust.
 
     Args:
         file_path: Relative path from project root (e.g. 'src/services/generator.py')
@@ -59,13 +67,68 @@ def get_signature(file_path: str) -> dict:
             "error": f"File not found: {abs_path}",
         }
 
-    if not file_path.endswith(".py"):
+    ext = abs_path.suffix.lower()
+
+    # Non-Python: dispatch to tree-sitter
+    if ext in TS_EXTENSION_MAP:
+        return _get_signature_treesitter(file_path, abs_path)
+
+    # Python: existing ast-based extraction
+    if ext == ".py":
+        return _get_signature_python(file_path, abs_path)
+
+    return {
+        "found": False,
+        "file_path": file_path,
+        "error": f"Unsupported file type: {ext}. Supported: .py, .ts, .tsx, .go, .rs",
+    }
+
+
+def _get_signature_treesitter(file_path: str, abs_path: Path) -> dict:
+    """Get file skeleton using tree-sitter for TS/Go/Rust files."""
+    try:
+        parsed = ts_parse_file(str(abs_path))
+    except (ValueError, FileNotFoundError) as e:
         return {
             "found": False,
             "file_path": file_path,
-            "error": "get_signature only supports Python (.py) files. Read non-Python files directly.",
+            "error": str(e),
         }
 
+    symbols = []
+    for sym in parsed.symbols:
+        if not sym.is_public:
+            continue
+
+        entry = {
+            "name": sym.name,
+            "kind": sym.kind,
+            "signature_line": sym.signature_line,
+            "start_line": sym.start_line,
+            "end_line": sym.end_line,
+        }
+        if sym.docstring:
+            first_line = sym.docstring.strip().splitlines()[0]
+            entry["docstring"] = first_line
+
+        if sym.methods:
+            entry["public_methods"] = sym.methods
+
+        symbols.append(entry)
+
+    return {
+        "found": True,
+        "file_path": file_path,
+        "language": parsed.language,
+        "module_docstring": parsed.module_docstring,
+        "symbol_count": len(symbols),
+        "symbols": symbols,
+        "hint": "Use get_code(file_path, symbol) to read the full body of any symbol listed above.",
+    }
+
+
+def _get_signature_python(file_path: str, abs_path: Path) -> dict:
+    """Get file skeleton using Python ast module."""
     source = abs_path.read_text(encoding="utf-8")
     source_lines = source.splitlines()
 
@@ -99,11 +162,9 @@ def get_signature(file_path: str) -> dict:
             "end_line": node.end_lineno,
         }
         if docstring:
-            # Truncate long docstrings to first line for skeleton view
             first_line = docstring.strip().splitlines()[0]
             entry["docstring"] = first_line
 
-        # For classes: also list public methods (one level deep)
         if kind == "class":
             methods = []
             for child in ast.walk(node):
@@ -132,7 +193,7 @@ def get_code(file_path: str, symbol: str | None = None) -> dict:
     Get the full source of a single function or class by name.
     Always reads from disk — always current.
 
-    Python files only. For non-Python files, read the file directly.
+    Supports Python, TypeScript, Go, and Rust.
 
     Args:
         file_path: Relative path from project root
@@ -151,14 +212,55 @@ def get_code(file_path: str, symbol: str | None = None) -> dict:
             "error": f"File not found: {abs_path}",
         }
 
-    if not file_path.endswith(".py"):
+    ext = abs_path.suffix.lower()
+
+    # Non-Python: dispatch to tree-sitter
+    if ext in TS_EXTENSION_MAP:
+        return _get_code_treesitter(file_path, abs_path, symbol)
+
+    # Python: existing ast-based extraction
+    if ext == ".py":
+        return _get_code_python(file_path, abs_path, symbol)
+
+    return {
+        "found": False,
+        "file_path": file_path,
+        "symbol": symbol,
+        "error": f"Unsupported file type: {ext}. Supported: .py, .ts, .tsx, .go, .rs",
+    }
+
+
+def _get_code_treesitter(file_path: str, abs_path: Path, symbol: str | None) -> dict:
+    """Get symbol source using tree-sitter for TS/Go/Rust files."""
+    # symbol=None → return module-level info
+    if symbol is None:
+        try:
+            parsed = ts_parse_file(str(abs_path))
+        except (ValueError, FileNotFoundError) as e:
+            return {
+                "found": False,
+                "file_path": file_path,
+                "symbol": None,
+                "error": str(e),
+            }
         return {
-            "found": False,
+            "found": True,
             "file_path": file_path,
-            "symbol": symbol,
-            "error": "get_code only supports Python (.py) files. Read non-Python files directly.",
+            "symbol": None,
+            "kind": "module_info",
+            "language": parsed.language,
+            "module_docstring": parsed.module_docstring,
+            "imports": [imp.module for imp in parsed.imports],
         }
 
+    # Named symbol lookup
+    result = ts_get_symbol_source(str(abs_path), symbol)
+    result["file_path"] = file_path
+    return result
+
+
+def _get_code_python(file_path: str, abs_path: Path, symbol: str | None) -> dict:
+    """Get symbol source using Python ast module."""
     source = abs_path.read_text(encoding="utf-8")
     source_lines = source.splitlines()
 

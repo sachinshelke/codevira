@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CodeVira | Agentic Context Engine</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Outfit:wght@700;800&family=JetBrains+Mono:wght@400;500&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="styles/main.css">
+</head>
+
+<body>
+    <div class="follow-glow"></div>
+
+    <nav>
+        <div class="container nav-content">
+            <div class="brand">
+                <img src="assets/codevira_logo.png" alt="CodeVira Logo">
+            </div>
+            <div class="nav-links">
+                <a href="#tools">TOOLS</a>
+                <a href="#architecture">ARCHITECTURE</a>
+                <a href="https://github.com/sachinshelke/codevira">GITHUB</a>
+            </div>
+        </div>
+    </nav>
+
+    <section class="hero">
+        <div class="glow-bg"></div>
+        <div class="reveal">
+            <h1>CODEVIRA.</h1>
+            <p>Eliminate the Orientation Tax. Rebuild your agent's context in milliseconds, not minutes.</p>
+        </div>
+    </section>
+
+    <section id="tools" class="tools-section container">
+        <div class="reveal">
+            <h2 style="font-size: 3rem;">The Toolset.</h2>
+            <p style="color: var(--color-text-dim);">26 Standardized MCP Tools for Global Context Awareness.</p>
+        </div>
+
+        <div class="tool-grid">
+            <!-- Graph Module -->
+            <div class="tool-card reveal">
+                <code>get_node</code>
+                <p>Retrieves metadata, rules, and connectivity for a specific file node.</p>
+            </div>
+            <div class="tool-card reveal">
+                <code>get_impact</code>
+                <p>Calculates the blast radius of a change using BFS traversal.</p>
+            </div>
+            <div class="tool-card reveal">
+                <code>list_nodes</code>
+                <p>Lists all nodes filtered by layer, stability, or protection status.</p>
+            </div>
+            <div class="tool-card reveal">
+                <code>add_node</code>
+                <p>Registers a new file into the context graph with automated role inference.</p>
+            </div>
+            <div class="tool-card reveal">
+                <code>refresh_graph</code>
+                <p>Auto-scans and registers all new files in the workspace.</p>
+            </div>
+            <div class="tool-card reveal">
+                <code>update_node</code>
+                <p>Commits session changes (rules, stability) back to the graph.</p>
+            </div>
+
+            <!-- Roadmap Module -->
+            <div class="tool-card reveal">
+                <code>get_roadmap</code>
+                <p>Snapshot of current phase, next actions, and open changesets.</p>
+            </div>
+            <div class="tool-card reveal">
+                <code>get_full_roadmap</code>
+                <p>Complete project history including all completed and deferred phases.</p>
+            </div>
+            <div class="tool-card reveal">
+                <code>get_phase</code>
+                <p>Detailed breakdown of a specific roadmap milestone.</p>
+            </div>
+            <div class="tool-card reveal">
+                <code>add_phase</code>
+                <p>Inserts new work items into the prioritized execution queue.</p>
+            </div>
+            <div class="tool-card reveal">
+                <code>update_phase_status</code>
+                <p>Manages phase transitions: pending | in_progress | blocked.</p>
+            </div>
+            <div class="tool-card reveal">
+                <code>defer_phase</code>
+                <p>Moves low-priority items to the deferred backlog.</p>
+            </div>
+            <div class="tool-card reveal">
+                <code>complete_phase</code>
+                <p>Finalizes a milestone and records permanent key decisions.</p>
+            </div>
+            <div class="tool-card reveal">
+                <code>update_next_action</code>
+                <p>Directs the next agent session with precise instructions.</p>
+            </div>
+
+            <!-- Changeset Module -->
+            <div class="tool-card reveal">
+                <code>start_changeset</code>
+                <p>Initiates tracking for a multi-file atomic modification.</p>
+            </div>
+            <div class="tool-card reveal">
+                <code>update_changeset_progress</code>
+                <p>Tracks granular file-level completion within a changeset.</p>
+            </div>
+            <div class="tool-card reveal">
+                <code>complete_changeset</code>
+                <p>Finalizes a fix and persists decisions for cross-session memory.</p>
+            </div>
+            <div class="tool-card reveal">
+                <code>list_open_changesets</code>
+                <p>Identifies unfinished work from previous sessions.</p>
+            </div>
+
+            <!-- Search Module -->
+            <div class="tool-card reveal">
+                <code>search_codebase</code>
+                <p>Semantic vector search via local ChromaDB and transformers.</p>
+            </div>
+            <div class="tool-card reveal">
+                <code>refresh_index</code>
+                <p>Triggers incremental re-indexing of changed files.</p>
+            </div>
+            <div class="tool-card reveal">
+                <code>search_decisions</code>
+                <p>Queries institutional memory across all historical logs.</p>
+            </div>
+            <div class="tool-card reveal">
+                <code>get_history</code>
+                <p>Correlates file states with recent git commit history.</p>
+            </div>
+            <div class="tool-card reveal">
+                <code>write_session_log</code>
+                <p>Appends structured outcomes to the persistent decision journal.</p>
+            </div>
+
+            <!-- Playbook & reader -->
+            <div class="tool-card reveal">
+                <code>get_playbook</code>
+                <p>Retrieves architectural 'plays' for specific tasks (e.g. add_route).</p>
+            </div>
+            <div class="tool-card reveal">
+                <code>get_signature</code>
+                <p>Extracts class/function signatures without reading full sources.</p>
+            </div>
+            <div class="tool-card reveal">
+                <code>get_code</code>
+                <p>Reads specific symbols from disk with 100% currency.</p>
+            </div>
+        </div>
+    </section>
+
+    <section id="architecture" class="arch-section reveal">
+        <img src="assets/codevira_mcp.png" alt="CodeVira Architecture">
+    </section>
+
+    <script src="scripts/app.js"></script>
+</body>
+
+</html>

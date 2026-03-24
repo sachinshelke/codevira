@@ -5,7 +5,7 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![MCP](https://img.shields.io/badge/protocol-MCP-purple)](https://modelcontextprotocol.io)
-[![Version](https://img.shields.io/badge/version-1.0.0-orange)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.2.0-orange)](CHANGELOG.md)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](CONTRIBUTING.md)
 [![Contributions Welcome](https://img.shields.io/badge/contributions-welcome-brightgreen)](CONTRIBUTING.md)
 
@@ -135,7 +135,7 @@ pip install codevira-mcp
 
 ```bash
 cd your-project
-codevira-mcp init
+codevira init
 ```
 
 This single command:
@@ -307,7 +307,7 @@ This loop keeps every session fast, focused, and resumable.
 | `get_history(file_path)` | All sessions that touched a file |
 | `write_session_log(...)` | Write structured session record |
 
-### Code Reader Tools _(Python only)_
+### Code Reader Tools
 | Tool | Description |
 |---|---|
 | `get_signature(file_path)` | All public symbols, signatures, line numbers |
@@ -390,12 +390,11 @@ Seven role definitions in `agents/` tell each agent exactly what to do and when:
 | Context graph + blast radius | ✅ | ✅ | ✅ | ✅ |
 | Roadmap + changesets | ✅ | ✅ | ✅ | ✅ |
 | Session logs + decision search | ✅ | ✅ | ✅ | ✅ |
-| `get_signature` / `get_code` | ✅ | ❌ | ❌ | ❌ |
-| Auto-generated graph stubs | ✅ | ❌ | ❌ | ❌ |
-| AST-based chunking | ✅ | ⚠️ regex | ⚠️ regex | ⚠️ regex |
+| `get_signature` / `get_code` | ✅ | ✅ | ✅ | ✅ |
+| Auto-generated graph stubs | ✅ | ✅ | ✅ | ✅ |
+| AST-based chunking | ✅ | ✅ | ✅ | ✅ |
 
-All session management, graph, roadmap, and search features work for any language.
-Only `get_signature`, `get_code`, and auto-generated graph stubs are Python-specific.
+All session management, graph, roadmap, and search features work for any language. Code parsing and extraction (search, graph generation, signature reads) are powered by robust ast and Tree-Sitter integrations.
 
 ---
 
@@ -427,7 +426,7 @@ Contributions are welcome — this is an early-stage open source project and the
 Read [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide: forking, branch naming, commit format, and PR process.
 
 **Good first areas:**
-- Tree-sitter support for TypeScript / Go / Rust (unlocks `get_signature` and graph auto-generation)
+- Graph visualization exports (Dot/Mermaid)
 - Additional playbook entries for common task types
 - IDE-specific setup guides
 - Bug reports and edge case fixes

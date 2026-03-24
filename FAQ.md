@@ -6,7 +6,7 @@
 
 ### Do I need to run the indexer every time?
 
-No. Run it once with `--full` when you first set up Codevira. After that, the git post-commit hook (installed via `bash .agents/hooks/install-hooks.sh`) automatically re-indexes any files you change on every commit. You can also run `python indexer/index_codebase.py --watch` during active development for real-time sync.
+No. Run it once with `codevira index --full` when you first set up Codevira. After that, the git post-commit hook (installed via `bash .agents/hooks/install-hooks.sh`) automatically re-indexes any files you change on every commit. You can also run `codevira index --watch` during active development for real-time sync.
 
 ### What is ChromaDB and do I need to install it separately?
 
@@ -14,7 +14,7 @@ ChromaDB is the vector database Codevira uses to power semantic code search. You
 
 ### Does this work with non-Python projects?
 
-Yes, with one limitation. The context graph, roadmap, changeset tracking, semantic search, and all session management tools work for any language. The only Python-specific features are `get_signature`, `get_code`, and auto-generated graph stubs — all of which use Python's AST. For TypeScript, Go, Rust, and other languages, those three features are unavailable but everything else works fully.
+Yes! As of v1.2.0, Codevira supports Python, TypeScript, Go, and Rust natively with full feature parity. The context graph, roadmap, changeset tracking, semantic search, AST chunking, `get_signature` / `get_code`, and auto-graph generation all work fully across these languages using Tree-Sitter and standard AST parsing.
 
 See the [Language Support](README.md#language-support) table for details.
 
@@ -41,8 +41,8 @@ No. Codevira runs entirely locally. ChromaDB is embedded (no server needed), gra
 The most common cause is the MCP server not being registered correctly. Check:
 
 1. The server is listed in your AI tool's MCP config (see [Quick Start](README.md#quick-start))
-2. The path to `mcp-server/server.py` is correct relative to your project root
-3. The server starts without errors: `python .agents/mcp-server/server.py`
+2. The server alias `codevira-mcp` works properly in your environment.
+3. The server starts without errors if you test it manually in your terminal.
 
 If the server starts but tools aren't appearing, restart your AI tool — most require a restart to pick up new MCP servers.
 
@@ -70,9 +70,9 @@ To fix this, you must declare **multiple unique servers** in your global config,
 
 Yes. Run:
 ```bash
-python indexer/index_codebase.py --full --generate-graph
+codevira index --full --generate-graph
 ```
-This creates auto-generated graph stubs for all your Python files. Stubs are marked `auto_generated: true` and have basic metadata inferred from imports and docstrings. Enrich them with `rules`, `stability`, and `do_not_revert` flags over time as your agents work on them.
+This creates auto-generated graph stubs for all your source files. Stubs are marked `auto_generated: true` and have basic metadata inferred from imports and docstrings. Enrich them with `rules`, `stability`, and `do_not_revert` flags over time as your agents work on them.
 
 ---
 
@@ -110,39 +110,47 @@ By default, `all-MiniLM-L6-v2` from sentence-transformers — a fast, lightweigh
 
 ## Troubleshooting
 
+### What if I get a "Database Corruption or OS Error"?
+
+If Codevira detects that its underlying ChromaDB index is corrupted (e.g., due to a hard crash or missing OS files), it will intercept the error and guide you. You can recover immediately by deleting the index folder and rebuilding it from scratch:
+```bash
+rm -rf .codevira/codeindex
+codevira index --full
+```
+
 ### The index is out of date — how do I fix it?
 
 ```bash
 # Rebuild from scratch
-python indexer/index_codebase.py --full
+codevira index --full
 
 # Or re-index just the stale files
-python indexer/index_codebase.py
+codevira index
 ```
 
 You can also ask your agent to call `refresh_index(["path/to/file.py"])` mid-session — it re-embeds specific files without a full rebuild.
 
 ### `get_node()` returns `index_status.stale: true` — what does that mean?
 
-The file has been modified since the last index build. The graph node is still valid, but `search_codebase()` results for that file may be outdated. Call `refresh_index(["path/to/file.py"])` to re-embed it, or run the indexer CLI.
+The file has been modified since the last index build. The graph node is still valid, but `search_codebase()` results for that file may be outdated. Call `refresh_index(["path/to/file.py"])` to re-embed it, or run `codevira index`.
 
 ### The MCP server crashes on startup — what do I check?
 
 ```bash
 # Check dependencies are installed
-pip install -r requirements.txt
+pip install codevira-mcp
 
 # Run the server directly to see the error
-python .agents/mcp-server/server.py
+codevira-mcp
 ```
 
-Common causes: missing `pyyaml`, wrong Python version (requires 3.10+), or `mcp` package not installed.
+Common causes: missing `tree-sitter`, wrong Python version (requires 3.10+), or `mcp` package not installed properly.
 
 ### My graph file has no nodes — why?
 
 If you skipped `--generate-graph` during setup, the graph directory will be empty. Run:
 ```bash
-python indexer/index_codebase.py --generate-graph
+codevira index --generate-graph
 ```
 Or ask your agent to call `refresh_graph()` — it scans for unregistered files and creates stubs.
 

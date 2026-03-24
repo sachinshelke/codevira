@@ -1,0 +1,215 @@
+:root {
+    /* --- CodeVira Techno-Savvy 3.2 Palette --- */
+    --color-bg: #09090b;
+    --color-surface: #121214;
+    --color-accent: #00e5ff;
+    --color-accent-dim: rgba(0, 229, 255, 0.15);
+    --color-text-bright: #ffffff;
+    --color-text-dim: #94a3b8;
+    --color-border: rgba(255, 255, 255, 0.08);
+
+    --font-main: 'Outfit', sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+}
+
+/* =========================================
+   CORE RESET
+   ========================================= */
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    -webkit-font-smoothing: antialiased;
+}
+
+body {
+    background-color: var(--color-bg);
+    color: var(--color-text-bright);
+    font-family: var(--font-main);
+    overflow-x: hidden;
+    line-height: 1.6;
+}
+
+.container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 0 2rem;
+}
+
+/* =========================================
+   NAV
+   ========================================= */
+
+nav {
+    position: fixed;
+    top: 0;
+    width: 100%;
+    z-index: 1000;
+    background: rgba(9, 9, 11, 0.8);
+    backdrop-filter: blur(20px);
+    border-bottom: 1px solid var(--color-border);
+    padding: 1rem 0;
+}
+
+.nav-content {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.brand {
+    display: flex;
+    align-items: center;
+}
+
+.brand img {
+    height: 48px;
+    width: auto;
+    /* Remove the baked-in gray background via mix-blend-mode or filter if necessary */
+    mix-blend-mode: screen;
+}
+
+.nav-links {
+    display: flex;
+    gap: 2rem;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 1px;
+}
+
+.nav-links a {
+    color: var(--color-text-dim);
+    text-decoration: none;
+    transition: color 0.3s ease;
+}
+
+.nav-links a:hover {
+    color: var(--color-accent);
+}
+
+/* =========================================
+   HERO
+   ========================================= */
+
+.hero {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    position: relative;
+    padding-top: 4rem;
+}
+
+.hero h1 {
+    font-size: clamp(3rem, 10vw, 8rem);
+    font-weight: 800;
+    line-height: 0.9;
+    letter-spacing: -0.05em;
+}
+
+.hero p {
+    margin-top: 2rem;
+    font-size: 1.25rem;
+    color: var(--color-text-dim);
+    max-width: 600px;
+}
+
+.glow-bg {
+    position: absolute;
+    width: 600px;
+    height: 600px;
+    background: radial-gradient(circle, var(--color-accent-dim) 0%, transparent 70%);
+    z-index: -1;
+    filter: blur(80px);
+}
+
+/* =========================================
+   REVEAL SYSTEM
+   ========================================= */
+
+.reveal {
+    opacity: 0;
+    transform: translateY(40px);
+    transition: all 0.8s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.reveal.active {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+/* =========================================
+   TOOLS SECTION
+   ========================================= */
+
+.tools-section {
+    padding: 10rem 0;
+}
+
+.tool-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 1.5rem;
+    margin-top: 4rem;
+}
+
+.tool-card {
+    background: var(--color-surface);
+    padding: 2rem;
+    border-radius: 16px;
+    border: 1px solid var(--color-border);
+    transition: all 0.3s ease;
+}
+
+.tool-card:hover {
+    border-color: var(--color-accent);
+    transform: translateY(-5px);
+}
+
+.tool-card code {
+    font-family: var(--font-mono);
+    color: var(--color-accent);
+    font-size: 14px;
+    display: block;
+    margin-bottom: 0.5rem;
+}
+
+.tool-card p {
+    font-size: 14px;
+    color: var(--color-text-dim);
+}
+
+/* =========================================
+   ARCHITECTURE
+   ========================================= */
+
+.arch-section {
+    width: 100vw;
+    background: #000;
+    padding: 8rem 0;
+    border-block: 1px solid var(--color-border);
+}
+
+.arch-section img {
+    width: 100%;
+    display: block;
+}
+
+/* =========================================
+   FOLLOW GLOW
+   ========================================= */
+
+.follow-glow {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 400px;
+    height: 400px;
+    background: radial-gradient(circle, rgba(0, 229, 255, 0.08) 0%, transparent 70%);
+    pointer-events: none;
+    z-index: 999;
+    transform: translate(-50%, -50%);
+}

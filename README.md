@@ -100,7 +100,7 @@ end
 
 subgraph Knowledge Stores
 E[(Semantic Index<br/>ChromaDB)]
-F[(Context Graph<br/>YAML Nodes)]
+F[(Context Graph<br/>SQLite DB)]
 end
 
 subgraph Runtime Access
@@ -230,9 +230,9 @@ your-project/
 │   ├── config.yaml        ← project configuration
 │   ├── roadmap.yaml       ← project roadmap (auto-generated, human-enrichable)
 │   ├── codeindex/         ← ChromaDB index (auto-regenerated)
-│   ├── graph/             ← context graph YAML files
-│   │   └── changesets/    ← active multi-file change records
-│   └── logs/              ← session logs by date
+│   └── graph/             ← context graph and session memory
+│       ├── graph.db       ← SQLite database for nodes, edges, logs, and decisions
+│       └── changesets/    ← active multi-file change records
 └── requirements.txt       ← add: codevira-mcp>=1.0.0
 ```
 
@@ -372,11 +372,10 @@ Seven role definitions in `agents/` tell each agent exactly what to do and when:
 │   ├── testing-standards.md
 │   └── ...13 more
 ├── graph/
-│   ├── _schema.yaml         # Node/edge schema reference
+│   ├── graph.db             # SQLite Context Graph and Session Memory (git-ignored)
 │   └── changesets/
 ├── hooks/
 │   └── install-hooks.sh
-├── logs/                    # Session logs (git-ignored)
 └── codeindex/               # ChromaDB files (git-ignored)
 ```
 
@@ -384,12 +383,12 @@ Seven role definitions in `agents/` tell each agent exactly what to do and when:
 
 ## Language Support
 
-| Feature | Python | TypeScript | Go | Rust |
+| Feature | Python | TypeScript | Go | Rust | 10+ Others (Java, C#, Ruby, PHP, C++) |
 |---|---|---|---|---|
-| Semantic code search | ✅ | ✅ | ✅ | ✅ |
-| Context graph + blast radius | ✅ | ✅ | ✅ | ✅ |
-| Roadmap + changesets | ✅ | ✅ | ✅ | ✅ |
-| Session logs + decision search | ✅ | ✅ | ✅ | ✅ |
+| Semantic code search | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Context graph + blast radius | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Roadmap + changesets | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Session logs + decision search | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `get_signature` / `get_code` | ✅ | ✅ | ✅ | ✅ |
 | Auto-generated graph stubs | ✅ | ✅ | ✅ | ✅ |
 | AST-based chunking | ✅ | ✅ | ✅ | ✅ |

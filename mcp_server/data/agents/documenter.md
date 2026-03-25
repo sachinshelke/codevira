@@ -97,20 +97,20 @@ complete_phase(
 write_session_log(
   session_id="<first 8 chars of a UUID>",
   task="<developer's original prompt>",
-  task_type="small_fix | medium_change | large_change",
+  phase="<current phase number>",
   files_changed=["src/services/generator.py"],
-  decisions=["key decision 1", "key decision 2"],
-  phase=<current phase number>,
-  next_action="<what was set in roadmap>",
-  agents_invoked=["developer", "reviewer", "tester", "builder", "documenter"],
-  tests_run=["tests/unit/test_feature.py"],
-  tests_passed=True,
-  build_clean=True,
-  changeset_id="<id or None>"
+  decisions=[
+    {
+      "file_path": "src/services/generator.py",
+      "decision": "key decision 1",
+      "context": "Why we made this decision"
+    }
+  ],
+  next_steps=["<what the next agent should do>"]
 )
 ```
 
-This writes to `.agents/logs/YYYY-MM-DD/session-{id}.yaml` and feeds `search_decisions()`.
+This writes to SQLite Memory and feeds `search_decisions()`.
 
 ---
 

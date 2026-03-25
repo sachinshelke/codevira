@@ -59,45 +59,10 @@ def search_codebase(description: str, top_k: int = 5) -> dict[str, Any]:
     except Exception as e:
         return {"error": f"Search failed: {e}"}
 
-def write_session_log(
-    session_id: str,
-    task: str,
-    task_type: str,
-    files_changed: list[str],
-    decisions: list,
-    phase: str | int | None = None,
-    next_action: str | None = None,
-    agents_invoked: list[str] | None = None,
-    tests_run: list[str] | None = None,
-    tests_passed: bool | None = None,
-    build_clean: bool | None = None,
-    changeset_id: str | None = None,
-) -> dict[str, str]:
+def write_session_log(session_id: str, task: str, phase: str, files_changed: list[str], decisions: list[dict], next_steps: list[str]) -> dict[str, str]:
     """Write a structured session log to SQLite Memory."""
     db = _get_db()
-
-    # Build a summary from the task info
-    summary = f"[{task_type}] {task}"
-
-    # Normalize decisions: the MCP schema sends list[str], but SQLite
-    # log_session() expects list[dict] with {decision, file_path, context}.
-    normalized = []
-    if decisions:
-        for d in decisions:
-            if isinstance(d, str):
-                normalized.append({"decision": d, "file_path": None, "context": task_type})
-            elif isinstance(d, dict):
-                normalized.append(d)
-
-    # Add file change records as decisions for traceability
-    for f in (files_changed or []):
-        normalized.append({
-            "decision": f"Modified file: {f}",
-            "file_path": f,
-            "context": changeset_id or task_type,
-        })
-
-    db.log_session(session_id, summary, str(phase) if phase else "", normalized)
+    db.log_session(session_id, task, phase, decisions)
     db.close()
     return {"status": f"Session {session_id} logged to SQLite Memory."}
 

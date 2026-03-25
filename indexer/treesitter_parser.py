@@ -1,80 +1,19 @@
 """
-treesitter_parser.py — Unified tree-sitter parser for TypeScript, Go, and Rust.
+treesitter_parser.py — Unified tree-sitter parser using tree-sitter-language-pack.
 
-Provides the same extraction API that Python's `ast` module gives us,
-but powered by tree-sitter grammars. Python files are NOT handled here —
-they continue to use the stdlib `ast` module in chunker.py and code_reader.py.
-
-Language support: TypeScript (.ts, .tsx), Go (.go), Rust (.rs)
+Supports parsing AST nodes (classes, functions, methods, imports) across many languages.
+Python files are NOT handled here — they use the stdlib `ast` module.
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
-from tree_sitter import Language, Parser, Node, Query, QueryCursor
+import tree_sitter_language_pack as tslp
+from tree_sitter import Node
 
-
-# ---------------------------------------------------------------------------
-# Language registry — lazy-loaded singletons
-# ---------------------------------------------------------------------------
-
-_LANGUAGES: dict[str, Language] = {}
-_PARSERS: dict[str, Parser] = {}
-
-# Extension → language key mapping
-EXTENSION_MAP: dict[str, str] = {
-    ".ts": "typescript",
-    ".tsx": "tsx",
-    ".go": "go",
-    ".rs": "rust",
-}
-
-# Language key → Python import module name
-_LANGUAGE_MODULES: dict[str, str] = {
-    "typescript": "tree_sitter_typescript",
-    "tsx": "tree_sitter_typescript",
-    "go": "tree_sitter_go",
-    "rust": "tree_sitter_rust",
-}
-
-
-def get_language(extension: str) -> str | None:
-    """Map a file extension to a tree-sitter language key. Returns None if unsupported."""
-    return EXTENSION_MAP.get(extension)
-
-
-def _load_language(lang_key: str) -> Language:
-    """Lazy-load and cache a tree-sitter Language object."""
-    if lang_key in _LANGUAGES:
-        return _LANGUAGES[lang_key]
-
-    module_name = _LANGUAGE_MODULES.get(lang_key)
-    if not module_name:
-        raise ValueError(f"Unsupported language: {lang_key}")
-
-    import importlib
-    mod = importlib.import_module(module_name)
-
-    # tree-sitter-typescript exposes language_typescript() and language_tsx()
-    if lang_key == "typescript":
-        lang = Language(mod.language_typescript())
-    elif lang_key == "tsx":
-        lang = Language(mod.language_tsx())
-    else:
-        lang = Language(mod.language())
-
-    _LANGUAGES[lang_key] = lang
-    return lang
-
-
-def _get_parser(lang_key: str) -> Parser:
-    """Get a cached Parser for the given language."""
-    if lang_key not in _PARSERS:
-        _PARSERS[lang_key] = Parser(_load_language(lang_key))
-    return _PARSERS[lang_key]
-
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Data classes — unified output across all languages
@@ -84,9 +23,9 @@ def _get_parser(lang_key: str) -> Parser:
 class ParsedSymbol:
     name: str
     kind: str             # "function" | "class" | "method" | "interface" | "struct" | "enum" | "trait" | "impl"
-    signature_line: str   # the def/func/fn line
-    start_line: int       # 1-indexed
-    end_line: int         # 1-indexed
+    signature_line: str
+    start_line: int
+    end_line: int
     docstring: str | None = None
     is_public: bool = True
     methods: list[str] = field(default_factory=list)
@@ -94,252 +33,110 @@ class ParsedSymbol:
 
 @dataclass
 class ParsedImport:
-    module: str           # the imported path/module
-    raw_line: str         # original import statement
+    module: str
+    raw_line: str
 
 
 @dataclass
 class ParsedFile:
-    language: str
     file_path: str
-    module_docstring: str | None
+    language: str
     symbols: list[ParsedSymbol]
     imports: list[ParsedImport]
+    module_docstring: str | None = None
 
 
 # ---------------------------------------------------------------------------
-# Tree-sitter query definitions per language
+# Language registry
 # ---------------------------------------------------------------------------
 
-# TypeScript / TSX queries
-_TS_QUERIES = """
-(function_declaration
-  name: (identifier) @func.name) @func.def
+EXTENSION_MAP: dict[str, str] = {
+    ".ts": "typescript",
+    ".tsx": "tsx",
+    ".go": "go",
+    ".rs": "rust",
+    ".java": "java",
+    ".cs": "csharp",
+    ".rb": "ruby",
+    ".cpp": "cpp",
+    ".cc": "cpp",
+    ".cxx": "cpp",
+    ".c": "c",
+    ".h": "c",
+    ".hpp": "cpp",
+    ".kt": "kotlin",
+    ".swift": "swift",
+    ".php": "php",
+    ".sol": "solidity",
+    ".vue": "vue",
+    ".js": "javascript",
+    ".jsx": "javascript",
+}
 
-(class_declaration
-  name: (type_identifier) @class.name) @class.def
-
-(interface_declaration
-  name: (type_identifier) @iface.name) @iface.def
-
-(method_definition
-  name: (property_identifier) @method.name) @method.def
-
-(export_statement
-  declaration: (function_declaration
-    name: (identifier) @export_func.name)) @export_func.def
-
-(export_statement
-  declaration: (class_declaration
-    name: (type_identifier) @export_class.name)) @export_class.def
-
-(import_statement) @import.stmt
-"""
-
-# Go queries
-_GO_QUERIES = """
-(function_declaration
-  name: (identifier) @func.name) @func.def
-
-(method_declaration
-  name: (field_identifier) @method.name) @method.def
-
-(type_declaration
-  (type_spec
-    name: (type_identifier) @type.name
-    type: (struct_type))) @struct.def
-
-(type_declaration
-  (type_spec
-    name: (type_identifier) @iface_type.name
-    type: (interface_type))) @iface.def
-
-(import_declaration) @import.stmt
-"""
-
-# Rust queries
-_RS_QUERIES = """
-(function_item
-  name: (identifier) @func.name) @func.def
-
-(struct_item
-  name: (type_identifier) @struct.name) @struct.def
-
-(enum_item
-  name: (type_identifier) @enum.name) @enum.def
-
-(trait_item
-  name: (type_identifier) @trait.name) @trait.def
-
-(impl_item
-  type: (type_identifier) @impl.name) @impl.def
-
-(use_declaration) @import.stmt
-"""
+def get_language(extension: str) -> str | None:
+    return EXTENSION_MAP.get(extension.lower())
 
 
 # ---------------------------------------------------------------------------
-# Comment / docstring extraction helpers
+# Node mapping configurations
 # ---------------------------------------------------------------------------
 
-def _get_preceding_comment(node: Node, source_lines: list[str]) -> str | None:
-    """
-    Extract comment block immediately preceding a node.
-    Handles // line comments, /** JSDoc */, /// rust doc comments, and Go // comments.
-    Requires the comment to be directly adjacent (no blank lines between comment and node).
-    """
-    # tree-sitter start_point is (row, col), 0-indexed
-    start_row = node.start_point[0]
-    if start_row == 0:
-        return None
+_CLASS_TYPES = {
+    "javascript": ["class_declaration", "class"],
+    "typescript": ["class_declaration", "class", "interface_declaration"],
+    "tsx": ["class_declaration", "class", "interface_declaration"],
+    "go": ["type_declaration"],
+    "rust": ["struct_item", "enum_item", "impl_item", "trait_item"],
+    "java": ["class_declaration", "interface_declaration", "enum_declaration"],
+    "c": ["struct_specifier", "type_definition"],
+    "cpp": ["class_specifier", "struct_specifier"],
+    "csharp": ["class_declaration", "interface_declaration", "enum_declaration", "struct_declaration"],
+    "ruby": ["class", "module"],
+    "kotlin": ["class_declaration", "object_declaration"],
+    "swift": ["class_declaration", "struct_declaration", "protocol_declaration"],
+    "php": ["class_declaration", "interface_declaration"],
+    "solidity": ["contract_declaration", "interface_declaration", "library_declaration"],
+}
 
-    # Check if the line immediately before the node is a comment or blank
-    row = start_row - 1
-    first_line = source_lines[row].strip()
+_FUNCTION_TYPES = {
+    "javascript": ["function_declaration", "method_definition", "arrow_function"],
+    "typescript": ["function_declaration", "method_definition", "arrow_function"],
+    "tsx": ["function_declaration", "method_definition", "arrow_function"],
+    "go": ["function_declaration", "method_declaration"],
+    "rust": ["function_item"],
+    "java": ["method_declaration", "constructor_declaration"],
+    "c": ["function_definition"],
+    "cpp": ["function_definition"],
+    "csharp": ["method_declaration", "constructor_declaration"],
+    "ruby": ["method", "singleton_method"],
+    "kotlin": ["function_declaration"],
+    "swift": ["function_declaration"],
+    "php": ["function_definition", "method_declaration"],
+    "solidity": ["function_definition", "constructor_definition"],
+}
 
-    # If the line directly above is blank, there's no adjacent docstring
-    if not first_line:
-        return None
-
-    doc_lines: list[str] = []
-
-    while row >= 0:
-        line = source_lines[row].strip()
-
-        # Blank line breaks adjacency
-        if not line:
-            break
-
-        # JSDoc / block comment end
-        if line.endswith("*/"):
-            # Single-line block comment: /** ... */ or /* ... */
-            if line.startswith("/*") or line.startswith("/**"):
-                cleaned = line.lstrip("/*").rstrip("*/").lstrip("* ").strip()
-                return cleaned if cleaned else None
-
-            # Multi-line block comment: walk up to find the opening
-            block_lines = [line]
-            row -= 1
-            while row >= 0:
-                bl = source_lines[row].strip()
-                block_lines.insert(0, bl)
-                if bl.startswith("/*") or bl.startswith("/**"):
-                    break
-                row -= 1
-            # Clean up the block
-            cleaned_lines = []
-            for bl in block_lines:
-                bl = bl.lstrip("/*").rstrip("*/").strip()
-                bl = bl.lstrip("* ").strip()
-                if bl:
-                    cleaned_lines.append(bl)
-            return "\n".join(cleaned_lines) if cleaned_lines else None
-
-        # Rust /// doc comment or Go/TS // comment
-        if line.startswith("///"):
-            doc_lines.insert(0, line.lstrip("/").strip())
-            row -= 1
-            continue
-        elif line.startswith("//"):
-            doc_lines.insert(0, line.lstrip("/").strip())
-            row -= 1
-            continue
-
-        # Not a comment line — stop
-        break
-
-    return "\n".join(doc_lines) if doc_lines else None
-
-
-def _node_text(node: Node, source_bytes: bytes) -> str:
-    """Extract the text content of a tree-sitter node."""
-    return source_bytes[node.start_byte:node.end_byte].decode("utf-8", errors="replace")
-
-
-def _first_line_text(node: Node, source_lines: list[str]) -> str:
-    """Get the first source line of a node (the signature line)."""
-    return source_lines[node.start_point[0]].strip()
-
+_IMPORT_TYPES = {
+    "javascript": ["import_statement"],
+    "typescript": ["import_statement"],
+    "tsx": ["import_statement"],
+    "go": ["import_declaration", "import_spec"],
+    "rust": ["use_declaration"],
+    "java": ["import_declaration"],
+    "c": ["preproc_include"],
+    "cpp": ["preproc_include"],
+    "csharp": ["using_directive"],
+    "ruby": ["call"], 
+    "kotlin": ["import_header"],
+    "swift": ["import_declaration"],
+    "php": ["namespace_use_declaration"],
+    "solidity": ["import_directive"],
+}
 
 # ---------------------------------------------------------------------------
-# Visibility helpers
-# ---------------------------------------------------------------------------
-
-def _is_public_ts(name: str, node: Node) -> bool:
-    """In TypeScript, symbols are public unless prefixed with _ or marked private."""
-    if name.startswith("_"):
-        return False
-    # Check if parent is an export_statement
-    parent = node.parent
-    if parent and parent.type == "export_statement":
-        return True
-    return True  # TS symbols without export are still module-level
-
-
-def _is_public_go(name: str) -> bool:
-    """In Go, exported symbols start with an uppercase letter."""
-    return len(name) > 0 and name[0].isupper()
-
-
-def _is_public_rust(name: str, node: Node) -> bool:
-    """In Rust, public items have a `pub` visibility modifier."""
-    if name.startswith("_"):
-        return False
-    # Check for `pub` keyword in children
-    for child in node.children:
-        if child.type == "visibility_modifier":
-            return True
-    return False
-
-
-# ---------------------------------------------------------------------------
-# Per-language symbol extractors
-# ---------------------------------------------------------------------------
-
-def _extract_methods_from_class(node: Node, source_bytes: bytes) -> list[str]:
-    """Extract public method names from a class/struct/impl body."""
-    methods = []
-    for child in node.children:
-        if child.type == "class_body":
-            for member in child.children:
-                if member.type == "method_definition":
-                    name_node = member.child_by_field_name("name")
-                    if name_node:
-                        name = _node_text(name_node, source_bytes)
-                        if not name.startswith("_"):
-                            methods.append(name)
-        elif child.type == "declaration_list":
-            # Rust impl block
-            for member in child.children:
-                if member.type == "function_item":
-                    name_node = member.child_by_field_name("name")
-                    if name_node:
-                        name = _node_text(name_node, source_bytes)
-                        if not name.startswith("_"):
-                            methods.append(name)
-    return methods
-
-
-# ---------------------------------------------------------------------------
-# Main parse function
+# Parsing core
 # ---------------------------------------------------------------------------
 
 def parse_file(file_path: str, language: str | None = None) -> ParsedFile:
-    """
-    Parse a source file using tree-sitter and extract symbols + imports.
-
-    Args:
-        file_path: Absolute or relative path to the source file
-        language: Language key (e.g. "typescript", "go", "rust").
-                  If None, inferred from file extension.
-
-    Returns:
-        ParsedFile with symbols, imports, and module_docstring.
-
-    Raises:
-        ValueError: if language is unsupported or cannot be inferred
-        FileNotFoundError: if file does not exist
-    """
     path = Path(file_path)
     if not path.exists():
         raise FileNotFoundError(f"File not found: {file_path}")
@@ -349,478 +146,173 @@ def parse_file(file_path: str, language: str | None = None) -> ParsedFile:
         if language is None:
             raise ValueError(f"Cannot infer language for extension: {path.suffix}")
 
+    try:
+        parser = tslp.get_parser(language)
+    except Exception as e:
+        raise ValueError(f"Failed to load parser for {language}: {e}")
+
     source_bytes = path.read_bytes()
     source_text = source_bytes.decode("utf-8", errors="replace")
     source_lines = source_text.splitlines()
 
-    parser = _get_parser(language)
     tree = parser.parse(source_bytes)
     root = tree.root_node
 
-    # Select queries based on language
-    if language in ("typescript", "tsx"):
-        query_text = _TS_QUERIES
-    elif language == "go":
-        query_text = _GO_QUERIES
-    elif language == "rust":
-        query_text = _RS_QUERIES
-    else:
-        raise ValueError(f"No queries defined for language: {language}")
-
-    lang_obj = _load_language(language)
-    query = Query(lang_obj, query_text)
-    cursor = QueryCursor(query)
-    captures = cursor.captures(root)
-
     symbols: list[ParsedSymbol] = []
     imports: list[ParsedImport] = []
-    seen_names: set[str] = set()
+    seen: set[str] = set()
 
-    # Build capture-name → node list map
-    # captures is a dict[str, list[Node]]
-    capture_map: dict[str, list[Node]] = captures if isinstance(captures, dict) else {}
+    class_types = set(_CLASS_TYPES.get(language, []))
+    func_types = set(_FUNCTION_TYPES.get(language, []))
+    import_types = set(_IMPORT_TYPES.get(language, []))
 
-    # Process based on language
-    if language in ("typescript", "tsx"):
-        _process_ts_captures(capture_map, source_bytes, source_lines, symbols, imports, seen_names)
-    elif language == "go":
-        _process_go_captures(capture_map, source_bytes, source_lines, symbols, imports, seen_names)
-    elif language == "rust":
-        _process_rust_captures(capture_map, source_bytes, source_lines, symbols, imports, seen_names)
+    def walk(node: Node, parent_kind: str | None = None, is_exported: bool = False):
+        if not node:
+            return
+            
+        node_type = node.type
+        current_exported = is_exported or "export" in node_type
+        
+        # 1. Imports
+        if node_type in import_types:
+            raw = _node_text(node, source_bytes)
+            import re
+            # JS/TS/Java: quoted module strings
+            matches = re.findall(r'["\']([^"\']+)["\']', raw)
+            if matches:
+                for m in matches:
+                    imports.append(ParsedImport(module=m, raw_line=raw.strip()))
+            else:
+                # Rust/Go/C: extract scoped path or identifier directly
+                # For Rust use_declaration: "use std::collections::HashMap;" → "std::collections::HashMap"
+                # For Go import_spec: "fmt" or quoted
+                path_parts = re.findall(r'(?:use|import)\s+(.+?)(?:\s*;|\s*$)', raw.strip())
+                if path_parts:
+                    module = path_parts[0].strip().rstrip(';')
+                    imports.append(ParsedImport(module=module, raw_line=raw.strip()))
+                elif raw.strip():
+                    imports.append(ParsedImport(module=raw.strip(), raw_line=raw.strip()))
+        
+        # 2. Classes / Types
+        elif node_type in class_types:
+            name_node = node.child_by_field_name("name")
+            name = _node_text(name_node, source_bytes) if name_node else None
+            
+            if not name:
+                for child in node.children:
+                    if "identifier" in child.type or child.type == "type_identifier":
+                        name = _node_text(child, source_bytes)
+                        break
 
-    # Extract module-level docstring (first comment block at top of file)
-    module_docstring = _extract_module_docstring(root, source_lines)
+            # Go: type_declaration wraps type_spec which contains the actual struct/interface
+            if language == "go" and node_type == "type_declaration":
+                for spec in node.children:
+                    if spec.type == "type_spec":
+                        # Extract the name from type_spec
+                        for c in spec.children:
+                            if c.type == "type_identifier":
+                                name = _node_text(c, source_bytes)
+                            elif c.type == "struct_type":
+                                kind_override = "struct"
+                            elif c.type == "interface_type":
+                                kind_override = "interface"
+                        if name and name not in seen:
+                            seen.add(name)
+                            k = kind_override if 'kind_override' in dir() else "struct"
+                            public = _is_public(name, node, language)
+                            symbols.append(ParsedSymbol(
+                                name=name,
+                                kind=k,
+                                signature_line=_first_line_text(node, source_lines),
+                                start_line=node.start_point[0] + 1,
+                                end_line=node.end_point[0] + 1,
+                                docstring=_get_preceding_comment(node, source_lines),
+                                is_public=public,
+                                methods=[]
+                            ))
+                # Walk children for nested declarations
+                for child in node.children:
+                    walk(child, parent_kind, current_exported)
+                return
+
+            if name and name not in seen:
+                seen.add(name)
+                methods = []
+                body = node.child_by_field_name("body") or node.child_by_field_name("declaration_list") or node
+                for child in body.children:
+                    if child.type in func_types:
+                        m_name_node = child.child_by_field_name("name")
+                        if m_name_node:
+                            methods.append(_node_text(m_name_node, source_bytes))
+
+                kind = "class"
+                if "interface" in node_type: kind = "interface"
+                elif "struct" in node_type or "type" in node_type: kind = "struct"
+                elif "enum" in node_type: kind = "enum"
+                elif "trait" in node_type: kind = "trait"
+                elif "impl" in node_type: kind = "impl"
+
+                if language == "rust" and "impl" in node_type:
+                    for c in node.children:
+                        if c.type == "type_identifier":
+                            name = _node_text(c, source_bytes)
+                            break
+                            
+                public = current_exported or _is_public(name, node, language)
+
+                symbols.append(ParsedSymbol(
+                    name=name,
+                    kind=kind,
+                    signature_line=_first_line_text(node, source_lines),
+                    start_line=node.start_point[0] + 1,
+                    end_line=node.end_point[0] + 1,
+                    docstring=_get_preceding_comment(node, source_lines),
+                    is_public=public,
+                    methods=methods
+                ))
+            
+            for child in node.children:
+                walk(child, "class", current_exported)
+                
+        # 3. Functions / Methods
+        elif node_type in func_types:
+            name_node = node.child_by_field_name("name")
+            name = _node_text(name_node, source_bytes) if name_node else None
+            if name and name not in seen:
+                seen.add(name)
+                kind = "method" if parent_kind == "class" or "method" in node_type else "function"
+                
+                if language == "rust" and node.parent and node.parent.type == "declaration_list":
+                    pass 
+                else:
+                    public = current_exported or _is_public(name, node, language)
+                    symbols.append(ParsedSymbol(
+                        name=name,
+                        kind=kind,
+                        signature_line=_first_line_text(node, source_lines),
+                        start_line=node.start_point[0] + 1,
+                        end_line=node.end_point[0] + 1,
+                        docstring=_get_preceding_comment(node, source_lines),
+                        is_public=public
+                    ))
+            return
+            
+        else:
+            for child in node.children:
+                walk(child, parent_kind, current_exported)
+
+    walk(root)
+    mod_doc = _extract_module_docstring(root, source_lines)
 
     return ParsedFile(
-        language=language,
         file_path=file_path,
-        module_docstring=module_docstring,
+        language=language,
         symbols=symbols,
         imports=imports,
+        module_docstring=mod_doc,
     )
 
-
-def _extract_module_docstring(root: Node, source_lines: list[str]) -> str | None:
-    """Extract the first comment block at the top of the file as a module docstring."""
-    doc_lines: list[str] = []
-    for i, line in enumerate(source_lines):
-        stripped = line.strip()
-        if not stripped:
-            if doc_lines:
-                break
-            continue
-        if stripped.startswith("//") or stripped.startswith("///"):
-            doc_lines.append(stripped.lstrip("/").strip())
-        elif stripped.startswith("/*") or stripped.startswith("/**"):
-            # Collect block comment
-            block = []
-            for j in range(i, len(source_lines)):
-                bl = source_lines[j].strip()
-                block.append(bl)
-                if bl.endswith("*/") and j > i:
-                    break
-                if bl.endswith("*/") and j == i and len(bl) > 2:
-                    break
-            for bl in block:
-                cleaned = bl.lstrip("/*").rstrip("*/").lstrip("* ").strip()
-                if cleaned:
-                    doc_lines.append(cleaned)
-            break
-        else:
-            break
-    return "\n".join(doc_lines) if doc_lines else None
-
-
-# ---------------------------------------------------------------------------
-# Language-specific capture processors
-# ---------------------------------------------------------------------------
-
-def _process_ts_captures(
-    captures: dict[str, list[Node]],
-    source_bytes: bytes,
-    source_lines: list[str],
-    symbols: list[ParsedSymbol],
-    imports: list[ParsedImport],
-    seen: set[str],
-) -> None:
-    """Process TypeScript/TSX tree-sitter captures."""
-
-    # Functions
-    for node in captures.get("func.def", []):
-        name_node = node.child_by_field_name("name")
-        if not name_node:
-            continue
-        name = _node_text(name_node, source_bytes)
-        if name in seen:
-            continue
-        seen.add(name)
-        symbols.append(ParsedSymbol(
-            name=name,
-            kind="function",
-            signature_line=_first_line_text(node, source_lines),
-            start_line=node.start_point[0] + 1,
-            end_line=node.end_point[0] + 1,
-            docstring=_get_preceding_comment(node, source_lines),
-            is_public=_is_public_ts(name, node),
-        ))
-
-    # Exported functions (may duplicate — dedup via seen set)
-    for node in captures.get("export_func.def", []):
-        # The actual func is inside the export_statement
-        func_node = None
-        for child in node.children:
-            if child.type == "function_declaration":
-                func_node = child
-                break
-        if not func_node:
-            continue
-        name_node = func_node.child_by_field_name("name")
-        if not name_node:
-            continue
-        name = _node_text(name_node, source_bytes)
-        if name in seen:
-            continue
-        seen.add(name)
-        symbols.append(ParsedSymbol(
-            name=name,
-            kind="function",
-            signature_line=_first_line_text(func_node, source_lines),
-            start_line=func_node.start_point[0] + 1,
-            end_line=func_node.end_point[0] + 1,
-            docstring=_get_preceding_comment(node, source_lines),
-            is_public=True,
-        ))
-
-    # Classes
-    for node in captures.get("class.def", []):
-        name_node = node.child_by_field_name("name")
-        if not name_node:
-            continue
-        name = _node_text(name_node, source_bytes)
-        if name in seen:
-            continue
-        seen.add(name)
-        methods = _extract_methods_from_class(node, source_bytes)
-        symbols.append(ParsedSymbol(
-            name=name,
-            kind="class",
-            signature_line=_first_line_text(node, source_lines),
-            start_line=node.start_point[0] + 1,
-            end_line=node.end_point[0] + 1,
-            docstring=_get_preceding_comment(node, source_lines),
-            is_public=_is_public_ts(name, node),
-            methods=methods,
-        ))
-
-    # Exported classes
-    for node in captures.get("export_class.def", []):
-        class_node = None
-        for child in node.children:
-            if child.type == "class_declaration":
-                class_node = child
-                break
-        if not class_node:
-            continue
-        name_node = class_node.child_by_field_name("name")
-        if not name_node:
-            continue
-        name = _node_text(name_node, source_bytes)
-        if name in seen:
-            continue
-        seen.add(name)
-        methods = _extract_methods_from_class(class_node, source_bytes)
-        symbols.append(ParsedSymbol(
-            name=name,
-            kind="class",
-            signature_line=_first_line_text(class_node, source_lines),
-            start_line=class_node.start_point[0] + 1,
-            end_line=class_node.end_point[0] + 1,
-            docstring=_get_preceding_comment(node, source_lines),
-            is_public=True,
-            methods=methods,
-        ))
-
-    # Interfaces
-    for node in captures.get("iface.def", []):
-        name_node = node.child_by_field_name("name")
-        if not name_node:
-            continue
-        name = _node_text(name_node, source_bytes)
-        if name in seen:
-            continue
-        seen.add(name)
-        symbols.append(ParsedSymbol(
-            name=name,
-            kind="interface",
-            signature_line=_first_line_text(node, source_lines),
-            start_line=node.start_point[0] + 1,
-            end_line=node.end_point[0] + 1,
-            docstring=_get_preceding_comment(node, source_lines),
-            is_public=_is_public_ts(name, node),
-        ))
-
-    # Imports
-    for node in captures.get("import.stmt", []):
-        raw = _node_text(node, source_bytes)
-        module = _extract_ts_import_module(raw)
-        imports.append(ParsedImport(module=module, raw_line=raw.strip()))
-
-
-def _extract_ts_import_module(raw: str) -> str:
-    """Extract the module path from a TS import statement."""
-    import re
-    match = re.search(r"""from\s+['"]([^'"]+)['"]""", raw)
-    if match:
-        return match.group(1)
-    match = re.search(r"""import\s+['"]([^'"]+)['"]""", raw)
-    if match:
-        return match.group(1)
-    return raw.strip()
-
-
-def _process_go_captures(
-    captures: dict[str, list[Node]],
-    source_bytes: bytes,
-    source_lines: list[str],
-    symbols: list[ParsedSymbol],
-    imports: list[ParsedImport],
-    seen: set[str],
-) -> None:
-    """Process Go tree-sitter captures."""
-
-    # Functions
-    for node in captures.get("func.def", []):
-        name_node = node.child_by_field_name("name")
-        if not name_node:
-            continue
-        name = _node_text(name_node, source_bytes)
-        if name in seen:
-            continue
-        seen.add(name)
-        symbols.append(ParsedSymbol(
-            name=name,
-            kind="function",
-            signature_line=_first_line_text(node, source_lines),
-            start_line=node.start_point[0] + 1,
-            end_line=node.end_point[0] + 1,
-            docstring=_get_preceding_comment(node, source_lines),
-            is_public=_is_public_go(name),
-        ))
-
-    # Methods
-    for node in captures.get("method.def", []):
-        name_node = node.child_by_field_name("name")
-        if not name_node:
-            continue
-        name = _node_text(name_node, source_bytes)
-        if name in seen:
-            continue
-        seen.add(name)
-        symbols.append(ParsedSymbol(
-            name=name,
-            kind="method",
-            signature_line=_first_line_text(node, source_lines),
-            start_line=node.start_point[0] + 1,
-            end_line=node.end_point[0] + 1,
-            docstring=_get_preceding_comment(node, source_lines),
-            is_public=_is_public_go(name),
-        ))
-
-    # Structs
-    for node in captures.get("struct.def", []):
-        name_nodes = captures.get("type.name", [])
-        # Find the type.name that's a child of this node
-        name = None
-        for nn in name_nodes:
-            if nn.start_byte >= node.start_byte and nn.end_byte <= node.end_byte:
-                name = _node_text(nn, source_bytes)
-                break
-        if not name or name in seen:
-            continue
-        seen.add(name)
-        symbols.append(ParsedSymbol(
-            name=name,
-            kind="struct",
-            signature_line=_first_line_text(node, source_lines),
-            start_line=node.start_point[0] + 1,
-            end_line=node.end_point[0] + 1,
-            docstring=_get_preceding_comment(node, source_lines),
-            is_public=_is_public_go(name),
-        ))
-
-    # Interfaces
-    for node in captures.get("iface.def", []):
-        name_nodes = captures.get("iface_type.name", [])
-        name = None
-        for nn in name_nodes:
-            if nn.start_byte >= node.start_byte and nn.end_byte <= node.end_byte:
-                name = _node_text(nn, source_bytes)
-                break
-        if not name or name in seen:
-            continue
-        seen.add(name)
-        symbols.append(ParsedSymbol(
-            name=name,
-            kind="interface",
-            signature_line=_first_line_text(node, source_lines),
-            start_line=node.start_point[0] + 1,
-            end_line=node.end_point[0] + 1,
-            docstring=_get_preceding_comment(node, source_lines),
-            is_public=_is_public_go(name),
-        ))
-
-    # Imports
-    for node in captures.get("import.stmt", []):
-        raw = _node_text(node, source_bytes)
-        for mod in _extract_go_import_modules(raw):
-            imports.append(ParsedImport(module=mod, raw_line=raw.strip()))
-
-
-def _extract_go_import_modules(raw: str) -> list[str]:
-    """Extract all import paths from a Go import declaration."""
-    import re
-    return re.findall(r'"([^"]+)"', raw)
-
-
-def _process_rust_captures(
-    captures: dict[str, list[Node]],
-    source_bytes: bytes,
-    source_lines: list[str],
-    symbols: list[ParsedSymbol],
-    imports: list[ParsedImport],
-    seen: set[str],
-) -> None:
-    """Process Rust tree-sitter captures."""
-
-    # Functions (skip those inside impl blocks — they're captured as impl methods)
-    for node in captures.get("func.def", []):
-        # Skip if this function is inside an impl_item
-        parent = node.parent
-        if parent and parent.type == "declaration_list":
-            continue
-        name_node = node.child_by_field_name("name")
-        if not name_node:
-            continue
-        name = _node_text(name_node, source_bytes)
-        if name in seen:
-            continue
-        seen.add(name)
-        symbols.append(ParsedSymbol(
-            name=name,
-            kind="function",
-            signature_line=_first_line_text(node, source_lines),
-            start_line=node.start_point[0] + 1,
-            end_line=node.end_point[0] + 1,
-            docstring=_get_preceding_comment(node, source_lines),
-            is_public=_is_public_rust(name, node),
-        ))
-
-    # Structs
-    for node in captures.get("struct.def", []):
-        name_node = node.child_by_field_name("name")
-        if not name_node:
-            continue
-        name = _node_text(name_node, source_bytes)
-        if name in seen:
-            continue
-        seen.add(name)
-        symbols.append(ParsedSymbol(
-            name=name,
-            kind="struct",
-            signature_line=_first_line_text(node, source_lines),
-            start_line=node.start_point[0] + 1,
-            end_line=node.end_point[0] + 1,
-            docstring=_get_preceding_comment(node, source_lines),
-            is_public=_is_public_rust(name, node),
-        ))
-
-    # Enums
-    for node in captures.get("enum.def", []):
-        name_node = node.child_by_field_name("name")
-        if not name_node:
-            continue
-        name = _node_text(name_node, source_bytes)
-        if name in seen:
-            continue
-        seen.add(name)
-        symbols.append(ParsedSymbol(
-            name=name,
-            kind="enum",
-            signature_line=_first_line_text(node, source_lines),
-            start_line=node.start_point[0] + 1,
-            end_line=node.end_point[0] + 1,
-            docstring=_get_preceding_comment(node, source_lines),
-            is_public=_is_public_rust(name, node),
-        ))
-
-    # Traits
-    for node in captures.get("trait.def", []):
-        name_node = node.child_by_field_name("name")
-        if not name_node:
-            continue
-        name = _node_text(name_node, source_bytes)
-        if name in seen:
-            continue
-        seen.add(name)
-        symbols.append(ParsedSymbol(
-            name=name,
-            kind="trait",
-            signature_line=_first_line_text(node, source_lines),
-            start_line=node.start_point[0] + 1,
-            end_line=node.end_point[0] + 1,
-            docstring=_get_preceding_comment(node, source_lines),
-            is_public=_is_public_rust(name, node),
-        ))
-
-    # Impl blocks
-    for node in captures.get("impl.def", []):
-        name_nodes = captures.get("impl.name", [])
-        name = None
-        for nn in name_nodes:
-            if nn.start_byte >= node.start_byte and nn.end_byte <= node.end_byte:
-                name = _node_text(nn, source_bytes)
-                break
-        if not name or name in seen:
-            continue
-        seen.add(name)
-        methods = _extract_methods_from_class(node, source_bytes)
-        symbols.append(ParsedSymbol(
-            name=name,
-            kind="impl",
-            signature_line=_first_line_text(node, source_lines),
-            start_line=node.start_point[0] + 1,
-            end_line=node.end_point[0] + 1,
-            docstring=_get_preceding_comment(node, source_lines),
-            is_public=_is_public_rust(name, node),
-            methods=methods,
-        ))
-
-    # Imports (use declarations)
-    for node in captures.get("import.stmt", []):
-        raw = _node_text(node, source_bytes)
-        module = _extract_rust_use_path(raw)
-        imports.append(ParsedImport(module=module, raw_line=raw.strip()))
-
-
-def _extract_rust_use_path(raw: str) -> str:
-    """Extract the path from a Rust use declaration."""
-    import re
-    match = re.search(r"use\s+(.+);", raw)
-    if match:
-        return match.group(1).strip()
-    return raw.strip()
-
-
-# ---------------------------------------------------------------------------
-# Convenience: get source for a specific symbol
-# ---------------------------------------------------------------------------
-
 def get_symbol_source(file_path: str, symbol_name: str, language: str | None = None) -> dict:
-    """
-    Extract the full source code of a named symbol from a non-Python file.
-
-    Returns a dict matching the code_reader.get_code() output format.
-    """
     path = Path(file_path)
     if not path.exists():
         return {"found": False, "error": f"File not found: {file_path}"}
@@ -855,3 +347,77 @@ def get_symbol_source(file_path: str, symbol_name: str, language: str | None = N
         "error": f"Symbol '{symbol_name}' not found in {file_path}",
         "available_symbols": [s.name for s in parsed.symbols],
     }
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _node_text(node: Node, source_bytes: bytes) -> str:
+    return source_bytes[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
+
+def _first_line_text(node: Node, source_lines: list[str]) -> str:
+    start_row = node.start_point[0]
+    if start_row < len(source_lines):
+        line = source_lines[start_row].strip()
+        if len(line) > 120:
+            return line[:117] + "..."
+        return line
+    return ""
+
+def _get_preceding_comment(node: Node, source_lines: list[str]) -> str | None:
+    comments = []
+    current_line = node.start_point[0] - 1
+    
+    while current_line >= 0:
+        line = source_lines[current_line].strip()
+        if line.startswith(("//", "#", "*", "/*", "*/", "///")):
+            comments.append(line)
+            current_line -= 1
+        elif not line:
+            current_line -= 1
+        else:
+            break
+            
+    if comments:
+        comments.reverse()
+        return "\n".join(comments)
+    return None
+
+def _extract_module_docstring(root: Node, source_lines: list[str]) -> str | None:
+    if not root.children: return None
+    first = root.children[0]
+    for i in range(min(5, len(root.children))):
+        n = root.children[i]
+        if n.type == "comment" or n.type == "line_comment" or n.type == "block_comment":
+            doc = _node_text(n, "\n".join(source_lines).encode('utf-8'))
+            return doc.strip()
+    return None
+
+def _is_public(name: str, node: Node, language: str) -> bool:
+    if not name:
+        return False
+    if language == "go":
+        return name[0].isupper()
+    if language in ("typescript", "tsx", "javascript", "jsx"):
+        if name.startswith("_"): return False
+        if node.parent and "export" in node.parent.type:
+            return True
+        return False
+    if language == "rust":
+        # Check if any child token is 'pub'
+        for child in node.children:
+            if child.type == "visibility_modifier" or child.type == "pub":
+                return True
+        # Also check the source text of the first line
+        try:
+            first_line = node.start_point[0]
+            # Walk up through source bytes to find 'pub' keyword
+            node_src = node.text.decode("utf-8", errors="replace") if node.text else ""
+            return node_src.lstrip().startswith("pub ")
+        except Exception:
+            pass
+        return False
+        
+    return not name.startswith("_")
+

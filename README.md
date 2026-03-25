@@ -5,7 +5,7 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![MCP](https://img.shields.io/badge/protocol-MCP-purple)](https://modelcontextprotocol.io)
-[![Version](https://img.shields.io/badge/version-1.2.0-orange)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.3.0-orange)](CHANGELOG.md)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](CONTRIBUTING.md)
 [![Contributions Welcome](https://img.shields.io/badge/contributions-welcome-brightgreen)](CONTRIBUTING.md)
 
@@ -31,6 +31,7 @@ Codevira is a [Model Context Protocol](https://modelcontextprotocol.io) server y
 
 | Capability | What It Means |
 |---|---|
+| **Live auto-watch** | Background file watcher auto-reindexes on every save — no manual trigger or git commit needed |
 | **Context graph** | Every source file has a node: role, rules, dependencies, stability, `do_not_revert` flags |
 | **Semantic code search** | Natural language search across your codebase — no grep, no file reading |
 | **Roadmap** | Phase-based tracker so agents always know what phase you're in and what comes next |
@@ -100,7 +101,7 @@ end
 
 subgraph Knowledge Stores
 E[(Semantic Index<br/>ChromaDB)]
-F[(Context Graph<br/>YAML Nodes)]
+F[(Context Graph<br/>SQLite DB)]
 end
 
 subgraph Runtime Access
@@ -142,11 +143,13 @@ This single command:
 - Creates `.codevira/` with config, graph, and log directories
 - Adds `.codevira/` to `.gitignore` (index is auto-regenerated, no need to commit)
 - Prompts for project name, language, source directories (comma-separated), and file extensions
-- Builds the full code index
+- Builds the full code index using SHA-256 content hashing (only changed files are re-indexed)
 - Auto-generates graph stubs for all source files
 - Bootstraps `.codevira/roadmap.yaml` from git history
 - Installs a `post-commit` git hook for automatic reindexing
 - Prints the MCP config block to paste into your AI tool
+
+> **Live Auto-Watch:** When the MCP server starts, it automatically launches a background file watcher. Every time you save a source file, the index is updated within 2 seconds — no manual commands needed. The `post-commit` hook and `codevira index` CLI remain available as alternatives.
 
 ### 3. Connect to your AI tool
 
@@ -233,9 +236,9 @@ your-project/
 │   ├── config.yaml        ← project configuration
 │   ├── roadmap.yaml       ← project roadmap (auto-generated, human-enrichable)
 │   ├── codeindex/         ← ChromaDB index (auto-regenerated)
-│   ├── graph/             ← context graph YAML files
-│   │   └── changesets/    ← active multi-file change records
-│   └── logs/              ← session logs by date
+│   └── graph/             ← context graph and session memory
+│       ├── graph.db       ← SQLite database for nodes, edges, logs, and decisions
+│       └── changesets/    ← active multi-file change records
 └── requirements.txt       ← add: codevira-mcp>=1.0.0
 ```
 
@@ -357,8 +360,10 @@ Seven role definitions in `agents/` tell each agent exactly what to do and when:
 │       ├── playbook.py
 │       └── code_reader.py
 ├── indexer/
-│   ├── index_codebase.py    # Build/update ChromaDB index
+│   ├── index_codebase.py    # Build/update ChromaDB index + background file watcher
 │   ├── chunker.py           # AST-based code chunker
+│   ├── treesitter_parser.py # Multi-language AST parsing (16+ languages)
+│   ├── sqlite_graph.py      # SQLite graph database backend
 │   └── graph_generator.py   # Auto-generate graph stubs
 ├── requirements.txt         # Python dependencies
 ├── agents/                  # Role definitions
@@ -375,11 +380,10 @@ Seven role definitions in `agents/` tell each agent exactly what to do and when:
 │   ├── testing-standards.md
 │   └── ...13 more
 ├── graph/
-│   ├── _schema.yaml         # Node/edge schema reference
+│   ├── graph.db             # SQLite Context Graph and Session Memory (git-ignored)
 │   └── changesets/
 ├── hooks/
 │   └── install-hooks.sh
-├── logs/                    # Session logs (git-ignored)
 └── codeindex/               # ChromaDB files (git-ignored)
 ```
 
@@ -387,12 +391,12 @@ Seven role definitions in `agents/` tell each agent exactly what to do and when:
 
 ## Language Support
 
-| Feature | Python | TypeScript | Go | Rust |
+| Feature | Python | TypeScript | Go | Rust | 10+ Others (Java, C#, Ruby, PHP, C++) |
 |---|---|---|---|---|
-| Semantic code search | ✅ | ✅ | ✅ | ✅ |
-| Context graph + blast radius | ✅ | ✅ | ✅ | ✅ |
-| Roadmap + changesets | ✅ | ✅ | ✅ | ✅ |
-| Session logs + decision search | ✅ | ✅ | ✅ | ✅ |
+| Semantic code search | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Context graph + blast radius | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Roadmap + changesets | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Session logs + decision search | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `get_signature` / `get_code` | ✅ | ✅ | ✅ | ✅ |
 | Auto-generated graph stubs | ✅ | ✅ | ✅ | ✅ |
 | AST-based chunking | ✅ | ✅ | ✅ | ✅ |

@@ -1,8 +1,10 @@
 import argparse
+import logging
 import os
 import sys
 import time
 import hashlib
+import threading
 from pathlib import Path
 
 from mcp_server.paths import get_data_dir, get_project_root
@@ -13,12 +15,15 @@ INDEX_DIR = get_data_dir() / "codeindex"
 COLLECTION_NAME = "codebase_index"
 
 def _load_config() -> dict:
+    """Load .codevira/config.yaml and return the 'project' sub-dict."""
     config_path = get_data_dir() / "config.yaml"
     if config_path.exists():
         try:
             import yaml
             with open(config_path) as f:
-                return yaml.safe_load(f) or {}
+                raw = yaml.safe_load(f) or {}
+            # config.yaml nests settings under 'project' key
+            return raw.get("project", raw)
         except Exception:
             pass
     return {}
@@ -49,6 +54,7 @@ def _compute_hash(file_path: Path) -> str:
 
 def _get_changed_files(db: SQLiteGraph) -> list[tuple[str, str]]:
     changed = []
+    seen_paths = set()
     config = _load_config()
     watched_dirs = config.get("watched_dirs", ["src"])
     extensions = config.get("file_extensions", [".py", ".ts", ".tsx", ".go", ".rs"])
@@ -69,6 +75,9 @@ def _get_changed_files(db: SQLiteGraph) -> list[tuple[str, str]]:
             
             try:
                 rel_path = str(p.relative_to(PROJECT_ROOT))
+                if rel_path in seen_paths:
+                    continue
+                seen_paths.add(rel_path)
                 current_hash = _compute_hash(p)
                 stored_hash = db.get_file_hash(rel_path)
                 
@@ -118,23 +127,30 @@ def cmd_full_rebuild():
 
     all_chunks = []
     file_hashes = {}
+    seen_chunk_ids = set()
     
     with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), BarColumn(), TaskProgressColumn(), console=console) as progress:
         task1 = progress.add_task("[cyan]Parsing and chunking source files...", total=None)
         
+        # Chunk the entire project once (not per watched_dir)
+        all_project_chunks = chunk_project(str(PROJECT_ROOT))
+        
         for watch_dir in watched_dirs:
             abs_dir = PROJECT_ROOT / watch_dir
-            if abs_dir.exists():
-                chunks = chunk_project(str(PROJECT_ROOT))
-                # Just filter the returned chunks to match the watched dir
-                wd_str = str(watch_dir)
-                wd_chunks = [c for c in chunks if wd_str in c.file_path or c.file_path.startswith(wd_str)]
-                all_chunks.extend(wd_chunks)
+            if not abs_dir.exists():
+                continue
+            wd_str = str(watch_dir)
+            for c in all_project_chunks:
+                if c.file_path.startswith(wd_str) or wd_str == ".":
+                    chunk_id = f"{c.file_path}::{c.chunk_type}::{c.name}::{c.start_line}"
+                    if chunk_id not in seen_chunk_ids:
+                        seen_chunk_ids.add(chunk_id)
+                        all_chunks.append(c)
                 
-                for p in abs_dir.rglob("*"):
-                    if p.is_file() and p.suffix in extensions and not any(s in p.parts for s in skip_dirs):
-                        rel = str(p.relative_to(PROJECT_ROOT))
-                        file_hashes[rel] = _compute_hash(p)
+            for p in abs_dir.rglob("*"):
+                if p.is_file() and p.suffix in extensions and not any(s in p.parts for s in skip_dirs):
+                    rel = str(p.relative_to(PROJECT_ROOT))
+                    file_hashes[rel] = _compute_hash(p)
                         
         progress.update(task1, completed=100)
         task2 = progress.add_task(f"[cyan]Embedding {len(all_chunks)} chunks into ChromaDB...", total=len(all_chunks))
@@ -214,7 +230,24 @@ def cmd_incremental(quiet: bool = False):
     db.close()
     return 0
 
-def cmd_watch():
+_watcher_logger = logging.getLogger("codevira.watcher")
+
+# Debounce delay: how long to wait after the last file change before reindexing.
+# This prevents rapid saves (auto-formatters, IDE auto-save) from triggering
+# dozens of reindex cycles.
+DEBOUNCE_SECONDS = 2.0
+
+
+def start_background_watcher(quiet: bool = True):
+    """
+    Start a non-blocking file watcher that auto-reindexes on source changes.
+
+    Returns the watchdog Observer (already started) so the caller can stop it
+    later if needed.  The watcher uses a debounce timer: after the last file
+    event, it waits DEBOUNCE_SECONDS before running cmd_incremental().
+
+    Called automatically by the MCP server on startup.
+    """
     from watchdog.observers import Observer
     from watchdog.events import FileSystemEventHandler
 
@@ -223,33 +256,78 @@ def cmd_watch():
     extensions = config.get("file_extensions", [".py", ".ts", ".tsx", ".go", ".rs"])
     skip_dirs = config.get("skip_dirs", ["node_modules", ".venv", "__pycache__"])
 
-    class SourceFileHandler(FileSystemEventHandler):
-        def _reindex(self, src_path: str):
+    class DebouncedHandler(FileSystemEventHandler):
+        def __init__(self):
+            super().__init__()
+            self._timer: threading.Timer | None = None
+            self._lock = threading.Lock()
+
+        def _schedule_reindex(self, src_path: str):
             abs_path = Path(src_path)
             if not any(abs_path.suffix == ext for ext in extensions):
                 return
             if any(skip in abs_path.parts for skip in skip_dirs):
                 return
-            cmd_incremental(quiet=False)
+
+            with self._lock:
+                # Cancel any pending timer and restart the debounce window
+                if self._timer is not None:
+                    self._timer.cancel()
+                self._timer = threading.Timer(DEBOUNCE_SECONDS, self._do_reindex)
+                self._timer.daemon = True
+                self._timer.start()
+
+        def _do_reindex(self):
+            try:
+                _watcher_logger.debug("File change detected — running incremental reindex")
+                cmd_incremental(quiet=quiet)
+                _watcher_logger.debug("Incremental reindex complete")
+            except Exception as e:
+                _watcher_logger.warning("Background reindex failed: %s", e)
 
         def on_modified(self, event):
             if not event.is_directory:
-                self._reindex(event.src_path)
+                self._schedule_reindex(event.src_path)
 
         def on_created(self, event):
             if not event.is_directory:
-                self._reindex(event.src_path)
+                self._schedule_reindex(event.src_path)
+
+        def on_deleted(self, event):
+            if not event.is_directory:
+                self._schedule_reindex(event.src_path)
 
     observer = Observer()
-    handler = SourceFileHandler()
-    
-    print(f"Watching for changes in: {', '.join(watched_dirs)}...")
+    observer.daemon = True
+    handler = DebouncedHandler()
+
+    scheduled = 0
     for wd in watched_dirs:
         path = PROJECT_ROOT / wd
         if path.exists():
             observer.schedule(handler, str(path), recursive=True)
-            
-    observer.start()
+            scheduled += 1
+
+    if scheduled > 0:
+        observer.start()
+        _watcher_logger.info(
+            "Background watcher started — monitoring %d dir(s): %s",
+            scheduled, ", ".join(watched_dirs),
+        )
+    else:
+        _watcher_logger.warning("No valid watched_dirs found — watcher not started")
+
+    return observer
+
+
+def cmd_watch():
+    """Blocking CLI mode: start watcher and keep the process alive."""
+    config = _load_config()
+    watched_dirs = config.get("watched_dirs", ["src"])
+    print(f"Watching for changes in: {', '.join(watched_dirs)}...")
+    print("Press Ctrl+C to stop.\n")
+
+    observer = start_background_watcher(quiet=False)
     try:
         while True:
             time.sleep(1)

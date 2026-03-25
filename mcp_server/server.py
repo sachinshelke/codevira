@@ -686,6 +686,20 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
 def main():
     import asyncio
+    import logging
+
+    logger = logging.getLogger("codevira.server")
+
+    # Auto-start background file watcher so the index stays fresh
+    # on every file save — no manual trigger or git commit needed.
+    watcher = None
+    try:
+        from indexer.index_codebase import start_background_watcher
+        watcher = start_background_watcher(quiet=True)
+        logger.info("Live file watcher active — index updates on save")
+    except Exception as e:
+        # Watcher is best-effort; don't block server startup
+        logger.warning("Could not start background watcher: %s", e)
 
     async def _run():
         async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
@@ -695,7 +709,11 @@ def main():
                 server.create_initialization_options(),
             )
 
-    asyncio.run(_run())
+    try:
+        asyncio.run(_run())
+    finally:
+        if watcher is not None:
+            watcher.stop()
 
 
 if __name__ == "__main__":

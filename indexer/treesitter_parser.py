@@ -177,9 +177,21 @@ def parse_file(file_path: str, language: str | None = None) -> ParsedFile:
         if node_type in import_types:
             raw = _node_text(node, source_bytes)
             import re
+            # JS/TS/Java: quoted module strings
             matches = re.findall(r'["\']([^"\']+)["\']', raw)
-            for m in matches:
-                imports.append(ParsedImport(module=m, raw_line=raw.strip()))
+            if matches:
+                for m in matches:
+                    imports.append(ParsedImport(module=m, raw_line=raw.strip()))
+            else:
+                # Rust/Go/C: extract scoped path or identifier directly
+                # For Rust use_declaration: "use std::collections::HashMap;" → "std::collections::HashMap"
+                # For Go import_spec: "fmt" or quoted
+                path_parts = re.findall(r'(?:use|import)\s+(.+?)(?:\s*;|\s*$)', raw.strip())
+                if path_parts:
+                    module = path_parts[0].strip().rstrip(';')
+                    imports.append(ParsedImport(module=module, raw_line=raw.strip()))
+                elif raw.strip():
+                    imports.append(ParsedImport(module=raw.strip(), raw_line=raw.strip()))
         
         # 2. Classes / Types
         elif node_type in class_types:
@@ -191,6 +203,37 @@ def parse_file(file_path: str, language: str | None = None) -> ParsedFile:
                     if "identifier" in child.type or child.type == "type_identifier":
                         name = _node_text(child, source_bytes)
                         break
+
+            # Go: type_declaration wraps type_spec which contains the actual struct/interface
+            if language == "go" and node_type == "type_declaration":
+                for spec in node.children:
+                    if spec.type == "type_spec":
+                        # Extract the name from type_spec
+                        for c in spec.children:
+                            if c.type == "type_identifier":
+                                name = _node_text(c, source_bytes)
+                            elif c.type == "struct_type":
+                                kind_override = "struct"
+                            elif c.type == "interface_type":
+                                kind_override = "interface"
+                        if name and name not in seen:
+                            seen.add(name)
+                            k = kind_override if 'kind_override' in dir() else "struct"
+                            public = _is_public(name, node, language)
+                            symbols.append(ParsedSymbol(
+                                name=name,
+                                kind=k,
+                                signature_line=_first_line_text(node, source_lines),
+                                start_line=node.start_point[0] + 1,
+                                end_line=node.end_point[0] + 1,
+                                docstring=_get_preceding_comment(node, source_lines),
+                                is_public=public,
+                                methods=[]
+                            ))
+                # Walk children for nested declarations
+                for child in node.children:
+                    walk(child, parent_kind, current_exported)
+                return
 
             if name and name not in seen:
                 seen.add(name)
@@ -209,12 +252,6 @@ def parse_file(file_path: str, language: str | None = None) -> ParsedFile:
                 elif "trait" in node_type: kind = "trait"
                 elif "impl" in node_type: kind = "impl"
 
-                if language == "go" and node_type == "type_declaration":
-                    for c in node.children:
-                        if c.type == "type_identifier":
-                            name = _node_text(c, source_bytes)
-                            break
-                            
                 if language == "rust" and "impl" in node_type:
                     for c in node.children:
                         if c.type == "type_identifier":
@@ -358,6 +395,8 @@ def _extract_module_docstring(root: Node, source_lines: list[str]) -> str | None
     return None
 
 def _is_public(name: str, node: Node, language: str) -> bool:
+    if not name:
+        return False
     if language == "go":
         return name[0].isupper()
     if language in ("typescript", "tsx", "javascript", "jsx"):
@@ -366,9 +405,17 @@ def _is_public(name: str, node: Node, language: str) -> bool:
             return True
         return False
     if language == "rust":
+        # Check if any child token is 'pub'
+        for child in node.children:
+            if child.type == "visibility_modifier" or child.type == "pub":
+                return True
+        # Also check the source text of the first line
         try:
-            return "pub " in _node_text(node, b"pub ")
-        except:
+            first_line = node.start_point[0]
+            # Walk up through source bytes to find 'pub' keyword
+            node_src = node.text.decode("utf-8", errors="replace") if node.text else ""
+            return node_src.lstrip().startswith("pub ")
+        except Exception:
             pass
         return False
         

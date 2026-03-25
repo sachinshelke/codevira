@@ -31,6 +31,7 @@ Codevira is a [Model Context Protocol](https://modelcontextprotocol.io) server y
 
 | Capability | What It Means |
 |---|---|
+| **Live auto-watch** | Background file watcher auto-reindexes on every save — no manual trigger or git commit needed |
 | **Context graph** | Every source file has a node: role, rules, dependencies, stability, `do_not_revert` flags |
 | **Semantic code search** | Natural language search across your codebase — no grep, no file reading |
 | **Roadmap** | Phase-based tracker so agents always know what phase you're in and what comes next |
@@ -142,11 +143,13 @@ This single command:
 - Creates `.codevira/` with config, graph, and log directories
 - Adds `.codevira/` to `.gitignore` (index is auto-regenerated, no need to commit)
 - Prompts for project name, language, source directories (comma-separated), and file extensions
-- Builds the full code index
+- Builds the full code index using SHA-256 content hashing (only changed files are re-indexed)
 - Auto-generates graph stubs for all source files
 - Bootstraps `.codevira/roadmap.yaml` from git history
 - Installs a `post-commit` git hook for automatic reindexing
 - Prints the MCP config block to paste into your AI tool
+
+> **Live Auto-Watch:** When the MCP server starts, it automatically launches a background file watcher. Every time you save a source file, the index is updated within 2 seconds — no manual commands needed. The `post-commit` hook and `codevira index` CLI remain available as alternatives.
 
 ### 3. Connect to your AI tool
 
@@ -354,8 +357,10 @@ Seven role definitions in `agents/` tell each agent exactly what to do and when:
 │       ├── playbook.py
 │       └── code_reader.py
 ├── indexer/
-│   ├── index_codebase.py    # Build/update ChromaDB index
+│   ├── index_codebase.py    # Build/update ChromaDB index + background file watcher
 │   ├── chunker.py           # AST-based code chunker
+│   ├── treesitter_parser.py # Multi-language AST parsing (16+ languages)
+│   ├── sqlite_graph.py      # SQLite graph database backend
 │   └── graph_generator.py   # Auto-generate graph stubs
 ├── requirements.txt         # Python dependencies
 ├── agents/                  # Role definitions

@@ -23,14 +23,21 @@ The foundation. Everything needed to give AI agents persistent memory on any pro
 
 ---
 
-## ✅ v1.2 — Language Expansion (current)
+## ✅ v1.2 — Language Expansion & Persistence Overhaul (current)
 
-Extend full feature support beyond Python.
+Extend full feature support beyond Python. Migrate to a high-performance persistence layer.
 
 - **Tree-sitter integration** — AST-based chunking for TypeScript, Go, and Rust
 - **`get_signature` for TypeScript/Go/Rust** — symbol extraction via tree-sitter
+- **Multi-language expansion** — 16+ languages via `tree-sitter-language-pack` (Java, C#, Ruby, PHP, C++, etc.)
 - **Auto-generated graph stubs for all languages** — not just Python
 - **Language-specific playbook entries** — task rules for TypeScript patterns, Go idioms
+- **SQLite graph database** — migrated from hundreds of `.yaml` files to a single `graph.db`
+- **SQLite memory & session logs** — agent sessions and decisions stored in `graph.db` tables
+- **Blast-radius via recursive CTEs** — instant SQL-based dependency traversal
+- **SHA-256 hash-based indexing** — skip unmodified files, sub-second incremental reindex
+- **Live auto-watch (default)** — background file watcher auto-starts with MCP server; 2-second debounce
+- **Chaos testing & parser hardening** — Rust `is_public`, Go struct/interface, import extraction fixes
 
 ---
 

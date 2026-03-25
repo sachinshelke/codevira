@@ -242,4 +242,4 @@ class TestErrorHandling:
 
     def test_unsupported_language(self):
         with pytest.raises(ValueError):
-            parse_file(os.path.join(FIXTURES_DIR, "sample.ts"), "java")
+            parse_file(os.path.join(FIXTURES_DIR, "sample.ts"), "brainfuck")

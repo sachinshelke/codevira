@@ -173,48 +173,55 @@ These apply in ALL sessions regardless of task:
 
 The MCP server must be running for this protocol to work.
 
-**Claude Code** — add to `.claude/settings.json`:
+**Claude Code** (`.claude/settings.json`), **Cursor / Windsurf** (Settings → MCP):
 ```json
 {
   "mcpServers": {
-    "Codevira": {
-      "command": "python",
-      "args": [".agents/mcp-server/server.py"]
+    "codevira": {
+      "command": "/path/to/your-project/.venv/bin/python",
+      "args": ["-m", "mcp_server", "--project-dir", "/path/to/your-project"]
     }
   }
 }
 ```
 
-**Cursor** — Settings → MCP → Add Server:
-- Command: `python`
-- Args: `.agents/mcp-server/server.py`
-- Working directory: project root
+**Google Antigravity** — add to `~/.gemini/antigravity/mcp_config.json`:
+```json
+{
+  "mcpServers": {
+    "codevira": {
+      "$typeName": "exa.cascade_plugins_pb.CascadePluginCommandTemplate",
+      "command": "/path/to/your-project/.venv/bin/python",
+      "args": ["-m", "mcp_server", "--project-dir", "/path/to/your-project"]
+    }
+  }
+}
+```
 
-**Windsurf** — same as Cursor via MCP settings panel.
-
-Verify it works: the `get_roadmap` tool should return the current active phase.
+Verify it works: ask your agent call `get_roadmap()` — it should return the current active phase.
 
 ---
 
 ## FIRST-TIME SETUP (any project)
 
 ```bash
-pip install -r .agents/requirements.txt
+# Install the package
+pip install codevira-mcp
 
-# Copy and edit config
-cp .agents/config.example.yaml .agents/config.yaml
-# Edit config.yaml: set watched_dirs, language, file_extensions for your project
-
-# All in one — builds index + graph + roadmap stub:
-python .agents/indexer/index_codebase.py --full --generate-graph --bootstrap-roadmap
-
-# Install auto-reindex on commit
-bash .agents/hooks/install-hooks.sh
+# Initialize Codevira in your project
+codevira init
 ```
 
-After this, `get_node()`, `get_impact()`, `search_codebase()`, and `get_roadmap()` all work
-immediately. Auto-generated nodes are marked `auto_generated: true` — enrich them over time
-with rules, `do_not_revert` flags, and refined edge types.
+This single command:
+- Creates `.codevira/` with config, graph, and log directories.
+- Adds `.codevira/` to `.gitignore`.
+- Builds the full code index.
+- Auto-generates graph stubs for all source files.
+- Bootstraps `.codevira/roadmap.yaml` from git history.
+- Installs a `post-commit` git hook for automatic reindexing.
+- Prints the MCP config block to paste into your AI tool.
+
+After this, `get_node()`, `get_impact()`, `search_codebase()`, and `get_roadmap()` all work immediately.
 
 ## CODE INDEX SETUP (first time or after major changes)
 

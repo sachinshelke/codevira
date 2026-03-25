@@ -327,15 +327,23 @@ def _chunk_file_python(file_path: str, project_root: str) -> list[CodeChunk]:
 def iter_source_files(project_root: str) -> Iterator[str]:
     """Yield source files in TARGET_DIRS matching configured file_extensions."""
     extensions = tuple(_FILE_EXTENSIONS)
+    seen_files = set()
+    
     for target_dir in TARGET_DIRS:
         target_path = os.path.join(project_root, target_dir)
         if not os.path.exists(target_path):
             continue
+            
         for root, dirs, files in os.walk(target_path):
+            # Prune skipped dirs
             dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+            
             for fname in files:
                 if fname.endswith(extensions) and fname not in SKIP_FILES:
-                    yield os.path.join(root, fname)
+                    full_path = os.path.abspath(os.path.join(root, fname))
+                    if full_path not in seen_files:
+                        seen_files.add(full_path)
+                        yield full_path
 
 
 def chunk_project(project_root: str) -> list[CodeChunk]:

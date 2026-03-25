@@ -11,11 +11,11 @@ trigger: always_on
   (e.g., "commit my changes", "git commit").
 
 2. ACCOUNTABILITY
-- EVERY commit MUST be backed by corresponding session log entries in `.agents/logs/`.
-- If an action, change, or execution is not logged → it MUST NOT be committed.
+- EVERY commit MUST be backed by corresponding session log entries in Codevira's history.
+- If an action, change, or execution is not logged in Codevira → it MUST NOT be committed.
 
 3. DOCUMENTATION IS PART OF THE CHANGE
-- A change is INCOMPLETE until code, memory, session logs, FAQ, and docs are aligned.
+- A change is INCOMPLETE until code, Graph Rules, Roadmap, FAQ, and docs are aligned.
 - Commits represent **system truth**, not just code deltas.
 
 ────────────────────────
@@ -24,24 +24,23 @@ trigger: always_on
 
 Before generating a commit message, staging files, or committing, the agent MUST verify ALL of the following:
 
-### A. DECISION MEMORY SAFETY (CRITICAL)
-- Architectural memory (`.agents/memory.md` or equivalent) is LAW and MUST NOT be auto-updated.
+### A. ARCHITECTURAL INTENT SAFETY (CRITICAL)
+- The Roadmap (`roadmap.yaml`) and Graph Rules are LAW and MUST NOT be auto-updated.
 - If a new architectural decision, constraint, or intent change is discovered:
   - STOP
   - PROPOSE the change explicitly to the user
   - WAIT for approval
-- Only user-approved memory changes may be included in a commit.
-- Any approved memory change MUST be logged in the session log (what changed + why).
+- Only user-approved intent changes (via `complete_phase` or `update_node`) may be included in a commit.
+- Any approved change MUST be reflected in the final session log entries.
 
 ### B. SESSION LOG FINALIZATION
-- Session logs in `.agents/logs/` MUST include factual entries for all relevant work:
+- Codevira's session logs MUST include factual entries for all relevant work:
   - what was discussed
-  - what was implemented
-  - what succeeded or failed
+  - what was actually implemented (Evolution)
+  - what succeeded or failed (Wrong Paths)
   - what changed from previous behavior
-  - which decisions were reinforced or modified
-- Logs are append-only. Never rewrite history.
-- If session log is incomplete → STOP. No commit allowed.
+  - underlying logic (The Why)
+- If the session log (via `write_session_log()`) is not prepared → STOP. No commit allowed.
 
 ### C. FAQ SYNCHRONIZATION (NON-NEGOTIABLE)
 - If the commit reflects ANY of the following:

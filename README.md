@@ -188,6 +188,7 @@ Point your AI tool directly to the Python runtime inside your `.venv` where `cod
 {
   "mcpServers": {
     "codevira": {
+      "$typeName": "exa.cascade_plugins_pb.CascadePluginCommandTemplate",
       "command": "/path/to/your-project/.venv/bin/python",
       "args": ["-m", "mcp_server", "--project-dir", "/path/to/your-project"]
     }
@@ -206,10 +207,12 @@ Point your AI tool directly to the Python runtime inside your `.venv` where `cod
 > {
 >   "mcpServers": {
 >     "codevira-project-a": {
+>       "$typeName": "exa.cascade_plugins_pb.CascadePluginCommandTemplate",
 >       "command": "uvx",
 >       "args": ["codevira-mcp", "--project-dir", "/path/to/project-a"]
 >     },
 >     "codevira-project-b": {
+>       "$typeName": "exa.cascade_plugins_pb.CascadePluginCommandTemplate",
 >       "command": "uvx",
 >       "args": ["codevira-mcp", "--project-dir", "/path/to/project-b"]
 >     }

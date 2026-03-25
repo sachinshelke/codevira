@@ -21,88 +21,68 @@ INTENT and REALITY are different.
 LLM reasons
 → System decides
 → Code enforces
-→ Memory preserves intent
-→ Journal preserves truth
+→ Graph / Roadmap preserves intent
+→ Session Logs preserve truth
 → FAQ preserves explanation
 → Git freezes verified state
 
 ────────────────────────────────────────
-1. MEMORY & KNOWLEDGE SYSTEM
+1. AUTOMATED MEMORY & KNOWLEDGE SYSTEM (CODEVIRA)
 ────────────────────────────────────────
 
-### A. DECISION / INTENT MEMORY
-File: `.agents/memory.md` (or project-specific equivalent)
+### A. ARCHITECTURAL MEMORY (INTENT)
+Tools: `update_node()`, `add_phase()`, `complete_phase()`, `update_next_action()`
+Storage: `.codevira/graph/` and `.codevira/roadmap.yaml`
 
 Purpose:
-- Preserve architectural intent and direction
-- Capture final decisions and non-negotiables
-- Record WHY decisions were made
-- Encode "never do this again" rules
+- Preserve architectural intent and direction via Graph Rules.
+- Capture final decisions as `key_decisions` in Roadmap phases.
+- Record "never do this again" invariants as `rules` on specific file nodes.
 
 Rules:
-- This file is LAW.
-- NO execution logs.
-- NO experiments.
-- NO auto-updates.
-- Any change:
-  - MUST be explicitly approved by the user
-  - MUST be logged in the journal (what changed + why)
-
-If intent is unclear → STOP and ask.
+- Graph Rules and the Roadmap represent the "Project Law."
+- Any architectural change:
+  - MUST be explicitly approved by the user.
+  - MUST be persisted via `update_node` (new rules) or `complete_phase` (decisions).
+  - MUST be logically linked in the session log.
 
 ---
 
-### B. EXECUTION / JOURNAL MEMORY
-File: `.agents/logs/` (session logs written via `write_session_log()`)
+### B. EXECUTION MEMORY (TRUTH)
+Tool: `write_session_log()`
+Storage: `.codevira/logs/` (YAML)
 
 Purpose:
-- Preserve factual reality of what happened
+- Preserve factual reality of what happened in each session.
+- Prevent "token re-discovery" in future sessions.
 
 Must record:
-- What was discussed
-- What was implemented
-- What was tested
-- What succeeded or failed
-- What changed compared to before
+- The Evolution: What was suggested vs. what was actually built.
+- The "Wrong" Paths: Rejected ideas and failed attempts.
+- The "Why": Underlying logic and trade-offs.
+- The "What": Precise technical changes.
 
 Rules:
-- Append-only (never rewrite history)
-- Facts only (no opinions)
-- One entry per action
-- Every entry MUST include:
-  - Action
-  - Result (Success / Failure + reason)
-  - Decision reinforced or changed
-
-If it is not journaled → it does not exist.
+- Every session MUST end with a `write_session_log` call.
+- If it is not logged in the codevira history → it does not exist.
 
 ---
 
 ### C. FAQ / USER KNOWLEDGE
-File: `docs/FAQ.md` (or project equivalent)
+File: `docs/FAQ.md`
 
 Purpose:
-- Ensure future users, engineers, auditors can understand the system
+- Human-readable explanation of complex behaviors and non-obvious trade-offs.
 
-FAQ MUST be updated whenever:
-- A decision is made or confirmed
-- A behavior or workflow is finalized
-- A trade-off or limitation is accepted
-- An alternative is rejected
-- A previous behavior changes
-
-FAQ entries MUST explain:
-- What the decision/change is
-- WHY it was made
-- Alternatives considered
-- Why alternatives were rejected
-- Trade-offs and implications
-- Written assuming zero prior context
+Update FAQ whenever:
+- A behavior or workflow is finalized.
+- A technical limitation is accepted.
+- A previous decision is reversed.
 
 ENFORCEMENT:
-- If FAQ is not updated when required → WORK IS INCOMPLETE
-- Agent MUST STOP
-- No further coding, execution, or commits allowed
+- If behavior changed but FAQ is not updated → WORK IS INCOMPLETE.
+- Agent MUST STOP.
+- No further coding, execution, or commits allowed.
 
 ────────────────────────────────────────
 2. AGENT BEHAVIOR RULES

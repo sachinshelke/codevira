@@ -416,18 +416,22 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "session_id": {"type": "string", "description": "Short ID (8-char slug)"},
                     "task": {"type": "string", "description": "Original developer prompt"},
-                    "task_type": {"type": "string", "description": "small_fix | medium_change | large_change"},
+                    "phase": {"type": "string", "description": "phase"},
                     "files_changed": {"type": "array", "items": {"type": "string"}},
-                    "decisions": {"type": "array", "items": {"type": "string"}},
-                    "phase": {"type": ["integer", "string"]},
-                    "next_action": {"type": "string"},
-                    "agents_invoked": {"type": "array", "items": {"type": "string"}},
-                    "tests_run": {"type": "array", "items": {"type": "string"}},
-                    "tests_passed": {"type": "boolean"},
-                    "build_clean": {"type": "boolean"},
-                    "changeset_id": {"type": "string"},
+                    "decisions": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "file_path": {"type": "string"},
+                                "decision": {"type": "string"},
+                                "context": {"type": "string"}
+                            }
+                        }
+                    },
+                    "next_steps": {"type": "array", "items": {"type": "string"}}
                 },
-                "required": ["session_id", "task", "task_type", "files_changed", "decisions", "phase", "next_action"],
+                "required": ["session_id", "task", "phase", "files_changed", "decisions", "next_steps"],
             },
         ),
         Tool(
@@ -652,16 +656,10 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             result = write_session_log(
                 session_id=arguments["session_id"],
                 task=arguments["task"],
-                task_type=arguments["task_type"],
+                phase=arguments["phase"],
                 files_changed=arguments["files_changed"],
                 decisions=arguments["decisions"],
-                phase=arguments["phase"],
-                next_action=arguments["next_action"],
-                agents_invoked=arguments.get("agents_invoked"),
-                tests_run=arguments.get("tests_run"),
-                tests_passed=arguments.get("tests_passed"),
-                build_clean=arguments.get("build_clean"),
-                changeset_id=arguments.get("changeset_id"),
+                next_steps=arguments["next_steps"]
             )
         elif name == "refresh_index":
             result = refresh_index(file_paths=arguments.get("file_paths"))

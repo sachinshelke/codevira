@@ -64,6 +64,7 @@ def generate_graph_node(file_path: str, project_root: str) -> dict[str, Any]:
     
     ext = os.path.splitext(abs_path)[1].lower()
     
+    connects_to = []
     lang = ts_get_language(ext)
     if lang:
         try:
@@ -71,6 +72,8 @@ def generate_graph_node(file_path: str, project_root: str) -> dict[str, Any]:
             if parsed.module_docstring:
                 role = parsed.module_docstring
             key_funcs = [s.name for s in parsed.symbols if s.is_public]
+            for imp in parsed.imports:
+                connects_to.append(imp.module)
         except Exception:
             pass
     elif ext == ".py":
@@ -78,6 +81,18 @@ def generate_graph_node(file_path: str, project_root: str) -> dict[str, Any]:
         if doc:
             role = doc
         key_funcs = _get_python_public_symbols(abs_path)
+        try:
+            with open(abs_path, "r", encoding="utf-8") as f:
+                tree = ast.parse(f.read())
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.Import):
+                        for name in node.names:
+                            connects_to.append(name.name)
+                    elif isinstance(node, ast.ImportFrom):
+                        if node.module:
+                            connects_to.append(node.module)
+        except Exception:
+            pass
 
     if not role.endswith("."):
         role += "."
@@ -89,7 +104,7 @@ def generate_graph_node(file_path: str, project_root: str) -> dict[str, Any]:
         "layer": layer,
         "stability": "high" if layer == "database" else "medium",
         "key_functions": key_funcs,
-        "connects_to": [],
+        "connects_to": connects_to,
         "rules": [],
         "tests": [],
         "do_not_revert": False,
@@ -137,7 +152,8 @@ def generate_graph_sqlite(project_root: str, db_path: str | None = None) -> dict
             stability=node_data["stability"],
             type=node_data["type"],
             key_functions=json.dumps(node_data["key_functions"]),
-            dependencies="[]",
+            dependencies=json.dumps(node_data.get("connects_to", [])),
+            connects_to=node_data.get("connects_to", []),
             rules="[]",
             do_not_revert=node_data.get("do_not_revert", False)
         )

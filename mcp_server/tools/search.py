@@ -59,11 +59,25 @@ def search_codebase(description: str, top_k: int = 5) -> dict[str, Any]:
     except Exception as e:
         return {"error": f"Search failed: {e}"}
 
-def write_session_log(session_id: str, task: str, task_type: str, files_changed: list[str], decisions: list[dict], next_steps: list[str]) -> dict[str, str]:
+def write_session_log(
+    session_id: str,
+    task: str,
+    task_type: str,
+    files_changed: list[str],
+    decisions: list[str],
+    phase: int | str,
+    next_action: str,
+    agents_invoked: list[str] | None = None,
+    tests_run: list[str] | None = None,
+    tests_passed: bool | None = None,
+    build_clean: bool | None = None,
+    changeset_id: str | None = None,
+) -> dict[str, str]:
     db = _get_db()
-    db.log_session(session_id, task, task_type, decisions)
+    decisions_dicts = [{"decision": d, "context": task, "file_path": None} for d in decisions]
+    db.log_session(session_id, task, str(phase), decisions_dicts)
     db.close()
-    return {"status": f"Session {session_id} logged to SQLite Memory."}
+    return {"status": f"Session {session_id} logged to SQLite Memory.", "next_action": next_action}
 
 def search_decisions(query: str, limit: int = 10, session_id: str | None = None) -> dict[str, Any]:
     db = _get_db()

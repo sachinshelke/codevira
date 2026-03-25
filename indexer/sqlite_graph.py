@@ -116,6 +116,23 @@ class SQLiteGraph:
         with self.transaction() as conn:
             conn.execute(query, values)
 
+            # If connects_to is provided in kwargs, add edges
+            if "connects_to" in kwargs:
+                # Remove old edges for this source
+                conn.execute("DELETE FROM edges WHERE source_id = ?", (node_id,))
+
+                for target in kwargs["connects_to"]:
+                    # We could just store the raw target string, or assume it's another file ID
+                    # Here we assume the target is either an ID (file:...) or we just store the raw string
+                    # In a real app we'd resolve this to an actual file: ID, but for now we insert it
+                    target_id = f"file:{target}" if not target.startswith("file:") else target
+                    # Try to add edge but ignore if target_id doesn't exist (foreign key)
+                    try:
+                        conn.execute("INSERT OR IGNORE INTO edges (source_id, target_id, kind) VALUES (?, ?, ?)",
+                                     (node_id, target_id, "connects_to"))
+                    except sqlite3.Error:
+                        pass
+
     def update_node_metadata(self, node_id: str, **kwargs):
         valid_fields = ["role", "type", "rules", "key_functions", "dependencies", 
                         "stability", "do_not_revert", "layer"]
@@ -161,12 +178,12 @@ class SQLiteGraph:
         query = '''
             WITH RECURSIVE
             dependents(id, path, depth) AS (
-                SELECT id, id, 0 FROM nodes WHERE id = ?
+                SELECT id, ',' || id || ',', 0 FROM nodes WHERE id = ?
                 UNION ALL
-                SELECT e.source_id, d.path || '->' || e.source_id, d.depth + 1
+                SELECT e.source_id, d.path || e.source_id || ',', d.depth + 1
                 FROM edges e
                 JOIN dependents d ON e.target_id = d.id
-                WHERE d.depth < ? AND instr(d.path, e.source_id) = 0
+                WHERE d.depth < ? AND instr(d.path, ',' || e.source_id || ',') = 0
             )
             SELECT DISTINCT n.*, d.depth 
             FROM dependents d

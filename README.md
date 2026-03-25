@@ -392,14 +392,14 @@ Seven role definitions in `agents/` tell each agent exactly what to do and when:
 ## Language Support
 
 | Feature | Python | TypeScript | Go | Rust | 10+ Others (Java, C#, Ruby, PHP, C++) |
-|---|---|---|---|---|
+|---|---|---|---|---|---|
 | Semantic code search | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Context graph + blast radius | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Roadmap + changesets | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Session logs + decision search | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `get_signature` / `get_code` | ✅ | ✅ | ✅ | ✅ |
-| Auto-generated graph stubs | ✅ | ✅ | ✅ | ✅ |
-| AST-based chunking | ✅ | ✅ | ✅ | ✅ |
+| `get_signature` / `get_code` | ✅ | ✅ | ✅ | ✅ | |
+| Auto-generated graph stubs | ✅ | ✅ | ✅ | ✅ | |
+| AST-based chunking | ✅ | ✅ | ✅ | ✅ | |
 
 All session management, graph, roadmap, and search features work for any language. Code parsing and extraction (search, graph generation, signature reads) are powered by robust ast and Tree-Sitter integrations.
 

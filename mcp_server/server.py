@@ -44,7 +44,7 @@ except ImportError:
     sys.exit(1)
 
 import json
-from mcp_server.tools.graph import get_node, get_impact, list_nodes, add_node, refresh_graph
+from mcp_server.tools.graph import get_node, get_impact, list_nodes, add_node, update_node, refresh_graph
 from mcp_server.tools.roadmap import (
     get_roadmap, get_full_roadmap, get_phase,
     add_phase, update_phase_status, defer_phase,
@@ -58,7 +58,6 @@ from mcp_server.tools.changesets import (
     complete_changeset,
     get_changeset,
     list_open_changesets,
-    update_node_after_change,
 )
 from mcp_server.tools.playbook import get_playbook
 from mcp_server.tools.code_reader import get_signature, get_code
@@ -368,7 +367,6 @@ async def list_tools() -> list[Tool]:
                     "rules": {"type": "array", "items": {"type": "string"}},
                     "do_not_revert": {"type": "boolean", "default": False},
                     "tests": {"type": "array", "items": {"type": "string"}},
-                    "graph_file": {"type": "string", "description": "Target YAML filename (auto-inferred if omitted)"},
                 },
                 "required": ["file_path", "role", "layer"],
             },
@@ -399,7 +397,6 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "file_path": {"type": "string", "description": "Relative file path"},
-                    "n": {"type": "integer", "description": "Number of commits (default 5, max 20)", "default": 5},
                 },
                 "required": ["file_path"],
             },
@@ -619,7 +616,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 arguments["decisions"],
             )
         elif name == "update_node":
-            result = update_node_after_change(
+            result = update_node(
                 arguments["file_path"],
                 arguments["changes"],
             )

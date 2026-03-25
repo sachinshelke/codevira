@@ -59,9 +59,9 @@ def search_codebase(description: str, top_k: int = 5) -> dict[str, Any]:
     except Exception as e:
         return {"error": f"Search failed: {e}"}
 
-def write_session_log(session_id: str, task: str, task_type: str, files_changed: list[str], decisions: list[dict], next_steps: list[str]) -> dict[str, str]:
+def write_session_log(session_id: str, task: str, phase: str, files_changed: list[str], decisions: list[dict], next_steps: list[str]) -> dict[str, str]:
     db = _get_db()
-    db.log_session(session_id, task, task_type, decisions)
+    db.log_session(session_id, task, phase, decisions)
     db.close()
     return {"status": f"Session {session_id} logged to SQLite Memory."}
 

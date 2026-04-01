@@ -183,78 +183,35 @@ def update_node_after_change(file_path: str, changes: dict[str, Any]) -> dict[st
         file_path: The file that was changed
         changes: Dict with any of: last_changed_by, new_rules (list), new_connections (list)
     """
-    from tools.graph import _load_all_nodes
-    from pathlib import Path
-    import glob
+    from mcp_server.tools.graph import update_node
 
-    graph_dir = Path(__file__).parent.parent.parent / "graph"
-    nodes_by_file: dict[str, Path] = {}
+    translated_changes: dict[str, Any] = {}
+    passthrough_fields = {"key_functions", "stability", "do_not_revert"}
 
-    for yaml_file in graph_dir.glob("*.yaml"):
-        if yaml_file.name.startswith("_"):
-            continue
-        try:
-            with open(yaml_file) as f:
-                data = yaml.safe_load(f)
-            if data and "nodes" in data and file_path in data["nodes"]:
-                nodes_by_file[yaml_file] = data
-                break
-        except Exception:
-            pass
-
-    if not nodes_by_file:
-        return {
-            "success": False,
-            "message": f"Node '{file_path}' not found in any graph file.",
-            "hint": "Add it to the appropriate .agents/graph/*.yaml file.",
-        }
-
-    yaml_file, data = next(iter(nodes_by_file.items()))
-    node = data["nodes"][file_path]
-
-    if "last_changed_by" in changes:
-        node["last_changed_by"] = changes["last_changed_by"]
+    for field in passthrough_fields:
+        if field in changes:
+            translated_changes[field] = changes[field]
 
     if "new_rules" in changes:
-        existing = node.get("rules", [])
-        for rule in changes["new_rules"]:
-            if rule not in existing:
-                existing.append(rule)
-        node["rules"] = existing
-
-    if "do_not_revert" in changes:
-        node["do_not_revert"] = changes["do_not_revert"]
-
+        translated_changes["rules"] = changes["new_rules"]
     if "new_connections" in changes:
-        existing = node.get("connects_to", [])
-        existing_targets = {e.get("target") for e in existing}
-        for conn in changes["new_connections"]:
-            target = conn.get("target")
-            if target and target not in existing_targets:
-                existing.append(conn)
-                existing_targets.add(target)
-        node["connects_to"] = existing
+        translated_changes["connects_to"] = changes["new_connections"]
 
-    if "key_functions" in changes:
-        # Merge new functions into existing list (no duplicates)
-        existing = node.get("key_functions", [])
-        for fn in changes["key_functions"]:
-            if fn not in existing:
-                existing.append(fn)
-        node["key_functions"] = existing
+    result = update_node(file_path, translated_changes)
 
-    if "stability" in changes:
-        node["stability"] = changes["stability"]
+    if "error" in result:
+        return {
+            "success": False,
+            "message": result["error"],
+        }
 
-    if "new_tests" in changes:
-        existing = node.get("tests", [])
-        for t in changes["new_tests"]:
-            if t not in existing:
-                existing.append(t)
-        node["tests"] = existing
+    response = {
+        "success": True,
+        "updated_node": file_path,
+    }
+    if "last_changed_by" in changes:
+        response["note"] = (
+            "Node metadata updated. 'last_changed_by' is not persisted in the SQLite graph schema."
+        )
 
-    data["nodes"][file_path] = node
-    with open(yaml_file, "w") as f:
-        yaml.dump(data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
-
-    return {"success": True, "updated_node": file_path, "in_file": str(yaml_file)}
+    return response

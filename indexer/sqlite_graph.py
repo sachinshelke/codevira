@@ -90,6 +90,54 @@ class SQLiteGraph:
                 
                 CREATE INDEX IF NOT EXISTS idx_decisions_session ON decisions(session_id);
                 CREATE INDEX IF NOT EXISTS idx_decisions_file ON decisions(file_path);
+
+                -- ----------------------------------------------------
+                -- v1.4: Outcome Tracking (feedback loop)
+                -- ----------------------------------------------------
+                CREATE TABLE IF NOT EXISTS outcomes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    file_path TEXT NOT NULL,
+                    decision_id INTEGER,
+                    outcome_type TEXT NOT NULL,  -- 'kept' | 'modified' | 'reverted'
+                    delta_summary TEXT,
+                    detected_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE,
+                    FOREIGN KEY (decision_id) REFERENCES decisions(id) ON DELETE SET NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_outcomes_session ON outcomes(session_id);
+                CREATE INDEX IF NOT EXISTS idx_outcomes_file ON outcomes(file_path);
+
+                -- ----------------------------------------------------
+                -- v1.4: Developer Preferences (learned from corrections)
+                -- ----------------------------------------------------
+                CREATE TABLE IF NOT EXISTS preferences (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    category TEXT NOT NULL,    -- 'naming' | 'structure' | 'patterns' | 'formatting'
+                    signal TEXT NOT NULL,
+                    example TEXT,
+                    frequency INTEGER DEFAULT 1,
+                    last_seen DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_preferences_category ON preferences(category);
+
+                -- ----------------------------------------------------
+                -- v1.4: Learned Rules (auto-generated from patterns)
+                -- ----------------------------------------------------
+                CREATE TABLE IF NOT EXISTS learned_rules (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    rule_text TEXT NOT NULL,
+                    confidence REAL DEFAULT 0.5,
+                    source_sessions TEXT,      -- JSON array of session IDs
+                    category TEXT,             -- 'testing' | 'imports' | 'structure' | 'naming'
+                    file_pattern TEXT,         -- glob pattern this rule applies to
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_learned_rules_category ON learned_rules(category);
             ''')
             conn.execute("PRAGMA foreign_keys = ON;")
 
@@ -177,6 +225,218 @@ class SQLiteGraph:
         with self.transaction() as conn:
             cur = conn.execute(query, (node_id, max_depth, node_id))
             return [dict(r) for r in cur.fetchall()]
+
+    # ------------------------------------------------------------------
+    # Edge management
+    # ------------------------------------------------------------------
+
+    def add_edge(self, source_id: str, target_id: str, kind: str = "imports", line: int | None = None):
+        with self.transaction() as conn:
+            conn.execute(
+                'INSERT OR REPLACE INTO edges (source_id, target_id, kind, line) VALUES (?, ?, ?, ?)',
+                (source_id, target_id, kind, line),
+            )
+
+    def remove_edges_for_node(self, node_id: str):
+        with self.transaction() as conn:
+            conn.execute('DELETE FROM edges WHERE source_id = ?', (node_id,))
+
+    def get_edges_from(self, node_id: str) -> list[dict]:
+        cur = self.conn.execute('SELECT * FROM edges WHERE source_id = ?', (node_id,))
+        return [dict(r) for r in cur.fetchall()]
+
+    def get_edges_to(self, node_id: str) -> list[dict]:
+        cur = self.conn.execute('SELECT * FROM edges WHERE target_id = ?', (node_id,))
+        return [dict(r) for r in cur.fetchall()]
+
+    def get_all_edges(self) -> list[dict]:
+        cur = self.conn.execute('SELECT * FROM edges')
+        return [dict(r) for r in cur.fetchall()]
+
+    # ------------------------------------------------------------------
+    # Outcome tracking (feedback loop)
+    # ------------------------------------------------------------------
+
+    def record_outcome(self, session_id: str, file_path: str, outcome_type: str,
+                       decision_id: int | None = None, delta_summary: str | None = None):
+        with self.transaction() as conn:
+            conn.execute('''
+                INSERT INTO outcomes (session_id, file_path, decision_id, outcome_type, delta_summary)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (session_id, file_path, decision_id, outcome_type, delta_summary))
+
+    def get_outcomes_for_file(self, file_path: str, limit: int = 20) -> list[dict]:
+        cur = self.conn.execute('''
+            SELECT o.*, d.decision FROM outcomes o
+            LEFT JOIN decisions d ON o.decision_id = d.id
+            WHERE o.file_path = ?
+            ORDER BY o.detected_at DESC LIMIT ?
+        ''', (file_path, limit))
+        return [dict(r) for r in cur.fetchall()]
+
+    def get_decision_confidence(self, file_path: str | None = None, pattern: str | None = None) -> dict:
+        """Calculate confidence scores based on outcome history."""
+        if file_path:
+            cur = self.conn.execute('''
+                SELECT outcome_type, COUNT(*) as cnt FROM outcomes
+                WHERE file_path = ? GROUP BY outcome_type
+            ''', (file_path,))
+        elif pattern:
+            cur = self.conn.execute('''
+                SELECT outcome_type, COUNT(*) as cnt FROM outcomes
+                WHERE file_path LIKE ? GROUP BY outcome_type
+            ''', (f'%{pattern}%',))
+        else:
+            cur = self.conn.execute(
+                'SELECT outcome_type, COUNT(*) as cnt FROM outcomes GROUP BY outcome_type'
+            )
+
+        counts = {row['outcome_type']: row['cnt'] for row in cur.fetchall()}
+        total = sum(counts.values())
+        kept = counts.get('kept', 0)
+        modified = counts.get('modified', 0)
+        reverted = counts.get('reverted', 0)
+
+        confidence = (kept + modified * 0.5) / total if total > 0 else 0.0
+        return {
+            "total_decisions": total,
+            "kept": kept,
+            "modified": modified,
+            "reverted": reverted,
+            "confidence": round(confidence, 3),
+        }
+
+    # ------------------------------------------------------------------
+    # Developer preferences
+    # ------------------------------------------------------------------
+
+    def record_preference(self, category: str, signal: str, example: str | None = None):
+        existing = self.conn.execute(
+            'SELECT id, frequency FROM preferences WHERE category = ? AND signal = ?',
+            (category, signal),
+        ).fetchone()
+
+        if existing:
+            with self.transaction() as conn:
+                conn.execute('''
+                    UPDATE preferences SET frequency = frequency + 1, last_seen = CURRENT_TIMESTAMP, example = COALESCE(?, example)
+                    WHERE id = ?
+                ''', (example, existing['id']))
+        else:
+            with self.transaction() as conn:
+                conn.execute('''
+                    INSERT INTO preferences (category, signal, example) VALUES (?, ?, ?)
+                ''', (category, signal, example))
+
+    def get_preferences(self, category: str | None = None, min_frequency: int = 1) -> list[dict]:
+        if category:
+            cur = self.conn.execute('''
+                SELECT * FROM preferences WHERE category = ? AND frequency >= ?
+                ORDER BY frequency DESC
+            ''', (category, min_frequency))
+        else:
+            cur = self.conn.execute('''
+                SELECT * FROM preferences WHERE frequency >= ? ORDER BY frequency DESC
+            ''', (min_frequency,))
+        return [dict(r) for r in cur.fetchall()]
+
+    # ------------------------------------------------------------------
+    # Learned rules
+    # ------------------------------------------------------------------
+
+    def add_learned_rule(self, rule_text: str, confidence: float, source_sessions: list[str],
+                         category: str | None = None, file_pattern: str | None = None):
+        import json
+        with self.transaction() as conn:
+            conn.execute('''
+                INSERT INTO learned_rules (rule_text, confidence, source_sessions, category, file_pattern)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (rule_text, confidence, json.dumps(source_sessions), category, file_pattern))
+
+    def update_learned_rule(self, rule_id: int, confidence: float | None = None,
+                            source_sessions: list[str] | None = None):
+        import json
+        updates, values = [], []
+        if confidence is not None:
+            updates.append("confidence = ?")
+            values.append(confidence)
+        if source_sessions is not None:
+            updates.append("source_sessions = ?")
+            values.append(json.dumps(source_sessions))
+        if updates:
+            updates.append("updated_at = CURRENT_TIMESTAMP")
+            values.append(rule_id)
+            with self.transaction() as conn:
+                conn.execute(f'UPDATE learned_rules SET {", ".join(updates)} WHERE id = ?', values)
+
+    def get_learned_rules(self, category: str | None = None, file_pattern: str | None = None,
+                          min_confidence: float = 0.0) -> list[dict]:
+        query = 'SELECT * FROM learned_rules WHERE confidence >= ?'
+        params: list = [min_confidence]
+        if category:
+            query += ' AND category = ?'
+            params.append(category)
+        if file_pattern:
+            query += ' AND (file_pattern IS NULL OR ? LIKE file_pattern)'
+            params.append(file_pattern)
+        query += ' ORDER BY confidence DESC'
+        cur = self.conn.execute(query, params)
+        return [dict(r) for r in cur.fetchall()]
+
+    # ------------------------------------------------------------------
+    # Project maturity metrics
+    # ------------------------------------------------------------------
+
+    def get_project_maturity(self) -> dict:
+        """Compute overall project maturity based on outcomes and coverage."""
+        # Overall confidence
+        confidence = self.get_decision_confidence()
+
+        # File coverage: files with at least one session decision
+        total_files = self.conn.execute('SELECT COUNT(*) as c FROM nodes WHERE kind = "file"').fetchone()['c']
+        covered_files = self.conn.execute(
+            'SELECT COUNT(DISTINCT file_path) as c FROM decisions WHERE file_path IS NOT NULL'
+        ).fetchone()['c']
+
+        # Learned rules count
+        rule_count = self.conn.execute('SELECT COUNT(*) as c FROM learned_rules WHERE confidence >= 0.5').fetchone()['c']
+
+        # Preference signals count
+        pref_count = self.conn.execute('SELECT COUNT(*) as c FROM preferences WHERE frequency >= 2').fetchone()['c']
+
+        # Session count
+        session_count = self.conn.execute('SELECT COUNT(*) as c FROM sessions').fetchone()['c']
+
+        coverage = round(covered_files / total_files, 3) if total_files > 0 else 0.0
+
+        return {
+            "session_count": session_count,
+            "total_files": total_files,
+            "covered_files": covered_files,
+            "coverage": coverage,
+            "overall_confidence": confidence["confidence"],
+            "outcome_breakdown": confidence,
+            "learned_rules": rule_count,
+            "preference_signals": pref_count,
+        }
+
+    # ------------------------------------------------------------------
+    # Session helpers
+    # ------------------------------------------------------------------
+
+    def get_recent_sessions(self, limit: int = 5) -> list[dict]:
+        cur = self.conn.execute('''
+            SELECT * FROM sessions ORDER BY created_at DESC LIMIT ?
+        ''', (limit,))
+        return [dict(r) for r in cur.fetchall()]
+
+    def get_recent_decisions(self, limit: int = 10) -> list[dict]:
+        cur = self.conn.execute('''
+            SELECT d.*, s.summary, s.phase FROM decisions d
+            JOIN sessions s ON d.session_id = s.session_id
+            ORDER BY d.created_at DESC LIMIT ?
+        ''', (limit,))
+        return [dict(r) for r in cur.fetchall()]
 
     def get_file_hash(self, file_path: str) -> str | None:
         cur = self.conn.execute('SELECT sha256 FROM file_hashes WHERE file_path = ?', (file_path,))

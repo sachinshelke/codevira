@@ -26,6 +26,143 @@ def _roadmap_file() -> Path:
     return get_data_dir() / "roadmap.yaml"
 
 
+def _list_or_empty(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def _phase_number(entry: Any) -> Any:
+    if isinstance(entry, dict):
+        return entry.get("phase", entry.get("number"))
+    return entry
+
+
+def _normalize_phase_entry(entry: Any, default_status: str | None = None) -> dict[str, Any]:
+    normalized = dict(entry) if isinstance(entry, dict) else {}
+    phase_number = _phase_number(entry)
+
+    if phase_number is not None:
+        normalized["phase"] = phase_number
+        normalized["number"] = phase_number
+
+    if default_status and not normalized.get("status"):
+        normalized["status"] = default_status
+
+    description = normalized.get("description") or normalized.get("goal")
+    if description is not None:
+        normalized["description"] = description
+        normalized.setdefault("goal", description)
+
+    return normalized
+
+
+def _normalize_current_phase(raw_current: Any, data: dict[str, Any]) -> dict[str, Any]:
+    phases = _list_or_empty(data.get("phases"))
+    current = dict(raw_current) if isinstance(raw_current, dict) else {}
+    current_number = _phase_number(raw_current)
+
+    if current_number is None and phases:
+        for candidate in phases:
+            if isinstance(candidate, dict) and candidate.get("status") in {"in_progress", "blocked", "pending"}:
+                current_number = _phase_number(candidate)
+                break
+        if current_number is None:
+            current_number = _phase_number(phases[0])
+
+    matched_phase = next(
+        (
+            phase
+            for phase in phases
+            if str(_phase_number(phase)) == str(current_number)
+        ),
+        {},
+    )
+    if isinstance(matched_phase, dict):
+        for key, value in matched_phase.items():
+            current.setdefault(key, value)
+
+    if current_number is None:
+        current_number = current.get("number", current.get("phase"))
+
+    if current_number is not None:
+        current["number"] = current_number
+
+    normalized = _normalize_phase_entry(current, default_status="pending")
+    normalized.pop("phase", None)
+
+    if current_number is not None:
+        normalized["number"] = current_number
+        normalized.setdefault("name", f"Phase {current_number}")
+    else:
+        normalized.setdefault("name", "Getting Started")
+
+    normalized.setdefault(
+        "next_action",
+        data.get("next_action")
+        or (
+            "Define your first phase: use add_phase() to queue upcoming work, "
+            "or update_next_action() to describe what needs doing next."
+        ),
+    )
+    normalized["open_changesets"] = _list_or_empty(
+        normalized.get("open_changesets", data.get("open_changesets", []))
+    )
+
+    return normalized
+
+
+def _normalize_roadmap(data: Any) -> dict[str, Any]:
+    if not isinstance(data, dict):
+        return _create_stub_roadmap()
+
+    current = _normalize_current_phase(data.get("current_phase"), data)
+    current_number = current.get("number")
+    phases = _list_or_empty(data.get("phases"))
+
+    upcoming_raw = data.get("upcoming_phases")
+    if not isinstance(upcoming_raw, list):
+        upcoming_raw = data.get("upcoming")
+    if not isinstance(upcoming_raw, list):
+        upcoming_raw = [
+            phase
+            for phase in phases
+            if str(_phase_number(phase)) != str(current_number)
+            and str(getattr(phase, "get", lambda _k, _d=None: None)("status", "")).lower()
+            not in {"done", "complete", "completed"}
+        ]
+
+    completed_raw = data.get("completed_phases")
+    if not isinstance(completed_raw, list):
+        completed_raw = [
+            phase
+            for phase in phases
+            if str(_phase_number(phase)) != str(current_number)
+            and str(getattr(phase, "get", lambda _k, _d=None: None)("status", "")).lower()
+            in {"done", "complete", "completed"}
+        ]
+
+    deferred_raw = data.get("deferred")
+    if not isinstance(deferred_raw, list):
+        deferred_raw = data.get("deferred_phases", [])
+
+    return {
+        "project": data.get("project", get_project_root().name),
+        "version": str(data.get("version", "1.0")),
+        "current_phase": current,
+        "upcoming_phases": [
+            _normalize_phase_entry(phase, default_status="pending")
+            for phase in _list_or_empty(upcoming_raw)
+        ],
+        "deferred": [
+            _normalize_phase_entry(phase, default_status="deferred")
+            for phase in _list_or_empty(deferred_raw)
+        ],
+        "completed_phases": [
+            _normalize_phase_entry(phase, default_status="completed")
+            for phase in _list_or_empty(completed_raw)
+        ],
+    }
+
+
 def _load_roadmap() -> dict:
     roadmap_file = _roadmap_file()
     if not roadmap_file.exists():
@@ -33,7 +170,12 @@ def _load_roadmap() -> dict:
         _save_roadmap(stub)
         return stub
     with open(roadmap_file) as f:
-        return yaml.safe_load(f) or {}
+        raw_data = yaml.safe_load(f) or {}
+
+    normalized = _normalize_roadmap(raw_data)
+    if normalized != raw_data:
+        _save_roadmap(normalized)
+    return normalized
 
 
 def _create_stub_roadmap() -> dict:
@@ -58,6 +200,7 @@ def _create_stub_roadmap() -> dict:
 
 
 def _save_roadmap(data: dict) -> None:
+    _roadmap_file().parent.mkdir(parents=True, exist_ok=True)
     with open(_roadmap_file(), "w") as f:
         yaml.dump(data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
 
@@ -117,6 +260,7 @@ def get_full_roadmap() -> dict[str, Any]:
         "current_phase": data.get("current_phase", {}),
         "upcoming_phases": data.get("upcoming_phases", []),
         "deferred": data.get("deferred", []),
+        "deferred_phases": data.get("deferred", []),
         "completed_phases": data.get("completed_phases", []),
         "summary": {
             "completed": len(data.get("completed_phases", [])),
@@ -212,10 +356,12 @@ def add_phase(
 
     entry: dict[str, Any] = {
         "phase": phase,
+        "number": phase,
         "name": name,
         "priority": priority,
         "depends_on": depends_on or [],
         "description": description,
+        "goal": description,
     }
     if files:
         entry["files"] = files
@@ -327,9 +473,12 @@ def defer_phase(
     deferred_entry = {
         "name": target.get("name"),
         "phase": target.get("phase"),
+        "number": target.get("number", target.get("phase")),
         "reason": reason,
         "deferred_date": date.today().isoformat(),
         "original_priority": target.get("priority"),
+        "goal": target.get("goal", target.get("description")),
+        "description": target.get("description", target.get("goal", "")),
     }
 
     data["upcoming_phases"] = upcoming
@@ -371,9 +520,12 @@ def complete_phase(phase_number: int | str, key_decisions: list[str]) -> dict[st
 
     completed_entry = {
         "phase": current["number"],
+        "number": current["number"],
         "name": current["name"],
         "completed": date.today().isoformat(),
         "key_decisions": key_decisions,
+        "goal": current.get("goal", current.get("description", "")),
+        "description": current.get("description", current.get("goal", "")),
     }
     if current.get("started"):
         completed_entry["started"] = current["started"]
@@ -391,6 +543,7 @@ def complete_phase(phase_number: int | str, key_decisions: list[str]) -> dict[st
             "next_action": f"Begin {next_phase['name']}: {next_phase.get('description', '')}".strip(": "),
             "open_changesets": [],
             "description": next_phase.get("description", ""),
+            "goal": next_phase.get("goal", next_phase.get("description", "")),
         }
         data["upcoming_phases"] = upcoming
         advanced_to = data["current_phase"]["number"]

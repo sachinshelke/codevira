@@ -88,6 +88,37 @@ def _get_changed_files(db: SQLiteGraph) -> list[tuple[str, str]]:
                 
     return changed
 
+
+def _get_requested_files(file_paths: list[str]) -> list[tuple[str, str]]:
+    requested = []
+    seen_paths = set()
+    config = _load_config()
+    extensions = config.get("file_extensions", [".py", ".ts", ".tsx", ".go", ".rs"])
+    skip_dirs = config.get("skip_dirs", ["node_modules", ".venv", "__pycache__"])
+
+    for raw_path in file_paths:
+        candidate = Path(raw_path)
+        abs_path = candidate if candidate.is_absolute() else PROJECT_ROOT / candidate
+
+        try:
+            rel_path = str(abs_path.resolve().relative_to(PROJECT_ROOT))
+        except ValueError:
+            continue
+
+        if rel_path in seen_paths:
+            continue
+        if not abs_path.exists() or not abs_path.is_file():
+            continue
+        if abs_path.suffix not in extensions:
+            continue
+        if any(skip in abs_path.parts for skip in skip_dirs):
+            continue
+
+        seen_paths.add(rel_path)
+        requested.append((rel_path, _compute_hash(abs_path)))
+
+    return requested
+
 def _chunk_to_document(chunk) -> tuple[str, str, dict]:
     doc_id = f"{chunk.file_path}::{chunk.chunk_type}::{chunk.name}::{chunk.start_line}"
     document = f"{chunk.file_path} — {chunk.name}\n{chunk.docstring}\n\n{chunk.source_text}"
@@ -177,21 +208,26 @@ def cmd_full_rebuild():
     generate_graph_sqlite(str(PROJECT_ROOT), str(db.db_path))
     db.close()
 
-def cmd_incremental(quiet: bool = False):
+def cmd_incremental(quiet: bool = False, file_paths: list[str] | None = None):
     from indexer.chunker import chunk_file
     from indexer.graph_generator import generate_graph_sqlite
     from rich.console import Console
     console = Console(quiet=quiet)
 
     db = SQLiteGraph(get_data_dir() / "graph" / "graph.db")
-    changed_items = _get_changed_files(db)
+    explicit_files = file_paths or []
+    changed_items = _get_requested_files(explicit_files) if explicit_files else _get_changed_files(db)
     
     if not changed_items:
-        console.print("[green]✓[/green] No files changed. Index is up to date.")
+        if explicit_files:
+            console.print("[green]✓[/green] No matching files found to re-index.")
+        else:
+            console.print("[green]✓[/green] No files changed. Index is up to date.")
         db.close()
         return 0
 
-    console.print(f"[bold cyan]Incremental update:[/bold cyan] {len(changed_items)} changed file(s)")
+    file_label = "requested file(s)" if explicit_files else "changed file(s)"
+    console.print(f"[bold cyan]Incremental update:[/bold cyan] {len(changed_items)} {file_label}")
 
     client = _get_chroma_client()
     embed_fn = _get_embedding_fn()
@@ -202,6 +238,7 @@ def cmd_incremental(quiet: bool = False):
         db.close()
         sys.exit(1)
 
+    indexed_any = False
     for fpath, fhash in changed_items:
         try:
             collection.delete(where={"file_path": fpath})
@@ -219,13 +256,16 @@ def cmd_incremental(quiet: bool = False):
                     metas.append(meta)
                 collection.add(ids=ids, documents=docs, metadatas=metas)
 
-            generate_graph_sqlite(str(PROJECT_ROOT), str(db.db_path))
             db.update_file_hash(fpath, fhash)
+            indexed_any = True
             console.print(f"  [green]+[/green] Re-indexed {len(chunks)} chunks for {fpath}")
             
         except Exception as e:
             console.print(f"[red]Error indexing {fpath}: {e}[/red]")
             continue
+
+    if indexed_any:
+        generate_graph_sqlite(str(PROJECT_ROOT), str(db.db_path))
             
     db.close()
     return 0

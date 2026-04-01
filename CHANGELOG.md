@@ -13,6 +13,43 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [1.4.0] — 2026-04-02 — Living Memory: Adaptive Learning & Real Dependency Graph
+
+### Added — Dependency Graph (was broken, now works)
+- **Dependency edges wired up**: `extract_imports()` is now called during graph generation, populating the `edges` table via new `add_edge()` / `remove_edges_for_node()` methods. `get_impact()` now returns real blast-radius results (was always empty before).
+- **Tree-sitter import resolution**: Enhanced `_extract_imports_treesitter()` to resolve TypeScript/JS relative imports, Go package imports, and Rust use paths to actual project file paths.
+- **Edge auto-refresh**: Dependency edges are re-derived on every incremental index and live file-watcher trigger — edges stay current within 2 seconds of file save.
+
+### Added — Adaptive Learning Engine (7 new MCP tools)
+- **`get_decision_confidence(file_path?, pattern?)`**: Returns outcome-based confidence scores — how often past decisions in an area were kept, modified, or reverted.
+- **`get_preferences(category?)`**: Returns learned developer style preferences (naming, structure, patterns) from post-edit correction signals.
+- **`get_learned_rules(file_path?, category?)`**: Returns auto-generated rules from observed patterns — test pairing, import hotspots, co-change files, recurring decision phrases.
+- **`get_project_maturity()`**: Returns a 0–100 maturity score combining session count, file coverage, confidence, learned rules, and preference signals.
+- **`get_session_context()`**: Single "catch me up" call for cross-tool continuity. Returns current roadmap phase, open changesets, recent decisions with confidence, top preferences, and active rules.
+- **`export_graph(format, scope?)`**: Generates dependency diagrams in Mermaid or DOT format, with stability-based node styling.
+- **`get_graph_diff(base_ref?, head_ref?)`**: Shows which graph nodes changed between git refs, their stability, do_not_revert flags, and union blast radius.
+
+### Added — Backend (3 new files)
+- **`indexer/outcome_tracker.py`**: Git-based feedback loop — analyzes post-session git history to classify changes as kept, modified, or reverted. Feeds confidence scoring and preference learning.
+- **`indexer/rule_learner.py`**: Pattern detection engine — infers test pairing rules, import hotspot rules, decision pattern rules, and co-change rules from session history.
+- **`mcp_server/tools/learning.py`**: MCP tool implementations for all 7 learning tools, including maturity scoring and cross-tool session handoff.
+
+### Added — SQLite Schema (3 new tables)
+- **`outcomes`**: Tracks kept/modified/reverted outcomes per decision with delta summaries.
+- **`preferences`**: Stores developer style signals with frequency counts and examples.
+- **`learned_rules`**: Auto-generated rules with confidence scores, categories, and file pattern matching.
+
+### Changed
+- **`generate_graph_sqlite()`** now returns `edges_added` count alongside `nodes_added` / `nodes_skipped`.
+- **MCP server startup** now runs outcome analysis and rule inference on boot (best-effort, non-blocking).
+
+### Verified
+- Full tool audit: **33/33** tool dispatches registered and passing.
+- Unit tests: **70/70** pass (41 existing + 22 new + 7 edge-case).
+- Real codebase validation: 57 dependency edges populated, blast radius returns 27 affected files for core modules.
+
+---
+
 ## [1.3.1] — 2026-03-26 — MCP Tool Dispatch Hotfix
 
 ### Fixed

@@ -220,6 +220,150 @@ def get_impact(file_path: str) -> dict[str, Any]:
         "affected_files": affected,
     }
 
+def export_graph(format: str = "mermaid", scope: str | None = None) -> dict[str, Any]:
+    """Export the dependency graph as Mermaid or DOT format."""
+    db = _get_db()
+    try:
+        nodes = db.list_file_nodes()
+        edges = db.get_all_edges()
+
+        # Filter by scope if provided
+        if scope:
+            nodes = [n for n in nodes if n["file_path"].startswith(scope)]
+            node_ids = {f"file:{n['file_path']}" for n in nodes}
+            edges = [e for e in edges if e["source_id"] in node_ids or e["target_id"] in node_ids]
+
+        if format == "mermaid":
+            output = _to_mermaid(nodes, edges)
+        elif format == "dot":
+            output = _to_dot(nodes, edges)
+        else:
+            return {"error": f"Unknown format '{format}'. Use 'mermaid' or 'dot'."}
+
+        return {
+            "format": format,
+            "node_count": len(nodes),
+            "edge_count": len(edges),
+            "output": output,
+        }
+    finally:
+        db.close()
+
+
+def _to_mermaid(nodes: list[dict], edges: list[dict]) -> str:
+    lines = ["graph LR"]
+    # Create safe node IDs for Mermaid
+    id_map = {}
+    for n in nodes:
+        safe_id = n["file_path"].replace("/", "_").replace(".", "_").replace("-", "_")
+        id_map[f"file:{n['file_path']}"] = safe_id
+        label = Path(n["file_path"]).name
+        stability = n.get("stability", "medium")
+        style = ""
+        if stability == "high":
+            style = ":::high"
+        elif stability == "low":
+            style = ":::low"
+        lines.append(f"    {safe_id}[\"{label}\"]{style}")
+
+    for e in edges:
+        src = id_map.get(e["source_id"])
+        tgt = id_map.get(e["target_id"])
+        if src and tgt:
+            lines.append(f"    {src} --> {tgt}")
+
+    return "\n".join(lines)
+
+
+def _to_dot(nodes: list[dict], edges: list[dict]) -> str:
+    lines = ["digraph codevira {", "    rankdir=LR;", "    node [shape=box, fontsize=10];"]
+    id_map = {}
+    for n in nodes:
+        safe_id = n["file_path"].replace("/", "_").replace(".", "_").replace("-", "_")
+        id_map[f"file:{n['file_path']}"] = safe_id
+        label = Path(n["file_path"]).name
+        color = {"high": "green", "medium": "yellow", "low": "red"}.get(n.get("stability", "medium"), "white")
+        lines.append(f'    {safe_id} [label="{label}", fillcolor={color}, style=filled];')
+
+    for e in edges:
+        src = id_map.get(e["source_id"])
+        tgt = id_map.get(e["target_id"])
+        if src and tgt:
+            lines.append(f"    {src} -> {tgt};")
+
+    lines.append("}")
+    return "\n".join(lines)
+
+
+def get_graph_diff(base_ref: str = "main", head_ref: str = "HEAD") -> dict[str, Any]:
+    """Show which graph nodes changed between two git refs and their blast radius."""
+    import subprocess
+    root = get_project_root()
+
+    try:
+        diff_output = subprocess.check_output(
+            ["git", "-C", str(root), "diff", "--name-only", f"{base_ref}...{head_ref}"],
+            stderr=subprocess.DEVNULL,
+        ).decode("utf-8").strip()
+    except subprocess.CalledProcessError:
+        # Fallback for when there's no common ancestor (e.g., same branch)
+        try:
+            diff_output = subprocess.check_output(
+                ["git", "-C", str(root), "diff", "--name-only", base_ref, head_ref],
+                stderr=subprocess.DEVNULL,
+            ).decode("utf-8").strip()
+        except subprocess.CalledProcessError as e:
+            return {
+                "error": f"Could not compute diff between {base_ref} and {head_ref}",
+                "detail": f"git exit code {e.returncode}. Ensure both refs exist.",
+            }
+
+    if not diff_output:
+        return {"changed_files": [], "total_blast_radius": 0, "hint": "No files changed."}
+
+    changed_files = [f for f in diff_output.split("\n") if f.strip()]
+
+    db = _get_db()
+    try:
+        result_files = []
+        all_affected = set()
+
+        for fp in changed_files:
+            node = db.get_node_by_path(fp)
+            if node:
+                blast = db.get_blast_radius(node["id"], max_depth=3)
+                affected_paths = [r["file_path"] for r in blast if r["file_path"] != fp]
+                all_affected.update(affected_paths)
+                result_files.append({
+                    "file_path": fp,
+                    "in_graph": True,
+                    "stability": node.get("stability", "medium"),
+                    "do_not_revert": bool(node.get("do_not_revert")),
+                    "blast_radius": len(affected_paths),
+                    "affected": affected_paths[:5],  # Top 5 for brevity
+                })
+            else:
+                result_files.append({
+                    "file_path": fp,
+                    "in_graph": False,
+                    "stability": "unknown",
+                    "do_not_revert": False,
+                    "blast_radius": 0,
+                    "affected": [],
+                })
+
+        return {
+            "base_ref": base_ref,
+            "head_ref": head_ref,
+            "changed_files": result_files,
+            "total_changed": len(changed_files),
+            "total_blast_radius": len(all_affected),
+            "union_affected": list(all_affected)[:20],  # Top 20
+        }
+    finally:
+        db.close()
+
+
 def refresh_graph(file_paths: list[str] | None = None) -> dict[str, Any]:
     from indexer.graph_generator import generate_graph_sqlite
     from mcp_server.paths import get_project_root

@@ -44,7 +44,7 @@ except ImportError:
     sys.exit(1)
 
 import json
-from mcp_server.tools.graph import get_node, get_impact, list_nodes, add_node, update_node, refresh_graph
+from mcp_server.tools.graph import get_node, get_impact, list_nodes, add_node, update_node, refresh_graph, export_graph, get_graph_diff
 from mcp_server.tools.roadmap import (
     get_roadmap, get_full_roadmap, get_phase,
     add_phase, update_phase_status, defer_phase,
@@ -61,6 +61,13 @@ from mcp_server.tools.changesets import (
 )
 from mcp_server.tools.playbook import get_playbook
 from mcp_server.tools.code_reader import get_signature, get_code
+from mcp_server.tools.learning import (
+    get_decision_confidence as learning_get_decision_confidence,
+    get_preferences as learning_get_preferences,
+    get_learned_rules as learning_get_learned_rules,
+    get_project_maturity as learning_get_project_maturity,
+    get_session_context as learning_get_session_context,
+)
 
 server = Server("codevira")
 
@@ -548,6 +555,134 @@ async def list_tools() -> list[Tool]:
                 "required": ["file_path"],
             },
         ),
+        # ---- v1.4: Graph Visualization & Diff ----
+        Tool(
+            name="export_graph",
+            description=(
+                "Export the dependency graph as a Mermaid or DOT diagram. "
+                "Use for documentation, PR descriptions, or onboarding. "
+                "Pass scope to limit to a directory (e.g. 'src/services/')."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "format": {
+                        "type": "string",
+                        "enum": ["mermaid", "dot"],
+                        "description": "Output format: 'mermaid' or 'dot'",
+                        "default": "mermaid",
+                    },
+                    "scope": {
+                        "type": "string",
+                        "description": "Filter to files under this directory prefix",
+                    },
+                },
+            },
+        ),
+        Tool(
+            name="get_graph_diff",
+            description=(
+                "Show which graph nodes changed between two git refs and their blast radius. "
+                "Use before opening a PR to understand the impact of your changes. "
+                "Defaults to comparing main...HEAD."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "base_ref": {
+                        "type": "string",
+                        "description": "Base git ref (default: 'main')",
+                        "default": "main",
+                    },
+                    "head_ref": {
+                        "type": "string",
+                        "description": "Head git ref (default: 'HEAD')",
+                        "default": "HEAD",
+                    },
+                },
+            },
+        ),
+        # ---- v1.4: Learning & Adaptive Memory ----
+        Tool(
+            name="get_decision_confidence",
+            description=(
+                "Get confidence scores for a file or pattern based on outcome history. "
+                "Returns how often past decisions were kept, modified, or reverted. "
+                "Call this before making decisions in an area to gauge reliability."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "Specific file to check confidence for",
+                    },
+                    "pattern": {
+                        "type": "string",
+                        "description": "Directory or file pattern to check (e.g. 'src/api/')",
+                    },
+                },
+            },
+        ),
+        Tool(
+            name="get_preferences",
+            description=(
+                "Get learned developer preferences from past correction patterns. "
+                "Returns coding style signals: naming conventions, structural preferences, patterns. "
+                "Call this before writing code to match the developer's style."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "category": {
+                        "type": "string",
+                        "description": "Filter by category: 'naming' | 'structure' | 'patterns' | 'formatting'",
+                    },
+                },
+            },
+        ),
+        Tool(
+            name="get_learned_rules",
+            description=(
+                "Get auto-generated rules from observed patterns across sessions. "
+                "These rules are learned from what works — test pairing patterns, import rules, "
+                "co-change patterns. Higher confidence = more reliable. "
+                "Use alongside get_playbook() for comprehensive guidance."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "File path to get rules for (matches by pattern)",
+                    },
+                    "category": {
+                        "type": "string",
+                        "description": "Filter: 'testing' | 'imports' | 'structure' | 'patterns' | 'naming'",
+                    },
+                },
+            },
+        ),
+        Tool(
+            name="get_project_maturity",
+            description=(
+                "Get overall project intelligence and maturity metrics. "
+                "Shows session count, file coverage, confidence score, learned rules, "
+                "and preference signals. The higher the score, the less ambiguous agent decisions are."
+            ),
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        Tool(
+            name="get_session_context",
+            description=(
+                "Single 'catch me up' call for cross-tool continuity. "
+                "Returns current roadmap phase, open changesets, recent decisions with confidence, "
+                "learned preferences, and active rules — everything a new session needs. "
+                "Call this at the START of every session instead of multiple separate calls. "
+                "Works seamlessly across AI tools: Cursor, Claude Code, Windsurf, Antigravity."
+            ),
+            inputSchema={"type": "object", "properties": {}},
+        ),
     ]
 
 
@@ -668,6 +803,34 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             result = get_signature(arguments["file_path"])
         elif name == "get_code":
             result = get_code(arguments["file_path"], symbol=arguments.get("symbol"))
+        # ---- v1.4: Graph Visualization & Diff ----
+        elif name == "export_graph":
+            result = export_graph(
+                format=arguments.get("format", "mermaid"),
+                scope=arguments.get("scope"),
+            )
+        elif name == "get_graph_diff":
+            result = get_graph_diff(
+                base_ref=arguments.get("base_ref", "main"),
+                head_ref=arguments.get("head_ref", "HEAD"),
+            )
+        # ---- v1.4: Learning & Adaptive Memory ----
+        elif name == "get_decision_confidence":
+            result = learning_get_decision_confidence(
+                file_path=arguments.get("file_path"),
+                pattern=arguments.get("pattern"),
+            )
+        elif name == "get_preferences":
+            result = learning_get_preferences(category=arguments.get("category"))
+        elif name == "get_learned_rules":
+            result = learning_get_learned_rules(
+                file_path=arguments.get("file_path"),
+                category=arguments.get("category"),
+            )
+        elif name == "get_project_maturity":
+            result = learning_get_project_maturity()
+        elif name == "get_session_context":
+            result = learning_get_session_context()
         else:
             result = {"error": f"Unknown tool: {name}"}
 
@@ -693,6 +856,17 @@ def main():
     except Exception as e:
         # Watcher is best-effort; don't block server startup
         logger.warning("Could not start background watcher: %s", e)
+
+    # v1.4: Run outcome analysis and rule inference on startup
+    # This processes any sessions that haven't been analyzed yet.
+    try:
+        from indexer.outcome_tracker import analyze_session_outcomes
+        from indexer.rule_learner import run_rule_inference
+        analyze_session_outcomes()
+        run_rule_inference()
+        logger.info("Outcome analysis and rule inference complete")
+    except Exception as e:
+        logger.warning("Could not run startup learning: %s", e)
 
     async def _run():
         async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):

@@ -105,13 +105,75 @@ def extract_imports(file_path: str, project_root: str) -> list[str]:
 def _extract_imports_treesitter(file_path: str, project_root: str) -> list[str]:
     """
     Extract import paths from a non-Python file using tree-sitter.
-    Returns raw import module paths (not resolved to file paths).
+    Resolves relative/local imports to actual project file paths where possible.
+    Falls back to raw module strings for unresolvable imports.
     """
     try:
         parsed = ts_parse_file(file_path)
     except (FileNotFoundError, ValueError):
         return []
-    return [imp.module for imp in parsed.imports]
+
+    project_root_path = Path(project_root)
+    file_dir = Path(file_path).parent
+    results: list[str] = []
+
+    for imp in parsed.imports:
+        raw = imp.module
+        resolved = _resolve_ts_import(raw, file_dir, project_root_path)
+        if resolved and resolved not in results:
+            results.append(resolved)
+
+    return results
+
+
+def _resolve_ts_import(raw_module: str, file_dir: Path, project_root: Path) -> str | None:
+    """
+    Try to resolve a tree-sitter import string to a relative file path.
+    Handles TypeScript/JS relative imports, Go package imports, and Rust use paths.
+    """
+    # TypeScript/JS: relative imports like './foo' or '../bar'
+    if raw_module.startswith('.'):
+        # Resolve relative to the importing file's directory
+        candidates = [
+            file_dir / f"{raw_module}.ts",
+            file_dir / f"{raw_module}.tsx",
+            file_dir / f"{raw_module}.js",
+            file_dir / f"{raw_module}.jsx",
+            file_dir / raw_module / "index.ts",
+            file_dir / raw_module / "index.tsx",
+            file_dir / raw_module / "index.js",
+        ]
+        for c in candidates:
+            resolved = c.resolve()
+            if resolved.exists():
+                try:
+                    return str(resolved.relative_to(project_root))
+                except ValueError:
+                    continue
+        return None
+
+    # Non-relative: try as a project-local path (e.g. 'src/utils/foo')
+    # Check common extensions
+    for ext in ['.ts', '.tsx', '.js', '.go', '.rs']:
+        candidate = project_root / f"{raw_module}{ext}"
+        if candidate.exists():
+            return str(candidate.relative_to(project_root))
+
+    # Try as directory with index file
+    for index in ['index.ts', 'index.tsx', 'index.js', 'mod.rs']:
+        candidate = project_root / raw_module / index
+        if candidate.exists():
+            return str(candidate.relative_to(project_root))
+
+    # Go: package paths like 'project/internal/services'
+    # Try mapping to directory with .go files
+    candidate_dir = project_root / raw_module
+    if candidate_dir.is_dir():
+        go_files = list(candidate_dir.glob('*.go'))
+        if go_files:
+            return str(go_files[0].relative_to(project_root))
+
+    return None
 
 
 def _extract_imports_python(file_path: str, project_root: str) -> list[str]:

@@ -97,5 +97,17 @@ def get_history(file_path: str) -> dict[str, Any]:
 
 def refresh_index(file_paths: list[str]) -> dict:
     from indexer.index_codebase import cmd_incremental
-    cmd_incremental(quiet=True)
-    return {"status": f"Index refreshed for {len(file_paths)} files."}
+    requested_files = file_paths or None
+    cmd_incremental(quiet=True, file_paths=requested_files)
+
+    if requested_files:
+        return {
+            "status": f"Index refreshed for {len(requested_files)} requested file(s).",
+            "file_paths": requested_files,
+            "mode": "targeted",
+        }
+
+    return {
+        "status": "Index refreshed for all changed files.",
+        "mode": "incremental",
+    }

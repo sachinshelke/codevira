@@ -20,6 +20,15 @@ def set_project_dir(path: str | Path) -> None:
     _project_dir_override = Path(path).resolve()
 
 
+def _discover_project_root(start: Path) -> Path:
+    """Walk upward to find the nearest ancestor that contains .codevira/."""
+    start = start.resolve()
+    for candidate in (start, *start.parents):
+        if (candidate / ".codevira").is_dir():
+            return candidate
+    return start
+
+
 def get_project_root() -> Path:
     """Return the project root directory.
 
@@ -27,8 +36,8 @@ def get_project_root() -> Path:
     otherwise falls back to the current working directory.
     """
     if _project_dir_override is not None:
-        return _project_dir_override
-    return Path.cwd()
+        return _discover_project_root(_project_dir_override)
+    return _discover_project_root(Path.cwd())
 
 
 def get_data_dir() -> Path:

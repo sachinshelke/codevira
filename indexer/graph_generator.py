@@ -233,6 +233,9 @@ def generate_graph_sqlite(project_root: str, db_path: str | None = None) -> dict
         added += 1
         files_added.append(fp)
         
+    # Build the full set of project file paths (used by Phases 2 and 4)
+    all_node_paths = {fp for fp in file_paths if "node_modules" not in fp and ".venv" not in fp}
+
     # ---- Phase 2: Populate function-level symbols ----
     symbols_added = 0
     for fp in all_node_paths:
@@ -303,8 +306,6 @@ def generate_graph_sqlite(project_root: str, db_path: str | None = None) -> dict
 
     # ---- Phase 4: Populate dependency edges from imports ----
     edges_added = 0
-    all_node_paths = {fp for fp in file_paths if "node_modules" not in fp and ".venv" not in fp}
-
     for fp in all_node_paths:
         source_id = f"file:{fp}"
         abs_path = os.path.join(project_root, fp)

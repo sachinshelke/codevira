@@ -52,7 +52,7 @@ Make setup and daily use smoother.
 
 ---
 
-## ✅ v1.4 — Living Memory (current)
+## ✅ v1.4 — Living Memory
 
 Transform Codevira from a static knowledge base into an adaptive memory that learns.
 
@@ -71,14 +71,40 @@ Transform Codevira from a static knowledge base into an adaptive memory that lea
 
 ---
 
-## 🔜 v1.5 — Ecosystem & Scale
+## ✅ v1.5 — Zero-Config Global Memory + Deep Graph Intelligence (current)
 
-Expand beyond single-developer, single-repo usage.
+Make Codevira instant to set up and intelligent across all your projects.
 
-- **VS Code extension** — one-click MCP server setup without editing JSON config manually
-- **Multi-repo support** — federated graph across multiple repositories in a workspace
-- **Remote ChromaDB** — option to share a single index across a team (instead of per-developer local)
+- **Zero-config init** — auto-detects language, source dirs, file extensions from project markers (15 languages); no interactive prompts
+- **IDE auto-inject** — writes MCP config directly into Claude Code, Cursor, Windsurf, and Google Antigravity on `init`
+- **Cross-project global memory** — `~/.codevira/global.db` aggregates learned preferences and rules across all projects; imported on startup with confidence decay
+- **Function-level call graph** — `symbols` + `call_edges` tables; knows which function calls which, across files
+- **3 new deep graph tools**: `query_graph()` (callers/callees/tests), `analyze_changes()` (function-level risk scoring), `find_hotspots()` (complexity heatmap)
+- **5 MCP workflow prompts** — `review_changes`, `debug_issue`, `onboard_session`, `pre_commit_check`, `architecture_overview`
+- **36 MCP tools** (up from 33)
+
+---
+
+## 🔜 v1.6 — Cloud Sync & Distribution
+
+Bridge from local tool to cloud-connected service.
+
+- **Publish to PyPI** — `pipx install codevira-mcp` works for anyone, no repo clone needed
+- **List on MCP registries** — Anthropic MCP registry, Cursor marketplace, Windsurf plugin store
+- **`codevira-mcp sync` daemon** — lightweight local agent that pushes `.codevira/` data to cloud in real time
+- **Cloud MCP server (SSE transport)** — HTTP/SSE endpoint; AI tools connect via URL + API key instead of local subprocess
 - **GitHub Actions integration** — run index + graph refresh in CI on every merge
+
+---
+
+## 🔜 v2.0 — Team Intelligence
+
+Expand beyond single-developer usage.
+
+- **Shared team memory** — org-wide learned rules and preferences, not just per-developer
+- **Multi-repo federated graph** — dependency graph spans multiple repositories in a workspace
+- **Remote ChromaDB** — shared semantic index across the team
+- **VS Code extension** — one-click MCP server setup without editing JSON config manually
 - **Natural language graph queries** — "show me all files that publish events" via semantic graph search
 
 ---

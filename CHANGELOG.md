@@ -13,6 +13,52 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [1.5.0] — 2026-04-02 — Zero-Config Global Memory + Deep Graph Intelligence
+
+### Added — Zero-Config Init
+- **Auto project detection** (`mcp_server/detect.py`): `codevira-mcp init` now requires zero prompts. Language, watched dirs, and file extensions are inferred from project markers (`Cargo.toml`, `go.mod`, `tsconfig.json`, `pyproject.toml`, `package.json`, etc.) across 15 languages.
+- **IDE auto-inject** (`mcp_server/ide_inject.py`): On `init`, automatically writes MCP server config into Claude Code (`.claude/settings.json`), Cursor (`.cursor/mcp.json`), Windsurf (`.windsurf/mcp.json`), and Google Antigravity config — non-destructively, merging with existing entries.
+- **CLI flags**: `--name`, `--language`, `--dirs`, `--ext`, `--no-inject` for overriding auto-detection without interactive prompts.
+
+### Added — Cross-Project Global Memory
+- **Global DB** (`indexer/global_db.py`): `~/.codevira/global.db` aggregates preferences and learned rules across all projects. Tables: `projects`, `global_preferences`, `global_rules`.
+- **Global sync** (`mcp_server/global_sync.py`): On server startup, imports global preferences (frequency ≥ 3) and rules (confidence ≥ 0.6) into the current project with 0.8× decay. On session end, exports project-level signals back to global.
+- **`get_global_stats()` in `get_session_context()`**: Single-call context now includes cross-project intelligence count.
+- **Paths** (`mcp_server/paths.py`): `get_global_home()` / `get_global_db_path()` create `~/.codevira/` on first use.
+
+### Added — Function-Level Call Graph
+- **`symbols` table** in SQLite: stores functions/classes/methods with name, kind, signature, parameters, return type, start/end line, docstring, visibility.
+- **`call_edges` table** in SQLite: caller → callee relationships with line numbers, resolved at index time.
+- **`add_symbol()`, `add_call_edge()`, `get_callers()`, `get_callees()`, `get_symbols_for_file()`, `find_symbol()`, `find_hotspot_functions()`, `find_high_fan_in()`** — 8 new SQLite methods.
+- **Phase 2/3 indexing** in `graph_generator.py`: After file nodes, populates symbols via `_get_python_symbols_detailed()` (ast.walk with call extraction), then resolves cross-file call edges.
+
+### Added — Deep Graph Tools (3 new MCP tools)
+- **`query_graph(file_path, symbol?, query_type)`**: Traverses call graph for `callers`, `callees`, `tests`, `dependents`, or `symbols` — function-level, not just file-level.
+- **`analyze_changes(base_ref?, head_ref?)`**: Function-level risk scoring for every changed file — flags missing tests, counts callers, identifies high-risk changes.
+- **`find_hotspots(threshold?)`**: Finds large functions (>50 lines), high fan-in (>5 callers), high fan-out nodes — complexity heatmap for the codebase.
+
+### Added — MCP Workflow Prompts (5 prompts)
+- **`review_changes`**: Staged diff + blast radius + risk score in one prompt.
+- **`debug_issue`**: Symptom → affected files → call chain → hypothesis.
+- **`onboard_session`**: Full project context catch-up for new AI sessions.
+- **`pre_commit_check`**: Test coverage gaps + high-risk functions before commit.
+- **`architecture_overview`**: Module map + hotspots + dependency summary.
+
+### Added — Tests
+- **`tests/test_v15_zero_config.py`**: 31 new tests covering auto-detection, IDE inject, global DB, call graph, hotspot detection, MCP prompts, and global sync lifecycle.
+
+### Changed
+- **`mcp_server/cli.py`**: Replaced all 4 `input()` calls with `auto_detect_project()`; replaced manual JSON printing with `inject_ide_config()`; registers project in global DB on init.
+- **`mcp_server/server.py`**: Registered 3 new graph tools + 5 MCP prompts via `@server.list_prompts()` / `@server.get_prompt()`; runs `import_global_to_project()` on startup.
+- **`mcp_server/tools/learning.py`**: `get_session_context()` now includes `global_intelligence` stats.
+
+### Verified
+- Full tool audit: **36/36** tool dispatches registered (33 tools + 3 new graph tools).
+- MCP prompts: **5/5** registered and resolvable.
+- Unit tests: **101/101** pass (70 existing + 31 new).
+
+---
+
 ## [1.4.0] — 2026-04-02 — Living Memory: Adaptive Learning & Real Dependency Graph
 
 ### Added — Dependency Graph (was broken, now works)

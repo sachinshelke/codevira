@@ -142,16 +142,71 @@ def _scan_dominant_language(root: Path, max_depth: int = 2) -> str:
     return "python"  # ultimate fallback
 
 
+
+# Top-level directories that never contain user code
+_SKIP_DIRS: set[str] = {
+    "node_modules", ".git", ".codevira", "__pycache__", ".venv", "venv",
+    "env", ".env", ".tox", "dist", "build", "target", ".next", ".nuxt",
+    ".turbo", ".cache", "coverage", ".nyc_output", "htmlcov", ".pytest_cache",
+    ".mypy_cache", ".ruff_cache", ".eggs", "*.egg-info", "vendor",
+    ".idea", ".vscode", "__snapshots__", ".storybook", "storybook-static",
+    "public", "static", "assets", "migrations", "fixtures",
+}
+
+
 def detect_watched_dirs(root: Path, language: str) -> list[str]:
-    """Detect source directories based on language conventions."""
-    candidates = LANGUAGE_DIRS.get(language, [])
-    found = [d for d in candidates if (root / d).is_dir()]
+    """
+    Detect source directories by scanning the actual project.
+
+    Strategy:
+      1. Scan every top-level subdirectory for source files (by extension).
+      2. Include any dir that contains at least one source file, recursively.
+      3. Fall back to convention list if nothing found that way.
+      4. Ultimate fallback: ["."]
+    """
+    extensions = set(LANGUAGE_EXTENSIONS.get(language, [".py"]))
+    found: list[str] = []
+
+    try:
+        for entry in sorted(root.iterdir()):
+            if not entry.is_dir():
+                continue
+            name = entry.name
+            # Skip hidden dirs and known non-code dirs
+            if name.startswith(".") or name in _SKIP_DIRS or name.endswith("-info"):
+                continue
+            # Check if this dir has any source file (up to reasonable depth)
+            if _dir_has_sources(entry, extensions, max_depth=6):
+                found.append(name)
+    except PermissionError:
+        pass
 
     if found:
         return found
 
-    # Fallback: use "." (project root)
+    # Convention fallback
+    candidates = LANGUAGE_DIRS.get(language, [])
+    convention = [d for d in candidates if (root / d).is_dir()]
+    if convention:
+        return convention
+
     return ["."]
+
+
+def _dir_has_sources(path: Path, extensions: set[str], max_depth: int) -> bool:
+    """Return True if path contains at least one file with a matching extension."""
+    if max_depth == 0:
+        return False
+    try:
+        for entry in path.iterdir():
+            if entry.is_file() and entry.suffix in extensions:
+                return True
+            if entry.is_dir() and not entry.name.startswith(".") and entry.name not in _SKIP_DIRS:
+                if _dir_has_sources(entry, extensions, max_depth - 1):
+                    return True
+    except PermissionError:
+        pass
+    return False
 
 
 def language_extensions(language: str) -> list[str]:

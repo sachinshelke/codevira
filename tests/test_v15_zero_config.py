@@ -31,7 +31,8 @@ def _setup_db(tmp_path, monkeypatch):
 class TestDetect:
     def test_detect_python_from_pyproject(self, tmp_path):
         (tmp_path / "pyproject.toml").write_text("[project]\nname='test'\n")
-        (tmp_path / "src").mkdir()
+        src = (tmp_path / "src"); src.mkdir()
+        (src / "main.py").write_text("def main(): pass")
         from mcp_server.detect import auto_detect_project
         result = auto_detect_project(tmp_path)
         assert result["language"] == "python"
@@ -40,7 +41,8 @@ class TestDetect:
 
     def test_detect_typescript_from_tsconfig(self, tmp_path):
         (tmp_path / "tsconfig.json").write_text("{}")
-        (tmp_path / "src").mkdir()
+        src = (tmp_path / "src"); src.mkdir()
+        (src / "index.ts").write_text("export const x = 1")
         from mcp_server.detect import auto_detect_project
         result = auto_detect_project(tmp_path)
         assert result["language"] == "typescript"
@@ -48,6 +50,8 @@ class TestDetect:
 
     def test_detect_go_from_gomod(self, tmp_path):
         (tmp_path / "go.mod").write_text("module example.com/test")
+        cmd = (tmp_path / "cmd"); cmd.mkdir()
+        (cmd / "main.go").write_text("package main")
         from mcp_server.detect import auto_detect_project
         result = auto_detect_project(tmp_path)
         assert result["language"] == "go"
@@ -55,7 +59,8 @@ class TestDetect:
 
     def test_detect_rust_from_cargo(self, tmp_path):
         (tmp_path / "Cargo.toml").write_text("[package]\nname='test'\n")
-        (tmp_path / "src").mkdir()
+        src = (tmp_path / "src"); src.mkdir()
+        (src / "main.rs").write_text("fn main() {}")
         from mcp_server.detect import auto_detect_project
         result = auto_detect_project(tmp_path)
         assert result["language"] == "rust"
@@ -80,24 +85,43 @@ class TestDetect:
         assert result2["language"] == "typescript"
 
     def test_detect_fallback_to_python(self, tmp_path):
-        # Empty directory — should fallback to python
         from mcp_server.detect import auto_detect_project
         result = auto_detect_project(tmp_path)
         assert result["language"] == "python"
 
     def test_detect_watched_dirs_existing(self, tmp_path):
-        (tmp_path / "pyproject.toml").write_text("")
-        (tmp_path / "src").mkdir()
-        (tmp_path / "lib").mkdir()
+        # New behaviour: dirs must contain actual source files to be included
+        src = (tmp_path / "src"); src.mkdir()
+        lib = (tmp_path / "lib"); lib.mkdir()
+        modules = (tmp_path / "modules"); modules.mkdir()
+        (src / "app.py").write_text("x = 1")
+        (lib / "utils.py").write_text("x = 1")
+        (modules / "core.py").write_text("x = 1")
         from mcp_server.detect import detect_watched_dirs
         dirs = detect_watched_dirs(tmp_path, "python")
         assert "src" in dirs
         assert "lib" in dirs
+        assert "modules" in dirs  # picked up even though not in convention list
 
     def test_detect_watched_dirs_fallback(self, tmp_path):
+        # Empty project — no source files anywhere → fallback to ["."]
         from mcp_server.detect import detect_watched_dirs
         dirs = detect_watched_dirs(tmp_path, "python")
         assert dirs == ["."]
+
+    def test_detect_watched_dirs_skips_non_code(self, tmp_path):
+        # node_modules, dist, build should be excluded even if they have .ts files
+        node_mod = (tmp_path / "node_modules"); node_mod.mkdir()
+        dist = (tmp_path / "dist"); dist.mkdir()
+        src = (tmp_path / "src"); src.mkdir()
+        (node_mod / "lib.ts").write_text("x=1")
+        (dist / "bundle.ts").write_text("x=1")
+        (src / "app.ts").write_text("x=1")
+        from mcp_server.detect import detect_watched_dirs
+        dirs = detect_watched_dirs(tmp_path, "typescript")
+        assert "node_modules" not in dirs
+        assert "dist" not in dirs
+        assert "src" in dirs
 
     def test_collection_name_sanitized(self, tmp_path):
         (tmp_path / "pyproject.toml").write_text("")

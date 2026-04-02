@@ -141,42 +141,30 @@ def cmd_init() -> None:
 
     print()
 
-    # Step 5: Run full index build
-    print("  Building code index ...               ", end="", flush=True)
+    # Step 5: Run full index build — let rich progress bars render directly.
+    # Suppress noisy HuggingFace/transformers output via env vars.
+    import os as _os
+    import contextlib, io
+    print("  Building code index ...")
     try:
         from indexer.index_codebase import cmd_full_rebuild
-        import io
-        import contextlib
-
-        buf = io.StringIO()
-        with contextlib.redirect_stdout(buf):
+        _os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+        _os.environ.setdefault("HF_HUB_VERBOSITY", "error")
+        # Suppress stderr noise (BertModel LOAD REPORT, HF_TOKEN warnings)
+        with contextlib.redirect_stderr(io.StringIO()):
             cmd_full_rebuild()
-        output = buf.getvalue()
-        # Extract chunk count from output
-        chunk_count = "?"
-        for line in output.splitlines():
-            if "chunks indexed" in line or "Total:" in line or "documents" in line.lower():
-                chunk_count = line.strip()
-                break
-            if "Indexed" in line:
-                chunk_count = line.strip()
-                break
-        print(f"done")
     except Exception as e:
-        print(f"skipped ({e})")
+        print(f"  skipped ({e})")
 
     # Step 6: Generate graph stubs
     print("  Generating graph stubs ...            ", end="", flush=True)
     try:
         from indexer.index_codebase import cmd_generate_graph
-        import io
-        import contextlib
-
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             cmd_generate_graph()
         output = buf.getvalue()
-        nodes = "?"
+        nodes = "0"
         for line in output.splitlines():
             if "Nodes added:" in line:
                 nodes = line.split(":")[-1].strip()

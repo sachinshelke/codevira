@@ -1,11 +1,11 @@
 # Codevira MCP
 
-> Persistent memory and project context for AI coding agents — across every session, every tool, every file.
+> Persistent adaptive memory for AI coding agents — learns from every session, works with every tool, remembers across every project.
 
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![MCP](https://img.shields.io/badge/protocol-MCP-purple)](https://modelcontextprotocol.io)
-[![Version](https://img.shields.io/badge/version-1.3.1-orange)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.4.0-orange)](CHANGELOG.md)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](CONTRIBUTING.md)
 [![Contributions Welcome](https://img.shields.io/badge/contributions-welcome-brightgreen)](CONTRIBUTING.md)
 
@@ -37,6 +37,8 @@ Codevira is a [Model Context Protocol](https://modelcontextprotocol.io) server y
 | **Roadmap** | Phase-based tracker so agents always know what phase you're in and what comes next |
 | **Changeset tracking** | Multi-file changes tracked atomically; sessions resume cleanly after interruption |
 | **Decision log** | Every session writes a structured log; past decisions are searchable by any future agent |
+| **Adaptive learning** | Outcome tracking, confidence scoring, developer preference learning, and automatic rule inference — memory that gets smarter over time |
+| **Cross-tool continuity** | Single "catch me up" call for seamless switching between Cursor, Claude Code, Windsurf, and Antigravity |
 | **Agent personas** | Seven role definitions (Planner, Developer, Reviewer, Tester, Builder, Documenter, Orchestrator) with explicit protocols |
 
 **The result:** ~1,400 tokens of overhead per session instead of 15,000+ tokens of re-discovery.
@@ -271,18 +273,20 @@ This loop keeps every session fast, focused, and resumable.
 
 ---
 
-## 26 MCP Tools
+## 33 MCP Tools
 
 ### Graph Tools
 | Tool | Description |
 |---|---|
 | `get_node(file_path)` | Metadata, rules, connections, staleness for any file |
-| `get_impact(file_path)` | BFS blast-radius — which files depend on this one |
+| `get_impact(file_path)` | BFS blast-radius — which files depend on this one (powered by real import edges) |
 | `list_nodes(layer?, stability?, do_not_revert?)` | Query nodes by attribute |
 | `add_node(file_path, role, type, ...)` | Register a new file in the graph |
 | `update_node(file_path, changes)` | Append rules, connections, key_functions |
 | `refresh_graph(file_paths?)` | Auto-generate stubs for unregistered files |
 | `refresh_index(file_paths?)` | Re-embed specific files in ChromaDB |
+| `export_graph(format, scope?)` | Export dependency graph as Mermaid or DOT diagram |
+| `get_graph_diff(base_ref?, head_ref?)` | Show changed nodes, stability flags, and blast radius between git refs |
 
 ### Roadmap Tools
 | Tool | Description |
@@ -312,6 +316,15 @@ This loop keeps every session fast, focused, and resumable.
 | `search_decisions(query, limit?, session_id?)` | Search all past session decisions; optionally filter to a specific session |
 | `get_history(file_path)` | All sessions that touched a file |
 | `write_session_log(...)` | Write structured session record |
+
+### Adaptive Learning Tools (v1.4)
+| Tool | Description |
+|---|---|
+| `get_decision_confidence(file_path?, pattern?)` | Outcome-based reliability scores — how often past decisions were kept vs reverted |
+| `get_preferences(category?)` | Learned developer style preferences from post-edit corrections |
+| `get_learned_rules(file_path?, category?)` | Auto-generated rules from observed patterns (test pairing, import hotspots, co-changes) |
+| `get_project_maturity()` | 0–100 intelligence score combining sessions, coverage, confidence, rules, preferences |
+| `get_session_context()` | Single "catch me up" call for cross-tool continuity (Cursor ↔ Claude Code ↔ Antigravity) |
 
 ### Code Reader Tools
 | Tool | Description |

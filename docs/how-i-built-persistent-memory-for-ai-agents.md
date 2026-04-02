@@ -197,7 +197,7 @@ The changeset is just a YAML file: which files are in scope, which are done, whi
 
 All of this is exposed through a local MCP (Model Context Protocol) server. One server that works with Claude Code, Cursor, Windsurf, Google Antigravity, and any other MCP-compatible tool.
 
-26 tools total across five modules: graph, roadmap, changesets, search, and a Python code reader (`get_signature`, `get_code` via AST). One JSON config block and everything is available in your AI tool immediately.
+33 tools total across six modules: graph, roadmap, changesets, search, adaptive learning, and code reader. One JSON config block and everything is available in your AI tool immediately.
 
 The server runs entirely locally. No external services, no API keys, no data leaving your machine. ChromaDB is embedded, embeddings run on-device with `sentence-transformers`. Your code stays yours.
 

@@ -143,7 +143,7 @@ class TestIDEInject:
     def test_inject_claude_creates_config(self, tmp_path):
         from mcp_server.ide_inject import _inject_claude
         (tmp_path / ".claude").mkdir()
-        path = _inject_claude(tmp_path, "/usr/bin/codevira-mcp")
+        path = _inject_claude(tmp_path, "/usr/bin/codevira-mcp", "/usr/bin/python3")
         assert path is not None
         config = json.loads((tmp_path / ".claude" / "settings.json").read_text())
         assert config["mcpServers"]["codevira"]["command"] == "/usr/bin/codevira-mcp"
@@ -156,7 +156,7 @@ class TestIDEInject:
         (claude_dir / "settings.json").write_text(json.dumps({
             "mcpServers": {"other": {"command": "other-cmd"}},
         }))
-        _inject_claude(tmp_path, "/usr/bin/codevira-mcp")
+        _inject_claude(tmp_path, "/usr/bin/codevira-mcp", "/usr/bin/python3")
         config = _read_json_safe(claude_dir / "settings.json")
         assert "other" in config["mcpServers"]
         assert "codevira" in config["mcpServers"]

@@ -60,12 +60,16 @@ def test_get_roadmap_migrates_legacy_current_phase(tmp_path, monkeypatch):
 def test_get_project_root_discovers_codevira_from_subdirectory(tmp_path, monkeypatch):
     project_root = tmp_path / "subdir-project"
     nested_dir = project_root / "src" / "feature"
-    (project_root / ".codevira").mkdir(parents=True)
+    codevira_dir = project_root / ".codevira"
+    codevira_dir.mkdir(parents=True)
+    # config.yaml must exist — _discover_project_root now checks for it
+    # so that ~/.codevira/ (global memory dir) is never mistaken as a project root
+    (codevira_dir / "config.yaml").write_text("project:\n  name: test\n")
     nested_dir.mkdir(parents=True)
     _set_project_root(monkeypatch, nested_dir)
 
     assert paths.get_project_root() == project_root.resolve()
-    assert paths.get_data_dir() == (project_root / ".codevira").resolve()
+    assert paths.get_data_dir() == codevira_dir.resolve()
 
 
 def test_update_node_after_change_updates_sqlite_graph(tmp_path, monkeypatch):

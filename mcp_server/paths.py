@@ -21,10 +21,14 @@ def set_project_dir(path: str | Path) -> None:
 
 
 def _discover_project_root(start: Path) -> Path:
-    """Walk upward to find the nearest ancestor that contains .codevira/."""
+    """Walk upward to find the nearest ancestor that contains .codevira/config.yaml.
+
+    Checks for config.yaml specifically so that ~/.codevira/ (global memory dir,
+    which contains only global.db) is never mistaken for a project root.
+    """
     start = start.resolve()
     for candidate in (start, *start.parents):
-        if (candidate / ".codevira").is_dir():
+        if (candidate / ".codevira" / "config.yaml").is_file():
             return candidate
     return start
 

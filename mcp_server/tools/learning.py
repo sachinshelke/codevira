@@ -162,6 +162,13 @@ def get_session_context() -> dict:
             logger.debug("Could not load changesets context: %s", e)
             context["open_changesets"] = []
 
+        # v1.5: Add global intelligence stats
+        try:
+            from mcp_server.global_sync import get_global_stats
+            context["global_intelligence"] = get_global_stats()
+        except Exception:
+            context["global_intelligence"] = None
+
         return context
     finally:
         db.close()

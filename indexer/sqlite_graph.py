@@ -138,8 +138,52 @@ class SQLiteGraph:
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_learned_rules_category ON learned_rules(category);
+
+                -- ----------------------------------------------------
+                -- v1.5: Function-level symbols and call graph
+                -- ----------------------------------------------------
+                CREATE TABLE IF NOT EXISTS symbols (
+                    id TEXT PRIMARY KEY,           -- 'file:path.py::func_name'
+                    file_node_id TEXT,             -- FK to nodes.id
+                    name TEXT NOT NULL,
+                    kind TEXT,                     -- 'function' | 'class' | 'method' | 'interface' | 'struct'
+                    signature TEXT,
+                    parameters TEXT,               -- JSON: [{name, type}]
+                    return_type TEXT,
+                    start_line INTEGER,
+                    end_line INTEGER,
+                    docstring TEXT,
+                    is_public BOOLEAN DEFAULT 1,
+                    calls TEXT,                    -- JSON: ['func_a', 'func_b']
+                    FOREIGN KEY (file_node_id) REFERENCES nodes(id) ON DELETE CASCADE
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_symbols_file ON symbols(file_node_id);
+                CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name);
+
+                CREATE TABLE IF NOT EXISTS call_edges (
+                    caller_id TEXT,                -- symbols.id
+                    callee_id TEXT,                -- symbols.id
+                    line INTEGER,
+                    PRIMARY KEY (caller_id, callee_id),
+                    FOREIGN KEY (caller_id) REFERENCES symbols(id) ON DELETE CASCADE,
+                    FOREIGN KEY (callee_id) REFERENCES symbols(id) ON DELETE CASCADE
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_call_edges_callee ON call_edges(callee_id);
+                CREATE INDEX IF NOT EXISTS idx_call_edges_caller ON call_edges(caller_id);
             ''')
             conn.execute("PRAGMA foreign_keys = ON;")
+
+            # v1.5 migrations: add source column for global sync tracking
+            try:
+                conn.execute("ALTER TABLE preferences ADD COLUMN source TEXT DEFAULT 'local'")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+            try:
+                conn.execute("ALTER TABLE learned_rules ADD COLUMN source TEXT DEFAULT 'local'")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
 
     def add_node(self, node_id: str, kind: str, name: str, file_path: str, **kwargs):
         existing = self.get_node(node_id)
@@ -310,7 +354,8 @@ class SQLiteGraph:
     # Developer preferences
     # ------------------------------------------------------------------
 
-    def record_preference(self, category: str, signal: str, example: str | None = None):
+    def record_preference(self, category: str, signal: str, example: str | None = None,
+                          source: str = "local"):
         existing = self.conn.execute(
             'SELECT id, frequency FROM preferences WHERE category = ? AND signal = ?',
             (category, signal),
@@ -325,8 +370,8 @@ class SQLiteGraph:
         else:
             with self.transaction() as conn:
                 conn.execute('''
-                    INSERT INTO preferences (category, signal, example) VALUES (?, ?, ?)
-                ''', (category, signal, example))
+                    INSERT INTO preferences (category, signal, example, source) VALUES (?, ?, ?, ?)
+                ''', (category, signal, example, source))
 
     def get_preferences(self, category: str | None = None, min_frequency: int = 1) -> list[dict]:
         if category:
@@ -480,6 +525,113 @@ class SQLiteGraph:
         params.append(limit)
         
         cur = self.conn.execute(sql, params)
+        return [dict(r) for r in cur.fetchall()]
+
+    # ------------------------------------------------------------------
+    # v1.5: Function-level symbols and call graph
+    # ------------------------------------------------------------------
+
+    def add_symbol(self, symbol_id: str, file_node_id: str, name: str, kind: str,
+                   signature: str | None = None, parameters: str | None = None,
+                   return_type: str | None = None, start_line: int | None = None,
+                   end_line: int | None = None, docstring: str | None = None,
+                   is_public: bool = True, calls: str | None = None):
+        """Insert or replace a function/class symbol."""
+        with self.transaction() as conn:
+            conn.execute('''
+                INSERT OR REPLACE INTO symbols
+                    (id, file_node_id, name, kind, signature, parameters, return_type,
+                     start_line, end_line, docstring, is_public, calls)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (symbol_id, file_node_id, name, kind, signature, parameters,
+                  return_type, start_line, end_line, docstring, is_public, calls))
+
+    def remove_symbols_for_file(self, file_node_id: str):
+        """Remove all symbols (and their call_edges) for a file node."""
+        with self.transaction() as conn:
+            # call_edges cascade from symbols via FK
+            conn.execute("DELETE FROM symbols WHERE file_node_id = ?", (file_node_id,))
+
+    def add_call_edge(self, caller_id: str, callee_id: str, line: int | None = None):
+        """Record a function call relationship."""
+        with self.transaction() as conn:
+            conn.execute('''
+                INSERT OR REPLACE INTO call_edges (caller_id, callee_id, line)
+                VALUES (?, ?, ?)
+            ''', (caller_id, callee_id, line))
+
+    def get_callers(self, symbol_id: str) -> list[dict]:
+        """Get all functions that call this symbol."""
+        cur = self.conn.execute('''
+            SELECT s.id, s.name, s.kind, s.file_node_id, ce.line
+            FROM call_edges ce
+            JOIN symbols s ON ce.caller_id = s.id
+            WHERE ce.callee_id = ?
+            ORDER BY s.name
+        ''', (symbol_id,))
+        return [dict(r) for r in cur.fetchall()]
+
+    def get_callees(self, symbol_id: str) -> list[dict]:
+        """Get all functions called by this symbol."""
+        cur = self.conn.execute('''
+            SELECT s.id, s.name, s.kind, s.file_node_id, ce.line
+            FROM call_edges ce
+            JOIN symbols s ON ce.callee_id = s.id
+            WHERE ce.caller_id = ?
+            ORDER BY s.name
+        ''', (symbol_id,))
+        return [dict(r) for r in cur.fetchall()]
+
+    def get_symbols_for_file(self, file_node_id: str) -> list[dict]:
+        """Get all symbols in a file."""
+        cur = self.conn.execute('''
+            SELECT * FROM symbols WHERE file_node_id = ? ORDER BY start_line
+        ''', (file_node_id,))
+        return [dict(r) for r in cur.fetchall()]
+
+    def find_symbol(self, name: str, file_path: str | None = None) -> dict | None:
+        """Find a symbol by name, optionally scoped to a file."""
+        if file_path:
+            node_id = f"file:{file_path}"
+            cur = self.conn.execute(
+                "SELECT * FROM symbols WHERE name = ? AND file_node_id = ?",
+                (name, node_id),
+            )
+        else:
+            cur = self.conn.execute(
+                "SELECT * FROM symbols WHERE name = ? LIMIT 1", (name,),
+            )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+    def get_symbol_count(self) -> int:
+        return self.conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
+
+    def get_call_edge_count(self) -> int:
+        return self.conn.execute("SELECT COUNT(*) FROM call_edges").fetchone()[0]
+
+    def find_hotspot_functions(self, min_lines: int = 50) -> list[dict]:
+        """Find large functions exceeding line threshold."""
+        cur = self.conn.execute('''
+            SELECT s.*, (s.end_line - s.start_line) as line_count,
+                   n.file_path as full_path
+            FROM symbols s
+            JOIN nodes n ON s.file_node_id = n.id
+            WHERE (s.end_line - s.start_line) >= ?
+            ORDER BY (s.end_line - s.start_line) DESC
+        ''', (min_lines,))
+        return [dict(r) for r in cur.fetchall()]
+
+    def find_high_fan_in(self, min_callers: int = 5) -> list[dict]:
+        """Find symbols with many callers (high fan-in = high risk)."""
+        cur = self.conn.execute('''
+            SELECT s.id, s.name, s.kind, s.file_node_id, COUNT(ce.caller_id) as caller_count
+            FROM symbols s
+            JOIN call_edges ce ON ce.callee_id = s.id
+            GROUP BY s.id
+            HAVING caller_count >= ?
+            ORDER BY caller_count DESC
+        ''', (min_callers,))
         return [dict(r) for r in cur.fetchall()]
 
     def close(self):

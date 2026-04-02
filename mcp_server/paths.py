@@ -52,3 +52,15 @@ def get_package_data_dir() -> Path:
     These are read-only assets installed alongside the package.
     """
     return Path(__file__).parent / "data"
+
+
+def get_global_home() -> Path:
+    """Return ~/.codevira/ global data directory. Creates it if needed."""
+    home = Path.home() / ".codevira"
+    home.mkdir(parents=True, exist_ok=True)
+    return home
+
+
+def get_global_db_path() -> Path:
+    """Return path to the global SQLite database for cross-project intelligence."""
+    return get_global_home() / "global.db"

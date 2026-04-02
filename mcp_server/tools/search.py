@@ -64,6 +64,14 @@ def write_session_log(session_id: str, task: str, phase: str, files_changed: lis
     db = _get_db()
     db.log_session(session_id, task, phase, decisions)
     db.close()
+
+    # v1.5: Export qualifying learnings to global memory
+    try:
+        from mcp_server.global_sync import export_project_to_global
+        export_project_to_global()
+    except Exception:
+        pass  # Best-effort, non-blocking
+
     return {"status": f"Session {session_id} logged to SQLite Memory."}
 
 def search_decisions(query: str, limit: int = 10, session_id: str | None = None) -> dict[str, Any]:

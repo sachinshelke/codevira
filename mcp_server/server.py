@@ -44,7 +44,13 @@ except ImportError:
     sys.exit(1)
 
 import json
-from mcp_server.tools.graph import get_node, get_impact, list_nodes, add_node, update_node, refresh_graph, export_graph, get_graph_diff
+from mcp_server.tools.graph import (
+    get_node, get_impact, list_nodes, add_node, update_node, refresh_graph,
+    export_graph, get_graph_diff,
+    query_graph as query_graph_tool,
+    analyze_changes as analyze_changes_tool,
+    find_hotspots as find_hotspots_tool,
+)
 from mcp_server.tools.roadmap import (
     get_roadmap, get_full_roadmap, get_phase,
     add_phase, update_phase_status, defer_phase,
@@ -70,6 +76,41 @@ from mcp_server.tools.learning import (
 )
 
 server = Server("codevira")
+
+
+# ---- MCP Prompts (workflow templates) ----
+@server.list_prompts()
+async def handle_list_prompts():
+    from mcp_server.prompts import list_prompts as _list_prompts
+    from mcp.types import Prompt, PromptArgument
+    prompts = _list_prompts()
+    return [
+        Prompt(
+            name=p["name"],
+            description=p.get("description"),
+            arguments=[
+                PromptArgument(name=a["name"], description=a.get("description"), required=a.get("required", False))
+                for a in p.get("arguments", [])
+            ],
+        )
+        for p in prompts
+    ]
+
+
+@server.get_prompt()
+async def handle_get_prompt(name: str, arguments: dict | None = None):
+    from mcp_server.prompts import get_prompt as _get_prompt
+    from mcp.types import GetPromptResult, PromptMessage, TextContent as PromptTextContent
+    result = _get_prompt(name, arguments)
+    if not result:
+        raise ValueError(f"Unknown prompt: {name}")
+    return GetPromptResult(
+        description=result["description"],
+        messages=[
+            PromptMessage(role=m["role"], content=PromptTextContent(type="text", text=m["content"]["text"]))
+            for m in result["messages"]
+        ],
+    )
 
 
 @server.list_tools()
@@ -683,6 +724,56 @@ async def list_tools() -> list[Tool]:
             ),
             inputSchema={"type": "object", "properties": {}},
         ),
+        # ---- v1.5: Deep Graph Intelligence Tools ----
+        Tool(
+            name="query_graph",
+            description=(
+                "Query the function-level call graph. Find callers, callees, tests, or dependents "
+                "for a specific symbol. Use query_type='symbols' to list all functions in a file."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "file_path": {"type": "string", "description": "Relative file path"},
+                    "symbol": {"type": "string", "description": "Function or class name to query"},
+                    "query_type": {
+                        "type": "string",
+                        "description": "callers | callees | tests | dependents | symbols",
+                        "default": "callees",
+                    },
+                },
+                "required": ["file_path"],
+            },
+        ),
+        Tool(
+            name="analyze_changes",
+            description=(
+                "Function-level risk-scored change analysis. Maps git diff to affected functions, "
+                "counts callers, flags test coverage gaps, assigns risk scores (high/medium/low). "
+                "Use before code review or pre-commit."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "base_ref": {"type": "string", "description": "Base git ref (default: main)", "default": "main"},
+                    "head_ref": {"type": "string", "description": "Head git ref (default: HEAD)", "default": "HEAD"},
+                },
+            },
+        ),
+        Tool(
+            name="find_hotspots",
+            description=(
+                "Find complexity and risk hotspots: large functions (exceeding line threshold), "
+                "high fan-in symbols (many callers = risky to change), and high fan-out files "
+                "(many dependencies = fragile)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "threshold": {"type": "integer", "description": "Min lines for large function (default: 50)", "default": 50},
+                },
+            },
+        ),
     ]
 
 
@@ -831,6 +922,22 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             result = learning_get_project_maturity()
         elif name == "get_session_context":
             result = learning_get_session_context()
+        # ---- v1.5: Deep Graph Intelligence ----
+        elif name == "query_graph":
+            result = query_graph_tool(
+                file_path=arguments["file_path"],
+                symbol=arguments.get("symbol"),
+                query_type=arguments.get("query_type", "callees"),
+            )
+        elif name == "analyze_changes":
+            result = analyze_changes_tool(
+                base_ref=arguments.get("base_ref", "main"),
+                head_ref=arguments.get("head_ref", "HEAD"),
+            )
+        elif name == "find_hotspots":
+            result = find_hotspots_tool(
+                threshold=arguments.get("threshold", 50),
+            )
         else:
             result = {"error": f"Unknown tool: {name}"}
 
@@ -867,6 +974,16 @@ def main():
         logger.info("Outcome analysis and rule inference complete")
     except Exception as e:
         logger.warning("Could not run startup learning: %s", e)
+
+    # v1.5: Import global intelligence from cross-project memory
+    try:
+        from mcp_server.global_sync import import_global_to_project
+        stats = import_global_to_project()
+        if stats.get("preferences_imported") or stats.get("rules_imported"):
+            logger.info("Global memory: imported %d preferences, %d rules",
+                        stats["preferences_imported"], stats["rules_imported"])
+    except Exception as e:
+        logger.warning("Could not sync global memory: %s", e)
 
     async def _run():
         async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):

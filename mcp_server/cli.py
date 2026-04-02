@@ -94,31 +94,33 @@ def cmd_init() -> None:
                 f.write(f"\n# Codevira — auto-generated, do not commit\n{entry}\n")
             print("done")
 
-    # Step 4: Interactive config
+    # Step 4: Zero-config auto-detection (no interactive prompts)
     print()
-    project_name = cwd.name
-    user_name = input(f"  Project name [{project_name}]: ").strip() or project_name
+    from mcp_server.detect import auto_detect_project
+    detected = auto_detect_project(cwd)
 
-    language_default = "python"
-    language = input(f"  Language [{language_default}]: ").strip() or language_default
+    # Apply CLI overrides if provided (parsed from args later)
+    if hasattr(cmd_init, '_overrides'):
+        overrides = cmd_init._overrides
+        if overrides.get("name"): detected["name"] = overrides["name"]
+        if overrides.get("language"): detected["language"] = overrides["language"]
+        if overrides.get("dirs"): detected["watched_dirs"] = [d.strip() for d in overrides["dirs"].split(",")]
+        if overrides.get("ext"): detected["file_extensions"] = [e.strip() for e in overrides["ext"].split(",")]
 
-    dirs_default = "src"
-    dirs_input = input(f"  Source directories (comma-separated) [{dirs_default}]: ").strip() or dirs_default
-    watched_dirs = [d.strip() for d in dirs_input.split(",") if d.strip()]
-
-    ext_default = ".py"
-    ext_input = input(f"  File extensions (comma-separated) [{ext_default}]: ").strip() or ext_default
-    file_extensions = [e.strip() if e.strip().startswith(".") else f".{e.strip()}"
-                       for e in ext_input.split(",") if e.strip()]
+    print(f"  Auto-detected:")
+    print(f"    Project:     {detected['name']}")
+    print(f"    Language:    {detected['language']}")
+    print(f"    Source dirs: {', '.join(detected['watched_dirs'])}")
+    print(f"    Extensions:  {', '.join(detected['file_extensions'])}")
 
     # Write config.yaml
     config = {
         "project": {
-            "name": user_name,
-            "language": language,
-            "collection_name": user_name.lower().replace("-", "_").replace(" ", "_"),
-            "watched_dirs": watched_dirs,
-            "file_extensions": file_extensions,
+            "name": detected["name"],
+            "language": detected["language"],
+            "collection_name": detected["collection_name"],
+            "watched_dirs": detected["watched_dirs"],
+            "file_extensions": detected["file_extensions"],
         }
     }
 
@@ -227,78 +229,59 @@ def cmd_init() -> None:
         except Exception as e:
             print(f"skipped ({e})")
 
-    # Step 9: Print MCP config
-    project_path = str(cwd)
-
-    # Detect the full path to codevira-mcp so MCP hosts that don't inherit
-    # the user's PATH (Claude Desktop, Cursor, Windsurf on macOS) can find it.
-    import shutil as _shutil
-    import sys as _sys
-    exe_full = _shutil.which("codevira-mcp")
-    if exe_full:
-        cmd_name = exe_full          # e.g. /Users/sachin/Library/Python/3.12/bin/codevira-mcp
-    else:
-        cmd_name = "codevira-mcp"    # fallback — may not work in all MCP hosts
-
-    # python -m mcp_server always works as long as `python` resolves correctly.
-    python_exe = _sys.executable     # absolute path to the current interpreter
-
+    # Step 9: Auto-inject IDE configurations
     print()
     print("  " + "─" * 60)
     print(f"  ✓  Codevira initialized in {data_dir}")
     print()
-    print("  Add this to your AI tool's MCP config:")
-    print()
 
-    base_config = (
-        '  {\n'
-        '    "mcpServers": {\n'
-        '      "codevira": {\n'
-        f'        "command": "{cmd_name}",\n'
-        f'        "cwd": "{project_path}"\n'
-        '      }\n'
-        '    }\n'
-        '  }'
-    )
+    no_inject = getattr(cmd_init, '_no_inject', False)
+    if not no_inject:
+        print("  Configuring AI tools ...              ", end="", flush=True)
+        try:
+            from mcp_server.ide_inject import inject_ide_config
+            results = inject_ide_config(cwd, project_name=detected["name"])
+            if results:
+                print("done")
+                for ide_name, config_path in results.items():
+                    print(f"    ✓ {ide_name}: {config_path}")
+            else:
+                print("no AI tools detected")
+        except Exception as e:
+            print(f"skipped ({e})")
 
-    antigravity_config = (
-        '  {\n'
-        '    "mcpServers": {\n'
-        '      "codevira": {\n'
-        '        "$typeName": "exa.cascade_plugins_pb.CascadePluginCommandTemplate",\n'
-        f'        "command": "{python_exe}",\n'
-        f'        "args": ["-m", "mcp_server", "--project-dir", "{project_path}"]\n'
-        '      }\n'
-        '    }\n'
-        '  }'
-    )
+    # Step 10: Register in global memory
+    try:
+        from mcp_server.global_sync import import_global_to_project
+        from mcp_server.paths import get_global_db_path
+        from indexer.global_db import GlobalDB
 
-    # python -m fallback (most reliable when PATH is not inherited)
-    python_fallback_config = (
-        '  {\n'
-        '    "mcpServers": {\n'
-        '      "codevira": {\n'
-        f'        "command": "{python_exe}",\n'
-        f'        "args": ["-m", "mcp_server", "--project-dir", "{project_path}"]\n'
-        '      }\n'
-        '    }\n'
-        '  }'
-    )
+        gdb = GlobalDB(get_global_db_path())
+        gdb.register_project(str(cwd), detected["name"], detected["language"])
+        proj_count = gdb.get_project_count()
+        gdb.close()
+        if proj_count > 1:
+            print(f"  Registered in global memory ({proj_count} projects)")
+    except Exception:
+        pass
 
-    print("  ── Claude Code (.claude/settings.json) " + "─" * 22)
-    print(base_config)
+    # Print fallback for undetected tools
+    import shutil as _shutil
+    import sys as _sys
+    python_exe = _sys.executable
+    project_path = str(cwd)
+
     print()
-    print("  ── Cursor / Windsurf (settings → MCP) " + "─" * 22)
-    print(base_config)
+    print("  For other AI tools, add this to their MCP config:")
     print()
-    print("  ── Google Antigravity (~/.gemini/antigravity/mcp_config.json)")
-    print(antigravity_config)
-    print()
-    if not exe_full:
-        print("  ⚠  codevira-mcp not found in PATH — use the python -m fallback below.")
-        print()
-    print("  ── Fallback (if codevira-mcp is not in your MCP host's PATH) " + "─" * 10)
-    print(python_fallback_config)
+    print('  {')
+    print('    "mcpServers": {')
+    print('      "codevira": {')
+    print(f'        "command": "{python_exe}",')
+    print(f'        "args": ["-m", "mcp_server", "--project-dir", "{project_path}"]')
+    print('      }')
+    print('    }')
+    print('  }')
     print()
     print("  Verify: ask your agent to call get_roadmap()")
     print()
@@ -348,7 +331,12 @@ def main() -> None:
     subparsers = parser.add_subparsers(dest="command")
 
     # init
-    subparsers.add_parser("init", help="Initialize Codevira in the current project")
+    init_parser = subparsers.add_parser("init", help="Initialize Codevira in the current project")
+    init_parser.add_argument("--name", help="Override project name")
+    init_parser.add_argument("--language", help="Override detected language")
+    init_parser.add_argument("--dirs", help="Override source directories (comma-separated)")
+    init_parser.add_argument("--ext", help="Override file extensions (comma-separated)")
+    init_parser.add_argument("--no-inject", action="store_true", help="Skip auto-injecting IDE configs")
 
     # index
     index_parser = subparsers.add_parser("index", help="Run the code indexer")
@@ -361,6 +349,14 @@ def main() -> None:
     args = parser.parse_args(raw_args)
 
     if args.command == "init":
+        # Pass overrides via function attribute (avoids changing signature)
+        cmd_init._overrides = {
+            "name": getattr(args, "name", None),
+            "language": getattr(args, "language", None),
+            "dirs": getattr(args, "dirs", None),
+            "ext": getattr(args, "ext", None),
+        }
+        cmd_init._no_inject = getattr(args, "no_inject", False)
         cmd_init()
     elif args.command == "index":
         cmd_index(full=args.full, quiet=args.quiet)

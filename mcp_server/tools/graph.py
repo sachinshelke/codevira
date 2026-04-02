@@ -387,3 +387,238 @@ def refresh_graph(file_paths: list[str] | None = None) -> dict[str, Any]:
         "status": f"Generated graph nodes in SQLite DB.",
         "hint": "Call get_node(file_path) to read the new graph stub."
     }
+
+
+# ---------------------------------------------------------------------------
+# v1.5: query_graph — callers/callees/tests/dependents
+# ---------------------------------------------------------------------------
+
+def query_graph(file_path: str, symbol: str | None = None,
+                query_type: str = "callees") -> dict[str, Any]:
+    """
+    Query the call graph.
+    query_type: 'callers' | 'callees' | 'tests' | 'dependents' | 'symbols'
+    """
+    db = _get_db()
+    try:
+        if query_type == "symbols":
+            # List all symbols in a file
+            node_id = f"file:{file_path}"
+            symbols = db.get_symbols_for_file(node_id)
+            return {
+                "file_path": file_path,
+                "query_type": "symbols",
+                "results": [
+                    {"name": s["name"], "kind": s["kind"], "signature": s["signature"],
+                     "start_line": s["start_line"], "end_line": s["end_line"],
+                     "is_public": bool(s["is_public"])}
+                    for s in symbols
+                ],
+                "count": len(symbols),
+            }
+
+        if symbol:
+            sym = db.find_symbol(symbol, file_path)
+        else:
+            return {"error": "symbol is required for callers/callees/tests queries"}
+
+        if not sym:
+            return {"error": f"Symbol '{symbol}' not found in {file_path}",
+                    "hint": "Call query_graph with query_type='symbols' to list available symbols."}
+
+        sym_id = sym["id"]
+
+        if query_type == "callers":
+            callers = db.get_callers(sym_id)
+            return {
+                "file_path": file_path, "symbol": symbol, "query_type": "callers",
+                "results": [{"name": c["name"], "kind": c["kind"],
+                             "file": c["file_node_id"].replace("file:", "")}
+                            for c in callers],
+                "count": len(callers),
+            }
+
+        elif query_type == "callees":
+            callees = db.get_callees(sym_id)
+            return {
+                "file_path": file_path, "symbol": symbol, "query_type": "callees",
+                "results": [{"name": c["name"], "kind": c["kind"],
+                             "file": c["file_node_id"].replace("file:", "")}
+                            for c in callees],
+                "count": len(callees),
+            }
+
+        elif query_type == "tests":
+            # Find test files that import or call this file's functions
+            node_id = f"file:{file_path}"
+            # Check edges: which test files depend on this file?
+            edges = db.conn.execute(
+                "SELECT source_id FROM edges WHERE target_id = ? AND kind = 'imports'",
+                (node_id,),
+            ).fetchall()
+            test_files = []
+            for e in edges:
+                src = e["source_id"].replace("file:", "")
+                if "test" in src.lower():
+                    test_files.append(src)
+            return {
+                "file_path": file_path, "symbol": symbol, "query_type": "tests",
+                "test_files": test_files,
+                "count": len(test_files),
+            }
+
+        elif query_type == "dependents":
+            # Files that depend on the file containing this symbol
+            node_id = f"file:{file_path}"
+            blast = db.get_blast_radius(node_id, max_depth=2)
+            return {
+                "file_path": file_path, "symbol": symbol, "query_type": "dependents",
+                "results": [{"file": r["file_path"]} for r in blast],
+                "count": len(blast),
+            }
+
+        else:
+            return {"error": f"Unknown query_type: {query_type}. Use: callers, callees, tests, dependents, symbols"}
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# v1.5: analyze_changes — function-level risk-scored change analysis
+# ---------------------------------------------------------------------------
+
+def analyze_changes(base_ref: str = "main", head_ref: str = "HEAD") -> dict[str, Any]:
+    """
+    Enhanced change analysis with function-level risk scoring.
+    Maps git diff to affected functions, callers, and test coverage gaps.
+    """
+    import subprocess
+    root = get_project_root()
+
+    # Get changed files
+    try:
+        diff_output = subprocess.check_output(
+            ["git", "-C", str(root), "diff", "--name-only", f"{base_ref}...{head_ref}"],
+            stderr=subprocess.DEVNULL,
+        ).decode("utf-8").strip()
+    except subprocess.CalledProcessError:
+        try:
+            diff_output = subprocess.check_output(
+                ["git", "-C", str(root), "diff", "--name-only", base_ref, head_ref],
+                stderr=subprocess.DEVNULL,
+            ).decode("utf-8").strip()
+        except subprocess.CalledProcessError as e:
+            return {"error": f"Could not compute diff: {e}"}
+
+    if not diff_output:
+        return {"changes": [], "summary": "No changes detected."}
+
+    changed_files = [f for f in diff_output.split("\n") if f.strip()]
+
+    db = _get_db()
+    try:
+        results = []
+        total_risk = {"high": 0, "medium": 0, "low": 0}
+        test_gaps = []
+
+        for fp in changed_files:
+            node_id = f"file:{fp}"
+            symbols = db.get_symbols_for_file(node_id)
+
+            # Check if any test files cover this file
+            test_edges = db.conn.execute(
+                "SELECT source_id FROM edges WHERE target_id = ? AND kind = 'imports'",
+                (node_id,),
+            ).fetchall()
+            test_files = [e["source_id"].replace("file:", "") for e in test_edges
+                          if "test" in e["source_id"].lower()]
+            has_tests = len(test_files) > 0
+
+            for sym in symbols:
+                sym_id = sym["id"]
+                callers = db.get_callers(sym_id)
+                caller_count = len(callers)
+
+                # Risk scoring
+                is_public = bool(sym.get("is_public"))
+                if is_public and caller_count >= 3 and not has_tests:
+                    risk = "high"
+                elif is_public and caller_count >= 1:
+                    risk = "medium"
+                else:
+                    risk = "low"
+
+                total_risk[risk] += 1
+
+                if is_public and not has_tests:
+                    test_gaps.append({"file": fp, "symbol": sym["name"], "callers": caller_count})
+
+                results.append({
+                    "file": fp,
+                    "symbol": sym["name"],
+                    "kind": sym["kind"],
+                    "risk": risk,
+                    "caller_count": caller_count,
+                    "has_tests": has_tests,
+                    "callers": [c["name"] for c in callers[:5]],
+                })
+
+        return {
+            "base_ref": base_ref,
+            "head_ref": head_ref,
+            "changed_files": len(changed_files),
+            "functions_analyzed": len(results),
+            "risk_summary": total_risk,
+            "test_gaps": test_gaps[:10],
+            "details": results[:30],  # Top 30 for token efficiency
+        }
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# v1.5: find_hotspots — complexity and risk hotspots
+# ---------------------------------------------------------------------------
+
+def find_hotspots(threshold: int = 50) -> dict[str, Any]:
+    """
+    Find complexity hotspots: large functions, high fan-in, high fan-out,
+    and low confidence areas.
+    """
+    db = _get_db()
+    try:
+        # Large functions
+        large_funcs = db.find_hotspot_functions(min_lines=threshold)
+
+        # High fan-in (many callers = high risk if changed)
+        high_fan_in = db.find_high_fan_in(min_callers=3)
+
+        # High fan-out (files with many dependencies = fragile)
+        fan_out = db.conn.execute('''
+            SELECT source_id, COUNT(target_id) as dep_count
+            FROM edges
+            GROUP BY source_id
+            HAVING dep_count >= 5
+            ORDER BY dep_count DESC
+            LIMIT 10
+        ''').fetchall()
+
+        return {
+            "large_functions": [
+                {"file": f.get("full_path", ""), "name": f["name"], "lines": f["line_count"],
+                 "kind": f["kind"]}
+                for f in large_funcs[:10]
+            ],
+            "high_fan_in": [
+                {"name": h["name"], "kind": h["kind"], "callers": h["caller_count"],
+                 "file": h["file_node_id"].replace("file:", "")}
+                for h in high_fan_in[:10]
+            ],
+            "high_fan_out": [
+                {"file": f["source_id"].replace("file:", ""), "dependencies": f["dep_count"]}
+                for f in fan_out
+            ],
+            "threshold": threshold,
+        }
+    finally:
+        db.close()

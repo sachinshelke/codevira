@@ -56,6 +56,92 @@ def _get_python_public_symbols(file_path: str) -> list[str]:
         pass
     return symbols
 
+def _get_python_symbols_detailed(file_path: str) -> list:
+    """Extract Python symbols with call information for the call graph."""
+    from indexer.treesitter_parser import ParsedSymbol
+    symbols = []
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            source = f.read()
+        tree = ast.parse(source)
+        source_lines = source.splitlines()
+
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if node.name.startswith("_"):
+                    continue
+
+                # Extract function calls within the body
+                calls = []
+                for child in ast.walk(node):
+                    if isinstance(child, ast.Call):
+                        if isinstance(child.func, ast.Name):
+                            calls.append(child.func.id)
+                        elif isinstance(child.func, ast.Attribute):
+                            calls.append(child.func.attr)
+
+                # Extract parameters
+                params = []
+                for arg in node.args.args:
+                    param = {"name": arg.arg}
+                    if arg.annotation:
+                        try:
+                            param["type"] = ast.unparse(arg.annotation)
+                        except Exception:
+                            pass
+                    params.append(param)
+
+                # Extract return type
+                ret_type = None
+                if node.returns:
+                    try:
+                        ret_type = ast.unparse(node.returns)
+                    except Exception:
+                        pass
+
+                sig_line = source_lines[node.lineno - 1].strip() if node.lineno <= len(source_lines) else ""
+                doc = ast.get_docstring(node)
+
+                sym = ParsedSymbol(
+                    name=node.name,
+                    kind="function",
+                    signature_line=sig_line,
+                    start_line=node.lineno,
+                    end_line=node.end_lineno or node.lineno,
+                    docstring=doc.splitlines()[0] if doc else None,
+                    is_public=not node.name.startswith("_"),
+                )
+                # Attach extra fields
+                sym.calls = calls  # type: ignore[attr-defined]
+                sym.parameters = params  # type: ignore[attr-defined]
+                sym.return_type = ret_type  # type: ignore[attr-defined]
+                symbols.append(sym)
+
+            elif isinstance(node, ast.ClassDef):
+                if node.name.startswith("_"):
+                    continue
+                sig_line = source_lines[node.lineno - 1].strip() if node.lineno <= len(source_lines) else ""
+                doc = ast.get_docstring(node)
+                methods = [n.name for n in node.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and not n.name.startswith("_")]
+                sym = ParsedSymbol(
+                    name=node.name,
+                    kind="class",
+                    signature_line=sig_line,
+                    start_line=node.lineno,
+                    end_line=node.end_lineno or node.lineno,
+                    docstring=doc.splitlines()[0] if doc else None,
+                    is_public=not node.name.startswith("_"),
+                    methods=methods,
+                )
+                sym.calls = []  # type: ignore[attr-defined]
+                sym.parameters = []  # type: ignore[attr-defined]
+                sym.return_type = None  # type: ignore[attr-defined]
+                symbols.append(sym)
+    except Exception:
+        pass
+    return symbols
+
+
 def generate_graph_node(file_path: str, project_root: str) -> dict[str, Any]:
     abs_path = os.path.join(project_root, file_path)
     if not os.path.exists(abs_path):
@@ -147,7 +233,75 @@ def generate_graph_sqlite(project_root: str, db_path: str | None = None) -> dict
         added += 1
         files_added.append(fp)
         
-    # ---- Phase 2: Populate dependency edges from imports ----
+    # ---- Phase 2: Populate function-level symbols ----
+    symbols_added = 0
+    for fp in all_node_paths:
+        file_node_id = f"file:{fp}"
+        abs_path = os.path.join(project_root, fp)
+        if not os.path.exists(abs_path):
+            continue
+
+        # Clear old symbols for this file (call_edges cascade via FK)
+        db.remove_symbols_for_file(file_node_id)
+
+        ext = os.path.splitext(abs_path)[1].lower()
+        symbols_for_file = []
+
+        lang = ts_get_language(ext)
+        if lang:
+            try:
+                parsed = ts_parse_file(abs_path, lang)
+                symbols_for_file = parsed.symbols
+            except Exception:
+                continue
+        elif ext == ".py":
+            symbols_for_file = _get_python_symbols_detailed(abs_path)
+
+        for sym in symbols_for_file:
+            sym_id = f"file:{fp}::{sym.name}"
+            calls_json = json.dumps(getattr(sym, 'calls', []) if hasattr(sym, 'calls') else [])
+            params_json = json.dumps(getattr(sym, 'parameters', []) if hasattr(sym, 'parameters') else [])
+            ret_type = getattr(sym, 'return_type', None) if hasattr(sym, 'return_type') else None
+
+            db.add_symbol(
+                symbol_id=sym_id,
+                file_node_id=file_node_id,
+                name=sym.name,
+                kind=sym.kind,
+                signature=sym.signature_line,
+                parameters=params_json,
+                return_type=ret_type,
+                start_line=sym.start_line,
+                end_line=sym.end_line,
+                docstring=sym.docstring,
+                is_public=sym.is_public,
+                calls=calls_json,
+            )
+            symbols_added += 1
+
+    # ---- Phase 3: Resolve call edges between symbols ----
+    call_edges_added = 0
+    # Build a name→symbol_id lookup for the whole project
+    all_symbols = {}
+    for row in db.conn.execute("SELECT id, name FROM symbols").fetchall():
+        name = row["name"]
+        if name not in all_symbols:
+            all_symbols[name] = row["id"]
+
+    for row in db.conn.execute("SELECT id, calls FROM symbols WHERE calls IS NOT NULL AND calls != '[]'").fetchall():
+        caller_id = row["id"]
+        try:
+            calls = json.loads(row["calls"])
+        except (json.JSONDecodeError, TypeError):
+            continue
+        for callee_name in calls:
+            if callee_name in all_symbols:
+                callee_id = all_symbols[callee_name]
+                if caller_id != callee_id:  # avoid self-edges
+                    db.add_call_edge(caller_id, callee_id)
+                    call_edges_added += 1
+
+    # ---- Phase 4: Populate dependency edges from imports ----
     edges_added = 0
     all_node_paths = {fp for fp in file_paths if "node_modules" not in fp and ".venv" not in fp}
 
@@ -178,7 +332,9 @@ def generate_graph_sqlite(project_root: str, db_path: str | None = None) -> dict
         "nodes_added": added,
         "nodes_skipped": skipped,
         "edges_added": edges_added,
-        "files_added": files_added
+        "symbols_added": symbols_added,
+        "call_edges_added": call_edges_added,
+        "files_added": files_added,
     }
 
 def generate_roadmap_stub(project_root: str, output_path: str):

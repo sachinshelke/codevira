@@ -28,11 +28,21 @@ def _load_config() -> dict:
             pass
     return {}
 
+def _check_search_deps() -> bool:
+    """Return True if chromadb + sentence-transformers are available."""
+    try:
+        import chromadb  # noqa: F401
+        import sentence_transformers  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
 def _get_chroma_client():
     try:
         import chromadb
     except ImportError:
-        print("ERROR: chromadb not installed.")
+        print("ERROR: semantic search requires chromadb.")
+        print("       Install it with: pip install 'codevira-mcp[search]'")
         sys.exit(1)
     db_dir = str(INDEX_DIR)
     return chromadb.PersistentClient(path=db_dir)
@@ -42,7 +52,8 @@ def _get_embedding_fn():
         from chromadb.utils import embedding_functions
         return embedding_functions.SentenceTransformerEmbeddingFunction(model_name="all-MiniLM-L6-v2")
     except ImportError:
-        print("ERROR: sentence-transformers not installed.")
+        print("ERROR: semantic search requires sentence-transformers.")
+        print("       Install it with: pip install 'codevira-mcp[search]'")
         sys.exit(1)
 
 def _compute_hash(file_path: Path) -> str:
@@ -137,10 +148,19 @@ def cmd_full_rebuild():
     from indexer.graph_generator import generate_graph_sqlite
     from rich.console import Console
     from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
-    
+
     console = Console()
     INDEX_DIR.mkdir(parents=True, exist_ok=True)
     db = SQLiteGraph(get_data_dir() / "graph" / "graph.db")
+
+    if not _check_search_deps():
+        console.print("[yellow]⚠[/yellow]  Semantic search skipped — install with: [bold]pip install 'codevira-mcp\\[search\\]'[/bold]")
+        # Still build the graph even without search deps
+        from indexer.graph_generator import generate_graph_sqlite
+        result = generate_graph_sqlite(str(PROJECT_ROOT), str(get_data_dir() / "graph" / "graph.db"))
+        console.print(f"[green]✓[/green] Graph built: {result.get('nodes_added', 0)} nodes, {result.get('edges_added', 0)} edges.")
+        db.close()
+        return
 
     client = _get_chroma_client()
     try:

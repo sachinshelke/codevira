@@ -2,6 +2,8 @@
 MCP tool for retrieving curated rule playbooks by task type.
 Serves the right 2-3 rule files for a given task — not all of them.
 """
+from __future__ import annotations
+
 from pathlib import Path
 
 from mcp_server.paths import get_package_data_dir

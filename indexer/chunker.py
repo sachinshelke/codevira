@@ -6,6 +6,8 @@ Language support:
   - Python: stdlib ast module (full support)
   - TypeScript, Go, Rust: tree-sitter grammars via treesitter_parser
 """
+from __future__ import annotations
+
 import ast
 import os
 from dataclasses import dataclass

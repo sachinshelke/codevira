@@ -7,11 +7,15 @@ Dispatches subcommands:
   codevira-mcp index            → run incremental index update
   codevira-mcp index --full     → full index rebuild
   codevira-mcp status           → show index health and stats
+  codevira-mcp report           → show recent crash logs
+  codevira-mcp report --clear   → clear the crash log
 
 Global flags:
   --project-dir <path>          → override project directory (for Google Antigravity,
                                    which doesn't support `cwd` in its MCP config)
 """
+from __future__ import annotations
+
 import argparse
 import sys
 from pathlib import Path
@@ -155,6 +159,10 @@ def cmd_init() -> None:
             cmd_full_rebuild()
     except Exception as e:
         print(f"  skipped ({e})")
+        try:
+            from mcp_server.crash_logger import log_crash
+            log_crash(e, context="codevira init: index build", project_path=str(cwd))
+        except Exception: pass
 
     # Step 6: Generate graph stubs
     print("  Generating graph stubs ...            ", end="", flush=True)
@@ -172,6 +180,10 @@ def cmd_init() -> None:
         print(f"done ({nodes} nodes)")
     except Exception as e:
         print(f"skipped ({e})")
+        try:
+            from mcp_server.crash_logger import log_crash
+            log_crash(e, context="codevira init: graph stubs", project_path=str(cwd))
+        except Exception: pass
 
     # Step 7: Bootstrap roadmap
     print("  Bootstrapping roadmap ...             ", end="", flush=True)
@@ -186,6 +198,10 @@ def cmd_init() -> None:
         print("done")
     except Exception as e:
         print(f"skipped ({e})")
+        try:
+            from mcp_server.crash_logger import log_crash
+            log_crash(e, context="codevira init: roadmap bootstrap", project_path=str(cwd))
+        except Exception: pass
 
     # Step 8: Install git hook
     if git_dir.exists():
@@ -216,6 +232,10 @@ def cmd_init() -> None:
             print("done")
         except Exception as e:
             print(f"skipped ({e})")
+            try:
+                from mcp_server.crash_logger import log_crash
+                log_crash(e, context="codevira init: git hook", project_path=str(cwd))
+            except Exception: pass
 
     # Step 9: Auto-inject IDE configurations
     print()
@@ -237,6 +257,10 @@ def cmd_init() -> None:
                 print("no AI tools detected")
         except Exception as e:
             print(f"skipped ({e})")
+            try:
+                from mcp_server.crash_logger import log_crash
+                log_crash(e, context="codevira init: IDE inject", project_path=str(cwd))
+            except Exception: pass
 
     # Step 10: Register in global memory
     try:
@@ -250,8 +274,12 @@ def cmd_init() -> None:
         gdb.close()
         if proj_count > 1:
             print(f"  Registered in global memory ({proj_count} projects)")
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"  Global memory registration skipped ({e})")
+        try:
+            from mcp_server.crash_logger import log_crash
+            log_crash(e, context="codevira init: global memory register", project_path=str(cwd))
+        except Exception: pass
 
     # Print fallback for undetected tools
     import shutil as _shutil
@@ -289,6 +317,27 @@ def cmd_status() -> None:
     """Show index health and statistics."""
     from indexer.index_codebase import cmd_status as _cmd_status
     _cmd_status()
+
+
+def cmd_report(limit: int = 20, clear: bool = False) -> None:
+    """Show recent crash logs."""
+    from mcp_server.crash_logger import read_recent_crashes, get_crash_log_path
+
+    if clear:
+        log_path = get_crash_log_path()
+        if log_path.exists():
+            log_path.unlink()
+            print("  Crash log cleared.")
+        else:
+            print("  No crash log to clear.")
+        return
+
+    print()
+    print("  Codevira — Crash Report")
+    print("  " + "-" * 40)
+    print()
+    print(read_recent_crashes(limit=limit))
+    print()
 
 
 def cmd_server(project_dir: Path | None = None) -> None:
@@ -334,6 +383,11 @@ def main() -> None:
     # status
     subparsers.add_parser("status", help="Show index health and statistics")
 
+    # report
+    report_parser = subparsers.add_parser("report", help="Show recent crash logs")
+    report_parser.add_argument("--limit", type=int, default=20, help="Number of recent crashes to show (default: 20)")
+    report_parser.add_argument("--clear", action="store_true", help="Clear the crash log")
+
     args = parser.parse_args(raw_args)
 
     if args.command == "init":
@@ -350,6 +404,8 @@ def main() -> None:
         cmd_index(full=args.full, quiet=args.quiet)
     elif args.command == "status":
         cmd_status()
+    elif args.command == "report":
+        cmd_report(limit=args.limit, clear=args.clear)
     else:
         # No subcommand → start MCP server
         cmd_server()

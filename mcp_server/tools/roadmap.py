@@ -13,6 +13,8 @@ Full planning lifecycle:
   add_open_changeset()       → register active changeset in current phase
   remove_open_changeset()    → resolve changeset from current phase
 """
+from __future__ import annotations
+
 from datetime import date
 from pathlib import Path
 from typing import Any

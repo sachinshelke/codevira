@@ -2,6 +2,8 @@
 MCP tools for managing multi-file change sets.
 Tracks in-progress fixes that span multiple files across sessions.
 """
+from __future__ import annotations
+
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -164,8 +166,12 @@ def list_open_changesets() -> dict[str, Any]:
                     "files_pending": data.get("files_pending", []),
                     "blocker": data.get("blocker"),
                 })
-        except Exception:
-            pass
+        except Exception as e:
+            try:
+                from mcp_server.crash_logger import log_crash
+                log_crash(e, context=f"list_open_changesets: reading {yaml_file.name}")
+            except Exception:
+                pass
 
     return {
         "open_changesets": open_cs,

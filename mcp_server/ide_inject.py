@@ -261,5 +261,11 @@ def inject_ide_config(project_root: Path, project_name: str = "") -> dict[str, s
 
         except Exception as e:
             logger.warning("Failed to inject %s config: %s", ide, e)
+            try:
+                from mcp_server.crash_logger import log_crash
+                log_crash(e, context=f"IDE config inject: {ide}",
+                          project_path=str(project_root))
+            except Exception:
+                pass
 
     return results

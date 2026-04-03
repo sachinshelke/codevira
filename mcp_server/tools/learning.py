@@ -8,6 +8,8 @@ These tools expose the feedback loop to AI agents:
   - get_project_maturity: Overall project intelligence score
   - get_session_context: Single "catch me up" call for cross-tool continuity
 """
+from __future__ import annotations
+
 import json
 import logging
 from mcp_server.paths import get_data_dir
@@ -150,7 +152,7 @@ def get_session_context() -> dict:
                 "status": roadmap.get("current_phase", {}).get("status"),
             }
         except Exception as e:
-            logger.debug("Could not load roadmap context: %s", e)
+            logger.warning("Could not load roadmap context: %s", e)
             context["roadmap"] = None
 
         # Add open changesets if any
@@ -159,14 +161,15 @@ def get_session_context() -> dict:
             changesets = list_open_changesets()
             context["open_changesets"] = changesets.get("changesets", [])
         except Exception as e:
-            logger.debug("Could not load changesets context: %s", e)
+            logger.warning("Could not load changesets context: %s", e)
             context["open_changesets"] = []
 
         # v1.5: Add global intelligence stats
         try:
             from mcp_server.global_sync import get_global_stats
             context["global_intelligence"] = get_global_stats()
-        except Exception:
+        except Exception as e:
+            logger.warning("Could not load global intelligence: %s", e)
             context["global_intelligence"] = None
 
         return context

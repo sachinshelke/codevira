@@ -8,6 +8,8 @@ SQLite and served alongside static rules from rules/*.md.
 This is the engine that makes Codevira's memory adaptive:
 the more sessions that happen, the less ambiguous future decisions become.
 """
+from __future__ import annotations
+
 import json
 import logging
 import re
@@ -164,7 +166,6 @@ def _find_common_phrases(texts: list[str], min_words: int = 3) -> list[tuple[str
 def _upsert_rule(db: SQLiteGraph, rule_text: str, confidence: float,
                  category: str, file_pattern: str | None = None):
     """Insert a new learned rule or update confidence if a similar one exists."""
-    import json
     with db.transaction() as conn:
         existing = conn.execute(
             'SELECT id, confidence FROM learned_rules WHERE rule_text = ?',

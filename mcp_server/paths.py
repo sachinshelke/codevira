@@ -7,6 +7,8 @@ Project data (.codevira/) lives in the user's project directory.
 All tools should import from here instead of computing
 Path(__file__).parent.parent... chains.
 """
+from __future__ import annotations
+
 from pathlib import Path
 
 # Allow overriding project directory via CLI flag (e.g. for Google Antigravity

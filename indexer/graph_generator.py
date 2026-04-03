@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import ast
+import json
 import os
 import re
 import subprocess
@@ -201,7 +204,6 @@ def generate_graph_sqlite(project_root: str, db_path: str | None = None) -> dict
     skipped = 0
     files_added = []
     
-    import json
     for fp in file_paths:
         if "node_modules" in fp or ".venv" in fp:
             continue

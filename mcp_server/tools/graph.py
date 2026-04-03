@@ -1,8 +1,10 @@
-import os
-import time
-from pathlib import Path
-from typing import Any, Optional
+from __future__ import annotations
+
+import json
 import logging
+import subprocess
+from pathlib import Path
+from typing import Any
 
 from mcp_server.paths import get_data_dir, get_project_root
 from indexer.sqlite_graph import SQLiteGraph
@@ -95,7 +97,6 @@ def list_nodes(layer: str | None = None, do_not_revert: bool | None = None, stab
 
 def add_node(file_path: str, role: str, layer: str, stability: str = "medium", node_type: str = "file", key_functions: list[str] | None = None, connects_to: list[dict] | None = None, rules: list[str] | None = None, do_not_revert: bool = False, tests: list[str] | None = None) -> dict[str, str]:
     db = _get_db()
-    import json
     
     node_id = f"file:{file_path}"
     
@@ -123,7 +124,6 @@ def update_node(file_path: str, changes: dict[str, Any]) -> dict[str, str]:
         db.close()
         return {"error": f"Node '{file_path}' not found."}
         
-    import json
     updates = {}
     for key, val in changes.items():
         if key in ["rules", "key_functions"]:
@@ -163,14 +163,13 @@ def get_node(file_path: str) -> dict[str, Any]:
         }
         
     staleness = _check_staleness(file_path)
-    import json
     
     res_node = dict(node)
     for k in ["rules", "key_functions", "dependencies"]:
         if res_node.get(k):
             try:
                 res_node[k] = json.loads(res_node[k])
-            except:
+            except (json.JSONDecodeError, TypeError, ValueError):
                 pass
 
     return {
@@ -297,7 +296,6 @@ def _to_dot(nodes: list[dict], edges: list[dict]) -> str:
 
 def get_graph_diff(base_ref: str = "main", head_ref: str = "HEAD") -> dict[str, Any]:
     """Show which graph nodes changed between two git refs and their blast radius."""
-    import subprocess
     root = get_project_root()
 
     try:
@@ -492,7 +490,6 @@ def analyze_changes(base_ref: str = "main", head_ref: str = "HEAD") -> dict[str,
     Enhanced change analysis with function-level risk scoring.
     Maps git diff to affected functions, callers, and test coverage gaps.
     """
-    import subprocess
     root = get_project_root()
 
     # Get changed files

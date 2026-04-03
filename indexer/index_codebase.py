@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import argparse
 import logging
 import os
@@ -94,8 +96,11 @@ def _get_changed_files(db: SQLiteGraph) -> list[tuple[str, str]]:
                 
                 if current_hash != stored_hash:
                     changed.append((rel_path, current_hash))
-            except Exception:
-                pass
+            except Exception as e:
+                try:
+                    from mcp_server.crash_logger import log_crash
+                    log_crash(e, context="get_changed_files: hash check")
+                except Exception: pass
                 
     return changed
 
@@ -262,8 +267,11 @@ def cmd_incremental(quiet: bool = False, file_paths: list[str] | None = None):
     for fpath, fhash in changed_items:
         try:
             collection.delete(where={"file_path": fpath})
-        except Exception:
-            pass
+        except Exception as e:
+            try:
+                from mcp_server.crash_logger import log_crash
+                log_crash(e, context=f"incremental index: delete old chunks for {fpath}")
+            except Exception: pass
 
         try:
             chunks = chunk_file(str(PROJECT_ROOT / fpath), str(PROJECT_ROOT))
@@ -279,9 +287,13 @@ def cmd_incremental(quiet: bool = False, file_paths: list[str] | None = None):
             db.update_file_hash(fpath, fhash)
             indexed_any = True
             console.print(f"  [green]+[/green] Re-indexed {len(chunks)} chunks for {fpath}")
-            
+
         except Exception as e:
             console.print(f"[red]Error indexing {fpath}: {e}[/red]")
+            try:
+                from mcp_server.crash_logger import log_crash
+                log_crash(e, context=f"incremental index: indexing {fpath}")
+            except Exception: pass
             continue
 
     if indexed_any:
@@ -344,6 +356,10 @@ def start_background_watcher(quiet: bool = True):
                 _watcher_logger.debug("Incremental reindex complete")
             except Exception as e:
                 _watcher_logger.warning("Background reindex failed: %s", e)
+                try:
+                    from mcp_server.crash_logger import log_crash
+                    log_crash(e, context="background watcher: incremental reindex")
+                except Exception: pass
 
         def on_modified(self, event):
             if not event.is_directory:
@@ -403,13 +419,18 @@ def cmd_status():
     console = Console()
     db = SQLiteGraph(get_data_dir() / "graph" / "graph.db")
     
+    search_available = True
     try:
         client = _get_chroma_client()
         embed_fn = _get_embedding_fn()
         collection = client.get_collection(COLLECTION_NAME, embedding_function=embed_fn)
         chunk_count = collection.count()
-    except Exception:
+    except ImportError:
         chunk_count = 0
+        search_available = False
+    except Exception as e:
+        chunk_count = 0
+        console.print(f"[yellow]Warning: could not read search index: {e}[/yellow]")
 
     stale_files = _get_changed_files(db)
 

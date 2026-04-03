@@ -32,6 +32,8 @@ Usage (Claude Code .claude/settings.json):
 
 Usage (Cursor / Windsurf): configure via their MCP settings UI with same command.
 """
+from __future__ import annotations
+
 import sys
 
 try:
@@ -943,6 +945,14 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
     except Exception as e:
         result = {"error": str(e), "tool": name}
+        # Log crashes with full traceback (sanitized, no secrets)
+        try:
+            from mcp_server.crash_logger import log_crash
+            from mcp_server.paths import get_project_root
+            log_crash(e, context="tool dispatch", tool_name=name,
+                      project_path=str(get_project_root()))
+        except Exception:
+            pass  # crash logger must never break the server
 
     return [TextContent(type="text", text=json.dumps(result, indent=2))]
 
@@ -952,6 +962,13 @@ def main():
     import logging
 
     logger = logging.getLogger("codevira.server")
+
+    # Install global crash handler — catches unhandled exceptions
+    try:
+        from mcp_server.crash_logger import install_global_handler, log_crash
+        install_global_handler()
+    except Exception as e:
+        logger.warning("Could not install crash handler: %s", e)
 
     # Auto-start background file watcher so the index stays fresh
     # on every file save — no manual trigger or git commit needed.
@@ -963,6 +980,8 @@ def main():
     except Exception as e:
         # Watcher is best-effort; don't block server startup
         logger.warning("Could not start background watcher: %s", e)
+        try: log_crash(e, context="background watcher startup")
+        except Exception: pass
 
     # v1.4: Run outcome analysis and rule inference on startup
     # This processes any sessions that haven't been analyzed yet.
@@ -974,6 +993,8 @@ def main():
         logger.info("Outcome analysis and rule inference complete")
     except Exception as e:
         logger.warning("Could not run startup learning: %s", e)
+        try: log_crash(e, context="startup learning pipeline")
+        except Exception: pass
 
     # v1.5: Import global intelligence from cross-project memory
     try:
@@ -984,6 +1005,8 @@ def main():
                         stats["preferences_imported"], stats["rules_imported"])
     except Exception as e:
         logger.warning("Could not sync global memory: %s", e)
+        try: log_crash(e, context="global memory import")
+        except Exception: pass
 
     async def _run():
         async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):

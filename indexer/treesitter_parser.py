@@ -7,6 +7,7 @@ Python files are NOT handled here — they use the stdlib `ast` module.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -176,7 +177,6 @@ def parse_file(file_path: str, language: str | None = None) -> ParsedFile:
         # 1. Imports
         if node_type in import_types:
             raw = _node_text(node, source_bytes)
-            import re
             # JS/TS/Java: quoted module strings
             matches = re.findall(r'["\']([^"\']+)["\']', raw)
             if matches:

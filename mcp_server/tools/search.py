@@ -1,5 +1,5 @@
-import os
-import re
+from __future__ import annotations
+
 import json
 from datetime import datetime
 from pathlib import Path
@@ -57,6 +57,11 @@ def search_codebase(description: str, top_k: int = 5) -> dict[str, Any]:
             "hint": "Use get_code(file_path, symbol) to read full source.",
         }
     except Exception as e:
+        try:
+            from mcp_server.crash_logger import log_crash
+            log_crash(e, context="search_codebase")
+        except Exception:
+            pass
         return {"error": f"Search failed: {e}"}
 
 def write_session_log(session_id: str, task: str, phase: str, files_changed: list[str], decisions: list[dict], next_steps: list[str]) -> dict[str, str]:
@@ -69,8 +74,12 @@ def write_session_log(session_id: str, task: str, phase: str, files_changed: lis
     try:
         from mcp_server.global_sync import export_project_to_global
         export_project_to_global()
-    except Exception:
-        pass  # Best-effort, non-blocking
+    except Exception as e:
+        try:
+            from mcp_server.crash_logger import log_crash
+            log_crash(e, context="write_session_log: global export")
+        except Exception:
+            pass
 
     return {"status": f"Session {session_id} logged to SQLite Memory."}
 

@@ -181,5 +181,7 @@ def _get_project_language() -> str | None:
             config = yaml.safe_load(f) or {}
         project = config.get("project", config)
         return project.get("language")
-    except Exception:
+    except Exception as e:
+        import logging
+        logging.getLogger("codevira.global_sync").warning("Could not read project language: %s", e)
         return None

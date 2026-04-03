@@ -10,6 +10,8 @@ what happened to the agent's changes:
 This feedback feeds into confidence scoring, preference learning, and
 automatic rule generation.
 """
+from __future__ import annotations
+
 import difflib
 import logging
 import subprocess

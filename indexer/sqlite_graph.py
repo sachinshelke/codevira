@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+import json
 import sqlite3
 import os
 import logging
@@ -391,7 +394,6 @@ class SQLiteGraph:
 
     def add_learned_rule(self, rule_text: str, confidence: float, source_sessions: list[str],
                          category: str | None = None, file_pattern: str | None = None):
-        import json
         with self.transaction() as conn:
             conn.execute('''
                 INSERT INTO learned_rules (rule_text, confidence, source_sessions, category, file_pattern)
@@ -400,7 +402,6 @@ class SQLiteGraph:
 
     def update_learned_rule(self, rule_id: int, confidence: float | None = None,
                             source_sessions: list[str] | None = None):
-        import json
         updates, values = [], []
         if confidence is not None:
             updates.append("confidence = ?")

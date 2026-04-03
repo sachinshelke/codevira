@@ -7,7 +7,6 @@
 [![MCP](https://img.shields.io/badge/protocol-MCP-purple)](https://modelcontextprotocol.io)
 [![Version](https://img.shields.io/badge/version-1.5.0-orange)](CHANGELOG.md)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](CONTRIBUTING.md)
-[![Contributions Welcome](https://img.shields.io/badge/contributions-welcome-brightgreen)](CONTRIBUTING.md)
 
 **Works with:** Claude Code · Cursor · Windsurf · Google Antigravity · any MCP-compatible AI tool
 
@@ -27,27 +26,112 @@ You end up spending thousands of tokens on re-discovery — every single session
 
 ## What It Does
 
-Codevira is a [Model Context Protocol](https://modelcontextprotocol.io) server you drop into any project. It gives every AI agent that works on your codebase a shared, persistent memory:
+Codevira is a [Model Context Protocol](https://modelcontextprotocol.io) server that gives every AI agent working on your codebase a shared, persistent memory:
 
 | Capability | What It Means |
 |---|---|
-| **Live auto-watch** | Background file watcher auto-reindexes on every save — no manual trigger or git commit needed |
+| **Zero-config setup** | Auto-detects language, source dirs, and file extensions; auto-injects IDE config — no prompts, no manual JSON editing |
+| **Live auto-watch** | Background file watcher auto-reindexes on every save — no manual trigger needed |
 | **Context graph** | Every source file has a node: role, rules, dependencies, stability, `do_not_revert` flags |
-| **Semantic code search** | Natural language search across your codebase — no grep, no file reading |
+| **Function-level call graph** | Knows which function calls which — callers, callees, test coverage, risk scoring |
+| **Semantic code search** | Natural language search across your codebase (optional — requires `[search]` extras) |
 | **Roadmap** | Phase-based tracker so agents always know what phase you're in and what comes next |
 | **Changeset tracking** | Multi-file changes tracked atomically; sessions resume cleanly after interruption |
 | **Decision log** | Every session writes a structured log; past decisions are searchable by any future agent |
-| **Adaptive learning** | Outcome tracking, confidence scoring, developer preference learning, and automatic rule inference — memory that gets smarter over time |
+| **Adaptive learning** | Outcome tracking, confidence scoring, developer preference learning, and automatic rule inference |
+| **Cross-project memory** | Learned preferences and rules sync across all your projects via `~/.codevira/global.db` |
 | **Cross-tool continuity** | Single "catch me up" call for seamless switching between Cursor, Claude Code, Windsurf, and Antigravity |
-| **Agent personas** | Seven role definitions (Planner, Developer, Reviewer, Tester, Builder, Documenter, Orchestrator) with explicit protocols |
 
 **The result:** ~1,400 tokens of overhead per session instead of 15,000+ tokens of re-discovery.
 
 ---
 
+## Quick Start
+
+### 1. Install
+
+```bash
+# Recommended: global install via pipx (isolated, works everywhere)
+pipx install codevira-mcp
+
+# Alternative: pip install
+pip install codevira-mcp
+
+# With semantic search support (adds ChromaDB + sentence-transformers)
+pip install 'codevira-mcp[search]'
+```
+
+### 2. Initialize in your project
+
+```bash
+cd your-project
+codevira init
+```
+
+This single command — with zero prompts:
+- Auto-detects language, source directories, and file extensions from project markers
+- Creates `.codevira/` with config, graph database, and index
+- Adds `.codevira/` to `.gitignore`
+- Builds the full code index (with progress bar)
+- Auto-generates graph stubs for all source files
+- Bootstraps the roadmap from git history
+- Installs a `post-commit` git hook for automatic reindexing
+- **Auto-injects MCP config** into Claude Code, Cursor, Windsurf, and Google Antigravity
+
+### 3. Verify
+
+Ask your AI agent to call `get_roadmap()` — it should return your current phase and next action.
+
+> **Note:** After `codevira init`, restart your AI tool to pick up the new MCP server config.
+
+### Manual config (only if auto-inject didn't detect your tool)
+
+**Claude Code** (`.claude/settings.json`), **Cursor** (`.cursor/mcp.json`), **Windsurf** (`.windsurf/mcp.json`):
+```json
+{
+  "mcpServers": {
+    "codevira": {
+      "command": "codevira-mcp",
+      "args": [],
+      "cwd": "/path/to/your-project"
+    }
+  }
+}
+```
+
+**Google Antigravity** (`~/.gemini/settings/mcp_config.json`):
+```json
+{
+  "mcpServers": {
+    "codevira-yourproject": {
+      "$typeName": "exa.cascade_plugins_pb.CascadePluginCommandTemplate",
+      "command": "codevira-mcp",
+      "args": ["--project-dir", "/path/to/your-project"]
+    }
+  }
+}
+```
+
+### Project structure after init
+
+```
+your-project/
+├── src/                   <- your code (indexed)
+├── .codevira/             <- Codevira data directory (git-ignored)
+│   ├── config.yaml        <- project configuration (auto-generated)
+│   ├── graph/
+│   │   ├── graph.db       <- SQLite: context graph, symbols, sessions, decisions
+│   │   └── changesets/    <- active multi-file change records
+│   ├── codeindex/         <- semantic search index (optional, requires [search])
+│   └── logs/              <- session logs
+└── .claude/settings.json  <- MCP config (auto-injected by init)
+```
+
+---
+
 ## How It Works
 
-## Agent Session Lifecycle
+### Agent Session Lifecycle
 
 ```mermaid
 flowchart TB
@@ -58,7 +142,7 @@ subgraph Orientation
 A[Check Open Changesets]
 B[Get Project Roadmap]
 C[Search Past Decisions]
-D[Load Graph Context\nget_node • get_impact]
+D[Load Graph Context\nget_node - get_impact]
 end
 
 subgraph Execution
@@ -85,9 +169,6 @@ H --> I
 I --> J
 ```
 
----
-
-
 ### Code Intelligence Model
 
 ```mermaid
@@ -96,21 +177,22 @@ flowchart TB
 A[Source Code]
 
 subgraph Structural Analysis
-B[AST Parser]
+B[Tree-sitter AST Parser]
 C[Function / Class Extraction]
-D[Dependency Analysis]
+D[Dependency + Call Graph Analysis]
 end
 
 subgraph Knowledge Stores
-E[(Semantic Index<br/>ChromaDB)]
-F[(Context Graph<br/>SQLite DB)]
+E[(Semantic Index\nChromaDB — optional)]
+F[(Context Graph + Call Graph\nSQLite DB)]
+G[(Global Memory\n~/.codevira/global.db)]
 end
 
 subgraph Runtime Access
-G[MCP Query Layer<br/>search_codebase • get_node • get_impact]
+H[MCP Query Layer\n36 tools + 5 prompts]
 end
 
-H[AI Coding Agent<br/>Claude Code • Cursor]
+I[AI Coding Agent\nClaude Code - Cursor - Windsurf - Antigravity]
 
 A --> B
 B --> C
@@ -119,132 +201,12 @@ C --> E
 B --> D
 D --> F
 
-E --> G
-F --> G
-
+F --> H
+E --> H
 G --> H
+
+H --> I
 ```
-
-
-## Quick Start
-
-### 1. Install
-
-```bash
-pip install codevira-mcp
-```
-
-### 2. Initialize in your project
-
-```bash
-cd your-project
-codevira init
-```
-
-This single command:
-- Creates `.codevira/` with config, graph, and log directories
-- Adds `.codevira/` to `.gitignore` (index is auto-regenerated, no need to commit)
-- Prompts for project name, language, source directories (comma-separated), and file extensions
-- Builds the full code index using SHA-256 content hashing (only changed files are re-indexed)
-- Auto-generates graph stubs for all source files
-- Bootstraps `.codevira/roadmap.yaml` from git history
-- Installs a `post-commit` git hook for automatic reindexing
-- Prints the MCP config block to paste into your AI tool
-
-> **Live Auto-Watch:** When the MCP server starts, it automatically launches a background file watcher. Every time you save a source file, the index is updated within 2 seconds — no manual commands needed. The `post-commit` hook and `codevira index` CLI remain available as alternatives.
-
-### 3. Connect to your AI tool
-
-Depending on your IDE and environment, `codevira-mcp` may not automatically be in your `PATH`.
-You can use `uvx` (the easiest option) or provide the absolute path to your Python virtual environment.
-
-**Option A: Using uvx (Recommended for all IDEs without local install)**
-If you use [`uv`](https://github.com/astral-sh/uv), you can run the MCP server seamlessly without managing virtual environments per project.
-
-**Claude Code** (`.claude/settings.json`), **Cursor / Windsurf** (Settings → MCP):
-```json
-{
-  "mcpServers": {
-    "codevira": {
-      "command": "uvx",
-      "args": ["codevira-mcp", "--project-dir", "/path/to/your-project"]
-    }
-  }
-}
-```
-
-**Option B: Using Local Venv (Recommended, works everywhere)**
-Point your AI tool directly to the Python runtime inside your `.venv` where `codevira-mcp` is installed. 
-
-**Claude Code** (`.claude/settings.json`) or **Cursor / Windsurf** (Settings → MCP):
-```json
-{
-  "mcpServers": {
-    "codevira": {
-      "command": "/path/to/your-project/.venv/bin/python",
-      "args": ["-m", "mcp_server", "--project-dir", "/path/to/your-project"]
-    }
-  }
-}
-```
-
-**Google Antigravity** — add to `~/.gemini/antigravity/mcp_config.json`:
-```json
-{
-  "mcpServers": {
-    "codevira": {
-      "$typeName": "exa.cascade_plugins_pb.CascadePluginCommandTemplate",
-      "command": "/path/to/your-project/.venv/bin/python",
-      "args": ["-m", "mcp_server", "--project-dir", "/path/to/your-project"]
-    }
-  }
-}
-```
-
-> **⚠️ IMPORTANT: Using Global Clients (Antigravity / Claude Desktop) with Multiple Projects**
-> 
-> Unlike Cursor, which spins up isolated MCP servers per project automatically, global clients like Antigravity share a single `mcp_config.json` across all your open projects.
-> 
-> If you configure `codevira` once for `Project A`, and then ask a question about `Project B`, the agent will read the graph and roadmap from `Project A`.
-> 
-> **To fix this:** You must register uniquely named servers for each project in your global config. The AI will dynamically choose the right tool prefix based on your conversation context:
-> ```json
-> {
->   "mcpServers": {
->     "codevira-project-a": {
->       "$typeName": "exa.cascade_plugins_pb.CascadePluginCommandTemplate",
->       "command": "uvx",
->       "args": ["codevira-mcp", "--project-dir", "/path/to/project-a"]
->     },
->     "codevira-project-b": {
->       "$typeName": "exa.cascade_plugins_pb.CascadePluginCommandTemplate",
->       "command": "uvx",
->       "args": ["codevira-mcp", "--project-dir", "/path/to/project-b"]
->     }
->   }
-> }
-> ```
-
-### 4. Verify
-
-Ask your agent to call `get_roadmap()` — it should return your current phase and next action.
-
-### Project structure after init
-
-```
-your-project/
-├── src/                   ← your code (indexed)
-├── .codevira/             ← Codevira data directory (git-ignored)
-│   ├── config.yaml        ← project configuration
-│   ├── roadmap.yaml       ← project roadmap (auto-generated, human-enrichable)
-│   ├── codeindex/         ← ChromaDB index (auto-regenerated)
-│   └── graph/             ← context graph and session memory
-│       ├── graph.db       ← SQLite database for nodes, edges, logs, and decisions
-│       └── changesets/    ← active multi-file change records
-└── requirements.txt       ← add: codevira-mcp>=1.0.0
-```
-
-> **Roadmap lifecycle:** The roadmap is auto-generated during init and updated by the agent through MCP tool calls. See [docs/roadmap.md](docs/roadmap.md) for the full lifecycle guide, manual editing steps, and troubleshooting.
 
 ---
 
@@ -254,11 +216,11 @@ Every agent session follows a simple protocol. Set it up once in your agent's sy
 
 **Session start (mandatory):**
 ```
-list_open_changesets()      → resume any unfinished work first
-get_roadmap()               → current phase, next action
-search_decisions("topic")   → check what's already been decided
-get_node("src/service.py")  → read rules before touching a file
-get_impact("src/service.py") → check blast radius
+list_open_changesets()      -> resume any unfinished work first
+get_roadmap()               -> current phase, next action
+search_decisions("topic")   -> check what's already been decided
+get_node("src/service.py")  -> read rules before touching a file
+get_impact("src/service.py") -> check blast radius
 ```
 
 **Session end (mandatory):**
@@ -273,20 +235,27 @@ This loop keeps every session fast, focused, and resumable.
 
 ---
 
-## 33 MCP Tools
+## 36 MCP Tools + 5 Prompts
 
 ### Graph Tools
 | Tool | Description |
 |---|---|
 | `get_node(file_path)` | Metadata, rules, connections, staleness for any file |
-| `get_impact(file_path)` | BFS blast-radius — which files depend on this one (powered by real import edges) |
+| `get_impact(file_path)` | BFS blast-radius — which files depend on this one |
 | `list_nodes(layer?, stability?, do_not_revert?)` | Query nodes by attribute |
 | `add_node(file_path, role, type, ...)` | Register a new file in the graph |
 | `update_node(file_path, changes)` | Append rules, connections, key_functions |
 | `refresh_graph(file_paths?)` | Auto-generate stubs for unregistered files |
-| `refresh_index(file_paths?)` | Re-embed specific files in ChromaDB |
+| `refresh_index(file_paths?)` | Re-embed specific files in the search index |
 | `export_graph(format, scope?)` | Export dependency graph as Mermaid or DOT diagram |
 | `get_graph_diff(base_ref?, head_ref?)` | Show changed nodes, stability flags, and blast radius between git refs |
+
+### Deep Graph Tools (v1.5)
+| Tool | Description |
+|---|---|
+| `query_graph(file_path, symbol?, query_type)` | Function-level: callers, callees, tests, dependents, symbols |
+| `analyze_changes(base_ref?, head_ref?)` | Function-level risk scoring with test coverage gaps |
+| `find_hotspots(threshold?)` | Large functions, high fan-in, high fan-out — complexity heatmap |
 
 ### Roadmap Tools
 | Tool | Description |
@@ -304,7 +273,6 @@ This loop keeps every session fast, focused, and resumable.
 | Tool | Description |
 |---|---|
 | `list_open_changesets()` | All in-progress changesets |
-| `get_changeset(id)` | Full detail: files done, files pending, blocker |
 | `start_changeset(id, description, files)` | Open a multi-file changeset |
 | `complete_changeset(id, decisions)` | Close and record decisions |
 | `update_changeset_progress(id, last_file, blocker?)` | Mid-session checkpoint |
@@ -312,122 +280,66 @@ This loop keeps every session fast, focused, and resumable.
 ### Search Tools
 | Tool | Description |
 |---|---|
-| `search_codebase(description, top_k?)` | Semantic search over source code |
-| `search_decisions(query, limit?, session_id?)` | Search all past session decisions; optionally filter to a specific session |
+| `search_codebase(query, limit?)` | Semantic search over source code (requires `[search]` extras) |
+| `search_decisions(query, limit?, session_id?)` | Search all past session decisions |
 | `get_history(file_path)` | All sessions that touched a file |
 | `write_session_log(...)` | Write structured session record |
 
-### Adaptive Learning Tools (v1.4)
+### Adaptive Learning Tools
 | Tool | Description |
 |---|---|
-| `get_decision_confidence(file_path?, pattern?)` | Outcome-based reliability scores — how often past decisions were kept vs reverted |
-| `get_preferences(category?)` | Learned developer style preferences from post-edit corrections |
-| `get_learned_rules(file_path?, category?)` | Auto-generated rules from observed patterns (test pairing, import hotspots, co-changes) |
-| `get_project_maturity()` | 0–100 intelligence score combining sessions, coverage, confidence, rules, preferences |
-| `get_session_context()` | Single "catch me up" call for cross-tool continuity (Cursor ↔ Claude Code ↔ Antigravity) |
+| `get_decision_confidence(file_path?, pattern?)` | Outcome-based reliability scores |
+| `get_preferences(category?)` | Learned developer style preferences |
+| `get_learned_rules(file_path?, category?)` | Auto-generated rules from observed patterns |
+| `get_project_maturity()` | 0-100 intelligence score |
+| `get_session_context()` | Single "catch me up" call for cross-tool continuity |
 
 ### Code Reader Tools
 | Tool | Description |
 |---|---|
-| `get_signature(file_path)` | All public symbols, signatures, line numbers |
+| `get_signature(file_path)` | All public symbols, signatures, line numbers (Python, TypeScript, Go, Rust) |
 | `get_code(file_path, symbol)` | Full source of one function or class |
 
 ### Playbook Tool
 | Tool | Description |
 |---|---|
-| `get_playbook(task_type)` | Curated rules for a task: `add_route`, `add_service`, `add_schema`, `debug_pipeline`, `commit`, `write_test` |
+| `get_playbook(task_type)` | Curated rules for: `add_route`, `add_service`, `add_schema`, `debug_pipeline`, `commit`, `write_test` |
 
----
-
-## Agent Personas
-
-Seven role definitions in `agents/` tell each agent exactly what to do and when:
-
-| Agent | Invoked When | Key Responsibility |
-|---|---|---|
-| `orchestrator.md` | Every session start | Classify task, select pipeline |
-| `planner.md` | Large or ambiguous tasks | Decompose into ordered steps |
-| `developer.md` | All code changes | Write code within graph rules |
-| `reviewer.md` | `stability: high` or `do_not_revert` files | Flag rule violations |
-| `tester.md` | After every code change | Run the test suite |
-| `builder.md` | After tests pass | Lint, type-check |
-| `documenter.md` | End of every session | Update graph, roadmap, log |
-
----
-
-## Project Structure
-
-```
-.agents/
-├── PROTOCOL.md              # Session protocol — read this first
-├── config.example.yaml      # Config template
-├── config.yaml              # Your config (git-ignored)
-├── roadmap.yaml             # Phase tracker (auto-created, git-ignored)
-├── mcp-server/
-│   ├── server.py            # MCP server entry point
-│   └── tools/
-│       ├── graph.py
-│       ├── roadmap.py
-│       ├── changesets.py
-│       ├── search.py
-│       ├── playbook.py
-│       └── code_reader.py
-├── indexer/
-│   ├── index_codebase.py    # Build/update ChromaDB index + background file watcher
-│   ├── chunker.py           # AST-based code chunker
-│   ├── treesitter_parser.py # Multi-language AST parsing (16+ languages)
-│   ├── sqlite_graph.py      # SQLite graph database backend
-│   └── graph_generator.py   # Auto-generate graph stubs
-├── requirements.txt         # Python dependencies
-├── agents/                  # Role definitions
-│   ├── orchestrator.md
-│   ├── planner.md
-│   ├── developer.md
-│   ├── reviewer.md
-│   ├── tester.md
-│   ├── builder.md
-│   └── documenter.md
-├── rules/                   # Engineering standards
-│   ├── master_rule.md
-│   ├── coding-standards.md
-│   ├── testing-standards.md
-│   └── ...13 more
-├── graph/
-│   ├── graph.db             # SQLite Context Graph and Session Memory (git-ignored)
-│   └── changesets/
-├── hooks/
-│   └── install-hooks.sh
-└── codeindex/               # ChromaDB files (git-ignored)
-```
+### MCP Workflow Prompts (v1.5)
+| Prompt | Description |
+|---|---|
+| `review_changes` | Staged diff + blast radius + risk score |
+| `debug_issue` | Symptom -> affected files -> call chain -> hypothesis |
+| `onboard_session` | Full project context catch-up for new sessions |
+| `pre_commit_check` | Test coverage gaps + high-risk functions before commit |
+| `architecture_overview` | Module map + hotspots + dependency summary |
 
 ---
 
 ## Language Support
 
-| Feature | Python | TypeScript | Go | Rust | 10+ Others (Java, C#, Ruby, PHP, C++) |
+| Feature | Python | TypeScript | Go | Rust | 12+ Others |
 |---|---|---|---|---|---|
-| Semantic code search | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Context graph + blast radius | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Roadmap + changesets | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Session logs + decision search | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `get_signature` / `get_code` | ✅ | ✅ | ✅ | ✅ | |
-| Auto-generated graph stubs | ✅ | ✅ | ✅ | ✅ | |
-| AST-based chunking | ✅ | ✅ | ✅ | ✅ | |
+| Context graph + blast radius | Y | Y | Y | Y | Y |
+| Semantic code search | Y | Y | Y | Y | Y |
+| Function-level call graph | Y | Y | Y | Y | |
+| `get_signature` / `get_code` | Y | Y | Y | Y | |
+| AST-based chunking | Y | Y | Y | Y | |
+| Auto-generated graph stubs | Y | Y | Y | Y | |
+| Roadmap + changesets | Y | Y | Y | Y | Y |
+| Session logs + decision search | Y | Y | Y | Y | Y |
 
-All session management, graph, roadmap, and search features work for any language. Code parsing and extraction (search, graph generation, signature reads) are powered by robust ast and Tree-Sitter integrations.
+Supported languages: Python, TypeScript, JavaScript, Go, Rust, Java, Kotlin, C#, Ruby, PHP, C, C++, Swift, Solidity, Vue.
 
 ---
 
 ## Requirements
 
-- Python 3.10+
-- ChromaDB
-- sentence-transformers
-- PyYAML
+- **Python 3.10+**
 
-```bash
-pip install -r .agents/requirements.txt
-```
+Base install (`pip install codevira-mcp`): includes everything except semantic search. All 36 MCP tools work — graph, roadmap, changesets, code reader, learning, call graph.
+
+With semantic search (`pip install 'codevira-mcp[search]'`): adds ChromaDB + sentence-transformers for `search_codebase()`. Downloads a ~90MB embedding model on first use.
 
 ---
 
@@ -441,23 +353,11 @@ Read the full write-up: [How We Cut AI Coding Agent Token Usage by 92%](docs/how
 
 ## Contributing
 
-Contributions are welcome — this is an early-stage open source project and there's a lot of room to grow.
+Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide.
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide: forking, branch naming, commit format, and PR process.
-
-**Good first areas:**
-- Graph visualization exports (Dot/Mermaid)
-- Additional playbook entries for common task types
-- IDE-specific setup guides
-- Bug reports and edge case fixes
-
-**Reporting a bug?** → [Open a bug report](https://github.com/sachinshelke/codevira/issues/new?template=bug_report.md)
-
-**Requesting a feature?** → [Open a feature request](https://github.com/sachinshelke/codevira/issues/new?template=feature_request.md)
-
-**Found a security issue?** → Read [SECURITY.md](SECURITY.md) — please don't use public issues for vulnerabilities.
-
-Please open an issue before submitting a large PR so we can discuss the approach first.
+**Reporting a bug?** [Open a bug report](https://github.com/sachinshelke/codevira/issues/new?template=bug_report.md)
+**Requesting a feature?** [Open a feature request](https://github.com/sachinshelke/codevira/issues/new?template=feature_request.md)
+**Found a security issue?** Read [SECURITY.md](SECURITY.md) — please don't use public issues for vulnerabilities.
 
 ---
 
@@ -465,22 +365,9 @@ Please open an issue before submitting a large PR so we can discuss the approach
 
 Common questions about setup, usage, architecture, and troubleshooting — see [FAQ.md](FAQ.md).
 
----
-
 ## Roadmap
 
-See what's built, what's coming next, and what's being considered — see [ROADMAP.md](ROADMAP.md).
-
-Want to influence priorities? [Open a feature request](https://github.com/sachinshelke/codevira/issues/new?template=feature_request.md) or upvote existing ones.
-
----
-
-## Code of Conduct
-
-This project follows the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.md).
-By participating, you agree to maintain a respectful and welcoming environment.
-
----
+See what's built, what's next, and the long-term vision — see [ROADMAP.md](ROADMAP.md).
 
 ## License
 

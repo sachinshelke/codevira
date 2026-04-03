@@ -9,7 +9,7 @@
 ## 2. Commit Standards (Conventional Commits)
 
 - **Format**: `<type>(<scope>): <subject>` — Example: `feat(core): implement circuit breaker`.
-- **Accountability**: Every commit should reference the changeset or task it addresses (see session logs in `.agents/logs/`).
+- **Accountability**: Every commit should reference the changeset or task it addresses (see session logs in `.codevira/logs/`).
 - **Atomic Commits**: Each commit should represent a single logical change.
 
 ## 3. CI/CD Gates (The Quality Bar)

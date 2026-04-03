@@ -32,7 +32,7 @@ Security concerns relevant to this project include:
 - **Arbitrary code execution** via MCP tool inputs
 - **Path traversal** in file-reading tools (`get_node`, `get_code`, `get_signature`)
 - **Credential exposure** via session logs or graph nodes
-- **Malicious graph YAML** that causes unintended behavior when loaded
+- **Malicious graph database entries** that cause unintended behavior when loaded
 
 ## Out of Scope
 

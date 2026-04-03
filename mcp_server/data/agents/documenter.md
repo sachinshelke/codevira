@@ -117,7 +117,7 @@ This writes to SQLite Memory and feeds `search_decisions()`.
 ## Log Directory Convention
 
 ```
-.agents/logs/
+.codevira/logs/
   2025-01-15/
     session-a1b2c3d4.yaml
     session-e5f6g7h8.yaml

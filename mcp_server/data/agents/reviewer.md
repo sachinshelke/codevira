@@ -12,7 +12,7 @@ Only when triggered by the Orchestrator (see `orchestrator.md`):
 - File has `stability: high` or `do_not_revert: true` in graph
 - File has non-empty `rules` in graph node
 - Change touches event payloads or schemas
-- Change touches `.agents/graph/` or `.agents/roadmap.yaml`
+- Change touches `.codevira/graph/` or `.codevira/roadmap.yaml`
 
 ---
 
@@ -52,8 +52,8 @@ For each changed file:
 - [ ] Error cases use typed exceptions, not generic exceptions
 
 ### 5. Agent Framework Changes
-- [ ] If `.agents/graph/*.yaml` changed — run `get_impact()` to verify no broken node references
-- [ ] If `.agents/roadmap.yaml` changed — confirm phase numbers are consistent
+- [ ] If `.codevira/graph/*.yaml` changed — run `get_impact()` to verify no broken node references
+- [ ] If `.codevira/roadmap.yaml` changed — confirm phase numbers are consistent
 - [ ] If MCP tools changed — verify server.py still registers them with correct inputSchema
 
 ---

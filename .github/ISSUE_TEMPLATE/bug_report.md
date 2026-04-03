@@ -33,7 +33,7 @@ paste error here
 - **OS:** (e.g. macOS 14, Ubuntu 22.04, Windows 11)
 - **Python version:** (e.g. 3.11.2)
 - **AI tool:** (e.g. Claude Code, Cursor, Windsurf)
-- **Codevira commit:** (run `git rev-parse HEAD` in `.agents/`)
+- **Codevira version:** (run `codevira-mcp --help` or `codevira status`)
 
 ## Additional Context
 

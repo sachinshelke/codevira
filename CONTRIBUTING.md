@@ -31,12 +31,12 @@ By participating, you agree to uphold a respectful and welcoming environment for
 1. **Fork** the repository on GitHub
 2. **Clone** your fork locally:
    ```bash
-   git clone https://github.com/sachinshelke/codevira.git
-   cd Codevira
+   git clone https://github.com/YOUR-USERNAME/codevira.git
+   cd codevira
    ```
-3. **Install** dependencies:
+3. **Install** in development mode:
    ```bash
-   pip install -r requirements.txt
+   pip install -e '.[all]'
    ```
 4. **Create a branch** for your change:
    ```bash
@@ -48,82 +48,61 @@ By participating, you agree to uphold a respectful and welcoming environment for
 
 ## Contributing with an AI Agent
 
-**AI-assisted contributions are fully welcome here — in fact, this project is built for exactly that workflow.**
+**AI-assisted contributions are fully welcome — in fact, this project is built for exactly that workflow.**
 
-Codevira exists to make AI-assisted coding better. It gives your agent persistent memory, blast-radius awareness, and a structured session log. Using it while contributing to this repo is not just allowed — it's the best way to contribute.
-
-Here's how a great AI-assisted contribution looks:
+Codevira exists to make AI-assisted coding better. Using it while contributing to this repo is the best way to contribute.
 
 ### Set up Codevira on your fork
 
 ```bash
-# After cloning your fork, build the index so your agent has full context
-cp config.example.yaml config.yaml
-codevira index --full
+# After cloning your fork
+cd codevira
+pip install -e '.[all]'
+codevira init
 ```
 
-Connect your AI tool to `.agents/mcp-server/server.py` as described in the README.
-Now your agent knows every file's role, rules, and dependencies before touching anything.
+This auto-detects the project, builds the index, and configures your AI tool. Your agent now has full context of the codebase.
 
 ### Let the agent orient before coding
 
 At the start of the session, your agent should call:
 
 ```
-get_roadmap()                        → understand the project state
-get_node("mcp-server/tools/graph.py") → read the rules for the file it will change
-get_impact("mcp-server/tools/graph.py") → know what else might be affected
-search_decisions("topic")            → check what's already been decided
+get_roadmap()                         -> understand the project state
+get_node("mcp_server/tools/graph.py") -> read the rules for the file it will change
+get_impact("mcp_server/tools/graph.py") -> know what else might be affected
+search_decisions("topic")             -> check what's already been decided
 ```
-
-This takes seconds and prevents the agent from making decisions that contradict existing design choices.
 
 ### Keep the PR scope clean
 
-AI agents are powerful — they can change many files quickly. For a PR to be reviewable, keep it focused:
+AI agents can change many files quickly. For a PR to be reviewable:
 
-- **Start a changeset** before the agent begins: `start_changeset(id, description, files)` — this defines the scope upfront
-- **One concern per PR** — if the agent discovers additional improvements while working, open a separate issue instead of expanding the PR
-- **Review every file** the agent changed before submitting — you are responsible for the PR, not the agent
+- **Start a changeset** before the agent begins: `start_changeset(id, description, files)`
+- **One concern per PR** — if the agent discovers additional improvements, open a separate issue
+- **Review every file** the agent changed before submitting
 
-### Include the session decisions in your PR
+### Include session decisions in your PR
 
-When your agent calls `write_session_log()` at the end of the session, it captures the key decisions made. Paste the `decisions` list into your PR description. This tells reviewers *why* the code is the way it is — not just *what* changed.
+When your agent calls `write_session_log()`, it captures key decisions. Include them in your PR description:
 
-Example PR description with AI session context:
 ```
 ## What
 Added tree-sitter chunker for TypeScript files.
 
 ## Agent session decisions
 - Used tree-sitter over regex because it handles template literals and decorators correctly
-- Kept Python AST chunker as the default; TypeScript chunker activates via config language: typescript
-- Fallback to line-based splitting when tree-sitter parse fails (graceful degradation)
+- Kept Python AST chunker as the default; TypeScript chunker activates via config
+- Fallback to line-based splitting when tree-sitter parse fails
 ```
-
-### Why this works better
-
-When you use Codevira while contributing to Codevira, you get:
-- Your agent never re-reads files it already knows about
-- Blast radius is checked before every change — no accidental side effects
-- Decisions are captured automatically — PR descriptions write themselves
-- Session logs become part of the project's institutional memory
-
-This is the workflow Codevira is designed to enable. Contributing this way is the best demonstration of what the project does.
 
 ---
 
 ## How to Report a Bug
 
-1. Check [existing issues](https://github.com/sachinshelke/codevira/issues) first — it may already be reported.
+1. Check [existing issues](https://github.com/sachinshelke/codevira/issues) first.
 2. Open a [new bug report](https://github.com/sachinshelke/codevira/issues/new?template=bug_report.md).
-3. Fill in the template — the more detail, the faster we can fix it.
-
-**Good bug reports include:**
-- What you did (exact steps to reproduce)
-- What you expected to happen
-- What actually happened (error message, stack trace)
-- Your environment (OS, Python version, AI tool used)
+3. Include: OS, Python version, AI tool, and full error message.
 
 ---
 
@@ -131,9 +110,9 @@ This is the workflow Codevira is designed to enable. Contributing this way is th
 
 1. Check [existing issues](https://github.com/sachinshelke/codevira/issues) to avoid duplicates.
 2. Open a [feature request](https://github.com/sachinshelke/codevira/issues/new?template=feature_request.md).
-3. Describe the problem you're trying to solve, not just the solution — this helps us find the best approach together.
+3. Describe the **problem** you're trying to solve, not just the solution.
 
-For large features, please open an issue for discussion **before** writing code. This avoids wasted effort if the approach doesn't fit the project direction.
+For large features, please open an issue for discussion **before** writing code.
 
 ---
 
@@ -142,13 +121,11 @@ For large features, please open an issue for discussion **before** writing code.
 ### 1. Fork and clone
 
 ```bash
-git clone https://github.com/sachinshelke/codevira.git
-cd Codevira
+git clone https://github.com/YOUR-USERNAME/codevira.git
+cd codevira
 ```
 
 ### 2. Create a branch
-
-Use a descriptive branch name:
 
 ```bash
 git checkout -b feat/typescript-chunker
@@ -169,16 +146,19 @@ Branch prefixes:
 
 - Keep changes focused — one feature or fix per PR
 - Follow the existing code style
-- If you add a new MCP tool, register it in `mcp-server/server.py`
+- If you add a new MCP tool, register it in `mcp_server/server.py`
 - If you change tool behavior, update the relevant section in `README.md`
 
 ### 4. Test your changes
 
 ```bash
-# Verify the MCP server starts and all tools register correctly
+# Run the test suite
+python -m pytest tests/ -v
+
+# Verify the MCP server starts and all tools register
 python -m mcp_server
 
-# If you modified the indexer, test it on a small project
+# If you modified the indexer, test on the project itself
 codevira index --full
 codevira status
 ```
@@ -193,7 +173,7 @@ git push origin feat/typescript-chunker
 
 ### 6. Open a Pull Request
 
-Go to GitHub and open a PR from your branch. Fill in the PR template — describe what changed and why.
+Go to GitHub and open a PR from your branch. Fill in the template.
 
 ---
 
@@ -202,22 +182,56 @@ Go to GitHub and open a PR from your branch. Fill in the PR template — describ
 ```bash
 # Clone
 git clone https://github.com/sachinshelke/codevira.git
-cd Codevira
+cd codevira
 
-# Install dependencies
-pip install -r requirements.txt
-
-# Optional: install in a virtual environment
-python -m venv .venv
-source .venv/bin/activate    # macOS/Linux
-.venv\Scripts\activate       # Windows
-pip install -r requirements.txt
+# Install in development mode (editable, with all optional deps)
+pip install -e '.[all]'
 
 # Verify MCP server starts
 python -m mcp_server
+
+# Run tests
+python -m pytest tests/ -v
+
+# Initialize Codevira on this project (for AI-assisted development)
+codevira init
 ```
 
 **Recommended Python version:** 3.10 or higher.
+
+### Project layout
+
+```
+codevira/
+├── mcp_server/            # MCP server package
+│   ├── server.py          # Server entry point + tool registration
+│   ├── cli.py             # CLI: init, index, status
+│   ├── detect.py          # Zero-config language/dir auto-detection
+│   ├── ide_inject.py      # Auto-inject MCP config into IDEs
+│   ├── paths.py           # Centralized path resolution
+│   ├── global_sync.py     # Cross-project memory sync
+│   ├── prompts.py         # MCP workflow prompts
+│   ├── tools/             # MCP tool implementations
+│   │   ├── graph.py
+│   │   ├── roadmap.py
+│   │   ├── search.py
+│   │   ├── learning.py
+│   │   ├── code_reader.py
+│   │   └── playbook.py
+│   └── data/              # Bundled assets (agents, rules, config template)
+├── indexer/               # Indexing and analysis
+│   ├── index_codebase.py  # Build/update index + background watcher
+│   ├── chunker.py         # AST-based code chunker
+│   ├── treesitter_parser.py
+│   ├── sqlite_graph.py    # SQLite graph database
+│   ├── graph_generator.py # Auto-generate graph stubs + symbols
+│   ├── global_db.py       # Cross-project global database
+│   ├── outcome_tracker.py # Git-based feedback loop
+│   └── rule_learner.py    # Automatic rule inference
+├── tests/                 # Test suite
+├── pyproject.toml         # Package config
+└── README.md
+```
 
 ---
 
@@ -226,8 +240,8 @@ python -m mcp_server
 - **One PR per concern** — don't bundle unrelated changes
 - **Keep PRs small** — easier to review, faster to merge
 - **Write a clear description** — what changed, why, and how to test it
-- **Link related issues** — use `Closes #123` in the PR description to auto-close issues
-- **Be responsive** — if a reviewer asks for changes, try to respond within a few days
+- **Link related issues** — use `Closes #123`
+- **Be responsive** — respond to review comments within a few days
 
 PRs that pass review will be squash-merged to keep the main branch history clean.
 
@@ -239,8 +253,6 @@ We follow [Conventional Commits](https://www.conventionalcommits.org/):
 
 ```
 <type>(<scope>): <short description>
-
-<optional longer description>
 ```
 
 **Types:**
@@ -249,16 +261,16 @@ We follow [Conventional Commits](https://www.conventionalcommits.org/):
 | `feat` | New feature |
 | `fix` | Bug fix |
 | `docs` | Documentation change |
-| `refactor` | Code change that doesn't fix a bug or add a feature |
+| `refactor` | Code restructuring |
 | `test` | Adding or updating tests |
 | `chore` | Tooling, config, dependencies |
 
 **Examples:**
 ```
 feat(indexer): add tree-sitter chunker for TypeScript
-fix(roadmap): auto-create stub when roadmap.yaml is missing
-docs(readme): add Windsurf setup instructions
-refactor(graph): simplify _infer_graph_file logic
+fix(roadmap): auto-create stub when roadmap is missing
+docs(readme): update quick start for v1.5 zero-config
+refactor(graph): migrate from YAML to SQLite
 ```
 
 ---
@@ -267,17 +279,15 @@ refactor(graph): simplify _infer_graph_file logic
 
 New to the project? Look for issues tagged [`good first issue`](https://github.com/sachinshelke/codevira/issues?q=label%3A%22good+first+issue%22).
 
-Areas particularly welcoming to new contributors:
+Areas welcoming to new contributors:
 
-- **Graph visualization** — exporters for Dot or Mermaid graphs
-- **Playbook entries** — add new task types to `mcp-server/tools/playbook.py`
-- **IDE setup guides** — detailed setup for specific AI tools
-- **Documentation** — examples, tutorials, clarifications
+- **Documentation** — examples, tutorials, setup guides for specific tools
+- **Playbook entries** — add new task types to `mcp_server/tools/playbook.py`
 - **Bug fixes** — any open bug report
+- **Test coverage** — add tests for edge cases
 
 ---
 
 ## Questions?
 
 Open a [Discussion](https://github.com/sachinshelke/codevira/discussions) or comment on a relevant issue.
-We're happy to help you get started.

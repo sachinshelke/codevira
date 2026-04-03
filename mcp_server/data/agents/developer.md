@@ -39,7 +39,7 @@ You receive a task, orient via MCP tools, then write precise targeted changes.
 
 ## Coding Rules
 
-- Follow `.agents/rules/` standards — especially `coding-standards.md`
+- Follow `rules/` standards — especially `coding-standards.md`
 - **Never** modify files with `do_not_revert: true` without explicit permission
 - If a file has `rules` in its graph node — read them before writing a single line
 
@@ -104,8 +104,8 @@ This ensures future agents can find it via `get_node()` and `get_impact()`.
 
 | Task type | Read this rule file |
 |---|---|
-| Adding an API route | `.agents/rules/api-standards.md` |
-| Adding a service | `.agents/rules/resilience-observability.md` |
+| Adding an API route | `rules/api-standards.md` |
+| Adding a service | `rules/resilience-observability.md` |
 | Modifying imports | Review your project's layer/import rules |
-| Writing tests | `.agents/rules/testing-standards.md` |
-| Committing | `.agents/rules/git_commits.md` |
+| Writing tests | `rules/testing-standards.md` |
+| Committing | `rules/git_commits.md` |

@@ -82,7 +82,7 @@ Reviewer is NOT always needed. Trigger it when ANY of:
 - The file's graph node has `do_not_revert: true`
 - The file's graph node has non-empty `rules`
 - The change affects a schema or event payload
-- The change touches `.agents/graph/` or `.agents/roadmap.yaml`
+- The change touches `.codevira/graph/` or `.codevira/roadmap.yaml`
 
 Skip reviewer for: scaffolding, new test files, config-only changes, docs.
 

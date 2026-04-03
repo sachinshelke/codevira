@@ -4,33 +4,71 @@
 
 ## Setup
 
+### How do I install Codevira?
+
+```bash
+# Recommended: global install via pipx
+pipx install codevira-mcp
+
+# Alternative: pip
+pip install codevira-mcp
+
+# With semantic search (adds ChromaDB + sentence-transformers)
+pip install 'codevira-mcp[search]'
+```
+
+Then run `codevira init` in any project. It auto-detects everything and auto-injects IDE configs.
+
 ### Do I need to run the indexer every time?
 
-No. Run it once with `codevira index --full` when you first set up Codevira. After that, the git post-commit hook (installed via `bash .agents/hooks/install-hooks.sh`) automatically re-indexes any files you change on every commit. You can also run `codevira index --watch` during active development for real-time sync.
+No. Run `codevira init` once when you first set up a project. After that:
+- The **live file watcher** auto-reindexes on every save (starts with the MCP server)
+- The **git post-commit hook** (auto-installed by init) reindexes on every commit
+- You can manually run `codevira index` or `codevira index --full` if needed
 
-### What is ChromaDB and do I need to install it separately?
+### What is ChromaDB and do I need it?
 
-ChromaDB is the vector database Codevira uses to power semantic code search. You don't install it separately — it's included in `requirements.txt` and installed with `pip install -r requirements.txt`.
+ChromaDB powers the `search_codebase()` semantic search tool. It's **optional** — all other 35 tools work without it.
+
+Install with search support: `pip install 'codevira-mcp[search]'`
+
+Without it, you still get the full context graph, roadmap, changesets, call graph, learning, and all code reader tools.
 
 ### Does this work with non-Python projects?
 
-Yes! As of v1.2.0, Codevira supports Python, TypeScript, Go, and Rust natively with full feature parity. The context graph, roadmap, changeset tracking, semantic search, AST chunking, `get_signature` / `get_code`, and auto-graph generation all work fully across these languages using Tree-Sitter and standard AST parsing.
+Yes. Codevira supports 15+ languages with zero-config auto-detection:
 
-See the [Language Support](README.md#language-support) table for details.
+- **Full support** (AST parsing, get_signature, get_code, call graph): Python, TypeScript, Go, Rust
+- **Standard support** (graph, search, roadmap, changesets, learning): Java, Kotlin, C#, Ruby, PHP, C, C++, Swift, Solidity, Vue, JavaScript
+
+`codevira init` auto-detects the language from project markers (`Cargo.toml`, `go.mod`, `tsconfig.json`, `pyproject.toml`, `package.json`, etc.).
 
 ### Can I use Codevira on a monorepo?
 
-Yes. Set `watched_dirs` in `config.yaml` to include all the subdirectories you want indexed:
-```yaml
-project:
-  watched_dirs: ["services/api", "services/worker", "shared/lib"]
-  file_extensions: [".py"]
+Yes. As of v1.5, `codevira init` scans your project tree and automatically detects all directories containing source files. For a typical monorepo:
+
 ```
-Each directory is indexed and graphed. The blast-radius tool (`get_impact`) works across all of them.
+detected: apps, packages, libs, scripts
+```
+
+If you want to override, use CLI flags:
+```bash
+codevira init --dirs "services/api,services/worker,shared/lib"
+```
+
+Or edit `.codevira/config.yaml` after init.
 
 ### Do I need a GitHub account or any external service?
 
-No. Codevira runs entirely locally. ChromaDB is embedded (no server needed), graph files are YAML on disk, and session logs are local files. Nothing is sent anywhere.
+No. Codevira runs entirely locally. The context graph is a SQLite database, session logs are local files, and semantic search (if installed) uses an embedded database. Nothing is sent anywhere.
+
+The only file outside your project is `~/.codevira/global.db` — a local SQLite database for cross-project intelligence.
+
+### How does cross-project memory work?
+
+When you use Codevira on multiple projects, learned preferences and rules are synced to `~/.codevira/global.db`. When you initialize a new project, it imports relevant intelligence from your other projects — so new projects benefit from day one.
+
+This happens automatically. No configuration needed.
 
 ---
 
@@ -38,41 +76,57 @@ No. Codevira runs entirely locally. ChromaDB is embedded (no server needed), gra
 
 ### My agent isn't calling the MCP tools — why?
 
-The most common cause is the MCP server not being registered correctly. Check:
+Common causes:
 
-1. The server is listed in your AI tool's MCP config (see [Quick Start](README.md#quick-start))
-2. The server alias `codevira-mcp` works properly in your environment.
-3. The server starts without errors if you test it manually in your terminal.
+1. **MCP config not written** — run `codevira init` in your project; it auto-injects config into Claude Code, Cursor, Windsurf, and Antigravity
+2. **IDE needs restart** — most AI tools require a restart to pick up new MCP servers
+3. **Binary not in PATH** — check that `codevira-mcp` is accessible; if installed via pipx, verify `~/.local/bin` is in your PATH
+4. **Wrong project directory** — the config's `cwd` must point to the project where `.codevira/config.yaml` exists
 
-If the server starts but tools aren't appearing, restart your AI tool — most require a restart to pick up new MCP servers.
+Test manually: run `codevira-mcp` from your project directory — it should start without errors.
 
 ### What happens if I skip PROTOCOL.md?
 
-Your agent will still work — the MCP tools are always available. But without following the session protocol, agents won't orient to the current phase, won't check blast radius before changing files, and won't write session logs. Over time the graph and decision history drift from reality, and future agents lose the accumulated context. The protocol is what makes Codevira valuable across sessions.
+Your agent will still work — the MCP tools are always available. But without following the session protocol, agents won't orient to the current phase, won't check blast radius before changes, and won't write session logs. The protocol is what makes memory accumulate across sessions.
 
 ### Can multiple developers share the same graph?
 
-Yes — commit your `graph/` directory to version control. The graph files are plain YAML, merge cleanly, and are designed to be shared. Session logs (`logs/`) and the code index (`codeindex/`) are git-ignored because they're either personal or binary — those stay local.
+The context graph lives in `.codevira/graph/graph.db` (SQLite). It's git-ignored by default because it contains local index data. If you want to share graph nodes and rules across a team, you can commit it — but the semantic index (`codeindex/`) should stay local.
 
 ### Can I use Codevira without a roadmap?
 
-Yes. If `roadmap.yaml` doesn't exist, `get_roadmap()` auto-creates a minimal Phase 1 stub on first call. You can use all graph, search, and changeset features without ever touching the roadmap. It's there when you need it, invisible when you don't.
+Yes. If the roadmap doesn't exist, `get_roadmap()` auto-creates a minimal Phase 1 stub on first call. You can use all graph, search, and changeset features without ever touching the roadmap.
 
-### Why is my agent reading the roadmap (or search results) from a different project?
+### Why is my agent reading the roadmap from a different project?
 
-This happens when you are using a "Global" MCP client (like Google Antigravity or Claude Desktop) and have hardcoded a single `codevira` server in your global configuration. Global clients share their background processes across all your workspaces.
+This happens with global MCP clients like Google Antigravity that share config across workspaces. Each project needs a unique server name:
 
-If you have `Project A` configured in your `mcp_config.json`, but you open an Antigravity chat window for `Project B`, the tool requests will still route to `Project A`'s database.
-
-To fix this, you must declare **multiple unique servers** in your global config, one for each project. The LLM is intelligent enough to pick the right prefix (e.g., `codevira-project-b_get_roadmap` vs `codevira-project-a_get_roadmap`) based on your conversation context. See the **IMPORTANT** note in the [Quick Start Guide](README.md#3-connect-to-your-ai-tool) for the exact JSON snippet.
-
-### Can I use this on an existing project that has no graph nodes yet?
-
-Yes. Run:
-```bash
-codevira index --full --generate-graph
+```json
+{
+  "mcpServers": {
+    "codevira-project-a": {
+      "$typeName": "exa.cascade_plugins_pb.CascadePluginCommandTemplate",
+      "command": "codevira-mcp",
+      "args": ["--project-dir", "/path/to/project-a"]
+    },
+    "codevira-project-b": {
+      "$typeName": "exa.cascade_plugins_pb.CascadePluginCommandTemplate",
+      "command": "codevira-mcp",
+      "args": ["--project-dir", "/path/to/project-b"]
+    }
+  }
+}
 ```
-This creates auto-generated graph stubs for all your source files. Stubs are marked `auto_generated: true` and have basic metadata inferred from imports and docstrings. Enrich them with `rules`, `stability`, and `do_not_revert` flags over time as your agents work on them.
+
+Claude Code, Cursor, and Windsurf use per-project config files, so this issue doesn't apply to them.
+
+### What is the function-level call graph?
+
+New in v1.5. Codevira now tracks which functions call which — not just file-level imports. Use:
+- `query_graph(file, symbol, "callers")` — who calls this function?
+- `query_graph(file, symbol, "callees")` — what does this function call?
+- `analyze_changes()` — function-level risk scoring with test coverage gaps
+- `find_hotspots()` — large functions, high fan-in, complexity heatmap
 
 ---
 
@@ -80,79 +134,75 @@ This creates auto-generated graph stubs for all your source files. Stubs are mar
 
 ### What's the difference between the graph and the code index?
 
-They serve different purposes:
-
 | | Context Graph | Code Index |
 |---|---|---|
-| **Storage** | YAML files in `graph/` | ChromaDB in `codeindex/` |
-| **Content** | File metadata, rules, dependencies, decisions | Chunked source code, embedded as vectors |
-| **Used by** | `get_node`, `get_impact`, `list_nodes` | `search_codebase` |
-| **Best for** | "What does this file do? What are its rules?" | "Where in the codebase is X implemented?" |
-| **Updated by** | Agents via `update_node`, `add_node` | Indexer CLI or git hook |
-
-Both work together — a typical session uses the graph for orientation and the code index for finding existing patterns.
+| **Storage** | SQLite (`graph.db`) | ChromaDB (`codeindex/`) |
+| **Required?** | Yes (always) | Optional (`[search]` extras) |
+| **Content** | File metadata, rules, dependencies, symbols, call edges, sessions, decisions | Chunked source code as vectors |
+| **Used by** | `get_node`, `get_impact`, `query_graph`, `analyze_changes`, all learning tools | `search_codebase` |
+| **Best for** | "What does this file do? Who calls this function?" | "Where in the codebase is X implemented?" |
 
 ### Does Codevira send my code anywhere?
 
 No. Everything runs locally:
-- ChromaDB is an embedded database (no external server)
-- Embeddings are generated locally using `sentence-transformers` (no API calls)
-- Graph files, session logs, and roadmap are plain files on disk
-- The MCP server runs as a local process
+- Context graph is a local SQLite database
+- Embeddings (if using `[search]`) are generated locally using `sentence-transformers`
+- Session logs and decisions are stored in the local SQLite database
+- Global memory (`~/.codevira/global.db`) is a local file
+- The MCP server runs as a local subprocess
 
 Your code never leaves your machine.
 
-### What model does the semantic search use?
+### What model does semantic search use?
 
-By default, `all-MiniLM-L6-v2` from sentence-transformers — a fast, lightweight embedding model that runs entirely on CPU. It's downloaded once on first use (~90MB) and cached locally. You can swap it out in `indexer/chunker.py` if you prefer a different model.
+`all-MiniLM-L6-v2` from sentence-transformers — a fast, lightweight embedding model that runs entirely on CPU. Downloaded once on first use (~90MB) and cached locally. Only used if you install with `[search]` extras.
 
 ---
 
 ## Troubleshooting
 
-### What if I get a "Database Corruption or OS Error"?
+### The MCP server crashes on startup
 
-If Codevira detects that its underlying ChromaDB index is corrupted (e.g., due to a hard crash or missing OS files), it will intercept the error and guide you. You can recover immediately by deleting the index folder and rebuilding it from scratch:
+```bash
+# Verify the binary works
+codevira-mcp --help
+
+# Test server startup from your project dir
+cd your-project
+codevira-mcp
+```
+
+Common causes: wrong Python version (requires 3.10+), missing `mcp` package, or `.codevira/config.yaml` not found (run `codevira init` first).
+
+### Database corruption
+
+If the SQLite database is corrupted:
+```bash
+rm -rf .codevira/graph/graph.db
+codevira index --full
+```
+
+If the search index is corrupted:
 ```bash
 rm -rf .codevira/codeindex
 codevira index --full
 ```
 
-### The index is out of date — how do I fix it?
+### The index is out of date
 
 ```bash
 # Rebuild from scratch
 codevira index --full
 
-# Or re-index just the stale files
+# Or re-index just stale files
 codevira index
 ```
 
-You can also ask your agent to call `refresh_index(["path/to/file.py"])` mid-session — it re-embeds specific files without a full rebuild.
+You can also ask your agent to call `refresh_index(["path/to/file.py"])` mid-session.
 
-### `get_node()` returns `index_status.stale: true` — what does that mean?
+### `get_node()` returns `index_status.stale: true`
 
-The file has been modified since the last index build. The graph node is still valid, but `search_codebase()` results for that file may be outdated. Call `refresh_index(["path/to/file.py"])` to re-embed it, or run `codevira index`.
-
-### The MCP server crashes on startup — what do I check?
-
-```bash
-# Check dependencies are installed
-pip install codevira-mcp
-
-# Run the server directly to see the error
-codevira-mcp
-```
-
-Common causes: missing `tree-sitter`, wrong Python version (requires 3.10+), or `mcp` package not installed properly.
-
-### My graph file has no nodes — why?
-
-If you skipped `--generate-graph` during setup, the graph directory will be empty. Run:
-```bash
-codevira index --generate-graph
-```
-Or ask your agent to call `refresh_graph()` — it scans for unregistered files and creates stubs.
+The file has been modified since the last index build. The graph node is still valid, but search results may be outdated. Call `refresh_index(["path/to/file.py"])` to re-embed it.
 
 ---
 
@@ -160,16 +210,16 @@ Or ask your agent to call `refresh_graph()` — it scans for unregistered files 
 
 ### How do I report a bug?
 
-Open a [bug report](https://github.com/sachinshelke/codevira/issues/new?template=bug_report.md) on GitHub. Please include your OS, Python version, AI tool, and the full error message.
+Open a [bug report](https://github.com/sachinshelke/codevira/issues/new?template=bug_report.md) on GitHub. Include your OS, Python version, AI tool, and the full error message.
 
 ### How do I request a feature?
 
-Open a [feature request](https://github.com/sachinshelke/codevira/issues/new?template=feature_request.md). Describe the problem you're trying to solve — not just the solution.
+Open a [feature request](https://github.com/sachinshelke/codevira/issues/new?template=feature_request.md). Describe the problem you're trying to solve.
 
-### I found a security vulnerability — what do I do?
+### I found a security vulnerability
 
-Please **do not** open a public issue. Email **sachin@prayog.io** directly. See [SECURITY.md](SECURITY.md) for the full policy.
+Please **do not** open a public issue. Email **sachin@prayog.io** directly. See [SECURITY.md](SECURITY.md).
 
 ### How do I contribute code?
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) — it covers forking, branching, PR process, and how to contribute using an AI agent (which works great with Codevira).
+Read [CONTRIBUTING.md](CONTRIBUTING.md) — covers forking, branching, PR process, and AI-assisted contribution workflows.

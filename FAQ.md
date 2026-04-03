@@ -74,6 +74,64 @@ This happens automatically. No configuration needed.
 
 ## Usage
 
+### Which transport should I use — stdio or HTTP?
+
+| Client | Use | Why |
+|--------|-----|-----|
+| Claude Desktop (app) | stdio only | Desktop app only supports `command`+`args` config |
+| Claude Code CLI | stdio **or** HTTP | Both work; HTTP lets you register via URL |
+| Cursor, Windsurf | stdio | These tools use `command`+`args` config |
+| Google Antigravity | stdio | Same |
+
+**Stdio** (default): the MCP client spawns `codevira-mcp` as a subprocess. No server to manage.
+
+**HTTP** (`codevira-mcp serve`): run a persistent HTTP server, register it by URL. Useful when you want one server shared across multiple Claude Code sessions, or when you need to test with Claude.ai.
+
+### How do I configure Claude Desktop specifically?
+
+Claude Desktop requires the `command`+`args` format in its own config file — the `url` format is not supported.
+
+Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
+```json
+{
+  "mcpServers": {
+    "codevira": {
+      "command": "/path/to/codevira-mcp",
+      "args": ["--project-dir", "/path/to/your-project"]
+    }
+  }
+}
+```
+
+Find the full binary path with: `which codevira-mcp`
+
+### How do I use the HTTP transport with Claude Code?
+
+Start the server in a terminal:
+```bash
+codevira-mcp serve --https --port 7443 --project-dir /path/to/your-project
+```
+
+Register in `~/.claude/settings.json`:
+```json
+{
+  "mcpServers": {
+    "codevira": {
+      "url": "https://localhost:7443/mcp"
+    }
+  }
+}
+```
+
+Node.js (used by Claude Code) requires a trusted HTTPS certificate. To set that up once:
+```bash
+brew install mkcert && mkcert -install
+launchctl setenv NODE_EXTRA_CA_CERTS "$(mkcert -CAROOT)/rootCA.pem"
+echo 'export NODE_EXTRA_CA_CERTS="$(mkcert -CAROOT)/rootCA.pem"' >> ~/.zshrc
+```
+
+Then restart Claude Code. Certs are auto-generated at `~/.codevira/certs/` on first `serve --https`.
+
 ### My agent isn't calling the MCP tools — why?
 
 Common causes:
@@ -81,7 +139,8 @@ Common causes:
 1. **MCP config not written** — run `codevira init` in your project; it auto-injects config into Claude Code, Cursor, Windsurf, and Antigravity
 2. **IDE needs restart** — most AI tools require a restart to pick up new MCP servers
 3. **Binary not in PATH** — check that `codevira-mcp` is accessible; if installed via pipx, verify `~/.local/bin` is in your PATH
-4. **Wrong project directory** — the config's `cwd` must point to the project where `.codevira/config.yaml` exists
+4. **Wrong project directory** — the config's `cwd` (stdio) or `--project-dir` (HTTP) must point to the project where `.codevira/config.yaml` exists
+5. **Claude Desktop config format** — Claude Desktop uses `command`+`args`, not `url`. The `url` format only works in Claude Code CLI
 
 Test manually: run `codevira-mcp` from your project directory — it should start without errors.
 

@@ -13,6 +13,20 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [1.5.2] — 2026-04-03 — HTTP Transport + Claude Desktop Support
+
+### Added
+- **HTTP/Streamable transport** (`mcp_server/http_server.py`): New `codevira-mcp serve [--port N] [--https] [--host ADDR]` command starts a persistent MCP HTTP server using the MCP Streamable HTTP 2025-03-26 spec. Endpoint: `/mcp`. Health check: `GET /`.
+- **HTTPS with mkcert**: `--https` flag auto-generates trusted localhost certificates to `~/.codevira/certs/` using mkcert. Certs are reused on subsequent runs.
+- **Claude Desktop support**: `claude_desktop_config.json` now documented and auto-injected correctly using `command`+`args` (stdio) format, which is the only format Claude Desktop supports.
+- **Transport decision table**: README, PROTOCOL, and FAQ updated with a clear matrix — which transport to use for each client (Claude Desktop, Claude Code CLI, Cursor, Windsurf, Antigravity).
+- **`NODE_EXTRA_CA_CERTS` setup guide**: FAQ documents the one-time mkcert trust setup required for Claude Code CLI to accept local HTTPS certs.
+
+### Fixed
+- `--project-dir` flag now works both before and after the `serve` subcommand (argparse previously rejected it after the subcommand name).
+
+---
+
 ## [1.5.0] — 2026-04-02 — Zero-Config Global Memory + Deep Graph Intelligence
 
 ### Added — Zero-Config Init

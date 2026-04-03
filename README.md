@@ -5,10 +5,10 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![MCP](https://img.shields.io/badge/protocol-MCP-purple)](https://modelcontextprotocol.io)
-[![Version](https://img.shields.io/badge/version-1.5.0-orange)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.5.2-orange)](CHANGELOG.md)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](CONTRIBUTING.md)
 
-**Works with:** Claude Code · Cursor · Windsurf · Google Antigravity · any MCP-compatible AI tool
+**Works with:** Claude Code · Claude Desktop · Cursor · Windsurf · Google Antigravity · any MCP-compatible AI tool
 
 ---
 
@@ -86,7 +86,17 @@ Ask your AI agent to call `get_roadmap()` — it should return your current phas
 
 ### Manual config (only if auto-inject didn't detect your tool)
 
-**Claude Code** (`.claude/settings.json`), **Cursor** (`.cursor/mcp.json`), **Windsurf** (`.windsurf/mcp.json`):
+Codevira supports two transports. Use the right one for your client:
+
+| Client | Transport | Config file |
+|--------|-----------|-------------|
+| Claude Desktop (app) | stdio | `~/Library/Application Support/Claude/claude_desktop_config.json` |
+| Claude Code (CLI) | stdio or HTTP | `.claude/settings.json` |
+| Cursor | stdio | `.cursor/mcp.json` |
+| Windsurf | stdio | `.windsurf/mcp.json` |
+| Google Antigravity | stdio | `~/.gemini/settings/mcp_config.json` |
+
+**Stdio transport** — Claude Desktop, Cursor, Windsurf (`.claude/settings.json` / `.cursor/mcp.json` / `.windsurf/mcp.json`):
 ```json
 {
   "mcpServers": {
@@ -98,6 +108,49 @@ Ask your AI agent to call `get_roadmap()` — it should return your current phas
   }
 }
 ```
+
+**Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+```json
+{
+  "mcpServers": {
+    "codevira": {
+      "command": "/path/to/codevira-mcp",
+      "args": ["--project-dir", "/path/to/your-project"]
+    }
+  }
+}
+```
+
+> Tip: find the full binary path with `which codevira-mcp`
+
+**HTTP transport** — Claude Code CLI via `codevira-mcp serve` (`.claude/settings.json`):
+
+First start the HTTP server in a terminal:
+```bash
+codevira-mcp serve --port 7007 --project-dir /path/to/your-project
+# For HTTPS (required by some clients):
+codevira-mcp serve --https --port 7443 --project-dir /path/to/your-project
+```
+
+Then register the URL:
+```json
+{
+  "mcpServers": {
+    "codevira": {
+      "url": "https://localhost:7443/mcp"
+    }
+  }
+}
+```
+
+> **HTTPS note:** Claude Code uses Node.js, which requires a trusted CA for HTTPS.
+> Run once to trust the mkcert CA:
+> ```bash
+> brew install mkcert && mkcert -install
+> launchctl setenv NODE_EXTRA_CA_CERTS "$(mkcert -CAROOT)/rootCA.pem"
+> echo 'export NODE_EXTRA_CA_CERTS="$(mkcert -CAROOT)/rootCA.pem"' >> ~/.zshrc
+> ```
+> Then restart Claude Code.
 
 **Google Antigravity** (`~/.gemini/settings/mcp_config.json`):
 ```json

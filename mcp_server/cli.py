@@ -341,9 +341,20 @@ def cmd_report(limit: int = 20, clear: bool = False) -> None:
 
 
 def cmd_server(project_dir: Path | None = None) -> None:
-    """Start the MCP server."""
+    """Start the MCP server (stdio transport)."""
     from mcp_server.server import main as server_main
     server_main()
+
+
+def cmd_serve(
+    host: str = "127.0.0.1",
+    port: int = 7007,
+    use_https: bool = False,
+    project_dir: Path | None = None,
+) -> None:
+    """Start the MCP HTTP server (Streamable HTTP transport)."""
+    from mcp_server.http_server import run_http_server
+    run_http_server(host=host, port=port, use_https=use_https, project_dir=project_dir)
 
 
 def main() -> None:
@@ -388,6 +399,29 @@ def main() -> None:
     report_parser.add_argument("--limit", type=int, default=20, help="Number of recent crashes to show (default: 20)")
     report_parser.add_argument("--clear", action="store_true", help="Clear the crash log")
 
+    # serve
+    serve_parser = subparsers.add_parser(
+        "serve",
+        help="Start MCP HTTP server (Streamable HTTP transport — register via URL)",
+    )
+    serve_parser.add_argument(
+        "--port", type=int, default=7007,
+        help="TCP port to listen on (default: 7007)",
+    )
+    serve_parser.add_argument(
+        "--host", default="127.0.0.1",
+        help="Bind address (default: 127.0.0.1; use 0.0.0.0 for LAN access)",
+    )
+    serve_parser.add_argument(
+        "--https", action="store_true",
+        help="Enable HTTPS using mkcert certs from ~/.codevira/certs/",
+    )
+    serve_parser.add_argument(
+        "--project-dir",
+        metavar="PATH",
+        help="Project directory override (same as the global --project-dir flag)",
+    )
+
     args = parser.parse_args(raw_args)
 
     if args.command == "init":
@@ -406,8 +440,21 @@ def main() -> None:
         cmd_status()
     elif args.command == "report":
         cmd_report(limit=args.limit, clear=args.clear)
+    elif args.command == "serve":
+        # --project-dir may appear after "serve" — merge with pre-parsed value
+        sub_project_dir = getattr(args, "project_dir", None)
+        if sub_project_dir and project_dir is None:
+            from mcp_server.paths import set_project_dir
+            project_dir = Path(sub_project_dir).resolve()
+            set_project_dir(project_dir)
+        cmd_serve(
+            host=args.host,
+            port=args.port,
+            use_https=args.https,
+            project_dir=project_dir,
+        )
     else:
-        # No subcommand → start MCP server
+        # No subcommand → start MCP server (stdio transport)
         cmd_server()
 
 

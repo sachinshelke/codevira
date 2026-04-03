@@ -40,34 +40,48 @@ def _set_project_root(monkeypatch, root: Path) -> None:
 class TestSanitizePathKey:
     def test_unix_path(self):
         key = _sanitize_path_key("/Users/sachin/Projects/Foo")
-        assert key == "Users-sachin-Projects-Foo"
+        # Human-readable part uses underscores for path separators, ends with hash
+        assert key.startswith("Users_sachin_Projects_Foo_")
+        assert len(key.split("_")[-1]) == 8  # 8-char hash suffix
 
     def test_unix_trailing_slash(self):
-        key = _sanitize_path_key("/Users/sachin/Projects/Foo/")
-        assert key == "Users-sachin-Projects-Foo"
+        # Trailing slash resolves to same path, so same key
+        key1 = _sanitize_path_key("/Users/sachin/Projects/Foo/")
+        key2 = _sanitize_path_key("/Users/sachin/Projects/Foo")
+        assert key1 == key2
 
     def test_path_with_spaces(self, tmp_path):
         p = tmp_path / "My Project"
         key = _sanitize_path_key(str(p))
         assert " " not in key
-        assert "--" not in key  # no double hyphens
 
     def test_windows_drive_letter(self):
         key = _sanitize_path_key("C:\\Users\\sachin\\Projects")
-        # Drive colon stripped, backslashes become hyphens
-        assert key.startswith("C-") or not key.startswith("C:")
         assert ":" not in key
         assert "\\" not in key
 
     def test_no_leading_trailing_hyphens(self):
         key = _sanitize_path_key("/Users/sachin/Projects/Foo")
         assert not key.startswith("-")
+        assert not key.startswith("_")
         assert not key.endswith("-")
 
-    def test_consecutive_hyphens_collapsed(self):
-        # Simulate path with multiple separators
-        key = _sanitize_path_key("/a//b///c")
-        assert "--" not in key
+    def test_no_collision_between_hyphen_and_separator(self):
+        """/foo-bar and /foo/bar must produce DIFFERENT keys."""
+        key1 = _sanitize_path_key("/tmp/foo-bar")
+        key2 = _sanitize_path_key("/tmp/foo/bar")
+        assert key1 != key2
+
+    def test_no_collision_across_drive_letters(self):
+        """D:\\Projects\\Foo and C:\\Projects\\Foo must produce DIFFERENT keys."""
+        key1 = _sanitize_path_key("C:\\Projects\\Foo")
+        key2 = _sanitize_path_key("D:\\Projects\\Foo")
+        assert key1 != key2
+
+    def test_deterministic(self):
+        key1 = _sanitize_path_key("/Users/sachin/Projects/Foo")
+        key2 = _sanitize_path_key("/Users/sachin/Projects/Foo")
+        assert key1 == key2
 
 
 # ---------------------------------------------------------------------------

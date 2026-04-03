@@ -19,11 +19,14 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import secrets
 import subprocess
 from pathlib import Path
 from typing import AsyncIterator
 
 from starlette.applications import Starlette
+from starlette.middleware import Middleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Mount, Route
@@ -35,6 +38,9 @@ from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp_server.server import server
 
 logger = logging.getLogger(__name__)
+
+# Bearer token file — auto-generated on first non-loopback serve
+_TOKEN_FILE_NAME = "http_bearer_token"
 
 
 def _certs_dir() -> Path:
@@ -48,6 +54,54 @@ def _cert_file() -> Path:
 
 def _key_file() -> Path:
     return _certs_dir() / "localhost-key.pem"
+
+
+# ---------------------------------------------------------------------------
+# Bearer token auth (required when binding to non-loopback addresses)
+# ---------------------------------------------------------------------------
+
+def _get_or_create_token() -> str:
+    """Return the bearer token, creating one if it doesn't exist.
+
+    Token is stored in ~/.codevira/http_bearer_token so it persists across
+    restarts but is NOT committed to any project repo.
+    """
+    from mcp_server.paths import get_global_home
+    token_path = get_global_home() / _TOKEN_FILE_NAME
+    if token_path.exists():
+        token = token_path.read_text(encoding="utf-8").strip()
+        if token:
+            return token
+    token = secrets.token_urlsafe(32)
+    token_path.write_text(token + "\n", encoding="utf-8")
+    token_path.chmod(0o600)
+    return token
+
+
+class _BearerAuthMiddleware(BaseHTTPMiddleware):
+    """Reject requests without a valid Bearer token.
+
+    Applied only when the server binds to a non-loopback address (0.0.0.0, LAN IP, etc.)
+    to prevent unauthenticated access from other machines on the network.
+    The health endpoint (GET /) is exempt so uptime monitors still work.
+    """
+
+    def __init__(self, app, token: str):
+        super().__init__(app)
+        self._token = token
+
+    async def dispatch(self, request: Request, call_next):
+        # Allow health check without auth
+        if request.url.path == "/" and request.method == "GET":
+            return await call_next(request)
+
+        auth = request.headers.get("Authorization", "")
+        if auth != f"Bearer {self._token}":
+            return JSONResponse(
+                {"error": "Unauthorized", "hint": "Set Authorization: Bearer <token> header"},
+                status_code=401,
+            )
+        return await call_next(request)
 
 
 # ---------------------------------------------------------------------------
@@ -98,9 +152,14 @@ def generate_mkcert_certs() -> tuple[Path, Path]:
 # ASGI app factory
 # ---------------------------------------------------------------------------
 
-def create_app() -> Starlette:
+def create_app(bearer_token: str | None = None) -> Starlette:
     """
     Build and return the Starlette ASGI application.
+
+    Args:
+        bearer_token: If set, all requests (except GET /) must include
+                      an ``Authorization: Bearer <token>`` header.
+                      Used when binding to non-loopback addresses.
 
     Routes:
       GET /           → health check (useful for uptime monitoring)
@@ -122,12 +181,17 @@ def create_app() -> Starlette:
     async def health(_req: Request) -> JSONResponse:
         return JSONResponse({"status": "ok", "transport": "streamable-http", "server": "codevira"})
 
+    middleware = []
+    if bearer_token:
+        middleware.append(Middleware(_BearerAuthMiddleware, token=bearer_token))
+
     return Starlette(
         routes=[
             Route("/", endpoint=health, methods=["GET"]),
             Mount("/mcp", app=session_manager.handle_request),
         ],
         lifespan=lifespan,
+        middleware=middleware,
     )
 
 
@@ -246,8 +310,19 @@ def run_http_server(
     print("  Press Ctrl+C to stop.")
     print()
 
+    # ---- Bearer token auth (required for non-loopback binds) ----
+    bearer_token: str | None = None
+    is_loopback = host in ("127.0.0.1", "::1", "localhost")
+    if not is_loopback:
+        bearer_token = _get_or_create_token()
+        print(f"  ── Auth (non-loopback) ──────────────────────")
+        print(f"  Bearer token: {bearer_token}")
+        print(f"  All /mcp requests require: Authorization: Bearer <token>")
+        print(f"  Token stored in: ~/.codevira/{_TOKEN_FILE_NAME}")
+        print()
+
     # ---- Run uvicorn ----
-    app = create_app()
+    app = create_app(bearer_token=bearer_token)
 
     uvicorn.run(
         app,

@@ -49,19 +49,30 @@ _PROJECT_MARKERS = frozenset({
 def _sanitize_path_key(abs_path: str | Path) -> str:
     """Convert an absolute path to a filesystem-safe key string.
 
+    Uses a short hash suffix to prevent collisions between paths that
+    differ only in separator characters (e.g. /foo-bar vs /foo/bar) or
+    drive letters (D:\\Projects\\Foo vs C:\\Projects\\Foo).
+
     Examples:
-        /Users/sachin/Projects/Foo  → Users-sachin-Projects-Foo
-        C:\\Users\\sachin\\Projects → C-Users-sachin-Projects
+        /Users/sachin/Projects/Foo  → Users_sachin_Projects_Foo_a1b2c3d4
+        C:\\Users\\sachin\\Projects → Users_sachin_Projects_a1b2c3d4
     """
-    path = str(Path(abs_path).resolve())
-    # Remove leading slash / drive colon
-    path = re.sub(r"^[A-Za-z]:", "", path)  # Windows drive letter
-    path = path.lstrip("/\\")
-    # Replace path separators and any other non-alphanumeric chars with hyphens
-    key = re.sub(r"[^a-zA-Z0-9._-]", "-", path)
-    # Collapse consecutive hyphens
-    key = re.sub(r"-{2,}", "-", key)
-    return key.strip("-")
+    import hashlib
+    resolved = str(Path(abs_path).resolve())
+    # Hash the FULL resolved path (before any lossy transforms) for uniqueness
+    path_hash = hashlib.sha256(resolved.encode()).hexdigest()[:8]
+    # Strip drive letter and leading separators for the human-readable part
+    stripped = re.sub(r"^[A-Za-z]:", "", resolved)  # Windows drive letter
+    stripped = stripped.lstrip("/\\")
+    # Replace path separators with underscores (not hyphens — preserves
+    # literal hyphens in directory names as distinct from separators)
+    key = re.sub(r"[/\\]", "_", stripped)
+    # Replace any remaining non-safe chars with hyphens
+    key = re.sub(r"[^a-zA-Z0-9._-]", "-", key)
+    # Collapse consecutive underscores/hyphens
+    key = re.sub(r"[_-]{2,}", "_", key)
+    key = key.strip("_-")
+    return f"{key}_{path_hash}"
 
 
 def _get_git_remote_url(project_root: Path) -> str | None:

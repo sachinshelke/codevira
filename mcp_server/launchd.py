@@ -13,6 +13,7 @@ This is macOS-only. Windows and Linux service support is planned for v2.0.
 from __future__ import annotations
 
 import logging
+import plistlib
 import subprocess
 import sys
 from pathlib import Path
@@ -56,30 +57,18 @@ def install_launchd(
 
     log_dir = Path.home() / "Library" / "Logs"
     log_dir.mkdir(parents=True, exist_ok=True)
-    log_path = log_dir / "codevira-mcp.log"
+    log_path = str(log_dir / "codevira-mcp.log")
 
-    plist_content = f"""\
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>{_PLIST_LABEL}</string>
-    <key>ProgramArguments</key>
-    <array>
-        {"".join(f"<string>{a}</string>" + chr(10) + "        " for a in args).rstrip()}
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-    <key>StandardOutPath</key>
-    <string>{log_path}</string>
-    <key>StandardErrorPath</key>
-    <string>{log_path}</string>
-</dict>
-</plist>
-"""
+    # Build plist via plistlib (safe from XML injection — values are properly
+    # escaped regardless of content in host, port, or cmd_path).
+    plist_data = {
+        "Label": _PLIST_LABEL,
+        "ProgramArguments": args,
+        "RunAtLoad": True,
+        "KeepAlive": True,
+        "StandardOutPath": log_path,
+        "StandardErrorPath": log_path,
+    }
 
     _PLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
 
@@ -87,9 +76,11 @@ def install_launchd(
     subprocess.run(
         ["launchctl", "unload", str(_PLIST_PATH)],
         capture_output=True,
+        timeout=10,
     )
 
-    _PLIST_PATH.write_text(plist_content, encoding="utf-8")
+    with open(_PLIST_PATH, "wb") as f:
+        plistlib.dump(plist_data, f)
     logger.info("Wrote launchd plist: %s", _PLIST_PATH)
 
     # Load the new service
@@ -97,6 +88,7 @@ def install_launchd(
         ["launchctl", "load", str(_PLIST_PATH)],
         capture_output=True,
         text=True,
+        timeout=10,
     )
     if result.returncode != 0:
         raise RuntimeError(
@@ -125,6 +117,7 @@ def uninstall_launchd() -> bool:
     subprocess.run(
         ["launchctl", "unload", str(_PLIST_PATH)],
         capture_output=True,
+        timeout=10,
     )
     _PLIST_PATH.unlink(missing_ok=True)
     logger.info("Launchd service removed: %s", _PLIST_LABEL)
@@ -143,6 +136,7 @@ def launchd_status() -> dict:
             ["launchctl", "list", _PLIST_LABEL],
             capture_output=True,
             text=True,
+            timeout=5,
         )
         running = result.returncode == 0
 

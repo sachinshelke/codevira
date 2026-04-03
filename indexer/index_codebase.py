@@ -259,7 +259,7 @@ def cmd_incremental(quiet: bool = False, file_paths: list[str] | None = None):
     db = SQLiteGraph(get_data_dir() / "graph" / "graph.db")
     explicit_files = file_paths or []
     changed_items = _get_requested_files(explicit_files) if explicit_files else _get_changed_files(db)
-    
+
     if not changed_items:
         if explicit_files:
             console.print("[green]✓[/green] No matching files found to re-index.")
@@ -281,41 +281,44 @@ def cmd_incremental(quiet: bool = False, file_paths: list[str] | None = None):
         sys.exit(1)
 
     indexed_any = False
-    for fpath, fhash in changed_items:
-        try:
-            collection.delete(where={"file_path": fpath})
-        except Exception as e:
+    # Acquire ChromaDB write lock to prevent concurrent writes with the
+    # background watcher or background full-index thread.
+    with _chroma_write_lock:
+        for fpath, fhash in changed_items:
             try:
-                from mcp_server.crash_logger import log_crash
-                log_crash(e, context=f"incremental index: delete old chunks for {fpath}")
-            except Exception: pass
+                collection.delete(where={"file_path": fpath})
+            except Exception as e:
+                try:
+                    from mcp_server.crash_logger import log_crash
+                    log_crash(e, context=f"incremental index: delete old chunks for {fpath}")
+                except Exception: pass
 
-        try:
-            chunks = chunk_file(str(_project_root() / fpath), str(_project_root()))
-            if chunks:
-                ids, docs, metas = [], [], []
-                for chunk in chunks:
-                    doc_id, doc, meta = _chunk_to_document(chunk)
-                    ids.append(doc_id)
-                    docs.append(doc)
-                    metas.append(meta)
-                collection.add(ids=ids, documents=docs, metadatas=metas)
-
-            db.update_file_hash(fpath, fhash)
-            indexed_any = True
-            console.print(f"  [green]+[/green] Re-indexed {len(chunks)} chunks for {fpath}")
-
-        except Exception as e:
-            console.print(f"[red]Error indexing {fpath}: {e}[/red]")
             try:
-                from mcp_server.crash_logger import log_crash
-                log_crash(e, context=f"incremental index: indexing {fpath}")
-            except Exception: pass
-            continue
+                chunks = chunk_file(str(_project_root() / fpath), str(_project_root()))
+                if chunks:
+                    ids, docs, metas = [], [], []
+                    for chunk in chunks:
+                        doc_id, doc, meta = _chunk_to_document(chunk)
+                        ids.append(doc_id)
+                        docs.append(doc)
+                        metas.append(meta)
+                    collection.add(ids=ids, documents=docs, metadatas=metas)
+
+                db.update_file_hash(fpath, fhash)
+                indexed_any = True
+                console.print(f"  [green]+[/green] Re-indexed {len(chunks)} chunks for {fpath}")
+
+            except Exception as e:
+                console.print(f"[red]Error indexing {fpath}: {e}[/red]")
+                try:
+                    from mcp_server.crash_logger import log_crash
+                    log_crash(e, context=f"incremental index: indexing {fpath}")
+                except Exception: pass
+                continue
 
     if indexed_any:
         generate_graph_sqlite(str(_project_root()), str(db.db_path))
-            
+
     db.close()
     return 0
 
@@ -369,8 +372,9 @@ def start_background_watcher(quiet: bool = True):
         def _do_reindex(self):
             try:
                 _watcher_logger.debug("File change detected — running incremental reindex")
-                with _chroma_write_lock:
-                    cmd_incremental(quiet=quiet)
+                # Note: cmd_incremental acquires _chroma_write_lock internally,
+                # so we don't need to acquire it here.
+                cmd_incremental(quiet=quiet)
                 _watcher_logger.debug("Incremental reindex complete")
             except Exception as e:
                 _watcher_logger.warning("Background reindex failed: %s", e)

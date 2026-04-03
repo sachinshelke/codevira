@@ -102,17 +102,27 @@ def migrate_to_centralized(project_root: Path) -> dict:
     src_db = legacy / "graph" / "graph.db"
     dst_db = centralized / "graph" / "graph.db"
     if src_db.exists():
+        src_conn = None
+        dst_conn = None
         try:
             src_conn = sqlite3.connect(str(src_db))
             dst_conn = sqlite3.connect(str(dst_db))
             src_conn.backup(dst_conn)
-            src_conn.close()
-            dst_conn.close()
             files_copied += 1
         except Exception as e:
             logger.warning("Could not backup graph.db via API, falling back to copy: %s", e)
+            # Fallback: copy main db + WAL/SHM files if present
             shutil.copy2(src_db, dst_db)
+            for suffix in ("-wal", "-shm"):
+                wal_file = src_db.parent / (src_db.name + suffix)
+                if wal_file.exists():
+                    shutil.copy2(wal_file, dst_db.parent / (dst_db.name + suffix))
             files_copied += 1
+        finally:
+            if src_conn:
+                src_conn.close()
+            if dst_conn:
+                dst_conn.close()
 
     # 4. Copy codeindex/ (ChromaDB directory)
     src_index = legacy / "codeindex"
@@ -135,6 +145,7 @@ def migrate_to_centralized(project_root: Path) -> dict:
     (centralized / "metadata.json").write_text(json.dumps(metadata, indent=2))
 
     # 6. Update global.db project registry
+    gdb = None
     try:
         from indexer.global_db import GlobalDB
         gdb = GlobalDB(get_global_db_path())
@@ -145,9 +156,11 @@ def migrate_to_centralized(project_root: Path) -> dict:
             language="unknown",
             git_remote=git_remote,
         )
-        gdb.close()
     except Exception as e:
         logger.warning("Could not update global.db during migration: %s", e)
+    finally:
+        if gdb is not None:
+            gdb.close()
 
     # 7. Rename old .codevira/ → .codevira.migrated/ (safety net, not deleted)
     migrated_backup = project_root / ".codevira.migrated"

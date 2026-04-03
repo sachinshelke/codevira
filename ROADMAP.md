@@ -85,7 +85,7 @@ Make Codevira instant to set up and intelligent across all projects.
 
 ---
 
-## 🔜 v1.6 — True Zero-Friction: No Init, No Config, Just Works
+## ✅ v1.6 — True Zero-Friction: No Init, No Config, Just Works (current)
 
 **The big shift.** Eliminate every manual step between install and working memory.
 

@@ -36,9 +36,18 @@ from mcp_server.server import server
 
 logger = logging.getLogger(__name__)
 
-_CERTS_DIR = Path.home() / ".codevira" / "certs"
-_CERT_FILE = _CERTS_DIR / "localhost.pem"
-_KEY_FILE = _CERTS_DIR / "localhost-key.pem"
+
+def _certs_dir() -> Path:
+    from mcp_server.paths import get_global_home
+    return get_global_home() / "certs"
+
+
+def _cert_file() -> Path:
+    return _certs_dir() / "localhost.pem"
+
+
+def _key_file() -> Path:
+    return _certs_dir() / "localhost-key.pem"
 
 
 # ---------------------------------------------------------------------------
@@ -46,7 +55,7 @@ _KEY_FILE = _CERTS_DIR / "localhost-key.pem"
 # ---------------------------------------------------------------------------
 
 def _certs_exist() -> bool:
-    return _CERT_FILE.exists() and _KEY_FILE.exists()
+    return _cert_file().exists() and _key_file().exists()
 
 
 def generate_mkcert_certs() -> tuple[Path, Path]:
@@ -67,20 +76,22 @@ def generate_mkcert_certs() -> tuple[Path, Path]:
             "Then re-run: codevira-mcp serve --https"
         )
 
-    _CERTS_DIR.mkdir(parents=True, exist_ok=True)
+    cert_f = _cert_file()
+    key_f = _key_file()
+    _certs_dir().mkdir(parents=True, exist_ok=True)
 
     subprocess.run(
         [
             "mkcert",
-            "-cert-file", str(_CERT_FILE),
-            "-key-file", str(_KEY_FILE),
+            "-cert-file", str(cert_f),
+            "-key-file", str(key_f),
             "localhost",
             "127.0.0.1",
             "::1",
         ],
         check=True,
     )
-    return _CERT_FILE, _KEY_FILE
+    return cert_f, key_f
 
 
 # ---------------------------------------------------------------------------
@@ -148,6 +159,20 @@ def run_http_server(
     except Exception as e:
         logger.warning("Could not install crash handler: %s", e)
 
+    # v1.6: Auto-migrate legacy .codevira/ → ~/.codevira/projects/<key>/
+    try:
+        from mcp_server.migrate import detect_migration_needed, migrate_to_centralized
+        from mcp_server.paths import get_project_root
+        _proj_root = get_project_root()
+        if detect_migration_needed(_proj_root):
+            logger.info("Migrating legacy .codevira/ to centralized storage...")
+            result = migrate_to_centralized(_proj_root)
+            if result.get("migrated"):
+                logger.info("Migration complete: %d files moved to %s",
+                            result.get("files_copied", 0), result.get("new_path", ""))
+    except Exception as e:
+        logger.warning("Could not run storage migration: %s", e)
+
     try:
         from indexer.index_codebase import start_background_watcher
         start_background_watcher(quiet=True)
@@ -183,13 +208,13 @@ def run_http_server(
             print("  Generating localhost TLS certificate via mkcert ...")
             try:
                 generate_mkcert_certs()
-                print(f"  Certificate: {_CERT_FILE}")
-                print(f"  Private key: {_KEY_FILE}")
+                print(f"  Certificate: {_cert_file()}")
+                print(f"  Private key: {_key_file()}")
             except RuntimeError as e:
                 print(f"\n  ERROR: {e}\n")
                 return
-        ssl_certfile = str(_CERT_FILE)
-        ssl_keyfile = str(_KEY_FILE)
+        ssl_certfile = str(_cert_file())
+        ssl_keyfile = str(_key_file())
 
     # ---- Print registration instructions ----
     scheme = "https" if use_https else "http"

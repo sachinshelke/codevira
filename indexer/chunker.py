@@ -9,6 +9,7 @@ Language support:
 from __future__ import annotations
 
 import ast
+import functools
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,18 +35,25 @@ def _load_config() -> dict:
     return {}
 
 
-_config = _load_config()
-_project_cfg = _config.get("project", {})
-
 SKIP_DIRS = {"__pycache__", ".venv", "venv", ".git", "node_modules", "migrations"}
 SKIP_FILES = {"__init__.py"}
-TARGET_DIRS: set[str] = set(_project_cfg.get("watched_dirs", ["src"]))
-
-# Supported file extensions — defaults to .py, can be extended via config
-_FILE_EXTENSIONS: list[str] = _project_cfg.get("file_extensions", [".py"])
 
 # All tree-sitter supported extensions for dispatch
 _TS_SUPPORTED_EXTENSIONS = set(TS_EXTENSION_MAP.keys())
+
+
+@functools.lru_cache(maxsize=None)
+def _get_project_config() -> tuple[frozenset[str], tuple[str, ...]]:
+    """Lazily load config.yaml and return (TARGET_DIRS, FILE_EXTENSIONS).
+
+    Cached so subsequent calls are free. lru_cache is used so that the
+    config is only loaded once per process after the data directory is known.
+    """
+    cfg = _load_config()
+    project_cfg = cfg.get("project", cfg)
+    target_dirs: frozenset[str] = frozenset(project_cfg.get("watched_dirs", ["src"]))
+    file_extensions: tuple[str, ...] = tuple(project_cfg.get("file_extensions", [".py"]))
+    return target_dirs, file_extensions
 
 
 @dataclass
@@ -195,7 +203,8 @@ def _extract_imports_python(file_path: str, project_root: str) -> list[str]:
         return []
 
     project_root_path = Path(project_root)
-    project_packages = set(TARGET_DIRS)
+    target_dirs, _ = _get_project_config()
+    project_packages = set(target_dirs)
 
     results: list[str] = []
 
@@ -390,10 +399,11 @@ def _chunk_file_python(file_path: str, project_root: str) -> list[CodeChunk]:
 
 def iter_source_files(project_root: str) -> Iterator[str]:
     """Yield source files in TARGET_DIRS matching configured file_extensions."""
-    extensions = tuple(_FILE_EXTENSIONS)
+    target_dirs, file_extensions = _get_project_config()
+    extensions = file_extensions
     seen_files = set()
-    
-    for target_dir in TARGET_DIRS:
+
+    for target_dir in target_dirs:
         target_path = os.path.join(project_root, target_dir)
         if not os.path.exists(target_path):
             continue

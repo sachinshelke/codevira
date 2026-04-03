@@ -2,13 +2,17 @@
 cli.py — Entry point for the `codevira-mcp` command.
 
 Dispatches subcommands:
-  codevira-mcp                  → start MCP server (default)
-  codevira-mcp init             → initialize .codevira/ in the current project
-  codevira-mcp index            → run incremental index update
-  codevira-mcp index --full     → full index rebuild
-  codevira-mcp status           → show index health and stats
-  codevira-mcp report           → show recent crash logs
-  codevira-mcp report --clear   → clear the crash log
+  codevira-mcp                      → start MCP server (default)
+  codevira-mcp init                 → initialize project in centralized storage
+  codevira-mcp register             → one-time global IDE registration (v1.6)
+  codevira-mcp index                → run incremental index update
+  codevira-mcp index --full         → full index rebuild
+  codevira-mcp status               → show index health and stats
+  codevira-mcp report               → show recent crash logs
+  codevira-mcp report --clear       → clear the crash log
+  codevira-mcp serve                → start MCP HTTP server
+  codevira-mcp serve --install-service   → install macOS launchd auto-start
+  codevira-mcp serve --uninstall-service → remove macOS launchd service
 
 Global flags:
   --project-dir <path>          → override project directory (for Google Antigravity,
@@ -72,15 +76,36 @@ def cmd_init() -> None:
                 sys.exit(0)
             print()
 
-    # Step 2: Create .codevira/ directory structure
-    print(f"  Creating .codevira/ in {cwd} ...")
+    # Step 2a: Auto-migrate legacy .codevira/ if present
+    git_dir = cwd / ".git"
+    from mcp_server.migrate import detect_migration_needed, migrate_to_centralized
+    if detect_migration_needed(cwd):
+        print(f"  Migrating legacy .codevira/ to centralized storage ...", end="", flush=True)
+        try:
+            result = migrate_to_centralized(cwd)
+            if result.get("migrated"):
+                print(f" done ({result.get('files_copied', 0)} files → {result.get('new_path', '')})")
+                # Re-evaluate data_dir after migration — now points to centralized path
+                data_dir = get_data_dir()
+            else:
+                print(f" skipped ({result.get('reason', '')})")
+        except Exception as e:
+            print(f" failed ({e})")
+
+    # Step 2b: Create centralized directory structure
+    is_centralized = str(data_dir).startswith(str(Path.home() / ".codevira" / "projects"))
+    if is_centralized:
+        print(f"  Creating centralized data dir ...")
+        print(f"    {data_dir}")
+    else:
+        print(f"  Creating .codevira/ in {cwd} ...")
     for subdir in ["graph/changesets", "codeindex", "logs"]:
         (data_dir / subdir).mkdir(parents=True, exist_ok=True)
-    print(f"  Creating .codevira/ in {cwd} ...              done")
+    print(f"  Data directory ready ...                      done")
 
-    # Step 3: Auto-add to .gitignore if git repo
-    git_dir = cwd / ".git"
-    if git_dir.exists():
+    # Step 3: For new centralized projects, no .gitignore entry needed.
+    # For legacy mode (in-project), add .codevira/ to .gitignore.
+    if not is_centralized and git_dir.exists():
         gitignore = cwd / ".gitignore"
         entry = ".codevira/"
         needs_add = True
@@ -262,18 +287,23 @@ def cmd_init() -> None:
                 log_crash(e, context="codevira init: IDE inject", project_path=str(cwd))
             except Exception: pass
 
-    # Step 10: Register in global memory
+    # Step 10: Register in global memory (with git_remote for rename-resilient lookup)
     try:
         from mcp_server.global_sync import import_global_to_project
-        from mcp_server.paths import get_global_db_path
+        from mcp_server.paths import get_global_db_path, _get_git_remote_url
         from indexer.global_db import GlobalDB
+        from mcp_server.auto_init import _write_metadata
 
+        git_remote = _get_git_remote_url(cwd)
         gdb = GlobalDB(get_global_db_path())
-        gdb.register_project(str(cwd), detected["name"], detected["language"])
+        gdb.register_project(str(data_dir), detected["name"], detected["language"], git_remote=git_remote)
         proj_count = gdb.get_project_count()
         gdb.close()
         if proj_count > 1:
             print(f"  Registered in global memory ({proj_count} projects)")
+
+        # Write metadata.json for centralized storage marker
+        _write_metadata(data_dir, cwd)
     except Exception as e:
         print(f"  Global memory registration skipped ({e})")
         try:
@@ -351,10 +381,110 @@ def cmd_serve(
     port: int = 7007,
     use_https: bool = False,
     project_dir: Path | None = None,
+    install_service: bool = False,
+    uninstall_service: bool = False,
 ) -> None:
     """Start the MCP HTTP server (Streamable HTTP transport)."""
+    if install_service:
+        from mcp_server.launchd import install_launchd
+        try:
+            plist = install_launchd(port=port, use_https=use_https, host=host)
+            print(f"  Launchd service installed: {plist}")
+            print("  Codevira MCP server will start automatically on login.")
+        except RuntimeError as e:
+            print(f"  Error: {e}")
+            sys.exit(1)
+        return
+
+    if uninstall_service:
+        from mcp_server.launchd import uninstall_launchd
+        try:
+            removed = uninstall_launchd()
+            if removed:
+                print("  Launchd service removed.")
+            else:
+                print("  No launchd service was installed.")
+        except RuntimeError as e:
+            print(f"  Error: {e}")
+            sys.exit(1)
+        return
+
     from mcp_server.http_server import run_http_server
     run_http_server(host=host, port=port, use_https=use_https, project_dir=project_dir)
+
+
+def cmd_register(
+    global_mode: bool = True,
+    claude_desktop: bool = False,
+    http_url: str | None = None,
+) -> None:
+    """One-time global IDE registration (v1.6).
+
+    Injects codevira into all detected AI tools' global configs so that
+    every project the developer opens automatically has Codevira memory.
+    """
+    from mcp_server.paths import get_project_root
+    from mcp_server.ide_inject import (
+        _resolve_command, detect_installed_ides,
+        inject_global_claude_code, inject_global_cursor, inject_global_windsurf,
+        _inject_claude_desktop, inject_claude_http_url,
+    )
+
+    project_root = get_project_root()
+    cmd_path, python_exe = _resolve_command()
+
+    print()
+    print("  Codevira — Global IDE Registration (v1.6)")
+    print("  " + "─" * 44)
+    print()
+
+    if http_url:
+        path = inject_claude_http_url(http_url)
+        print(f"  ✓ Claude Code (HTTP URL): {path}")
+        print()
+        return
+
+    if claude_desktop:
+        path = _inject_claude_desktop(project_root, cmd_path, python_exe)
+        print(f"  ✓ Claude Desktop: {path}")
+        print("  Note: Claude Desktop uses stdio — restart it to pick up changes.")
+        print()
+        return
+
+    # Global mode: inject into all detected IDEs
+    ides = detect_installed_ides(project_root)
+    results: dict[str, str] = {}
+
+    for ide in ides:
+        try:
+            if ide == "claude":
+                path = inject_global_claude_code(cmd_path, python_exe)
+                if path:
+                    results["Claude Code (global)"] = path
+            elif ide == "cursor":
+                path = inject_global_cursor(cmd_path, python_exe)
+                if path:
+                    results["Cursor (global)"] = path
+            elif ide == "windsurf":
+                path = inject_global_windsurf(cmd_path, python_exe)
+                if path:
+                    results["Windsurf (global)"] = path
+            elif ide == "claude_desktop":
+                path = _inject_claude_desktop(project_root, cmd_path, python_exe)
+                if path:
+                    results["Claude Desktop"] = path
+        except Exception as e:
+            print(f"  Warning: could not configure {ide}: {e}")
+
+    if results:
+        for ide_name, config_path in results.items():
+            print(f"  ✓ {ide_name}: {config_path}")
+        print()
+        print("  Restart your AI tools to pick up the new configuration.")
+        print("  Every project you open will now have Codevira memory automatically.")
+    else:
+        print("  No AI tools detected. Install Claude Code, Cursor, or Windsurf first.")
+    print()
 
 
 def main() -> None:
@@ -417,9 +547,32 @@ def main() -> None:
         help="Enable HTTPS using mkcert certs from ~/.codevira/certs/",
     )
     serve_parser.add_argument(
+        "--install-service", action="store_true",
+        help="Install macOS launchd service so the server starts automatically on login",
+    )
+    serve_parser.add_argument(
+        "--uninstall-service", action="store_true",
+        help="Remove the macOS launchd service",
+    )
+    serve_parser.add_argument(
         "--project-dir",
         metavar="PATH",
         help="Project directory override (same as the global --project-dir flag)",
+    )
+
+    # register (v1.6: one-time global IDE registration)
+    register_parser = subparsers.add_parser(
+        "register",
+        help="One-time global IDE registration — inject Codevira into all detected AI tools",
+    )
+    register_parser.add_argument(
+        "--claude-desktop", action="store_true",
+        help="Only configure Claude Desktop (stdio mode)",
+    )
+    register_parser.add_argument(
+        "--http-url",
+        metavar="URL",
+        help="Inject an HTTP URL config into Claude Code (e.g. https://localhost:7443/mcp)",
     )
 
     args = parser.parse_args(raw_args)
@@ -452,6 +605,13 @@ def main() -> None:
             port=args.port,
             use_https=args.https,
             project_dir=project_dir,
+            install_service=getattr(args, "install_service", False),
+            uninstall_service=getattr(args, "uninstall_service", False),
+        )
+    elif args.command == "register":
+        cmd_register(
+            claude_desktop=getattr(args, "claude_desktop", False),
+            http_url=getattr(args, "http_url", None),
         )
     else:
         # No subcommand → start MCP server (stdio transport)

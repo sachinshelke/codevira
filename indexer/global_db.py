@@ -33,6 +33,7 @@ class GlobalDB:
                 path TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
                 language TEXT,
+                git_remote TEXT,
                 last_synced_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -66,13 +67,33 @@ class GlobalDB:
     # Project registry
     # ------------------------------------------------------------------
 
-    def register_project(self, path: str, name: str, language: str) -> None:
+    def register_project(self, path: str, name: str, language: str,
+                         git_remote: str | None = None) -> None:
+        # Ensure git_remote column exists (handles DBs created before v1.6)
+        try:
+            cols = [row[1] for row in self.conn.execute("PRAGMA table_info(projects)").fetchall()]
+            if "git_remote" not in cols:
+                self.conn.execute("ALTER TABLE projects ADD COLUMN git_remote TEXT")
+                self.conn.commit()
+        except Exception:
+            pass
         self.conn.execute(
-            "INSERT OR REPLACE INTO projects (path, name, language, last_synced_at) "
-            "VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
-            (path, name, language),
+            "INSERT OR REPLACE INTO projects (path, name, language, git_remote, last_synced_at) "
+            "VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)",
+            (path, name, language, git_remote),
         )
         self.conn.commit()
+
+    def find_project_by_remote(self, remote_url: str) -> str | None:
+        """Return the registered path for a project matching the given git remote URL, or None."""
+        try:
+            row = self.conn.execute(
+                "SELECT path FROM projects WHERE git_remote = ? LIMIT 1",
+                (remote_url,),
+            ).fetchone()
+            return row["path"] if row else None
+        except Exception:
+            return None
 
     def get_project_count(self) -> int:
         row = self.conn.execute("SELECT COUNT(*) FROM projects").fetchone()

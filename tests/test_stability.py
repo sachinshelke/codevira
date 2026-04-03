@@ -14,6 +14,7 @@ def test_get_roadmap_migrates_legacy_current_phase(tmp_path, monkeypatch):
     project_root = tmp_path / "legacy-project"
     data_dir = project_root / ".codevira"
     data_dir.mkdir(parents=True)
+    (data_dir / "config.yaml").write_text("project:\n  name: test\n")
     _set_project_root(monkeypatch, project_root)
 
     legacy_roadmap = {
@@ -74,7 +75,9 @@ def test_get_project_root_discovers_codevira_from_subdirectory(tmp_path, monkeyp
 
 def test_update_node_after_change_updates_sqlite_graph(tmp_path, monkeypatch):
     project_root = tmp_path / "graph-project"
-    (project_root / ".codevira").mkdir(parents=True)
+    codevira_dir = project_root / ".codevira"
+    codevira_dir.mkdir(parents=True)
+    (codevira_dir / "config.yaml").write_text("project:\n  name: test\n")
     _set_project_root(monkeypatch, project_root)
 
     graph.add_node(

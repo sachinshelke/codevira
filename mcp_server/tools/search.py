@@ -33,7 +33,22 @@ def _get_chroma_client():
 def search_codebase(description: str, top_k: int = 5) -> dict[str, Any]:
     client, embed_fn = _get_chroma_client()
     if not client:
-        return {"error": "Index not found. Run 'codevira index --full'."}
+        # v1.6: Check if auto-init is running and return a friendly status
+        try:
+            from mcp_server.auto_init import get_init_progress
+            prog = get_init_progress()
+            if prog["status"] in ("initializing", "indexing"):
+                return {
+                    "status": "indexing",
+                    "message": "Semantic index is being built in the background. Try again in a few seconds.",
+                    "indexing_progress": prog,
+                }
+        except Exception:
+            pass
+        return {
+            "error": "Semantic index not found.",
+            "hint": "Install search deps with: pip install 'codevira-mcp[search]', then run: codevira index --full",
+        }
 
     try:
         collection = client.get_collection("codebase_index", embedding_function=embed_fn)

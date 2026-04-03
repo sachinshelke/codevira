@@ -781,6 +781,14 @@ async def list_tools() -> list[Tool]:
 
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
+    # v1.6: Auto-init check — triggers background init on first call if needed.
+    # This is a no-op (<1ms) on every subsequent call after initialization.
+    try:
+        from mcp_server.auto_init import ensure_project_initialized
+        ensure_project_initialized()
+    except Exception:
+        pass  # auto-init must never block tool dispatch
+
     try:
         if name == "get_node":
             result = get_node(arguments["file_path"])
@@ -969,6 +977,20 @@ def main():
         install_global_handler()
     except Exception as e:
         logger.warning("Could not install crash handler: %s", e)
+
+    # v1.6: Auto-migrate legacy .codevira/ → ~/.codevira/projects/<key>/
+    try:
+        from mcp_server.migrate import detect_migration_needed, migrate_to_centralized
+        from mcp_server.paths import get_project_root
+        _proj_root = get_project_root()
+        if detect_migration_needed(_proj_root):
+            logger.info("Migrating legacy .codevira/ to centralized storage...")
+            result = migrate_to_centralized(_proj_root)
+            if result.get("migrated"):
+                logger.info("Migration complete: %d files moved to %s",
+                            result.get("files_copied", 0), result.get("new_path", ""))
+    except Exception as e:
+        logger.warning("Could not run storage migration: %s", e)
 
     # Auto-start background file watcher so the index stays fresh
     # on every file save — no manual trigger or git commit needed.

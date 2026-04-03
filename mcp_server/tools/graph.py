@@ -156,10 +156,26 @@ def get_node(file_path: str) -> dict[str, Any]:
     db.close()
     
     if not node:
+        # v1.6: Check if auto-init is running
+        hint = "Use refresh_graph(['path/to/file']) to auto-generate a graph node for new files."
+        try:
+            from mcp_server.auto_init import get_init_progress
+            prog = get_init_progress()
+            if prog["status"] in ("initializing", "indexing"):
+                return {
+                    "found": False,
+                    "status": "initializing",
+                    "file_path": file_path,
+                    "message": "Graph is being built in the background. Try again in a few seconds.",
+                    "indexing_progress": prog,
+                    "hint": hint,
+                }
+        except Exception:
+            pass
         return {
             "found": False,
             "message": f"File '{file_path}' not found in the context graph.",
-            "hint": "Use refresh_graph(['path/to/file']) to auto-generate a graph node for new files.",
+            "hint": hint,
         }
         
     staleness = _check_staleness(file_path)

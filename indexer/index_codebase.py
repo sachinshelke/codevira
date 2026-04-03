@@ -12,9 +12,26 @@ from pathlib import Path
 from mcp_server.paths import get_data_dir, get_project_root
 from indexer.sqlite_graph import SQLiteGraph
 
-PROJECT_ROOT = get_project_root()
-INDEX_DIR = get_data_dir() / "codeindex"
 COLLECTION_NAME = "codebase_index"
+
+# Global lock — prevents the background watcher and background full-index from
+# writing to ChromaDB simultaneously. Both operations must acquire this lock
+# before any ChromaDB write (add/delete/recreate collection).
+_chroma_write_lock = threading.Lock()
+
+# Atomic counters for background indexing progress
+_bg_files_indexed: int = 0
+_bg_total_files: int = 0
+_bg_status: str = "idle"   # idle | running | done | error
+_bg_lock = threading.Lock()
+
+
+def _project_root():
+    return get_project_root()
+
+
+def _index_dir():
+    return get_data_dir() / "codeindex"
 
 def _load_config() -> dict:
     """Load .codevira/config.yaml and return the 'project' sub-dict."""
@@ -46,7 +63,7 @@ def _get_chroma_client():
         print("ERROR: semantic search requires chromadb.")
         print("       Install it with: pip install 'codevira-mcp[search]'")
         sys.exit(1)
-    db_dir = str(INDEX_DIR)
+    db_dir = str(_index_dir())
     return chromadb.PersistentClient(path=db_dir)
 
 def _get_embedding_fn():
@@ -74,7 +91,7 @@ def _get_changed_files(db: SQLiteGraph) -> list[tuple[str, str]]:
     skip_dirs = config.get("skip_dirs", ["node_modules", ".venv", "__pycache__"])
 
     for watch_dir in watched_dirs:
-        watch_path = PROJECT_ROOT / watch_dir
+        watch_path = _project_root() / watch_dir
         if not watch_path.exists():
             continue
 
@@ -85,9 +102,9 @@ def _get_changed_files(db: SQLiteGraph) -> list[tuple[str, str]]:
                 continue
             if any(skip in p.parts for skip in skip_dirs):
                 continue
-            
+
             try:
-                rel_path = str(p.relative_to(PROJECT_ROOT))
+                rel_path = str(p.relative_to(_project_root()))
                 if rel_path in seen_paths:
                     continue
                 seen_paths.add(rel_path)
@@ -114,10 +131,10 @@ def _get_requested_files(file_paths: list[str]) -> list[tuple[str, str]]:
 
     for raw_path in file_paths:
         candidate = Path(raw_path)
-        abs_path = candidate if candidate.is_absolute() else PROJECT_ROOT / candidate
+        abs_path = candidate if candidate.is_absolute() else _project_root() / candidate
 
         try:
-            rel_path = str(abs_path.resolve().relative_to(PROJECT_ROOT))
+            rel_path = str(abs_path.resolve().relative_to(_project_root()))
         except ValueError:
             continue
 
@@ -155,14 +172,14 @@ def cmd_full_rebuild():
     from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 
     console = Console()
-    INDEX_DIR.mkdir(parents=True, exist_ok=True)
+    _index_dir().mkdir(parents=True, exist_ok=True)
     db = SQLiteGraph(get_data_dir() / "graph" / "graph.db")
 
     if not _check_search_deps():
         console.print("[yellow]⚠[/yellow]  Semantic search skipped — install with: [bold]pip install 'codevira-mcp\\[search\\]'[/bold]")
         # Still build the graph even without search deps
         from indexer.graph_generator import generate_graph_sqlite
-        result = generate_graph_sqlite(str(PROJECT_ROOT), str(get_data_dir() / "graph" / "graph.db"))
+        result = generate_graph_sqlite(str(_project_root()), str(get_data_dir() / "graph" / "graph.db"))
         console.print(f"[green]✓[/green] Graph built: {result.get('nodes_added', 0)} nodes, {result.get('edges_added', 0)} edges.")
         db.close()
         return
@@ -189,10 +206,10 @@ def cmd_full_rebuild():
         task1 = progress.add_task("[cyan]Parsing and chunking source files...", total=None)
         
         # Chunk the entire project once (not per watched_dir)
-        all_project_chunks = chunk_project(str(PROJECT_ROOT))
-        
+        all_project_chunks = chunk_project(str(_project_root()))
+
         for watch_dir in watched_dirs:
-            abs_dir = PROJECT_ROOT / watch_dir
+            abs_dir = _project_root() / watch_dir
             if not abs_dir.exists():
                 continue
             wd_str = str(watch_dir)
@@ -205,7 +222,7 @@ def cmd_full_rebuild():
                 
             for p in abs_dir.rglob("*"):
                 if p.is_file() and p.suffix in extensions and not any(s in p.parts for s in skip_dirs):
-                    rel = str(p.relative_to(PROJECT_ROOT))
+                    rel = str(p.relative_to(_project_root()))
                     file_hashes[rel] = _compute_hash(p)
                         
         progress.update(task1, completed=100)
@@ -230,7 +247,7 @@ def cmd_full_rebuild():
         db.update_file_hash(path, f_hash)
         
     console.print(f"[cyan]Generating auto-graph stubs...[/cyan]")
-    generate_graph_sqlite(str(PROJECT_ROOT), str(db.db_path))
+    generate_graph_sqlite(str(_project_root()), str(db.db_path))
     db.close()
 
 def cmd_incremental(quiet: bool = False, file_paths: list[str] | None = None):
@@ -274,7 +291,7 @@ def cmd_incremental(quiet: bool = False, file_paths: list[str] | None = None):
             except Exception: pass
 
         try:
-            chunks = chunk_file(str(PROJECT_ROOT / fpath), str(PROJECT_ROOT))
+            chunks = chunk_file(str(_project_root() / fpath), str(_project_root()))
             if chunks:
                 ids, docs, metas = [], [], []
                 for chunk in chunks:
@@ -297,7 +314,7 @@ def cmd_incremental(quiet: bool = False, file_paths: list[str] | None = None):
             continue
 
     if indexed_any:
-        generate_graph_sqlite(str(PROJECT_ROOT), str(db.db_path))
+        generate_graph_sqlite(str(_project_root()), str(db.db_path))
             
     db.close()
     return 0
@@ -352,7 +369,8 @@ def start_background_watcher(quiet: bool = True):
         def _do_reindex(self):
             try:
                 _watcher_logger.debug("File change detected — running incremental reindex")
-                cmd_incremental(quiet=quiet)
+                with _chroma_write_lock:
+                    cmd_incremental(quiet=quiet)
                 _watcher_logger.debug("Incremental reindex complete")
             except Exception as e:
                 _watcher_logger.warning("Background reindex failed: %s", e)
@@ -379,7 +397,7 @@ def start_background_watcher(quiet: bool = True):
 
     scheduled = 0
     for wd in watched_dirs:
-        path = PROJECT_ROOT / wd
+        path = _project_root() / wd
         if path.exists():
             observer.schedule(handler, str(path), recursive=True)
             scheduled += 1
@@ -410,6 +428,65 @@ def cmd_watch():
     except KeyboardInterrupt:
         observer.stop()
     observer.join()
+
+def get_indexing_status() -> dict:
+    """Return the current background indexing progress. Thread-safe."""
+    with _bg_lock:
+        return {
+            "status": _bg_status,
+            "files_indexed": _bg_files_indexed,
+            "total_files": _bg_total_files,
+        }
+
+
+def start_background_full_index(callback=None) -> "threading.Thread":
+    """Start a full index rebuild in a background daemon thread.
+
+    This is used by auto_init.py to build the index without blocking tool calls.
+    The ChromaDB write lock (_chroma_write_lock) prevents concurrent writes
+    with the file watcher.
+
+    Args:
+        callback: Optional callable invoked when indexing completes.
+                  Called with (status: str) where status is 'done' or 'error'.
+
+    Returns:
+        The started Thread object.
+    """
+    global _bg_status, _bg_files_indexed, _bg_total_files
+
+    def _run():
+        global _bg_status, _bg_files_indexed, _bg_total_files
+        with _bg_lock:
+            _bg_status = "running"
+            _bg_files_indexed = 0
+            _bg_total_files = 0
+
+        try:
+            with _chroma_write_lock:
+                cmd_full_rebuild()
+            with _bg_lock:
+                _bg_status = "done"
+        except Exception as e:
+            with _bg_lock:
+                _bg_status = "error"
+            _watcher_logger.error("Background full-index failed: %s", e)
+            try:
+                from mcp_server.crash_logger import log_crash
+                log_crash(e, context="background full-index")
+            except Exception:
+                pass
+        finally:
+            if callback is not None:
+                try:
+                    callback(_bg_status)
+                except Exception:
+                    pass
+
+    t = threading.Thread(target=_run, daemon=True, name="codevira-bg-index")
+    t.start()
+    return t
+
 
 def cmd_status():
     from rich.console import Console
@@ -458,8 +535,8 @@ def cmd_status():
 def cmd_generate_graph():
     from indexer.graph_generator import generate_graph_sqlite
     db_path = str(get_data_dir() / "graph" / "graph.db")
-    print(f"Generating context graph nodes from {PROJECT_ROOT} into SQLite")
-    result = generate_graph_sqlite(str(PROJECT_ROOT), db_path)
+    print(f"Generating context graph nodes from {_project_root()} into SQLite")
+    result = generate_graph_sqlite(str(_project_root()), db_path)
 
     print(f"  Files scanned: {result['files_processed']}")
     print(f"  Nodes added:   {result['nodes_added']}")
@@ -471,7 +548,7 @@ def cmd_bootstrap_roadmap():
     if roadmap_file.exists():
         print(f"Roadmap already exists at {roadmap_file}")
         return
-    generate_roadmap_stub(str(PROJECT_ROOT), str(roadmap_file))
+    generate_roadmap_stub(str(_project_root()), str(roadmap_file))
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Codevira Codebase Indexer (SQLite + ChromaDB + SHA256)")

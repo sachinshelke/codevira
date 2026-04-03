@@ -113,7 +113,21 @@ def _disambiguate_js_ts(root: Path) -> str:
 
 
 def _scan_dominant_language(root: Path, max_depth: int = 2) -> str:
-    """Scan file extensions to find the dominant language."""
+    """Scan file extensions to find the dominant language.
+
+    Uses gitignore-aware discovery when pathspec is available, falls back
+    to a simple depth-limited walk otherwise.
+    """
+    try:
+        from mcp_server.gitignore import discover_source_files, infer_language_from_files
+        files = discover_source_files(root)
+        lang = infer_language_from_files(files)
+        if lang != "unknown":
+            return lang
+    except Exception:
+        pass
+
+    # Legacy fallback: depth-limited walk
     from collections import Counter
 
     counts: Counter[str] = Counter()
@@ -121,18 +135,14 @@ def _scan_dominant_language(root: Path, max_depth: int = 2) -> str:
                  "venv", ".tox", "dist", "build", "target", ".next", ".nuxt"}
 
     for path in root.rglob("*"):
-        # Limit depth
         try:
             rel = path.relative_to(root)
         except ValueError:
             continue
         if len(rel.parts) > max_depth + 1:
             continue
-
-        # Skip ignored directories
         if any(part in skip_dirs for part in rel.parts):
             continue
-
         if path.is_file() and path.suffix in _EXT_TO_LANG:
             counts[_EXT_TO_LANG[path.suffix]] += 1
 
@@ -159,30 +169,59 @@ def detect_watched_dirs(root: Path, language: str) -> list[str]:
     Detect source directories by scanning the actual project.
 
     Strategy:
-      1. Scan every top-level subdirectory for source files (by extension).
-      2. Include any dir that contains at least one source file, recursively.
-      3. Fall back to convention list if nothing found that way.
+      1. Use gitignore-aware discovery to find all source files.
+      2. Extract unique top-level directories that contain source files.
+      3. Fall back to convention list if nothing found.
       4. Ultimate fallback: ["."]
     """
+    # Try gitignore-aware discovery first
+    try:
+        from mcp_server.gitignore import discover_source_files
+        extensions = set(LANGUAGE_EXTENSIONS.get(language, [".py"]))
+        files = discover_source_files(root)
+        # Filter to language-appropriate files for better dir detection
+        lang_files = [f for f in files if f.suffix.lower() in extensions]
+        if not lang_files:
+            lang_files = files  # fall through to all files if none match
+
+        # Extract unique top-level dirs relative to project root
+        top_dirs: set[str] = set()
+        for f in lang_files:
+            try:
+                rel = f.relative_to(root)
+                if len(rel.parts) > 1:
+                    top_dirs.add(rel.parts[0])
+            except ValueError:
+                pass
+
+        # Filter out noise dirs
+        found = sorted(
+            d for d in top_dirs
+            if not d.startswith(".") and d not in _SKIP_DIRS and not d.endswith("-info")
+        )
+        if found:
+            return found
+    except Exception:
+        pass
+
+    # Legacy fallback: scan top-level dirs manually
     extensions = set(LANGUAGE_EXTENSIONS.get(language, [".py"]))
-    found: list[str] = []
+    found_legacy: list[str] = []
 
     try:
         for entry in sorted(root.iterdir()):
             if not entry.is_dir():
                 continue
             name = entry.name
-            # Skip hidden dirs and known non-code dirs
             if name.startswith(".") or name in _SKIP_DIRS or name.endswith("-info"):
                 continue
-            # Check if this dir has any source file (up to reasonable depth)
             if _dir_has_sources(entry, extensions, max_depth=6):
-                found.append(name)
+                found_legacy.append(name)
     except PermissionError:
         pass
 
-    if found:
-        return found
+    if found_legacy:
+        return found_legacy
 
     # Convention fallback
     candidates = LANGUAGE_DIRS.get(language, [])

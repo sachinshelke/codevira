@@ -172,6 +172,15 @@ def get_session_context() -> dict:
             logger.warning("Could not load global intelligence: %s", e)
             context["global_intelligence"] = None
 
+        # v1.6: Add indexing progress if background init is running
+        try:
+            from mcp_server.auto_init import get_init_progress
+            prog = get_init_progress()
+            if prog["status"] not in ("ready", "not_started"):
+                context["indexing_progress"] = prog
+        except Exception:
+            pass
+
         return context
     finally:
         db.close()

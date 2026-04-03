@@ -22,6 +22,7 @@ def _setup_db(tmp_path, monkeypatch) -> SQLiteGraph:
     project_root = tmp_path / "test-project"
     data_dir = project_root / ".codevira"
     data_dir.mkdir(parents=True)
+    (data_dir / "config.yaml").write_text("project:\n  name: test\n")
     monkeypatch.setattr(paths, "_project_dir_override", None)
     monkeypatch.chdir(project_root.resolve())
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "codevira-mcp"
-version = "1.5.2"
+version = "1.6.0"
 description = "Persistent adaptive memory for AI coding agents — MCP server with context graph, semantic search, adaptive learning, roadmap tracking, and cross-tool continuity."
 readme = "README.md"
 license = { text = "MIT" }
@@ -52,6 +52,7 @@ dependencies = [
   "rich>=13.0.0",
   "uvicorn>=0.27.0",
   "starlette>=0.36.0",
+  "pathspec>=0.12.0",
 ]
 
 [project.optional-dependencies]

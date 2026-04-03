@@ -22,13 +22,15 @@ from indexer.sqlite_graph import SQLiteGraph
 
 logger = logging.getLogger(__name__)
 
-PROJECT_ROOT = get_project_root()
+
+def _project_root():
+    return get_project_root()
 
 
 def _git_cmd(*args: str) -> str | None:
     try:
         return subprocess.check_output(
-            ["git", "-C", str(PROJECT_ROOT)] + list(args),
+            ["git", "-C", str(_project_root())] + list(args),
             stderr=subprocess.DEVNULL,
         ).decode("utf-8", errors="replace").strip()
     except (subprocess.CalledProcessError, FileNotFoundError):
@@ -98,7 +100,7 @@ def _determine_file_outcome(file_path: str, session_date: str) -> dict | None:
     Check git history to see what happened to a file after a session.
     Returns {'type': 'kept'|'modified'|'reverted', 'delta': ...}
     """
-    abs_path = PROJECT_ROOT / file_path
+    abs_path = _project_root() / file_path
     if not abs_path.exists():
         return {"type": "reverted", "delta": "File no longer exists"}
 

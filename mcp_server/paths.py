@@ -1,14 +1,23 @@
 """
 paths.py — Centralized path resolution for Codevira.
 
-After `pip install codevira-mcp`, code lives in site-packages.
-Project data (.codevira/) lives in the user's project directory.
+Resolution priority for get_data_dir():
+  1. Centralized ~/.codevira/projects/<key>/ — new in v1.6 (keyed by project path)
+  2. Git remote lookup — survives directory renames
+  3. Legacy <project_root>/.codevira/ — backward compat for existing projects
+  4. Default to centralized path for brand-new projects
 
-All tools should import from here instead of computing
-Path(__file__).parent.parent... chains.
+Project root discovery (get_project_root()):
+  - Uses --project-dir CLI override if set
+  - Walks upward from cwd looking for project markers:
+    .git, pyproject.toml, package.json, go.mod, Cargo.toml, .codevira/
+  - Falls back to cwd if no marker found
 """
 from __future__ import annotations
 
+import json
+import re
+import subprocess
 from pathlib import Path
 
 # Allow overriding project directory via CLI flag (e.g. for Google Antigravity
@@ -22,16 +31,90 @@ def set_project_dir(path: str | Path) -> None:
     _project_dir_override = Path(path).resolve()
 
 
-def _discover_project_root(start: Path) -> Path:
-    """Walk upward to find the nearest ancestor that contains .codevira/config.yaml.
+# ---------------------------------------------------------------------------
+# Path-key helpers (for centralized storage)
+# ---------------------------------------------------------------------------
 
-    Checks for config.yaml specifically so that ~/.codevira/ (global memory dir,
-    which contains only global.db) is never mistaken for a project root.
+#: Markers that identify a project root when walking upward.
+_PROJECT_MARKERS = frozenset({
+    ".git",
+    "pyproject.toml",
+    "package.json",
+    "go.mod",
+    "Cargo.toml",
+    ".codevira",
+})
+
+
+def _sanitize_path_key(abs_path: str | Path) -> str:
+    """Convert an absolute path to a filesystem-safe key string.
+
+    Examples:
+        /Users/sachin/Projects/Foo  → Users-sachin-Projects-Foo
+        C:\\Users\\sachin\\Projects → C-Users-sachin-Projects
+    """
+    path = str(Path(abs_path).resolve())
+    # Remove leading slash / drive colon
+    path = re.sub(r"^[A-Za-z]:", "", path)  # Windows drive letter
+    path = path.lstrip("/\\")
+    # Replace path separators and any other non-alphanumeric chars with hyphens
+    key = re.sub(r"[^a-zA-Z0-9._-]", "-", path)
+    # Collapse consecutive hyphens
+    key = re.sub(r"-{2,}", "-", key)
+    return key.strip("-")
+
+
+def _get_git_remote_url(project_root: Path) -> str | None:
+    """Return the git remote 'origin' URL for project_root, or None."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(project_root), "remote", "get-url", "origin"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        if result.returncode == 0:
+            url = result.stdout.strip()
+            return url if url else None
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        pass
+    return None
+
+
+def _find_project_by_git_remote(remote_url: str) -> Path | None:
+    """Scan ~/.codevira/projects/ for a project whose metadata.json matches remote_url."""
+    projects_dir = get_global_home() / "projects"
+    if not projects_dir.exists():
+        return None
+    for meta_file in projects_dir.glob("*/metadata.json"):
+        try:
+            meta = json.loads(meta_file.read_text())
+            if meta.get("git_remote") == remote_url:
+                # Return the centralized data dir (the directory containing metadata.json)
+                return meta_file.parent
+        except (json.JSONDecodeError, OSError):
+            continue
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Project root discovery
+# ---------------------------------------------------------------------------
+
+def _discover_project_root(start: Path) -> Path:
+    """Walk upward from *start* to find the nearest project root.
+
+    A project root is any ancestor directory that contains at least one
+    of: .git, pyproject.toml, package.json, go.mod, Cargo.toml, .codevira/
+
+    Stops at the first match so that nested repos return the inner root.
+    Falls back to *start* if no marker is found.
     """
     start = start.resolve()
     for candidate in (start, *start.parents):
-        if (candidate / ".codevira" / "config.yaml").is_file():
-            return candidate
+        for marker in _PROJECT_MARKERS:
+            if (candidate / marker).exists():
+                return candidate
     return start
 
 
@@ -46,9 +129,41 @@ def get_project_root() -> Path:
     return _discover_project_root(Path.cwd())
 
 
+# ---------------------------------------------------------------------------
+# Data directory resolution (v1.6 centralized + legacy fallback)
+# ---------------------------------------------------------------------------
+
 def get_data_dir() -> Path:
-    """Return the .codevira/ data directory inside the project root."""
-    return get_project_root() / ".codevira"
+    """Return the Codevira data directory for the current project.
+
+    Resolution chain:
+      1. Centralized ~/.codevira/projects/<key>/ if config.yaml exists there
+      2. Git remote lookup — finds centralized dir even after directory rename
+      3. Legacy <project_root>/.codevira/ if config.yaml exists there
+      4. Default to centralized path (new projects land here automatically)
+    """
+    project_root = get_project_root()
+    key = _sanitize_path_key(project_root)
+    centralized = get_global_home() / "projects" / key
+
+    # 1. Centralized dir already initialized?
+    if (centralized / "config.yaml").is_file():
+        return centralized
+
+    # 2. Try git remote lookup (survives directory renames)
+    remote_url = _get_git_remote_url(project_root)
+    if remote_url:
+        found = _find_project_by_git_remote(remote_url)
+        if found is not None:
+            return found
+
+    # 3. Legacy in-project .codevira/ (backward compat for v1.5 and earlier)
+    legacy = project_root / ".codevira"
+    if (legacy / "config.yaml").is_file():
+        return legacy
+
+    # 4. Default to centralized path — new project, will be created on init
+    return centralized
 
 
 def get_package_data_dir() -> Path:

@@ -51,5 +51,10 @@ docs/linkedin-*.md
 
 # Codevira — auto-generated, do not commit
 .codevira/
+.codevira.migrated/
+
+# Test coverage artifacts
+.coverage
+htmlcov/
 
 .mcp.json

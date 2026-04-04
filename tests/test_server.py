@@ -308,3 +308,339 @@ class TestCallToolSerialization:
              patch("mcp_server.auto_init.ensure_project_initialized"):
             result = _run(call_tool("get_roadmap", {}))
         assert len(result) == 1
+
+
+# ---------------------------------------------------------------------------
+# Additional tool dispatch routes
+# ---------------------------------------------------------------------------
+
+class TestCallToolAdditionalRoutes:
+    """Tests for tool dispatch routes not covered by TestCallToolDispatch."""
+
+    def test_dispatch_list_nodes_no_filters(self):
+        """list_nodes dispatches with no filters."""
+        sentinel = {"nodes": []}
+        with patch("mcp_server.server.list_nodes", return_value=sentinel) as mock_fn, \
+             patch("mcp_server.auto_init.ensure_project_initialized"):
+            result = _run(call_tool("list_nodes", {}))
+        mock_fn.assert_called_once_with(layer=None, do_not_revert=None, stability=None)
+        assert len(result) == 1
+        parsed = json.loads(result[0].text)
+        assert parsed == sentinel
+
+    def test_dispatch_list_nodes_with_filters(self):
+        """list_nodes dispatches with layer and stability filters."""
+        sentinel = {"nodes": ["a.py"]}
+        with patch("mcp_server.server.list_nodes", return_value=sentinel) as mock_fn, \
+             patch("mcp_server.auto_init.ensure_project_initialized"):
+            result = _run(call_tool("list_nodes", {"layer": "api", "stability": "high", "do_not_revert": True}))
+        mock_fn.assert_called_once_with(layer="api", do_not_revert=True, stability="high")
+        parsed = json.loads(result[0].text)
+        assert parsed == sentinel
+
+    def test_dispatch_complete_phase(self):
+        """complete_phase dispatches with phase_number and key_decisions."""
+        sentinel = {"status": "completed", "phase": 5}
+        with patch("mcp_server.server.complete_phase", return_value=sentinel) as mock_fn, \
+             patch("mcp_server.auto_init.ensure_project_initialized"):
+            result = _run(call_tool("complete_phase", {
+                "phase_number": 5,
+                "key_decisions": ["Used retry pattern"],
+            }))
+        mock_fn.assert_called_once_with(phase_number=5, key_decisions=["Used retry pattern"])
+        assert len(result) == 1
+        parsed = json.loads(result[0].text)
+        assert parsed["status"] == "completed"
+
+    def test_dispatch_update_phase_status(self):
+        """update_phase_status dispatches with status and optional blocker."""
+        sentinel = {"status": "in_progress"}
+        with patch("mcp_server.server.update_phase_status", return_value=sentinel) as mock_fn, \
+             patch("mcp_server.auto_init.ensure_project_initialized"):
+            result = _run(call_tool("update_phase_status", {"status": "in_progress"}))
+        mock_fn.assert_called_once_with(status="in_progress", blocker=None, started=None)
+        assert len(result) == 1
+        parsed = json.loads(result[0].text)
+        assert parsed["status"] == "in_progress"
+
+    def test_dispatch_update_phase_status_blocked(self):
+        """update_phase_status passes blocker when status=blocked."""
+        sentinel = {"status": "blocked"}
+        with patch("mcp_server.server.update_phase_status", return_value=sentinel) as mock_fn, \
+             patch("mcp_server.auto_init.ensure_project_initialized"):
+            result = _run(call_tool("update_phase_status", {
+                "status": "blocked",
+                "blocker": "Waiting on API key",
+            }))
+        mock_fn.assert_called_once_with(status="blocked", blocker="Waiting on API key", started=None)
+        assert len(result) == 1
+
+    def test_dispatch_get_preferences(self):
+        """get_preferences dispatches with optional category."""
+        sentinel = {"preferences": []}
+        with patch("mcp_server.server.learning_get_preferences", return_value=sentinel) as mock_fn, \
+             patch("mcp_server.auto_init.ensure_project_initialized"):
+            result = _run(call_tool("get_preferences", {"category": "naming"}))
+        mock_fn.assert_called_once_with(category="naming")
+        assert len(result) == 1
+        parsed = json.loads(result[0].text)
+        assert parsed == sentinel
+
+    def test_dispatch_get_preferences_no_category(self):
+        """get_preferences dispatches with no category."""
+        sentinel = {"preferences": ["snake_case"]}
+        with patch("mcp_server.server.learning_get_preferences", return_value=sentinel) as mock_fn, \
+             patch("mcp_server.auto_init.ensure_project_initialized"):
+            result = _run(call_tool("get_preferences", {}))
+        mock_fn.assert_called_once_with(category=None)
+        assert len(result) == 1
+
+    def test_dispatch_get_learned_rules(self):
+        """get_learned_rules dispatches with file_path and category."""
+        sentinel = {"rules": []}
+        with patch("mcp_server.server.learning_get_learned_rules", return_value=sentinel) as mock_fn, \
+             patch("mcp_server.auto_init.ensure_project_initialized"):
+            result = _run(call_tool("get_learned_rules", {"file_path": "src/api.py", "category": "testing"}))
+        mock_fn.assert_called_once_with(file_path="src/api.py", category="testing")
+        assert len(result) == 1
+        parsed = json.loads(result[0].text)
+        assert parsed == sentinel
+
+    def test_dispatch_get_learned_rules_no_args(self):
+        """get_learned_rules dispatches with no arguments."""
+        sentinel = {"rules": []}
+        with patch("mcp_server.server.learning_get_learned_rules", return_value=sentinel) as mock_fn, \
+             patch("mcp_server.auto_init.ensure_project_initialized"):
+            result = _run(call_tool("get_learned_rules", {}))
+        mock_fn.assert_called_once_with(file_path=None, category=None)
+        assert len(result) == 1
+
+    def test_dispatch_get_project_maturity(self):
+        """get_project_maturity dispatches with no arguments."""
+        sentinel = {"score": 72, "sessions": 15}
+        with patch("mcp_server.server.learning_get_project_maturity", return_value=sentinel) as mock_fn, \
+             patch("mcp_server.auto_init.ensure_project_initialized"):
+            result = _run(call_tool("get_project_maturity", {}))
+        mock_fn.assert_called_once()
+        assert len(result) == 1
+        parsed = json.loads(result[0].text)
+        assert parsed["score"] == 72
+
+    def test_dispatch_get_session_context(self):
+        """get_session_context dispatches with no arguments."""
+        sentinel = {"roadmap": {}, "changesets": [], "rules": []}
+        with patch("mcp_server.server.learning_get_session_context", return_value=sentinel) as mock_fn, \
+             patch("mcp_server.auto_init.ensure_project_initialized"):
+            result = _run(call_tool("get_session_context", {}))
+        mock_fn.assert_called_once()
+        assert len(result) == 1
+        parsed = json.loads(result[0].text)
+        assert "roadmap" in parsed
+
+    def test_dispatch_export_graph_default(self):
+        """export_graph dispatches with default format."""
+        sentinel = {"diagram": "graph LR ..."}
+        with patch("mcp_server.server.export_graph", return_value=sentinel) as mock_fn, \
+             patch("mcp_server.auto_init.ensure_project_initialized"):
+            result = _run(call_tool("export_graph", {}))
+        mock_fn.assert_called_once_with(format="mermaid", scope=None)
+        assert len(result) == 1
+        parsed = json.loads(result[0].text)
+        assert parsed == sentinel
+
+    def test_dispatch_export_graph_with_scope(self):
+        """export_graph dispatches with format=dot and a scope."""
+        sentinel = {"diagram": "digraph { ... }"}
+        with patch("mcp_server.server.export_graph", return_value=sentinel) as mock_fn, \
+             patch("mcp_server.auto_init.ensure_project_initialized"):
+            result = _run(call_tool("export_graph", {"format": "dot", "scope": "src/services/"}))
+        mock_fn.assert_called_once_with(format="dot", scope="src/services/")
+        assert len(result) == 1
+
+    def test_dispatch_start_changeset(self):
+        """start_changeset dispatches with all required args."""
+        sentinel = {"changeset_id": "auth-refactor", "status": "open"}
+        with patch("mcp_server.server.start_changeset", return_value=sentinel) as mock_fn, \
+             patch("mcp_server.auto_init.ensure_project_initialized"):
+            result = _run(call_tool("start_changeset", {
+                "changeset_id": "auth-refactor",
+                "description": "Refactor auth module",
+                "files": ["src/auth.py", "src/middleware.py"],
+            }))
+        mock_fn.assert_called_once_with(
+            "auth-refactor", "Refactor auth module",
+            ["src/auth.py", "src/middleware.py"],
+            trigger="medium_change",
+        )
+        assert len(result) == 1
+        parsed = json.loads(result[0].text)
+        assert parsed["changeset_id"] == "auth-refactor"
+
+    def test_dispatch_start_changeset_with_trigger(self):
+        """start_changeset passes trigger when provided."""
+        sentinel = {"changeset_id": "fix", "status": "open"}
+        with patch("mcp_server.server.start_changeset", return_value=sentinel) as mock_fn, \
+             patch("mcp_server.auto_init.ensure_project_initialized"):
+            _run(call_tool("start_changeset", {
+                "changeset_id": "fix",
+                "description": "Small fix",
+                "files": ["a.py"],
+                "trigger": "small_fix",
+            }))
+        mock_fn.assert_called_once_with("fix", "Small fix", ["a.py"], trigger="small_fix")
+
+    def test_dispatch_complete_changeset(self):
+        """complete_changeset dispatches with changeset_id and decisions."""
+        sentinel = {"status": "completed"}
+        with patch("mcp_server.server.complete_changeset", return_value=sentinel) as mock_fn, \
+             patch("mcp_server.auto_init.ensure_project_initialized"):
+            result = _run(call_tool("complete_changeset", {
+                "changeset_id": "auth-refactor",
+                "decisions": ["Kept retry logic", "Added timeout"],
+            }))
+        mock_fn.assert_called_once_with("auth-refactor", ["Kept retry logic", "Added timeout"])
+        assert len(result) == 1
+        parsed = json.loads(result[0].text)
+        assert parsed["status"] == "completed"
+
+    def test_dispatch_update_changeset_progress(self):
+        """update_changeset_progress dispatches with changeset_id and file_done."""
+        sentinel = {"status": "updated"}
+        with patch("mcp_server.server.update_changeset_progress", return_value=sentinel) as mock_fn, \
+             patch("mcp_server.auto_init.ensure_project_initialized"):
+            result = _run(call_tool("update_changeset_progress", {
+                "changeset_id": "auth-refactor",
+                "file_done": "src/auth.py",
+            }))
+        mock_fn.assert_called_once_with("auth-refactor", "src/auth.py", blocker=None)
+        assert len(result) == 1
+
+    def test_dispatch_update_changeset_progress_with_blocker(self):
+        """update_changeset_progress passes blocker when provided."""
+        sentinel = {"status": "blocked"}
+        with patch("mcp_server.server.update_changeset_progress", return_value=sentinel) as mock_fn, \
+             patch("mcp_server.auto_init.ensure_project_initialized"):
+            _run(call_tool("update_changeset_progress", {
+                "changeset_id": "auth-refactor",
+                "file_done": "src/auth.py",
+                "blocker": "Needs API review",
+            }))
+        mock_fn.assert_called_once_with("auth-refactor", "src/auth.py", blocker="Needs API review")
+
+    def test_dispatch_list_open_changesets(self):
+        """list_open_changesets dispatches with no arguments."""
+        sentinel = {"changesets": []}
+        with patch("mcp_server.server.list_open_changesets", return_value=sentinel) as mock_fn, \
+             patch("mcp_server.auto_init.ensure_project_initialized"):
+            result = _run(call_tool("list_open_changesets", {}))
+        mock_fn.assert_called_once()
+        assert len(result) == 1
+        parsed = json.loads(result[0].text)
+        assert parsed == sentinel
+
+    def test_dispatch_get_playbook(self):
+        """get_playbook dispatches with task_type."""
+        sentinel = {"rules": ["Always write tests first"]}
+        with patch("mcp_server.server.get_playbook", return_value=sentinel) as mock_fn, \
+             patch("mcp_server.auto_init.ensure_project_initialized"):
+            result = _run(call_tool("get_playbook", {"task_type": "add_route"}))
+        mock_fn.assert_called_once_with("add_route")
+        assert len(result) == 1
+        parsed = json.loads(result[0].text)
+        assert "rules" in parsed
+
+    def test_dispatch_get_decision_confidence(self):
+        """get_decision_confidence dispatches with file_path and pattern."""
+        sentinel = {"confidence": 0.85}
+        with patch("mcp_server.server.learning_get_decision_confidence", return_value=sentinel) as mock_fn, \
+             patch("mcp_server.auto_init.ensure_project_initialized"):
+            result = _run(call_tool("get_decision_confidence", {"file_path": "src/api.py", "pattern": "src/"}))
+        mock_fn.assert_called_once_with(file_path="src/api.py", pattern="src/")
+        assert len(result) == 1
+        parsed = json.loads(result[0].text)
+        assert parsed["confidence"] == 0.85
+
+    def test_dispatch_get_decision_confidence_no_args(self):
+        """get_decision_confidence dispatches with no arguments."""
+        sentinel = {"confidence": 0.5}
+        with patch("mcp_server.server.learning_get_decision_confidence", return_value=sentinel) as mock_fn, \
+             patch("mcp_server.auto_init.ensure_project_initialized"):
+            result = _run(call_tool("get_decision_confidence", {}))
+        mock_fn.assert_called_once_with(file_path=None, pattern=None)
+        assert len(result) == 1
+
+    def test_dispatch_refresh_index(self):
+        """refresh_index dispatches with file_paths."""
+        sentinel = {"reindexed": 3}
+        with patch("mcp_server.server.refresh_index", return_value=sentinel) as mock_fn, \
+             patch("mcp_server.auto_init.ensure_project_initialized"):
+            result = _run(call_tool("refresh_index", {"file_paths": ["a.py", "b.py"]}))
+        mock_fn.assert_called_once_with(file_paths=["a.py", "b.py"])
+        assert len(result) == 1
+        parsed = json.loads(result[0].text)
+        assert parsed["reindexed"] == 3
+
+    def test_dispatch_refresh_index_no_args(self):
+        """refresh_index dispatches with empty list when no file_paths provided."""
+        sentinel = {"reindexed": 0}
+        with patch("mcp_server.server.refresh_index", return_value=sentinel) as mock_fn, \
+             patch("mcp_server.auto_init.ensure_project_initialized"):
+            result = _run(call_tool("refresh_index", {}))
+        mock_fn.assert_called_once_with(file_paths=[])
+        assert len(result) == 1
+
+    def test_dispatch_refresh_graph(self):
+        """refresh_graph dispatches with file_paths."""
+        sentinel = {"generated": 2}
+        with patch("mcp_server.server.refresh_graph", return_value=sentinel) as mock_fn, \
+             patch("mcp_server.auto_init.ensure_project_initialized"):
+            result = _run(call_tool("refresh_graph", {"file_paths": ["new.py"]}))
+        mock_fn.assert_called_once_with(file_paths=["new.py"])
+        assert len(result) == 1
+        parsed = json.loads(result[0].text)
+        assert parsed["generated"] == 2
+
+    def test_dispatch_refresh_graph_no_args(self):
+        """refresh_graph dispatches with None when no file_paths provided."""
+        sentinel = {"generated": 5}
+        with patch("mcp_server.server.refresh_graph", return_value=sentinel) as mock_fn, \
+             patch("mcp_server.auto_init.ensure_project_initialized"):
+            result = _run(call_tool("refresh_graph", {}))
+        mock_fn.assert_called_once_with(file_paths=None)
+        assert len(result) == 1
+
+    def test_dispatch_get_history(self):
+        """get_history dispatches with file_path."""
+        sentinel = {"commits": [{"hash": "abc123"}]}
+        with patch("mcp_server.server.get_history", return_value=sentinel) as mock_fn, \
+             patch("mcp_server.auto_init.ensure_project_initialized"):
+            result = _run(call_tool("get_history", {"file_path": "src/core.py"}))
+        mock_fn.assert_called_once_with("src/core.py")
+        assert len(result) == 1
+        parsed = json.loads(result[0].text)
+        assert parsed["commits"][0]["hash"] == "abc123"
+
+    def test_dispatch_update_next_action(self):
+        """update_next_action dispatches with next_action string."""
+        sentinel = {"status": "updated"}
+        with patch("mcp_server.server.update_next_action", return_value=sentinel) as mock_fn, \
+             patch("mcp_server.auto_init.ensure_project_initialized"):
+            result = _run(call_tool("update_next_action", {"next_action": "Deploy to staging"}))
+        mock_fn.assert_called_once_with("Deploy to staging")
+        assert len(result) == 1
+        parsed = json.loads(result[0].text)
+        assert parsed["status"] == "updated"
+
+    def test_dispatch_defer_phase(self):
+        """defer_phase dispatches with phase_number and reason."""
+        sentinel = {"status": "deferred", "phase": 12}
+        with patch("mcp_server.server.defer_phase", return_value=sentinel) as mock_fn, \
+             patch("mcp_server.auto_init.ensure_project_initialized"):
+            result = _run(call_tool("defer_phase", {
+                "phase_number": 12,
+                "reason": "Blocked by API redesign",
+            }))
+        mock_fn.assert_called_once_with(phase_number=12, reason="Blocked by API redesign")
+        assert len(result) == 1
+        parsed = json.loads(result[0].text)
+        assert parsed["status"] == "deferred"

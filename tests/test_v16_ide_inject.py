@@ -393,3 +393,205 @@ class TestJsonHelpers:
         f = tmp_path / "deep" / "nested" / "settings.json"
         _write_json_safe(f, {"key": "val"})
         assert f.exists()
+
+
+# ---------------------------------------------------------------------------
+# detect_installed_ides
+# ---------------------------------------------------------------------------
+
+from mcp_server.ide_inject import detect_installed_ides, _resolve_command, inject_ide_config  # noqa: E402
+import mcp_server.ide_inject as ide_inject  # noqa: E402
+
+
+class TestDetectInstalledIdes:
+    def test_claude_detected_via_claude_dir(self, tmp_path, monkeypatch):
+        """Claude is detected when .claude/ directory exists under project_root."""
+        (tmp_path / ".claude").mkdir()
+        monkeypatch.setattr("shutil.which", lambda name: None)
+        # Ensure no other IDEs are detected
+        monkeypatch.setattr(Path, "home", lambda: tmp_path / "fakehome")
+        (tmp_path / "fakehome").mkdir(exist_ok=True)
+        monkeypatch.setattr(ide_inject, "_claude_desktop_config_path",
+                            lambda: tmp_path / "fakehome" / "nonexistent" / "config.json")
+        result = detect_installed_ides(tmp_path)
+        assert "claude" in result
+
+    def test_claude_detected_via_binary_in_path(self, tmp_path, monkeypatch):
+        """Claude is detected when claude binary is in PATH."""
+        def mock_which(name):
+            if name == "claude":
+                return "/usr/local/bin/claude"
+            return None
+        monkeypatch.setattr("shutil.which", mock_which)
+        monkeypatch.setattr(Path, "home", lambda: tmp_path / "fakehome")
+        (tmp_path / "fakehome").mkdir(exist_ok=True)
+        monkeypatch.setattr(ide_inject, "_claude_desktop_config_path",
+                            lambda: tmp_path / "fakehome" / "nonexistent" / "config.json")
+        result = detect_installed_ides(tmp_path)
+        assert "claude" in result
+
+    def test_cursor_detected_via_cursor_dir(self, tmp_path, monkeypatch):
+        """Cursor is detected when ~/.cursor/ directory exists."""
+        fakehome = tmp_path / "fakehome"
+        fakehome.mkdir()
+        (fakehome / ".cursor").mkdir()
+        monkeypatch.setattr(Path, "home", lambda: fakehome)
+        monkeypatch.setattr("shutil.which", lambda name: None)
+        monkeypatch.setattr(ide_inject, "_claude_desktop_config_path",
+                            lambda: fakehome / "nonexistent" / "config.json")
+        result = detect_installed_ides(tmp_path)
+        assert "cursor" in result
+
+    def test_windsurf_detected_via_windsurf_dir(self, tmp_path, monkeypatch):
+        """Windsurf is detected when ~/.windsurf/ directory exists."""
+        fakehome = tmp_path / "fakehome"
+        fakehome.mkdir()
+        (fakehome / ".windsurf").mkdir()
+        monkeypatch.setattr(Path, "home", lambda: fakehome)
+        monkeypatch.setattr("shutil.which", lambda name: None)
+        monkeypatch.setattr(ide_inject, "_claude_desktop_config_path",
+                            lambda: fakehome / "nonexistent" / "config.json")
+        result = detect_installed_ides(tmp_path)
+        assert "windsurf" in result
+
+    def test_antigravity_detected_via_gemini_dir(self, tmp_path, monkeypatch):
+        """Antigravity is detected when ~/.gemini/ directory exists."""
+        fakehome = tmp_path / "fakehome"
+        fakehome.mkdir()
+        (fakehome / ".gemini").mkdir()
+        monkeypatch.setattr(Path, "home", lambda: fakehome)
+        monkeypatch.setattr("shutil.which", lambda name: None)
+        monkeypatch.setattr(ide_inject, "_claude_desktop_config_path",
+                            lambda: fakehome / "nonexistent" / "config.json")
+        result = detect_installed_ides(tmp_path)
+        assert "antigravity" in result
+
+    def test_claude_desktop_detected_via_config_dir(self, tmp_path, monkeypatch):
+        """Claude Desktop is detected when its config directory exists."""
+        fakehome = tmp_path / "fakehome"
+        fakehome.mkdir()
+        desktop_config = fakehome / "Library" / "Application Support" / "Claude" / "config.json"
+        desktop_config.parent.mkdir(parents=True)
+        monkeypatch.setattr(Path, "home", lambda: fakehome)
+        monkeypatch.setattr("shutil.which", lambda name: None)
+        monkeypatch.setattr(ide_inject, "_claude_desktop_config_path", lambda: desktop_config)
+        result = detect_installed_ides(tmp_path)
+        assert "claude_desktop" in result
+
+    def test_none_found_returns_empty(self, tmp_path, monkeypatch):
+        """When no IDEs are installed, returns empty list."""
+        fakehome = tmp_path / "fakehome"
+        fakehome.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: fakehome)
+        monkeypatch.setattr("shutil.which", lambda name: None)
+        monkeypatch.setattr(ide_inject, "_claude_desktop_config_path",
+                            lambda: fakehome / "nonexistent" / "config.json")
+        result = detect_installed_ides(tmp_path)
+        assert result == []
+
+
+# ---------------------------------------------------------------------------
+# _resolve_command
+# ---------------------------------------------------------------------------
+
+class TestResolveCommand:
+    def test_shutil_which_finds_binary(self, monkeypatch):
+        """When shutil.which finds codevira-mcp, returns that path."""
+        monkeypatch.setattr("shutil.which", lambda name: "/usr/local/bin/codevira-mcp" if name == "codevira-mcp" else None)
+        cmd_path, python_exe = _resolve_command()
+        assert cmd_path == "/usr/local/bin/codevira-mcp"
+        assert python_exe == sys.executable
+
+    def test_pipx_venv_found(self, tmp_path, monkeypatch):
+        """When shutil.which fails but pipx venv exists, returns pipx path."""
+        monkeypatch.setattr("shutil.which", lambda name: None)
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        # Create the pipx venv binary
+        pipx_bin = tmp_path / ".local" / "pipx" / "venvs" / "codevira-mcp" / "bin" / "codevira-mcp"
+        pipx_bin.parent.mkdir(parents=True)
+        pipx_bin.write_text("#!/bin/bash\n")
+        cmd_path, python_exe = _resolve_command()
+        assert cmd_path == str(pipx_bin)
+        assert python_exe == sys.executable
+
+    def test_fallback_returns_python_exe(self, tmp_path, monkeypatch):
+        """When nothing is found, falls back to sys.executable."""
+        monkeypatch.setattr("shutil.which", lambda name: None)
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        # Ensure no pipx or sibling bins exist (tmp_path is empty)
+        cmd_path, python_exe = _resolve_command()
+        assert cmd_path == python_exe
+        assert python_exe == sys.executable
+
+
+# ---------------------------------------------------------------------------
+# inject_ide_config — integration tests
+# ---------------------------------------------------------------------------
+
+class TestInjectIdeConfigIntegration:
+    def test_per_project_claude_writes_settings(self, tmp_path, monkeypatch):
+        """Per-project mode: claude detected -> writes .claude/settings.json."""
+        project = tmp_path / "myproject"
+        project.mkdir()
+        (project / ".claude").mkdir()
+
+        fakehome = tmp_path / "fakehome"
+        fakehome.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: fakehome)
+        monkeypatch.setattr("shutil.which", lambda name: None)
+        monkeypatch.setattr(ide_inject, "_claude_desktop_config_path",
+                            lambda: fakehome / "nonexistent" / "config.json")
+        monkeypatch.setattr(ide_inject, "_resolve_command",
+                            lambda: ("/usr/bin/codevira-mcp", sys.executable))
+
+        results = inject_ide_config(project, project_name="myproject")
+        assert "Claude Code" in results
+        config_path = Path(results["Claude Code"])
+        assert config_path.exists()
+        data = json.loads(config_path.read_text())
+        assert "codevira" in data["mcpServers"]
+
+    def test_global_mode_claude_writes_global_settings(self, tmp_path, monkeypatch):
+        """Global mode: claude detected -> writes ~/.claude/settings.json."""
+        project = tmp_path / "myproject"
+        project.mkdir()
+        (project / ".claude").mkdir()
+
+        fakehome = tmp_path / "fakehome"
+        fakehome.mkdir()
+        (fakehome / ".claude").mkdir()
+        monkeypatch.setattr(Path, "home", lambda: fakehome)
+        monkeypatch.setattr("shutil.which", lambda name: None)
+        monkeypatch.setattr(ide_inject, "_claude_desktop_config_path",
+                            lambda: fakehome / "nonexistent" / "config.json")
+        monkeypatch.setattr(ide_inject, "_resolve_command",
+                            lambda: ("/usr/bin/codevira-mcp", sys.executable))
+        monkeypatch.setattr(ide_inject, "_claude_global_config_path",
+                            lambda: fakehome / ".claude" / "settings.json")
+
+        results = inject_ide_config(project, project_name="myproject", global_mode=True)
+        assert "Claude Code (global)" in results
+        config_path = Path(results["Claude Code (global)"])
+        assert config_path.exists()
+        data = json.loads(config_path.read_text())
+        assert "codevira" in data["mcpServers"]
+        # Global mode should NOT have --project-dir in args
+        entry = data["mcpServers"]["codevira"]
+        assert "--project-dir" not in str(entry.get("args", []))
+
+    def test_no_ides_detected_returns_empty(self, tmp_path, monkeypatch):
+        """When no IDEs are detected, inject_ide_config returns empty dict."""
+        project = tmp_path / "emptyproject"
+        project.mkdir()
+
+        fakehome = tmp_path / "fakehome"
+        fakehome.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: fakehome)
+        monkeypatch.setattr("shutil.which", lambda name: None)
+        monkeypatch.setattr(ide_inject, "_claude_desktop_config_path",
+                            lambda: fakehome / "nonexistent" / "config.json")
+        monkeypatch.setattr(ide_inject, "_resolve_command",
+                            lambda: ("/usr/bin/codevira-mcp", sys.executable))
+
+        results = inject_ide_config(project, project_name="emptyproject")
+        assert results == {}

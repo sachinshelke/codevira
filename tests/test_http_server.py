@@ -308,3 +308,118 @@ class TestCertsExist:
         (certs_dir / "localhost.pem").write_text("cert")
         (certs_dir / "localhost-key.pem").write_text("key")
         assert _certs_exist() is True
+
+
+# ---------------------------------------------------------------------------
+# Certificate path helpers
+# ---------------------------------------------------------------------------
+
+from mcp_server.http_server import _certs_dir, _cert_file, _key_file  # noqa: E402
+
+
+class TestCertPathHelpers:
+    def test_certs_dir_under_global_home(self, tmp_path, monkeypatch):
+        """_certs_dir returns a path under the global home directory."""
+        monkeypatch.setattr(paths, "get_global_home", lambda: tmp_path)
+        result = _certs_dir()
+        assert result == tmp_path / "certs"
+        assert str(result).startswith(str(tmp_path))
+
+    def test_cert_file_name(self, tmp_path, monkeypatch):
+        """_cert_file returns a path ending in localhost.pem."""
+        monkeypatch.setattr(paths, "get_global_home", lambda: tmp_path)
+        result = _cert_file()
+        assert result.name == "localhost.pem"
+        assert result.parent == tmp_path / "certs"
+
+    def test_key_file_name(self, tmp_path, monkeypatch):
+        """_key_file returns a path ending in localhost-key.pem."""
+        monkeypatch.setattr(paths, "get_global_home", lambda: tmp_path)
+        result = _key_file()
+        assert result.name == "localhost-key.pem"
+        assert result.parent == tmp_path / "certs"
+
+    def test_cert_and_key_share_same_parent(self, tmp_path, monkeypatch):
+        """_cert_file and _key_file are in the same directory."""
+        monkeypatch.setattr(paths, "get_global_home", lambda: tmp_path)
+        assert _cert_file().parent == _key_file().parent
+
+
+# ---------------------------------------------------------------------------
+# run_http_server — bearer token logic
+# ---------------------------------------------------------------------------
+
+from mcp_server.http_server import run_http_server  # noqa: E402
+
+
+class TestRunHttpServerBearerToken:
+    """Tests for bearer token logic in run_http_server.
+
+    uvicorn is imported locally inside run_http_server, so we inject a mock
+    module into sys.modules rather than patching a module-level attribute.
+    All startup side-effects (crash handler, migration, watcher, learning,
+    global sync) are wrapped in try/except inside run_http_server, so we
+    make their imports raise to suppress them cleanly.
+    """
+
+    @staticmethod
+    def _make_mock_uvicorn():
+        """Create a mock uvicorn module with a .run callable."""
+        mock_mod = types.ModuleType("uvicorn")
+        mock_mod.run = MagicMock()
+        return mock_mod
+
+    def test_non_loopback_creates_token(self, tmp_path, monkeypatch):
+        """When host is 0.0.0.0 (non-loopback), a bearer token is created."""
+        monkeypatch.setattr(paths, "get_global_home", lambda: tmp_path)
+        mock_uvicorn = self._make_mock_uvicorn()
+
+        with patch.dict("sys.modules", {"uvicorn": mock_uvicorn}), \
+             patch("mcp_server.http_server._get_or_create_token", return_value="test-token-xyz") as mock_token, \
+             patch("mcp_server.http_server.create_app", return_value=MagicMock()) as mock_create_app, \
+             patch("builtins.print"):
+            run_http_server(host="0.0.0.0", port=7007)
+
+        mock_token.assert_called_once()
+        mock_create_app.assert_called_once_with(bearer_token="test-token-xyz")
+
+    def test_loopback_no_token(self, tmp_path, monkeypatch):
+        """When host is 127.0.0.1 (loopback), no bearer token is created."""
+        monkeypatch.setattr(paths, "get_global_home", lambda: tmp_path)
+        mock_uvicorn = self._make_mock_uvicorn()
+
+        with patch.dict("sys.modules", {"uvicorn": mock_uvicorn}), \
+             patch("mcp_server.http_server._get_or_create_token") as mock_token, \
+             patch("mcp_server.http_server.create_app", return_value=MagicMock()) as mock_create_app, \
+             patch("builtins.print"):
+            run_http_server(host="127.0.0.1", port=7007)
+
+        mock_token.assert_not_called()
+        mock_create_app.assert_called_once_with(bearer_token=None)
+
+    def test_localhost_no_token(self, tmp_path, monkeypatch):
+        """When host is 'localhost' (loopback alias), no bearer token is created."""
+        monkeypatch.setattr(paths, "get_global_home", lambda: tmp_path)
+        mock_uvicorn = self._make_mock_uvicorn()
+
+        with patch.dict("sys.modules", {"uvicorn": mock_uvicorn}), \
+             patch("mcp_server.http_server._get_or_create_token") as mock_token, \
+             patch("mcp_server.http_server.create_app", return_value=MagicMock()) as mock_create_app, \
+             patch("builtins.print"):
+            run_http_server(host="localhost", port=7007)
+
+        mock_token.assert_not_called()
+        mock_create_app.assert_called_once_with(bearer_token=None)
+
+    def test_non_loopback_token_printed_to_stdout(self, tmp_path, monkeypatch, capsys):
+        """When host is non-loopback, the token is printed to stdout."""
+        monkeypatch.setattr(paths, "get_global_home", lambda: tmp_path)
+        mock_uvicorn = self._make_mock_uvicorn()
+
+        with patch.dict("sys.modules", {"uvicorn": mock_uvicorn}), \
+             patch("mcp_server.http_server._get_or_create_token", return_value="visible-token-123"), \
+             patch("mcp_server.http_server.create_app", return_value=MagicMock()):
+            run_http_server(host="0.0.0.0", port=7007)
+
+        captured = capsys.readouterr()
+        assert "visible-token-123" in captured.out

@@ -1,8 +1,57 @@
 """
 Shared pytest fixtures for the Codevira MCP test suite.
 """
+import sys
+import types
+from unittest.mock import MagicMock
+
 import pytest
 from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# Install a comprehensive mock of indexer.treesitter_parser BEFORE any test
+# file imports modules that depend on it. This mock provides all attributes
+# that code_reader.py, chunker.py, and graph_generator.py import.
+#
+# This runs at conftest load time (before collection), so it covers all tests.
+# ---------------------------------------------------------------------------
+if "tree_sitter_language_pack" not in sys.modules:
+    _ts_lang_pack = types.ModuleType("tree_sitter_language_pack")
+    _ts_lang_pack.__dict__["__all__"] = []
+    sys.modules["tree_sitter_language_pack"] = _ts_lang_pack
+
+if "tree_sitter" not in sys.modules:
+    _ts_mod = types.ModuleType("tree_sitter")
+    _ts_mod.Node = MagicMock()
+    sys.modules["tree_sitter"] = _ts_mod
+
+if "indexer.treesitter_parser" not in sys.modules:
+    _fake_ts = types.ModuleType("indexer.treesitter_parser")
+    _fake_ts.parse_file = MagicMock(return_value=None)
+    _fake_ts.get_language = MagicMock(return_value=None)
+    _fake_ts.get_symbol_source = MagicMock(return_value={"found": False})
+    _fake_ts.EXTENSION_MAP = {}
+    # ParsedSymbol dataclass stub (used by graph_generator)
+    from dataclasses import dataclass, field as dc_field
+    from typing import Optional, List
+
+    @dataclass
+    class _ParsedSymbol:
+        name: str = ""
+        kind: str = ""
+        signature_line: str = ""
+        start_line: int = 0
+        end_line: int = 0
+        docstring: Optional[str] = None
+        is_public: bool = True
+        methods: List[str] = dc_field(default_factory=list)
+
+    _fake_ts.ParsedSymbol = _ParsedSymbol
+    sys.modules["indexer.treesitter_parser"] = _fake_ts
+    # Also set on parent package so `from indexer.treesitter_parser import X` works
+    import indexer as _indexer_pkg
+    _indexer_pkg.treesitter_parser = _fake_ts
+
 import mcp_server.paths as paths
 from indexer.sqlite_graph import SQLiteGraph
 

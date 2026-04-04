@@ -543,3 +543,95 @@ class TestChaosGitignore:
         assert "Makefile" in names
         assert "Dockerfile" in names
         assert "main.py" in names
+
+
+# ===========================================================================
+# load_gitignore_spec returns None when pathspec unavailable (lines 123-124)
+# ===========================================================================
+
+class TestLoadGitignoreSpecPathspecUnavailable:
+    def test_returns_none_when_pathspec_not_available(self, tmp_path):
+        """load_gitignore_spec returns None when _PATHSPEC_AVAILABLE is False."""
+        import mcp_server.gitignore as gi_module
+        from unittest.mock import patch
+
+        _make_files(tmp_path, ["src/main.py"])
+        (tmp_path / ".gitignore").write_text("*.log\n")
+
+        with patch.object(gi_module, "_PATHSPEC_AVAILABLE", False):
+            result = gi_module.load_gitignore_spec(tmp_path)
+
+        assert result is None
+
+
+# ===========================================================================
+# discover_source_files with watched_dirs / gitignore filtering
+# (lines 231-232, 243-248, 255-261)
+# ===========================================================================
+
+class TestDiscoverSourceFilesWatchedDirs:
+    def test_watched_dirs_config_override_excludes_other_dirs(self, tmp_path):
+        """discover_source_files with watched_dirs config_override only returns
+        files under those directories (lines 243-248)."""
+        allowed = tmp_path / "src"
+        excluded = tmp_path / "docs"
+        allowed.mkdir()
+        excluded.mkdir()
+
+        (allowed / "main.py").write_text("pass")
+        (excluded / "guide.py").write_text("# Guide")
+
+        result = discover_source_files(
+            tmp_path, config_overrides={"watched_dirs": ["src"]}
+        )
+        result_names = [f.name for f in result]
+        assert "main.py" in result_names
+        assert "guide.py" not in result_names
+
+    def test_watched_dirs_prunes_subdirectory_walk(self, tmp_path):
+        """Files outside watched_dirs are excluded even when deeply nested
+        (exercises the dirs[:] pruning at lines 218-232)."""
+        src = tmp_path / "src"
+        other = tmp_path / "other"
+        nested = other / "deep" / "nested"
+        src.mkdir()
+        nested.mkdir(parents=True)
+
+        (src / "included.py").write_text("pass")
+        (nested / "excluded.py").write_text("pass")
+
+        result = discover_source_files(
+            tmp_path, config_overrides={"watched_dirs": ["src"]}
+        )
+        result_paths = [str(f) for f in result]
+        assert any("included.py" in p for p in result_paths)
+        assert not any("excluded.py" in p for p in result_paths)
+
+    def test_gitignore_spec_excludes_matching_files(self, tmp_path):
+        """Files matching .gitignore patterns are excluded (lines 255-261)."""
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "app.py").write_text("pass")
+        (src / "secret.log").write_text("passwords")
+
+        (tmp_path / ".gitignore").write_text("*.log\n")
+
+        result = discover_source_files(tmp_path)
+        result_names = [f.name for f in result]
+        assert "app.py" in result_names
+        assert "secret.log" not in result_names
+
+    def test_file_outside_watched_dir_excluded_directly(self, tmp_path):
+        """A file at root level is excluded when watched_dirs restricts to a subdir
+        (exercises the per-file allowed_dirs check at lines 243-248)."""
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "service.py").write_text("pass")
+        (tmp_path / "root_script.py").write_text("pass")
+
+        result = discover_source_files(
+            tmp_path, config_overrides={"watched_dirs": ["src"]}
+        )
+        result_paths = [str(f) for f in result]
+        assert any("service.py" in p for p in result_paths)
+        assert not any("root_script.py" in p for p in result_paths)

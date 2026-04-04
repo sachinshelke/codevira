@@ -530,3 +530,92 @@ class TestLegacyMigration:
         assert isinstance(migrated["current_phase"], dict)
         assert migrated["current_phase"]["number"] == 1
         assert migrated["upcoming_phases"][0]["phase"] == 2
+
+
+# =====================================================================
+# _normalize_current_phase edge cases (lines 65-71)
+# =====================================================================
+
+class TestNormalizeCurrentPhaseEdgeCases:
+    def test_finds_in_progress_phase_when_current_number_missing(self, tmp_path, monkeypatch):
+        """When current_phase dict has no number, _normalize_current_phase picks the
+        first in_progress phase from the phases list (line 66-69)."""
+        _, data_dir = _setup_project(tmp_path, monkeypatch)
+        _write_roadmap(data_dir, {
+            "current_phase": {"status": "in_progress"},
+            "phases": [
+                {"phase": 2, "name": "Phase 2", "status": "in_progress"},
+                {"phase": 3, "name": "Phase 3", "status": "pending"},
+            ],
+            "upcoming_phases": [],
+            "deferred": [],
+            "completed_phases": [],
+        })
+        result = roadmap.get_roadmap()
+        assert result is not None
+        assert result["current_phase"]["number"] == 2
+
+    def test_falls_back_to_first_phase_when_none_in_progress(self, tmp_path, monkeypatch):
+        """When current_phase has no number and no phases are in_progress, falls back
+        to the first phase in the list (line 70-71)."""
+        _, data_dir = _setup_project(tmp_path, monkeypatch)
+        _write_roadmap(data_dir, {
+            "current_phase": {"name": "Unspecified"},
+            "phases": [
+                {"phase": 5, "name": "Phase 5", "status": "pending"},
+                {"phase": 6, "name": "Phase 6", "status": "pending"},
+            ],
+            "upcoming_phases": [],
+            "deferred": [],
+            "completed_phases": [],
+        })
+        result = roadmap.get_roadmap()
+        assert result is not None
+        assert result["current_phase"]["number"] == 5
+
+
+# =====================================================================
+# _normalize_roadmap deferred_phases fallback key (line 147)
+# =====================================================================
+
+class TestDeferredPhasesFallback:
+    def test_deferred_phases_key_used_when_deferred_missing(self, tmp_path, monkeypatch):
+        """_normalize_roadmap falls back to 'deferred_phases' when 'deferred' is absent."""
+        _, data_dir = _setup_project(tmp_path, monkeypatch)
+        _write_roadmap(data_dir, {
+            "current_phase": {"number": 1, "name": "Setup", "status": "in_progress"},
+            "upcoming_phases": [],
+            "deferred_phases": [
+                {"phase": 5, "name": "Future Work", "status": "deferred"},
+            ],
+            "completed_phases": [],
+        })
+        result = roadmap.get_full_roadmap()
+        assert result is not None
+        deferred = result.get("deferred", [])
+        assert len(deferred) == 1
+        assert deferred[0]["name"] == "Future Work"
+
+
+# =====================================================================
+# add_phase — phase already in completed_phases (line 351)
+# =====================================================================
+
+class TestAddPhaseAlreadyInCompleted:
+    def test_add_phase_fails_when_number_in_completed_phases(self, tmp_path, monkeypatch):
+        """add_phase returns success=False when the phase number already exists in
+        completed_phases (line 350-351)."""
+        _, data_dir = _setup_project(tmp_path, monkeypatch)
+        _write_roadmap(data_dir, {
+            "current_phase": {"number": 3, "name": "Current", "status": "in_progress"},
+            "upcoming_phases": [],
+            "deferred": [],
+            "completed_phases": [
+                {"phase": 1, "name": "Done Phase", "status": "completed"},
+            ],
+        })
+        result = roadmap.add_phase(
+            phase=1, name="Redo Phase 1", description="Trying to re-add a completed phase"
+        )
+        assert result.get("success") is False
+        assert "already exists" in result.get("message", "").lower()

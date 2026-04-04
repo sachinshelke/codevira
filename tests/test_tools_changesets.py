@@ -329,3 +329,96 @@ class TestUpdateNodeAfterChange:
         assert any(dep["target"] == "src/other.py" for dep in node["dependencies"])
         assert "run" in node["key_functions"]
         assert bool(node["do_not_revert"]) is True
+
+
+# =====================================================================
+# list_open_changesets — corrupt YAML (lines 169-174)
+# =====================================================================
+
+class TestListOpenChangesetsCorruptYaml:
+    def test_corrupt_yaml_is_skipped_and_valid_returned(self, project_env):
+        """list_open_changesets skips corrupt YAML files and still returns valid ones."""
+        from unittest.mock import patch
+        _project, data_dir, _db = project_env
+        changesets_dir = data_dir / "graph" / "changesets"
+        changesets_dir.mkdir(parents=True, exist_ok=True)
+
+        # Write a valid in-progress changeset
+        valid_cs = changesets_dir / "cs-valid.yaml"
+        valid_cs.write_text(
+            "id: cs-valid\ndescription: Valid\nstatus: in_progress\n"
+            "files_pending: []\ncreated: '2026-01-01'\n"
+        )
+
+        # Write a corrupt YAML file
+        corrupt_cs = changesets_dir / "cs-corrupt.yaml"
+        corrupt_cs.write_text("{{corrupt: yaml: [missing\n")
+
+        result = list_open_changesets()
+
+        assert isinstance(result, dict)
+        assert "open_changesets" in result
+        # Corrupt file is skipped; valid changeset is returned
+        ids = [cs["id"] for cs in result["open_changesets"]]
+        assert "cs-valid" in ids
+        assert "cs-corrupt" not in ids
+
+    def test_all_corrupt_returns_empty_list(self, project_env):
+        """When all changeset files are corrupt, returns empty open_changesets list."""
+        _project, data_dir, _db = project_env
+        changesets_dir = data_dir / "graph" / "changesets"
+        changesets_dir.mkdir(parents=True, exist_ok=True)
+
+        (changesets_dir / "bad1.yaml").write_text("{{bad yaml\n")
+        (changesets_dir / "bad2.yaml").write_text(": : :\n")
+
+        result = list_open_changesets()
+        assert result["count"] == 0
+        assert result["open_changesets"] == []
+
+
+# =====================================================================
+# update_node_after_change — error and last_changed_by branches
+# (lines 208-211, 218-221)
+# =====================================================================
+
+class TestUpdateNodeAfterChangeBranches:
+    def test_error_in_update_node_returns_failure(self, project_env):
+        """update_node_after_change returns success=False when update_node returns an error."""
+        from unittest.mock import patch
+        _project, _data_dir, _db = project_env
+
+        with patch("mcp_server.tools.graph.update_node",
+                   return_value={"error": "node not found"}):
+            result = update_node_after_change("src/missing.py", {"stability": "high"})
+
+        assert result["success"] is False
+        assert "node not found" in result["message"]
+
+    def test_last_changed_by_adds_note_to_response(self, project_env):
+        """When last_changed_by is in changes, a note is added to the response."""
+        from unittest.mock import patch
+        _project, _data_dir, _db = project_env
+
+        with patch("mcp_server.tools.graph.update_node",
+                   return_value={"updated": True}):
+            result = update_node_after_change(
+                "src/api.py",
+                {"last_changed_by": "agent-001", "stability": "high"},
+            )
+
+        assert result["success"] is True
+        assert "note" in result
+        assert "last_changed_by" in result["note"] or "not persisted" in result["note"]
+
+    def test_no_last_changed_by_no_note(self, project_env):
+        """Without last_changed_by in changes, no note key is added."""
+        from unittest.mock import patch
+        _project, _data_dir, _db = project_env
+
+        with patch("mcp_server.tools.graph.update_node",
+                   return_value={"updated": True}):
+            result = update_node_after_change("src/api.py", {"stability": "high"})
+
+        assert result["success"] is True
+        assert "note" not in result

@@ -423,3 +423,132 @@ class TestRunHttpServerBearerToken:
 
         captured = capsys.readouterr()
         assert "visible-token-123" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# run_http_server — startup side-effects and HTTPS path (lines 202-281)
+# ---------------------------------------------------------------------------
+
+class TestRunHttpServer:
+    def test_crash_handler_exception_does_not_crash(self):
+        """If crash handler install fails, run_http_server continues."""
+        with patch("mcp_server.crash_logger.install_global_handler", side_effect=RuntimeError("boom")), \
+             patch("mcp_server.migrate.detect_migration_needed", return_value=False), \
+             patch("indexer.index_codebase.start_background_watcher", return_value=MagicMock()), \
+             patch("indexer.outcome_tracker.analyze_session_outcomes"), \
+             patch("indexer.rule_learner.run_rule_inference"), \
+             patch("mcp_server.global_sync.import_global_to_project", return_value=None), \
+             patch("uvicorn.run"):
+            run_http_server()  # Must not raise
+
+    def test_migration_triggered_on_startup(self):
+        """run_http_server triggers migration if legacy .codevira/ detected."""
+        with patch("mcp_server.crash_logger.install_global_handler"), \
+             patch("mcp_server.migrate.detect_migration_needed", return_value=True), \
+             patch("mcp_server.migrate.migrate_to_centralized", return_value={"migrated": True, "files_copied": 3, "new_path": "/tmp/x"}) as mock_migrate, \
+             patch("indexer.index_codebase.start_background_watcher", return_value=MagicMock()), \
+             patch("indexer.outcome_tracker.analyze_session_outcomes"), \
+             patch("indexer.rule_learner.run_rule_inference"), \
+             patch("mcp_server.global_sync.import_global_to_project", return_value=None), \
+             patch("uvicorn.run"):
+            run_http_server()
+        mock_migrate.assert_called_once()
+
+    def test_migration_exception_does_not_crash(self):
+        with patch("mcp_server.crash_logger.install_global_handler"), \
+             patch("mcp_server.migrate.detect_migration_needed", side_effect=RuntimeError("migrate fail")), \
+             patch("indexer.index_codebase.start_background_watcher", return_value=MagicMock()), \
+             patch("indexer.outcome_tracker.analyze_session_outcomes"), \
+             patch("indexer.rule_learner.run_rule_inference"), \
+             patch("mcp_server.global_sync.import_global_to_project", return_value=None), \
+             patch("uvicorn.run"):
+            run_http_server()  # Must not raise
+
+    def test_watcher_exception_does_not_crash(self):
+        with patch("mcp_server.crash_logger.install_global_handler"), \
+             patch("mcp_server.migrate.detect_migration_needed", return_value=False), \
+             patch("indexer.index_codebase.start_background_watcher", side_effect=ImportError("watchdog missing")), \
+             patch("indexer.outcome_tracker.analyze_session_outcomes"), \
+             patch("indexer.rule_learner.run_rule_inference"), \
+             patch("mcp_server.global_sync.import_global_to_project", return_value=None), \
+             patch("uvicorn.run"):
+            run_http_server()  # Must not raise
+
+    def test_learning_exception_does_not_crash(self):
+        with patch("mcp_server.crash_logger.install_global_handler"), \
+             patch("mcp_server.migrate.detect_migration_needed", return_value=False), \
+             patch("indexer.index_codebase.start_background_watcher", return_value=MagicMock()), \
+             patch("indexer.outcome_tracker.analyze_session_outcomes", side_effect=RuntimeError("learning fail")), \
+             patch("indexer.rule_learner.run_rule_inference"), \
+             patch("mcp_server.global_sync.import_global_to_project", return_value=None), \
+             patch("uvicorn.run"):
+            run_http_server()  # Must not raise
+
+    def test_global_sync_exception_does_not_crash(self):
+        with patch("mcp_server.crash_logger.install_global_handler"), \
+             patch("mcp_server.migrate.detect_migration_needed", return_value=False), \
+             patch("indexer.index_codebase.start_background_watcher", return_value=MagicMock()), \
+             patch("indexer.outcome_tracker.analyze_session_outcomes"), \
+             patch("indexer.rule_learner.run_rule_inference"), \
+             patch("mcp_server.global_sync.import_global_to_project", side_effect=RuntimeError("sync fail")), \
+             patch("uvicorn.run"):
+            run_http_server()  # Must not raise
+
+    def test_https_mode_generates_certs_when_missing(self, tmp_path, monkeypatch):
+        """When use_https=True and certs don't exist, generate them."""
+        monkeypatch.setattr(paths, "get_global_home", lambda: tmp_path)
+        cert_file = tmp_path / "certs" / "localhost.pem"
+        key_file = tmp_path / "certs" / "localhost-key.pem"
+        cert_file.parent.mkdir(parents=True, exist_ok=True)
+        cert_file.write_text("CERT")
+        key_file.write_text("KEY")
+        with patch("mcp_server.crash_logger.install_global_handler"), \
+             patch("mcp_server.migrate.detect_migration_needed", return_value=False), \
+             patch("indexer.index_codebase.start_background_watcher", return_value=MagicMock()), \
+             patch("indexer.outcome_tracker.analyze_session_outcomes"), \
+             patch("indexer.rule_learner.run_rule_inference"), \
+             patch("mcp_server.global_sync.import_global_to_project", return_value=None), \
+             patch("mcp_server.http_server._certs_exist", return_value=False), \
+             patch("mcp_server.http_server.generate_mkcert_certs") as mock_gen, \
+             patch("mcp_server.http_server._cert_file", return_value=cert_file), \
+             patch("mcp_server.http_server._key_file", return_value=key_file), \
+             patch("uvicorn.run"):
+            run_http_server(use_https=True)
+        mock_gen.assert_called_once()
+
+    def test_https_mode_cert_generation_failure_returns_early(self):
+        """When cert generation fails, run_http_server returns without starting uvicorn."""
+        with patch("mcp_server.crash_logger.install_global_handler"), \
+             patch("mcp_server.migrate.detect_migration_needed", return_value=False), \
+             patch("indexer.index_codebase.start_background_watcher", return_value=MagicMock()), \
+             patch("indexer.outcome_tracker.analyze_session_outcomes"), \
+             patch("indexer.rule_learner.run_rule_inference"), \
+             patch("mcp_server.global_sync.import_global_to_project", return_value=None), \
+             patch("mcp_server.http_server._certs_exist", return_value=False), \
+             patch("mcp_server.http_server.generate_mkcert_certs", side_effect=RuntimeError("mkcert not found")), \
+             patch("uvicorn.run") as mock_uvicorn:
+            run_http_server(use_https=True)
+        # uvicorn.run should NOT be called when cert generation fails
+        mock_uvicorn.assert_not_called()
+
+    def test_https_mode_uses_existing_certs(self, tmp_path, monkeypatch):
+        """When certs already exist, generate_mkcert_certs is NOT called."""
+        monkeypatch.setattr(paths, "get_global_home", lambda: tmp_path)
+        cert_file = tmp_path / "certs" / "localhost.pem"
+        key_file = tmp_path / "certs" / "localhost-key.pem"
+        cert_file.parent.mkdir(parents=True, exist_ok=True)
+        cert_file.write_text("CERT")
+        key_file.write_text("KEY")
+        with patch("mcp_server.crash_logger.install_global_handler"), \
+             patch("mcp_server.migrate.detect_migration_needed", return_value=False), \
+             patch("indexer.index_codebase.start_background_watcher", return_value=MagicMock()), \
+             patch("indexer.outcome_tracker.analyze_session_outcomes"), \
+             patch("indexer.rule_learner.run_rule_inference"), \
+             patch("mcp_server.global_sync.import_global_to_project", return_value=None), \
+             patch("mcp_server.http_server._certs_exist", return_value=True), \
+             patch("mcp_server.http_server.generate_mkcert_certs") as mock_gen, \
+             patch("mcp_server.http_server._cert_file", return_value=cert_file), \
+             patch("mcp_server.http_server._key_file", return_value=key_file), \
+             patch("uvicorn.run"):
+            run_http_server(use_https=True)
+        mock_gen.assert_not_called()

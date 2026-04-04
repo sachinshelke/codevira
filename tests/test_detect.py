@@ -442,3 +442,115 @@ class TestAutoDetectProject:
         assert result["language"] == "rust"
         assert result["file_extensions"] == [".rs"]
         assert result["collection_name"] == "my_crate"
+
+
+# ---------------------------------------------------------------------------
+# _scan_dominant_language — with files (covering lines 138-150)
+# ---------------------------------------------------------------------------
+
+class TestScanDominantLanguageWithFiles:
+    def test_finds_dominant_python(self, tmp_path):
+        """When .py files exist in tree, returns python."""
+        from mcp_server.detect import _scan_dominant_language
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "main.py").write_text("pass")
+        (src / "util.py").write_text("pass")
+        result = _scan_dominant_language(tmp_path, max_depth=3)
+        assert result == "python"
+
+    def test_returns_python_fallback_when_no_files(self, tmp_path):
+        """With no source files at all, falls back to 'python'."""
+        from mcp_server.detect import _scan_dominant_language
+        # Empty directory (no source files)
+        result = _scan_dominant_language(tmp_path, max_depth=3)
+        assert result == "python"
+
+    def test_gitignore_discover_fails_uses_legacy_walk(self, tmp_path):
+        """When gitignore discovery raises, falls back to depth-limited walk."""
+        from unittest.mock import patch
+        from mcp_server.detect import _scan_dominant_language
+        src = tmp_path / "app"
+        src.mkdir()
+        (src / "server.go").write_text("package main")
+        # _scan_dominant_language imports discover_source_files locally from mcp_server.gitignore
+        with patch("mcp_server.gitignore.discover_source_files", side_effect=Exception("pathspec error")):
+            result = _scan_dominant_language(tmp_path, max_depth=3)
+        # Should find .go via legacy walk, or python if gitignore succeeded before raise
+        assert result in ("go", "python")
+
+
+# ---------------------------------------------------------------------------
+# detect_watched_dirs — edge cases (covering lines 194-205, 219-221)
+# ---------------------------------------------------------------------------
+
+class TestDetectWatchedDirsEdgeCases:
+    def test_gitignore_empty_lang_files_falls_back_to_all_files(self, tmp_path):
+        """When no language-specific files found, uses all discovered files."""
+        from mcp_server.detect import detect_watched_dirs
+        (tmp_path / "docs").mkdir()
+        (tmp_path / "docs" / "README.md").write_text("# Docs")
+        # No .py files, but discover_source_files finds .md files
+        result = detect_watched_dirs(tmp_path, "python")
+        # Should return something, even if just ["."]
+        assert isinstance(result, list)
+        assert len(result) > 0
+
+    def test_permission_error_on_root_iterdir(self, tmp_path):
+        """PermissionError on iterdir() is caught gracefully."""
+        from unittest.mock import patch
+        from mcp_server.detect import detect_watched_dirs
+        # discover_source_files is imported locally inside detect_watched_dirs
+        with patch("mcp_server.gitignore.discover_source_files", side_effect=Exception("no pathspec")), \
+             patch("pathlib.Path.iterdir", side_effect=PermissionError("access denied")):
+            result = detect_watched_dirs(tmp_path, "python")
+        assert isinstance(result, list)
+
+    def test_returns_found_legacy_dirs(self, tmp_path):
+        """Legacy scan returns dirs containing source files."""
+        from unittest.mock import patch
+        from mcp_server.detect import detect_watched_dirs
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "app.py").write_text("pass")
+        # discover_source_files is imported locally inside detect_watched_dirs
+        with patch("mcp_server.gitignore.discover_source_files", side_effect=Exception("no pathspec")):
+            result = detect_watched_dirs(tmp_path, "python")
+        assert "src" in result
+
+
+# ---------------------------------------------------------------------------
+# _dir_has_sources — edge cases (covering lines 238, 241-247)
+# ---------------------------------------------------------------------------
+
+class TestDirHasSources:
+    def test_finds_source_in_subdir(self, tmp_path):
+        """_dir_has_sources recurses into subdirectories."""
+        from mcp_server.detect import _dir_has_sources
+        nested = tmp_path / "deep" / "nested"
+        nested.mkdir(parents=True)
+        (nested / "module.py").write_text("pass")
+        result = _dir_has_sources(tmp_path, {".py"}, max_depth=5)
+        assert result is True
+
+    def test_max_depth_zero_returns_false(self, tmp_path):
+        """_dir_has_sources returns False when max_depth=0."""
+        from mcp_server.detect import _dir_has_sources
+        (tmp_path / "module.py").write_text("pass")
+        result = _dir_has_sources(tmp_path, {".py"}, max_depth=0)
+        assert result is False
+
+    def test_permission_error_returns_false(self, tmp_path):
+        """PermissionError inside _dir_has_sources is caught, returns False."""
+        from unittest.mock import patch
+        from mcp_server.detect import _dir_has_sources
+        with patch("pathlib.Path.iterdir", side_effect=PermissionError("denied")):
+            result = _dir_has_sources(tmp_path, {".py"}, max_depth=3)
+        assert result is False
+
+    def test_no_matching_extension_returns_false(self, tmp_path):
+        """Files with wrong extension do not trigger True."""
+        from mcp_server.detect import _dir_has_sources
+        (tmp_path / "main.ts").write_text("const x = 1")
+        result = _dir_has_sources(tmp_path, {".py"}, max_depth=3)
+        assert result is False

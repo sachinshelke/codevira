@@ -644,3 +644,238 @@ class TestCallToolAdditionalRoutes:
         assert len(result) == 1
         parsed = json.loads(result[0].text)
         assert parsed["status"] == "deferred"
+
+
+# ---------------------------------------------------------------------------
+# Missing dispatch coverage (lines 800, 802, 855, 866, 879, 904, 906, 914,
+# 937, 943, 948)
+# ---------------------------------------------------------------------------
+
+class TestCallToolMissingDispatches:
+    def test_dispatch_get_full_roadmap(self):
+        sentinel = {"phases": []}
+        with patch("mcp_server.server.get_full_roadmap", return_value=sentinel), \
+             patch("mcp_server.auto_init.ensure_project_initialized"):
+            result = _run(call_tool("get_full_roadmap", {}))
+        parsed = json.loads(result[0].text)
+        assert parsed == sentinel
+
+    def test_dispatch_update_phase_status(self):
+        sentinel = {"status": "updated"}
+        with patch("mcp_server.server.update_phase_status", return_value=sentinel) as m, \
+             patch("mcp_server.auto_init.ensure_project_initialized"):
+            _run(call_tool("update_phase_status", {"status": "in_progress"}))
+        m.assert_called_once_with(status="in_progress", blocker=None, started=None)
+
+    def test_dispatch_defer_phase(self):
+        sentinel = {"deferred": True}
+        with patch("mcp_server.server.defer_phase", return_value=sentinel) as m, \
+             patch("mcp_server.auto_init.ensure_project_initialized"):
+            _run(call_tool("defer_phase", {"phase_number": 3, "reason": "blocked"}))
+        m.assert_called_once_with(phase_number=3, reason="blocked")
+
+    def test_dispatch_complete_phase(self):
+        sentinel = {"completed": True}
+        with patch("mcp_server.server.complete_phase", return_value=sentinel) as m, \
+             patch("mcp_server.auto_init.ensure_project_initialized"):
+            _run(call_tool("complete_phase", {"phase_number": 2, "key_decisions": ["Used REST"]}))
+        m.assert_called_once_with(phase_number=2, key_decisions=["Used REST"])
+
+    def test_dispatch_get_phase(self):
+        sentinel = {"phase": 1, "name": "Setup"}
+        with patch("mcp_server.server.get_phase", return_value=sentinel) as m, \
+             patch("mcp_server.auto_init.ensure_project_initialized"):
+            _run(call_tool("get_phase", {"phase_number": 1}))
+        m.assert_called_once_with(1)
+
+    def test_dispatch_refresh_graph(self):
+        sentinel = {"refreshed": True}
+        with patch("mcp_server.server.refresh_graph", return_value=sentinel) as m, \
+             patch("mcp_server.auto_init.ensure_project_initialized"):
+            _run(call_tool("refresh_graph", {"file_paths": ["src/x.py"]}))
+        m.assert_called_once_with(file_paths=["src/x.py"])
+
+    def test_dispatch_get_signature(self):
+        sentinel = {"symbols": []}
+        with patch("mcp_server.server.get_signature", return_value=sentinel) as m, \
+             patch("mcp_server.auto_init.ensure_project_initialized"):
+            _run(call_tool("get_signature", {"file_path": "src/api.py"}))
+        m.assert_called_once_with("src/api.py")
+
+    def test_dispatch_get_code(self):
+        sentinel = {"source": "def foo(): pass"}
+        with patch("mcp_server.server.get_code", return_value=sentinel) as m, \
+             patch("mcp_server.auto_init.ensure_project_initialized"):
+            _run(call_tool("get_code", {"file_path": "src/api.py", "symbol": "foo"}))
+        m.assert_called_once_with("src/api.py", symbol="foo")
+
+    def test_dispatch_export_graph(self):
+        sentinel = {"mermaid": "graph LR"}
+        with patch("mcp_server.server.export_graph", return_value=sentinel) as m, \
+             patch("mcp_server.auto_init.ensure_project_initialized"):
+            _run(call_tool("export_graph", {"format": "mermaid"}))
+        m.assert_called_once_with(format="mermaid", scope=None)
+
+    def test_dispatch_get_graph_diff(self):
+        sentinel = {"diff": []}
+        with patch("mcp_server.server.get_graph_diff", return_value=sentinel) as m, \
+             patch("mcp_server.auto_init.ensure_project_initialized"):
+            _run(call_tool("get_graph_diff", {}))
+        m.assert_called_once_with(base_ref="main", head_ref="HEAD")
+
+    def test_dispatch_get_decision_confidence(self):
+        sentinel = {"confidence": 0.9}
+        with patch("mcp_server.server.learning_get_decision_confidence", return_value=sentinel) as m, \
+             patch("mcp_server.auto_init.ensure_project_initialized"):
+            _run(call_tool("get_decision_confidence", {"file_path": "src/api.py"}))
+        m.assert_called_once_with(file_path="src/api.py", pattern=None)
+
+    def test_dispatch_get_preferences(self):
+        sentinel = {"preferences": []}
+        with patch("mcp_server.server.learning_get_preferences", return_value=sentinel) as m, \
+             patch("mcp_server.auto_init.ensure_project_initialized"):
+            _run(call_tool("get_preferences", {}))
+        m.assert_called_once_with(category=None)
+
+    def test_dispatch_get_learned_rules(self):
+        sentinel = {"rules": []}
+        with patch("mcp_server.server.learning_get_learned_rules", return_value=sentinel) as m, \
+             patch("mcp_server.auto_init.ensure_project_initialized"):
+            _run(call_tool("get_learned_rules", {}))
+        m.assert_called_once_with(file_path=None, category=None)
+
+    def test_dispatch_get_project_maturity(self):
+        sentinel = {"maturity": "Senior"}
+        with patch("mcp_server.server.learning_get_project_maturity", return_value=sentinel) as m, \
+             patch("mcp_server.auto_init.ensure_project_initialized"):
+            _run(call_tool("get_project_maturity", {}))
+        m.assert_called_once()
+
+    def test_dispatch_get_session_context(self):
+        sentinel = {"context": {}}
+        with patch("mcp_server.server.learning_get_session_context", return_value=sentinel) as m, \
+             patch("mcp_server.auto_init.ensure_project_initialized"):
+            _run(call_tool("get_session_context", {}))
+        m.assert_called_once()
+
+    def test_dispatch_query_graph(self):
+        sentinel = {"callees": []}
+        with patch("mcp_server.server.query_graph_tool", return_value=sentinel) as m, \
+             patch("mcp_server.auto_init.ensure_project_initialized"):
+            _run(call_tool("query_graph", {"file_path": "src/api.py"}))
+        m.assert_called_once_with(file_path="src/api.py", symbol=None, query_type="callees")
+
+    def test_dispatch_analyze_changes(self):
+        sentinel = {"changes": []}
+        with patch("mcp_server.server.analyze_changes_tool", return_value=sentinel) as m, \
+             patch("mcp_server.auto_init.ensure_project_initialized"):
+            _run(call_tool("analyze_changes", {}))
+        m.assert_called_once_with(base_ref="main", head_ref="HEAD")
+
+    def test_dispatch_find_hotspots(self):
+        sentinel = {"hotspots": []}
+        with patch("mcp_server.server.find_hotspots_tool", return_value=sentinel) as m, \
+             patch("mcp_server.auto_init.ensure_project_initialized"):
+            _run(call_tool("find_hotspots", {}))
+        m.assert_called_once_with(threshold=50)
+
+
+# ---------------------------------------------------------------------------
+# main() — lines 968-1045
+# ---------------------------------------------------------------------------
+
+class TestServerMain:
+    def test_main_installs_crash_handler(self):
+        with patch("mcp_server.crash_logger.install_global_handler") as mock_handler, \
+             patch("asyncio.run"), \
+             patch("indexer.index_codebase.start_background_watcher", return_value=MagicMock()), \
+             patch("indexer.outcome_tracker.analyze_session_outcomes"), \
+             patch("indexer.rule_learner.run_rule_inference"), \
+             patch("mcp_server.global_sync.import_global_to_project", return_value={}), \
+             patch("mcp_server.migrate.detect_migration_needed", return_value=False):
+            from mcp_server.server import main
+            main()
+        mock_handler.assert_called_once()
+
+    def test_main_crash_handler_exception_does_not_crash(self):
+        """If crash handler install fails, main() continues."""
+        with patch("mcp_server.crash_logger.install_global_handler", side_effect=RuntimeError("boom")), \
+             patch("asyncio.run"), \
+             patch("indexer.index_codebase.start_background_watcher", return_value=MagicMock()), \
+             patch("indexer.outcome_tracker.analyze_session_outcomes"), \
+             patch("indexer.rule_learner.run_rule_inference"), \
+             patch("mcp_server.global_sync.import_global_to_project", return_value={}), \
+             patch("mcp_server.migrate.detect_migration_needed", return_value=False):
+            from mcp_server.server import main
+            main()  # Must not raise
+
+    def test_main_migration_called_when_needed(self):
+        mock_watcher = MagicMock()
+        with patch("mcp_server.crash_logger.install_global_handler"), \
+             patch("asyncio.run"), \
+             patch("indexer.index_codebase.start_background_watcher", return_value=mock_watcher), \
+             patch("indexer.outcome_tracker.analyze_session_outcomes"), \
+             patch("indexer.rule_learner.run_rule_inference"), \
+             patch("mcp_server.global_sync.import_global_to_project", return_value={}), \
+             patch("mcp_server.migrate.detect_migration_needed", return_value=True), \
+             patch("mcp_server.migrate.migrate_to_centralized", return_value={"migrated": True, "files_copied": 5, "new_path": "/tmp/x"}) as mock_migrate:
+            from mcp_server.server import main
+            main()
+        mock_migrate.assert_called_once()
+
+    def test_main_migration_exception_does_not_crash(self):
+        with patch("mcp_server.crash_logger.install_global_handler"), \
+             patch("asyncio.run"), \
+             patch("indexer.index_codebase.start_background_watcher", return_value=MagicMock()), \
+             patch("indexer.outcome_tracker.analyze_session_outcomes"), \
+             patch("indexer.rule_learner.run_rule_inference"), \
+             patch("mcp_server.global_sync.import_global_to_project", return_value={}), \
+             patch("mcp_server.migrate.detect_migration_needed", side_effect=RuntimeError("migrate fail")):
+            from mcp_server.server import main
+            main()  # Must not raise
+
+    def test_main_watcher_exception_does_not_crash(self):
+        with patch("mcp_server.crash_logger.install_global_handler"), \
+             patch("asyncio.run"), \
+             patch("indexer.index_codebase.start_background_watcher", side_effect=ImportError("watchdog not found")), \
+             patch("indexer.outcome_tracker.analyze_session_outcomes"), \
+             patch("indexer.rule_learner.run_rule_inference"), \
+             patch("mcp_server.global_sync.import_global_to_project", return_value={}), \
+             patch("mcp_server.migrate.detect_migration_needed", return_value=False):
+            from mcp_server.server import main
+            main()  # Must not raise
+
+    def test_main_learning_exception_does_not_crash(self):
+        with patch("mcp_server.crash_logger.install_global_handler"), \
+             patch("asyncio.run"), \
+             patch("indexer.index_codebase.start_background_watcher", return_value=MagicMock()), \
+             patch("indexer.outcome_tracker.analyze_session_outcomes", side_effect=RuntimeError("learning fail")), \
+             patch("indexer.rule_learner.run_rule_inference"), \
+             patch("mcp_server.global_sync.import_global_to_project", return_value={}), \
+             patch("mcp_server.migrate.detect_migration_needed", return_value=False):
+            from mcp_server.server import main
+            main()  # Must not raise
+
+    def test_main_global_sync_exception_does_not_crash(self):
+        with patch("mcp_server.crash_logger.install_global_handler"), \
+             patch("asyncio.run"), \
+             patch("indexer.index_codebase.start_background_watcher", return_value=MagicMock()), \
+             patch("indexer.outcome_tracker.analyze_session_outcomes"), \
+             patch("indexer.rule_learner.run_rule_inference"), \
+             patch("mcp_server.global_sync.import_global_to_project", side_effect=RuntimeError("sync fail")), \
+             patch("mcp_server.migrate.detect_migration_needed", return_value=False):
+            from mcp_server.server import main
+            main()  # Must not raise
+
+    def test_main_stops_watcher_in_finally(self):
+        mock_watcher = MagicMock()
+        with patch("mcp_server.crash_logger.install_global_handler"), \
+             patch("asyncio.run"), \
+             patch("indexer.index_codebase.start_background_watcher", return_value=mock_watcher), \
+             patch("indexer.outcome_tracker.analyze_session_outcomes"), \
+             patch("indexer.rule_learner.run_rule_inference"), \
+             patch("mcp_server.global_sync.import_global_to_project", return_value={}), \
+             patch("mcp_server.migrate.detect_migration_needed", return_value=False):
+            from mcp_server.server import main
+            main()
+        mock_watcher.stop.assert_called_once()

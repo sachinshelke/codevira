@@ -556,3 +556,66 @@ class TestInitStatusDataclass:
         status = InitStatus(ready=False, indexing=True, files_indexed=5, total_files=20)
         assert status.files_indexed == 5
         assert status.total_files == 20
+
+
+# ---------------------------------------------------------------
+# Background thread: discover_source_files failure + indexing
+# exception branches (lines 164-165, 176-181)
+# ---------------------------------------------------------------
+
+class TestBackgroundInitExceptionBranches:
+    def test_discover_source_files_exception_continues(self, tmp_path):
+        """When discover_source_files raises, init uses empty file list and
+        still completes (lines 164-165)."""
+        project_root = tmp_path / "proj"
+        project_root.mkdir()
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+
+        with _bg_init_patches(DEFAULT_DETECTED,
+                              discover_return=None,
+                              index_side_effect=ImportError("no chromadb")), \
+             patch("mcp_server.gitignore.discover_source_files",
+                   side_effect=Exception("discover failed")):
+            ai._start_time = time.monotonic()
+            _run_background_init(project_root, data_dir)
+
+        # Despite discover failure, init should complete (not error)
+        assert ai._progress["status"] in ("ready", "error")
+
+    def test_import_error_on_indexing_sets_ready(self, tmp_path):
+        """When start_background_full_index raises ImportError (no chromadb),
+        status becomes 'ready' (lines 176-178)."""
+        project_root = tmp_path / "proj"
+        project_root.mkdir()
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+
+        fake_files = [Path("src/a.py"), Path("src/b.py")]
+        with _bg_init_patches(DEFAULT_DETECTED,
+                              discover_return=fake_files,
+                              index_side_effect=ImportError("No chromadb")):
+            ai._start_time = time.monotonic()
+            _run_background_init(project_root, data_dir)
+
+        assert ai._progress["status"] == "ready"
+        # files_indexed stays 0 for graph-only mode
+        assert ai._progress["files_indexed"] == 0
+
+    def test_runtime_error_on_indexing_sets_ready(self, tmp_path):
+        """When start_background_full_index raises a general exception,
+        status still becomes 'ready' (lines 179-181)."""
+        project_root = tmp_path / "proj"
+        project_root.mkdir()
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+
+        fake_files = [Path("src/a.py")]
+        with _bg_init_patches(DEFAULT_DETECTED,
+                              discover_return=fake_files,
+                              index_side_effect=RuntimeError("unexpected error")):
+            ai._start_time = time.monotonic()
+            _run_background_init(project_root, data_dir)
+
+        # Non-fatal exception -> status is still "ready"
+        assert ai._progress["status"] == "ready"

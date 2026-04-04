@@ -402,3 +402,83 @@ class TestRefreshIndexEmptyList:
         mock_cmd.assert_called_once_with(quiet=True, file_paths=None)
         assert result["mode"] == "incremental"
         assert "all changed" in result["status"].lower()
+
+
+# ---------------------------------------------------------------------------
+# _get_chroma_client (lines 16-31 of tools/search.py)
+# ---------------------------------------------------------------------------
+
+class TestGetChromaClientLines:
+    def test_codeindex_dir_missing_returns_none(self, project_env):
+        """When chromadb is importable but codeindex dir is missing, returns (None, None)."""
+        import sys
+        _project, data_dir, _db = project_env
+        # Ensure codeindex dir does NOT exist
+        codeindex = data_dir / "codeindex"
+        if codeindex.exists():
+            import shutil
+            shutil.rmtree(str(codeindex))
+
+        mock_chromadb = MagicMock()
+        mock_utils = MagicMock()
+        mock_embed_fns = MagicMock()
+
+        original_mods = {
+            "chromadb": sys.modules.get("chromadb"),
+            "chromadb.utils": sys.modules.get("chromadb.utils"),
+            "chromadb.utils.embedding_functions": sys.modules.get("chromadb.utils.embedding_functions"),
+        }
+        sys.modules["chromadb"] = mock_chromadb
+        sys.modules["chromadb.utils"] = mock_utils
+        sys.modules["chromadb.utils.embedding_functions"] = mock_embed_fns
+        try:
+            from mcp_server.tools.search import _get_chroma_client
+            client, embed_fn = _get_chroma_client()
+            assert client is None
+            assert embed_fn is None
+        finally:
+            for k, v in original_mods.items():
+                if v is None:
+                    sys.modules.pop(k, None)
+                else:
+                    sys.modules[k] = v
+
+    def test_with_codeindex_returns_client(self, project_env):
+        """When chromadb and codeindex dir both exist, returns (client, embed_fn)."""
+        import sys
+        _project, data_dir, _db = project_env
+        codeindex = data_dir / "codeindex"
+        codeindex.mkdir(exist_ok=True)
+
+        mock_client = MagicMock()
+        mock_embed_fn = MagicMock()
+        mock_embed_fn_cls = MagicMock(return_value=mock_embed_fn)
+
+        mock_embed_fns = MagicMock()
+        mock_embed_fns.SentenceTransformerEmbeddingFunction = mock_embed_fn_cls
+
+        mock_chromadb = MagicMock()
+        mock_chromadb.PersistentClient.return_value = mock_client
+
+        mock_utils = MagicMock()
+        mock_utils.embedding_functions = mock_embed_fns
+
+        original_mods = {
+            "chromadb": sys.modules.get("chromadb"),
+            "chromadb.utils": sys.modules.get("chromadb.utils"),
+            "chromadb.utils.embedding_functions": sys.modules.get("chromadb.utils.embedding_functions"),
+        }
+        sys.modules["chromadb"] = mock_chromadb
+        sys.modules["chromadb.utils"] = mock_utils
+        sys.modules["chromadb.utils.embedding_functions"] = mock_embed_fns
+        try:
+            from mcp_server.tools.search import _get_chroma_client
+            client, embed_fn = _get_chroma_client()
+            assert client is mock_client
+            assert embed_fn is mock_embed_fn
+        finally:
+            for k, v in original_mods.items():
+                if v is None:
+                    sys.modules.pop(k, None)
+                else:
+                    sys.modules[k] = v

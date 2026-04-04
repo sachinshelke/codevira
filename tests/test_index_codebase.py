@@ -431,3 +431,653 @@ class TestStartBackgroundFullIndex:
             t.join(timeout=5)
 
         callback.assert_called_once_with("error")
+
+
+# ---------------------------------------------------------------------------
+# cmd_full_rebuild
+# ---------------------------------------------------------------------------
+
+class TestCmdFullRebuild:
+    def test_no_search_deps_builds_graph_only(self, project_env):
+        """When chromadb not installed, cmd_full_rebuild still builds graph."""
+        _project, data_dir, _db = project_env
+        mock_result = {"nodes_added": 5, "edges_added": 3}
+        with patch("indexer.index_codebase._check_search_deps", return_value=False), \
+             patch("indexer.graph_generator.generate_graph_sqlite", return_value=mock_result) as mock_graph, \
+             patch("indexer.index_codebase.SQLiteGraph") as mock_db_cls:
+            mock_db = MagicMock()
+            mock_db_cls.return_value = mock_db
+            from indexer.index_codebase import cmd_full_rebuild
+            cmd_full_rebuild()
+        mock_graph.assert_called_once()
+        mock_db.close.assert_called_once()
+
+    def test_with_chromadb_indexes_chunks(self, project_env):
+        """When chromadb available, cmd_full_rebuild indexes chunks."""
+        _project, data_dir, _db = project_env
+        # Create the watched 'src' dir so abs_dir.exists() passes
+        src_dir = _project / "src"
+        src_dir.mkdir(exist_ok=True)
+        (src_dir / "main.py").write_text("def main(): pass")
+
+        mock_chunk = MagicMock()
+        mock_chunk.file_path = "src/main.py"
+        mock_chunk.chunk_type = "function"
+        mock_chunk.name = "main"
+        mock_chunk.start_line = 1
+        mock_chunk.end_line = 10
+        mock_chunk.docstring = ""
+        mock_chunk.source_text = "def main(): pass"
+        mock_chunk.layer = "api"
+
+        mock_collection = MagicMock()
+        mock_client = MagicMock()
+        mock_client.create_collection.return_value = mock_collection
+
+        # chunk_project is imported locally inside cmd_full_rebuild, so patch at source
+        with patch("indexer.index_codebase._check_search_deps", return_value=True), \
+             patch("indexer.index_codebase._get_chroma_client", return_value=mock_client), \
+             patch("indexer.index_codebase._get_embedding_fn", return_value=MagicMock()), \
+             patch("indexer.chunker.chunk_project", return_value=[mock_chunk]), \
+             patch("indexer.graph_generator.generate_graph_sqlite", return_value={"nodes_added": 1}), \
+             patch("indexer.index_codebase.SQLiteGraph") as mock_db_cls:
+            mock_db = MagicMock()
+            mock_db_cls.return_value = mock_db
+            from indexer.index_codebase import cmd_full_rebuild
+            cmd_full_rebuild()
+        mock_collection.add.assert_called()
+
+
+# ---------------------------------------------------------------------------
+# cmd_incremental
+# ---------------------------------------------------------------------------
+
+class TestCmdIncremental:
+    def test_no_changed_files_returns_zero(self, project_env):
+        _project, data_dir, db = project_env
+        with patch("indexer.index_codebase._get_changed_files", return_value=[]), \
+             patch("indexer.index_codebase.SQLiteGraph", return_value=db):
+            from indexer.index_codebase import cmd_incremental
+            result = cmd_incremental()
+        assert result == 0
+
+    def test_no_collection_prints_error_and_exits(self, project_env):
+        _project, data_dir, db = project_env
+        mock_client = MagicMock()
+        mock_client.get_collection.side_effect = Exception("collection missing")
+        with patch("indexer.index_codebase._get_changed_files", return_value=[("src/main.py", "abc123")]), \
+             patch("indexer.index_codebase._get_chroma_client", return_value=mock_client), \
+             patch("indexer.index_codebase._get_embedding_fn", return_value=MagicMock()), \
+             patch("indexer.index_codebase.SQLiteGraph", return_value=db), \
+             patch("indexer.index_codebase._check_search_deps", return_value=True), \
+             pytest.raises(SystemExit):
+            from indexer.index_codebase import cmd_incremental
+            cmd_incremental()
+
+    def test_explicit_files_no_match_returns_zero(self, project_env):
+        _project, data_dir, db = project_env
+        # file_paths given but no actual matching files exist
+        with patch("indexer.index_codebase._get_requested_files", return_value=[]), \
+             patch("indexer.index_codebase.SQLiteGraph", return_value=db):
+            from indexer.index_codebase import cmd_incremental
+            result = cmd_incremental(file_paths=["nonexistent.py"])
+        assert result == 0
+
+
+# ---------------------------------------------------------------------------
+# _get_chroma_client / _get_embedding_fn
+# ---------------------------------------------------------------------------
+
+class TestGetChromaClientAndEmbedFn:
+    def test_get_chroma_client_returns_client(self, project_env):
+        mock_chromadb = MagicMock()
+        mock_client = MagicMock()
+        mock_chromadb.PersistentClient.return_value = mock_client
+        with patch.dict("sys.modules", {"chromadb": mock_chromadb}):
+            from indexer.index_codebase import _get_chroma_client
+            result = _get_chroma_client()
+        assert result is mock_client
+
+    def test_get_chroma_client_sys_exit_if_no_chromadb(self, project_env):
+        import sys
+        # Simulate chromadb being unimportable by removing it from sys.modules
+        saved = sys.modules.pop("chromadb", None)
+        try:
+            with patch.dict("sys.modules", {"chromadb": None}):
+                from indexer.index_codebase import _get_chroma_client
+                with pytest.raises(SystemExit):
+                    _get_chroma_client()
+        finally:
+            if saved is not None:
+                sys.modules["chromadb"] = saved
+
+
+# ---------------------------------------------------------------------------
+# cmd_status
+# ---------------------------------------------------------------------------
+
+class TestCmdStatusIndexCb:
+    def test_cmd_status_shows_panel(self, project_env, capsys):
+        _project, data_dir, db = project_env
+        mock_client = MagicMock()
+        mock_collection = MagicMock()
+        mock_collection.count.return_value = 42
+        mock_client.get_collection.return_value = mock_collection
+        with patch("indexer.index_codebase.SQLiteGraph", return_value=db), \
+             patch("indexer.index_codebase._get_chroma_client", return_value=mock_client), \
+             patch("indexer.index_codebase._get_embedding_fn", return_value=MagicMock()), \
+             patch("indexer.index_codebase._get_changed_files", return_value=[]):
+            from indexer.index_codebase import cmd_status
+            cmd_status()  # Should not raise
+
+    def test_cmd_status_no_chromadb(self, project_env):
+        _project, data_dir, db = project_env
+        with patch("indexer.index_codebase.SQLiteGraph", return_value=db), \
+             patch("indexer.index_codebase._get_chroma_client", side_effect=ImportError("chromadb")), \
+             patch("indexer.index_codebase._get_changed_files", return_value=[]):
+            from indexer.index_codebase import cmd_status
+            cmd_status()  # Should not raise
+
+
+# ---------------------------------------------------------------------------
+# cmd_generate_graph
+# ---------------------------------------------------------------------------
+
+class TestCmdGenerateGraph:
+    def test_generates_graph(self, project_env):
+        _project, data_dir, _db = project_env
+        mock_result = {"files_processed": 5, "nodes_added": 10, "nodes_skipped": 2}
+        # generate_graph_sqlite is imported locally inside cmd_generate_graph
+        with patch("indexer.graph_generator.generate_graph_sqlite", return_value=mock_result) as mock_gen, \
+             patch("indexer.index_codebase.get_data_dir", return_value=data_dir), \
+             patch("indexer.index_codebase.get_project_root", return_value=_project):
+            from indexer.index_codebase import cmd_generate_graph
+            cmd_generate_graph()  # Should not raise
+        mock_gen.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# cmd_bootstrap_roadmap
+# ---------------------------------------------------------------------------
+
+class TestCmdBootstrapRoadmap:
+    def test_creates_roadmap_if_not_exists(self, project_env):
+        _project, data_dir, _db = project_env
+        # generate_roadmap_stub is imported locally inside cmd_bootstrap_roadmap
+        with patch("indexer.graph_generator.generate_roadmap_stub") as mock_stub, \
+             patch("indexer.index_codebase.get_data_dir", return_value=data_dir), \
+             patch("indexer.index_codebase.get_project_root", return_value=_project):
+            from indexer.index_codebase import cmd_bootstrap_roadmap
+            cmd_bootstrap_roadmap()
+        mock_stub.assert_called_once()
+
+    def test_skips_if_roadmap_exists(self, project_env, capsys):
+        _project, data_dir, _db = project_env
+        roadmap_file = data_dir / "roadmap.yaml"
+        roadmap_file.write_text("phases: []")
+        with patch("indexer.graph_generator.generate_roadmap_stub") as mock_stub, \
+             patch("indexer.index_codebase.get_data_dir", return_value=data_dir):
+            from indexer.index_codebase import cmd_bootstrap_roadmap
+            cmd_bootstrap_roadmap()
+        mock_stub.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# start_background_watcher
+# ---------------------------------------------------------------------------
+
+class TestStartBackgroundWatcher:
+    def test_watcher_starts_with_valid_dirs(self, project_env):
+        _project, data_dir, _db = project_env
+        src_dir = _project / "src"
+        src_dir.mkdir(exist_ok=True)
+        config = {"watched_dirs": ["src"], "file_extensions": [".py"], "skip_dirs": []}
+        with patch("indexer.index_codebase._load_config", return_value=config), \
+             patch("indexer.index_codebase.get_project_root", return_value=_project), \
+             patch("watchdog.observers.Observer") as mock_observer_cls:
+            mock_observer = MagicMock()
+            mock_observer_cls.return_value = mock_observer
+            from indexer.index_codebase import start_background_watcher
+            result = start_background_watcher(quiet=True)
+        mock_observer.start.assert_called_once()
+
+    def test_watcher_does_not_start_for_missing_dirs(self, project_env):
+        _project, _data_dir, _db = project_env
+        config = {"watched_dirs": ["nonexistent"], "file_extensions": [".py"], "skip_dirs": []}
+        with patch("indexer.index_codebase._load_config", return_value=config), \
+             patch("indexer.index_codebase.get_project_root", return_value=_project), \
+             patch("watchdog.observers.Observer") as mock_observer_cls:
+            mock_observer = MagicMock()
+            mock_observer_cls.return_value = mock_observer
+            from indexer.index_codebase import start_background_watcher
+            start_background_watcher(quiet=True)
+        mock_observer.start.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# _get_embedding_fn exit path
+# ---------------------------------------------------------------------------
+
+class TestGetEmbeddingFnExit:
+    def test_sys_exit_when_chromadb_utils_missing(self, project_env):
+        """_get_embedding_fn exits if chromadb.utils cannot be imported."""
+        import sys
+        # Remove chromadb.utils* from sys.modules so the import inside
+        # _get_embedding_fn raises ImportError, triggering sys.exit(1).
+        original_mods = {
+            "chromadb.utils": sys.modules.pop("chromadb.utils", None),
+            "chromadb.utils.embedding_functions": sys.modules.pop(
+                "chromadb.utils.embedding_functions", None
+            ),
+        }
+        try:
+            sys.modules["chromadb.utils"] = None  # type: ignore[assignment]
+            sys.modules["chromadb.utils.embedding_functions"] = None  # type: ignore[assignment]
+            from indexer.index_codebase import _get_embedding_fn
+            with pytest.raises(SystemExit) as exc_info:
+                _get_embedding_fn()
+            assert exc_info.value.code == 1
+        finally:
+            for k, v in original_mods.items():
+                if v is None:
+                    sys.modules.pop(k, None)
+                else:
+                    sys.modules[k] = v
+
+
+# ---------------------------------------------------------------------------
+# cmd_incremental — actual indexing loop (changed files, non-empty collection)
+# ---------------------------------------------------------------------------
+
+class TestCmdIncrementalLoop:
+    """cmd_incremental — actual indexing loop (lines 283-323)."""
+
+    @staticmethod
+    def _rich_mods():
+        """Return fake rich sub-modules so cmd_incremental doesn't fail on import."""
+        import types
+        import sys
+        mods = {}
+        for name in ("rich", "rich.console", "rich.table", "rich.panel",
+                     "rich.progress"):
+            if name not in sys.modules:
+                mods[name] = types.ModuleType(name)
+        # Console must be callable and return something with .print()
+        rich_console_mod = mods.get("rich.console") or sys.modules["rich.console"]
+        rich_console_mod.Console = MagicMock(return_value=MagicMock())
+        return mods
+
+    def test_indexes_changed_file_successfully(self, project_env):
+        """cmd_incremental processes changed files and updates the hash."""
+        import sys
+        _project, data_dir, db = project_env
+
+        src = _project / "src"
+        src.mkdir(exist_ok=True)
+        (src / "api.py").write_text("def hello(): pass")
+
+        mock_collection = MagicMock()
+        mock_client = MagicMock()
+        mock_client.get_collection.return_value = mock_collection
+
+        mock_chunk = MagicMock()
+        mock_chunk.file_path = "src/api.py"
+        mock_chunk.chunk_type = "function"
+        mock_chunk.name = "hello"
+        mock_chunk.start_line = 1
+        mock_chunk.end_line = 1
+        mock_chunk.docstring = ""
+        mock_chunk.source_text = "def hello(): pass"
+        mock_chunk.layer = "api"
+
+        with patch.dict(sys.modules, self._rich_mods()), \
+             patch("indexer.index_codebase._get_changed_files", return_value=[("src/api.py", "newhash123")]), \
+             patch("indexer.index_codebase._get_chroma_client", return_value=mock_client), \
+             patch("indexer.index_codebase._get_embedding_fn", return_value=MagicMock()), \
+             patch("indexer.chunker.chunk_file", return_value=[mock_chunk]), \
+             patch("indexer.graph_generator.generate_graph_sqlite", return_value={}), \
+             patch("indexer.index_codebase.SQLiteGraph", return_value=db):
+            from indexer.index_codebase import cmd_incremental
+            result = cmd_incremental()
+        assert result == 0
+        mock_collection.delete.assert_called()
+        mock_collection.add.assert_called()
+
+    def test_chunk_error_continues_to_next_file(self, project_env):
+        """When chunk_file raises, cmd_incremental continues to the next file."""
+        import sys
+        _project, data_dir, db = project_env
+
+        mock_collection = MagicMock()
+        mock_client = MagicMock()
+        mock_client.get_collection.return_value = mock_collection
+
+        with patch.dict(sys.modules, self._rich_mods()), \
+             patch("indexer.index_codebase._get_changed_files",
+                   return_value=[("src/api.py", "hash1"), ("src/db.py", "hash2")]), \
+             patch("indexer.index_codebase._get_chroma_client", return_value=mock_client), \
+             patch("indexer.index_codebase._get_embedding_fn", return_value=MagicMock()), \
+             patch("indexer.chunker.chunk_file", side_effect=Exception("chunk failed")), \
+             patch("indexer.graph_generator.generate_graph_sqlite", return_value={}), \
+             patch("indexer.index_codebase.SQLiteGraph", return_value=db):
+            from indexer.index_codebase import cmd_incremental
+            result = cmd_incremental()
+        # Returns 0 even when all files fail to chunk (indexed_any=False path)
+        assert result == 0
+
+
+# ---------------------------------------------------------------------------
+# DebouncedHandler event methods (via start_background_watcher)
+# ---------------------------------------------------------------------------
+
+class TestDebouncedHandlerEvents:
+    """DebouncedHandler event methods (lines 358-396, 406-411).
+
+    watchdog is an optional runtime dependency not present in the CI test
+    environment, so we inject fake modules into sys.modules before every test
+    that triggers the `from watchdog.observers import Observer` import path
+    inside start_background_watcher.
+    """
+
+    @staticmethod
+    def _fake_watchdog_mods():
+        """Return a dict of fake watchdog sub-modules for patch.dict."""
+        import sys, types
+        mods = {}
+        for name in ("watchdog", "watchdog.observers", "watchdog.events"):
+            if name not in sys.modules:
+                mods[name] = types.ModuleType(name)
+        # Observer must be a class
+        mock_observer_cls = MagicMock()
+        mods.get("watchdog.observers", sys.modules.get("watchdog.observers")).Observer = mock_observer_cls
+        # FileSystemEventHandler must be a real class (DebouncedHandler inherits it)
+        class _FakeHandler:
+            pass
+        mods.get("watchdog.events", sys.modules.get("watchdog.events")).FileSystemEventHandler = _FakeHandler
+        return mods
+
+    def _start_watcher_and_get_handler(self, project_env):
+        """Inject watchdog stubs, start watcher, return (src_dir, handler, timer_cls)."""
+        import sys
+        _project, _data_dir, _db = project_env
+        src_dir = _project / "src"
+        src_dir.mkdir(exist_ok=True)
+        config = {"watched_dirs": ["src"], "file_extensions": [".py"], "skip_dirs": ["__pycache__"]}
+
+        fake_mods = self._fake_watchdog_mods()
+        mock_obs = MagicMock()
+        mock_timer = MagicMock()
+
+        # Patch watchdog modules into sys.modules so the local import inside
+        # start_background_watcher succeeds, then patch the Observer class
+        # and threading.Timer to intercept calls.
+        with patch.dict(sys.modules, fake_mods), \
+             patch("indexer.index_codebase._load_config", return_value=config), \
+             patch("indexer.index_codebase.get_project_root", return_value=_project), \
+             patch("threading.Timer", return_value=MagicMock()) as mock_timer_cls:
+
+            # Override the Observer class inside the fake watchdog.observers mod
+            fake_obs_mod = sys.modules["watchdog.observers"]
+            fake_obs_mod.Observer = MagicMock(return_value=mock_obs)
+
+            from indexer.index_codebase import start_background_watcher
+            start_background_watcher(quiet=True)
+
+            handler = mock_obs.schedule.call_args[0][0] if mock_obs.schedule.called else None
+            return src_dir, handler, mock_timer_cls, mock_obs
+
+    def test_on_modified_triggers_schedule(self, project_env):
+        """DebouncedHandler.on_modified calls _schedule_reindex for .py files."""
+        import sys
+        _project, _data_dir, _db = project_env
+        src_dir = _project / "src"
+        src_dir.mkdir(exist_ok=True)
+        config = {"watched_dirs": ["src"], "file_extensions": [".py"], "skip_dirs": ["__pycache__"]}
+        fake_mods = self._fake_watchdog_mods()
+        mock_obs = MagicMock()
+
+        with patch.dict(sys.modules, fake_mods), \
+             patch("indexer.index_codebase._load_config", return_value=config), \
+             patch("indexer.index_codebase.get_project_root", return_value=_project), \
+             patch("threading.Timer", return_value=MagicMock()) as mock_timer_cls:
+            sys.modules["watchdog.observers"].Observer = MagicMock(return_value=mock_obs)
+            from indexer.index_codebase import start_background_watcher
+            start_background_watcher(quiet=True)
+
+            assert mock_obs.schedule.called
+            handler = mock_obs.schedule.call_args[0][0]
+            mock_event = MagicMock()
+            mock_event.is_directory = False
+            mock_event.src_path = str(src_dir / "app.py")
+            handler.on_modified(mock_event)
+
+        mock_timer_cls.assert_called()
+
+    def test_on_created_triggers_schedule(self, project_env):
+        """DebouncedHandler.on_created calls _schedule_reindex for .py files."""
+        import sys
+        _project, _data_dir, _db = project_env
+        src_dir = _project / "src"
+        src_dir.mkdir(exist_ok=True)
+        config = {"watched_dirs": ["src"], "file_extensions": [".py"], "skip_dirs": ["__pycache__"]}
+        fake_mods = self._fake_watchdog_mods()
+        mock_obs = MagicMock()
+
+        with patch.dict(sys.modules, fake_mods), \
+             patch("indexer.index_codebase._load_config", return_value=config), \
+             patch("indexer.index_codebase.get_project_root", return_value=_project), \
+             patch("threading.Timer", return_value=MagicMock()) as mock_timer_cls:
+            sys.modules["watchdog.observers"].Observer = MagicMock(return_value=mock_obs)
+            from indexer.index_codebase import start_background_watcher
+            start_background_watcher(quiet=True)
+
+            assert mock_obs.schedule.called
+            handler = mock_obs.schedule.call_args[0][0]
+            mock_event = MagicMock()
+            mock_event.is_directory = False
+            mock_event.src_path = str(src_dir / "new.py")
+            handler.on_created(mock_event)
+
+        mock_timer_cls.assert_called()
+
+    def test_on_deleted_triggers_schedule(self, project_env):
+        """DebouncedHandler.on_deleted calls _schedule_reindex for .py files."""
+        import sys
+        _project, _data_dir, _db = project_env
+        src_dir = _project / "src"
+        src_dir.mkdir(exist_ok=True)
+        config = {"watched_dirs": ["src"], "file_extensions": [".py"], "skip_dirs": ["__pycache__"]}
+        fake_mods = self._fake_watchdog_mods()
+        mock_obs = MagicMock()
+
+        with patch.dict(sys.modules, fake_mods), \
+             patch("indexer.index_codebase._load_config", return_value=config), \
+             patch("indexer.index_codebase.get_project_root", return_value=_project), \
+             patch("threading.Timer", return_value=MagicMock()) as mock_timer_cls:
+            sys.modules["watchdog.observers"].Observer = MagicMock(return_value=mock_obs)
+            from indexer.index_codebase import start_background_watcher
+            start_background_watcher(quiet=True)
+
+            assert mock_obs.schedule.called
+            handler = mock_obs.schedule.call_args[0][0]
+            mock_event = MagicMock()
+            mock_event.is_directory = False
+            mock_event.src_path = str(src_dir / "removed.py")
+            handler.on_deleted(mock_event)
+
+        mock_timer_cls.assert_called()
+
+    def test_directory_event_ignored(self, project_env):
+        """Directory events should not trigger reindex."""
+        import sys
+        _project, _data_dir, _db = project_env
+        src_dir = _project / "src"
+        src_dir.mkdir(exist_ok=True)
+        config = {"watched_dirs": ["src"], "file_extensions": [".py"], "skip_dirs": ["__pycache__"]}
+        fake_mods = self._fake_watchdog_mods()
+        mock_obs = MagicMock()
+
+        with patch.dict(sys.modules, fake_mods), \
+             patch("indexer.index_codebase._load_config", return_value=config), \
+             patch("indexer.index_codebase.get_project_root", return_value=_project), \
+             patch("threading.Timer", return_value=MagicMock()) as mock_timer_cls:
+            sys.modules["watchdog.observers"].Observer = MagicMock(return_value=mock_obs)
+            from indexer.index_codebase import start_background_watcher
+            start_background_watcher(quiet=True)
+
+            assert mock_obs.schedule.called
+            handler = mock_obs.schedule.call_args[0][0]
+            mock_timer_cls.reset_mock()
+
+            mock_event = MagicMock()
+            mock_event.is_directory = True  # directory event — should be skipped
+            mock_event.src_path = str(src_dir)
+            handler.on_modified(mock_event)
+
+        mock_timer_cls.assert_not_called()
+
+    def test_wrong_extension_not_scheduled(self, project_env):
+        """Files with non-matching extension don't trigger reindex."""
+        import sys
+        _project, _data_dir, _db = project_env
+        src_dir = _project / "src"
+        src_dir.mkdir(exist_ok=True)
+        config = {"watched_dirs": ["src"], "file_extensions": [".py"], "skip_dirs": ["__pycache__"]}
+        fake_mods = self._fake_watchdog_mods()
+        mock_obs = MagicMock()
+
+        with patch.dict(sys.modules, fake_mods), \
+             patch("indexer.index_codebase._load_config", return_value=config), \
+             patch("indexer.index_codebase.get_project_root", return_value=_project), \
+             patch("threading.Timer", return_value=MagicMock()) as mock_timer_cls:
+            sys.modules["watchdog.observers"].Observer = MagicMock(return_value=mock_obs)
+            from indexer.index_codebase import start_background_watcher
+            start_background_watcher(quiet=True)
+
+            assert mock_obs.schedule.called
+            handler = mock_obs.schedule.call_args[0][0]
+            mock_timer_cls.reset_mock()
+
+            mock_event = MagicMock()
+            mock_event.is_directory = False
+            mock_event.src_path = str(src_dir / "README.md")  # not .py
+            handler.on_modified(mock_event)
+
+        mock_timer_cls.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# start_background_full_index — callback behaviour (lines 481-488)
+# ---------------------------------------------------------------------------
+
+class TestBackgroundFullIndexCallback:
+    def test_callback_called_on_success(self, project_env):
+        """start_background_full_index calls callback with 'done' on success."""
+        callback_results = []
+
+        with patch("indexer.index_codebase.cmd_full_rebuild"):
+            from indexer.index_codebase import start_background_full_index
+            t = start_background_full_index(callback=callback_results.append)
+            t.join(timeout=5.0)
+
+        assert callback_results == ["done"]
+
+    def test_callback_called_on_error(self, project_env):
+        """start_background_full_index calls callback with 'error' on exception."""
+        callback_results = []
+
+        with patch("indexer.index_codebase.cmd_full_rebuild",
+                   side_effect=RuntimeError("rebuild failed")):
+            from indexer.index_codebase import start_background_full_index
+            t = start_background_full_index(callback=callback_results.append)
+            t.join(timeout=5.0)
+
+        assert callback_results == ["error"]
+
+    def test_callback_exception_does_not_crash(self, project_env):
+        """If the callback itself raises, the background thread still completes."""
+        def bad_callback(status):
+            raise RuntimeError("callback crashed")
+
+        with patch("indexer.index_codebase.cmd_full_rebuild"):
+            from indexer.index_codebase import start_background_full_index
+            t = start_background_full_index(callback=bad_callback)
+            t.join(timeout=5.0)
+        # No unhandled exception — thread finished cleanly
+
+
+# ---------------------------------------------------------------------------
+# cmd_status — stale file display (lines 530-535)
+# ---------------------------------------------------------------------------
+
+class TestCmdStatusStaleFiles:
+    """cmd_status stale file display (lines 530-535).
+
+    rich is an optional dependency not present in the test environment, so we
+    inject a minimal fake into sys.modules for each test.
+    """
+
+    @staticmethod
+    def _fake_rich_mods():
+        """Return fake rich sub-modules for patch.dict injection."""
+        import sys, types
+        mods = {}
+        for name in ("rich", "rich.console", "rich.table", "rich.panel",
+                     "rich.progress"):
+            if name not in sys.modules:
+                mod = types.ModuleType(name)
+                mods[name] = mod
+
+        # Provide minimal classes that cmd_status and cmd_incremental use
+        console_mod = mods.get("rich.console") or sys.modules.get("rich.console", types.ModuleType("rich.console"))
+        console_mod.Console = MagicMock(return_value=MagicMock())
+        mods["rich.console"] = console_mod
+
+        table_mod = mods.get("rich.table") or sys.modules.get("rich.table", types.ModuleType("rich.table"))
+        table_mod.Table = MagicMock(return_value=MagicMock())
+        mods["rich.table"] = table_mod
+
+        panel_mod = mods.get("rich.panel") or sys.modules.get("rich.panel", types.ModuleType("rich.panel"))
+        panel_mod.Panel = MagicMock(return_value=MagicMock())
+        mods["rich.panel"] = panel_mod
+
+        return mods
+
+    def test_cmd_status_shows_stale_files(self, project_env):
+        """cmd_status prints stale file list when files need reindexing."""
+        import sys
+        _project, data_dir, db = project_env
+        stale = [(f"src/file_{i}.py", f"hash{i}") for i in range(3)]
+
+        mock_client = MagicMock()
+        mock_collection = MagicMock()
+        mock_collection.count.return_value = 0
+        mock_client.get_collection.return_value = mock_collection
+
+        with patch.dict(sys.modules, self._fake_rich_mods()), \
+             patch("indexer.index_codebase.SQLiteGraph", return_value=db), \
+             patch("indexer.index_codebase._get_chroma_client", return_value=mock_client), \
+             patch("indexer.index_codebase._get_embedding_fn", return_value=MagicMock()), \
+             patch("indexer.index_codebase._get_changed_files", return_value=stale):
+            from indexer.index_codebase import cmd_status
+            cmd_status()  # should not raise
+
+    def test_cmd_status_many_stale_files_truncated(self, project_env):
+        """cmd_status truncates stale file list after 10 items."""
+        import sys
+        _project, data_dir, db = project_env
+        # 15 stale files — display first 10 then "and N more"
+        stale = [(f"src/file_{i}.py", f"hash{i}") for i in range(15)]
+
+        mock_client = MagicMock()
+        mock_collection = MagicMock()
+        mock_collection.count.return_value = 0
+        mock_client.get_collection.return_value = mock_collection
+
+        with patch.dict(sys.modules, self._fake_rich_mods()), \
+             patch("indexer.index_codebase.SQLiteGraph", return_value=db), \
+             patch("indexer.index_codebase._get_chroma_client", return_value=mock_client), \
+             patch("indexer.index_codebase._get_embedding_fn", return_value=MagicMock()), \
+             patch("indexer.index_codebase._get_changed_files", return_value=stale):
+            from indexer.index_codebase import cmd_status
+            cmd_status()  # should not raise

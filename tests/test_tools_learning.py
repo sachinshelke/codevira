@@ -488,3 +488,64 @@ class TestGetSessionContext:
         assert result["recent_decisions"] == []
         assert result["top_preferences"] == []
         assert result["top_rules"] == []
+
+
+# =====================================================================
+# get_session_context exception branches (lines 171-173, 180-182)
+# =====================================================================
+
+class TestGetSessionContextExceptions:
+    def test_global_stats_failure_sets_none(self, tmp_path, monkeypatch):
+        """get_session_context sets global_intelligence=None when get_global_stats raises."""
+        _setup_project(tmp_path, monkeypatch)
+
+        with patch("mcp_server.tools.roadmap.get_roadmap", side_effect=Exception("no roadmap")), \
+             patch("mcp_server.tools.changesets.list_open_changesets",
+                   side_effect=Exception("no changesets")), \
+             patch("mcp_server.global_sync.get_global_stats",
+                   side_effect=RuntimeError("global fail")):
+            result = learning.get_session_context()
+
+        assert result["global_intelligence"] is None
+
+    def test_auto_init_progress_failure_continues(self, tmp_path, monkeypatch):
+        """get_session_context continues normally when get_init_progress raises."""
+        _setup_project(tmp_path, monkeypatch)
+
+        with patch("mcp_server.tools.roadmap.get_roadmap", side_effect=Exception("no roadmap")), \
+             patch("mcp_server.tools.changesets.list_open_changesets",
+                   side_effect=Exception("no changesets")), \
+             patch("mcp_server.global_sync.get_global_stats", return_value={}), \
+             patch("mcp_server.auto_init.get_init_progress",
+                   side_effect=RuntimeError("init fail")):
+            result = learning.get_session_context()
+
+        # Function should complete successfully despite get_init_progress failing
+        assert result is not None
+        assert "recent_sessions" in result
+
+
+# =====================================================================
+# _maturity_hint boundary coverage (lines 233, 237)
+# =====================================================================
+
+class TestMaturityHint:
+    def test_score_above_80_returns_mature_hint(self):
+        """Score >= 80 returns the 'mature' hint string."""
+        result = learning._maturity_hint(80.0)
+        assert "mature" in result.lower() or "learned patterns" in result.lower()
+
+    def test_score_between_50_and_80_returns_good_progress_hint(self):
+        """Score >= 50 but < 80 returns the 'good progress' hint."""
+        result = learning._maturity_hint(60.0)
+        assert "confidence" in result.lower() or "progress" in result.lower()
+
+    def test_score_between_20_and_50_returns_building_hint(self):
+        """Score >= 20 but < 50 returns the 'still building' hint (line 237)."""
+        result = learning._maturity_hint(30.0)
+        assert "building" in result.lower() or "memory" in result.lower()
+
+    def test_score_below_20_returns_fresh_start_hint(self):
+        """Score < 20 returns the 'fresh start' hint."""
+        result = learning._maturity_hint(5.0)
+        assert "fresh" in result.lower() or "every session" in result.lower()

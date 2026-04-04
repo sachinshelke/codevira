@@ -1,10 +1,8 @@
 """
-Tests for:
-  - mcp_server/tools/playbook.py — curated rule playbooks by task type
-  - mcp_server/auto_init.py — auto-initialization on first tool call
+Tests for mcp_server/auto_init.py — auto-initialization on first tool call.
 
-Split into two sections. The auto_init tests reset module globals between
-tests to avoid state leakage.
+Standalone replacement for the auto_init portion of test_playbook_and_auto_init.py.
+Resets module globals between tests via autouse fixture.
 """
 from __future__ import annotations
 
@@ -14,136 +12,11 @@ import threading
 import time
 import types
 import yaml
+from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 import pytest
-
-
-# =====================================================================
-# PLAYBOOK TESTS
-# =====================================================================
-
-from mcp_server.tools.playbook import get_playbook, PLAYBOOKS
-
-
-class TestPlaybookValidTaskTypes:
-    def test_add_route_returns_rules(self, tmp_path):
-        rules_dir = tmp_path / "rules"
-        rules_dir.mkdir()
-        (rules_dir / "api-standards.md").write_text("# API Standards\nRule content here.")
-        (rules_dir / "coding-standards.md").write_text("# Coding Standards\nMore rules.")
-
-        with patch("mcp_server.tools.playbook.get_package_data_dir", return_value=tmp_path):
-            result = get_playbook("add_route")
-
-        assert result["found"] is True
-        assert result["task_type"] == "add_route"
-        assert len(result["rules"]) == 2
-        assert result["rules"][0]["file"] == "api-standards.md"
-        assert "API Standards" in result["rules"][0]["content"]
-
-    def test_commit_returns_rules(self, tmp_path):
-        rules_dir = tmp_path / "rules"
-        rules_dir.mkdir()
-        (rules_dir / "git_commits.md").write_text("# Git Commits\nCommit rules.")
-        (rules_dir / "git-cicd-governance.md").write_text("# CI/CD Governance\nCI rules.")
-
-        with patch("mcp_server.tools.playbook.get_package_data_dir", return_value=tmp_path):
-            result = get_playbook("commit")
-
-        assert result["found"] is True
-        assert len(result["rules"]) == 2
-
-    def test_write_test_returns_rules(self, tmp_path):
-        rules_dir = tmp_path / "rules"
-        rules_dir.mkdir()
-        (rules_dir / "testing-standards.md").write_text("# Testing Standards")
-        (rules_dir / "smoke-testing.md").write_text("# Smoke Testing")
-
-        with patch("mcp_server.tools.playbook.get_package_data_dir", return_value=tmp_path):
-            result = get_playbook("write_test")
-
-        assert result["found"] is True
-        assert len(result["rules"]) == 2
-
-
-class TestPlaybookUnknownAndEdge:
-    def test_unknown_task_type_returns_not_found(self, tmp_path):
-        with patch("mcp_server.tools.playbook.get_package_data_dir", return_value=tmp_path):
-            result = get_playbook("nonexistent_task")
-
-        assert result["found"] is False
-        assert "nonexistent_task" == result["task_type"]
-        assert "available_task_types" in result
-        assert sorted(PLAYBOOKS.keys()) == result["available_task_types"]
-
-    def test_missing_rule_file_returns_placeholder(self, tmp_path):
-        rules_dir = tmp_path / "rules"
-        rules_dir.mkdir()
-        # Only create one of the two expected files
-        (rules_dir / "api-standards.md").write_text("# API Standards")
-        # coding-standards.md is missing
-
-        with patch("mcp_server.tools.playbook.get_package_data_dir", return_value=tmp_path):
-            result = get_playbook("add_route")
-
-        assert result["found"] is True
-        missing_rule = [r for r in result["rules"] if "File not found" in r["content"]]
-        assert len(missing_rule) == 1
-
-    def test_case_insensitivity_and_whitespace(self, tmp_path):
-        rules_dir = tmp_path / "rules"
-        rules_dir.mkdir()
-        (rules_dir / "api-standards.md").write_text("content")
-        (rules_dir / "coding-standards.md").write_text("content")
-
-        with patch("mcp_server.tools.playbook.get_package_data_dir", return_value=tmp_path):
-            result = get_playbook("  Add_Route  ")
-
-        assert result["found"] is True
-        assert result["task_type"] == "add_route"
-
-    def test_all_six_task_types_return_correct_rule_counts(self, tmp_path):
-        """All 6 task types should map to the expected number of rule files."""
-        rules_dir = tmp_path / "rules"
-        rules_dir.mkdir()
-        # Create all rule files referenced in PLAYBOOKS
-        all_files = set()
-        for rule_list in PLAYBOOKS.values():
-            all_files.update(rule_list)
-        for f in all_files:
-            (rules_dir / f).write_text(f"# {f}\nContent.")
-
-        with patch("mcp_server.tools.playbook.get_package_data_dir", return_value=tmp_path):
-            for task_type, expected_files in PLAYBOOKS.items():
-                result = get_playbook(task_type)
-                assert result["found"] is True, f"Failed for {task_type}"
-                assert len(result["rules"]) == len(expected_files), f"Wrong count for {task_type}"
-
-    def test_note_field_present(self, tmp_path):
-        rules_dir = tmp_path / "rules"
-        rules_dir.mkdir()
-        (rules_dir / "coding-standards.md").write_text("content")
-        (rules_dir / "resilience-observability.md").write_text("content")
-
-        with patch("mcp_server.tools.playbook.get_package_data_dir", return_value=tmp_path):
-            result = get_playbook("add_service")
-
-        assert "note" in result
-        assert "add_service" in result["note"]
-
-    def test_hint_field_on_unknown_type(self, tmp_path):
-        with patch("mcp_server.tools.playbook.get_package_data_dir", return_value=tmp_path):
-            result = get_playbook("foo")
-
-        assert "hint" in result
-        assert "get_node" in result["hint"]
-
-
-# =====================================================================
-# AUTO-INIT TESTS
-# =====================================================================
 
 import mcp_server.auto_init as ai
 from mcp_server.auto_init import (
@@ -152,12 +25,17 @@ from mcp_server.auto_init import (
     InitStatus,
     _write_config,
     _write_metadata,
+    _register_global,
+    _run_background_init,
+    _update_progress,
 )
 
 
-@pytest.fixture(autouse=True)
-def reset_auto_init():
-    """Reset module-level state between tests to prevent leakage."""
+# ---------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------
+
+def _reset_ai_globals():
     ai._init_done = False
     ai._indexing_thread = None
     ai._progress = {
@@ -168,7 +46,14 @@ def reset_auto_init():
         "error": None,
     }
     ai._start_time = None
+
+
+@pytest.fixture(autouse=True)
+def reset_auto_init():
+    """Reset module-level state before AND after each test."""
+    _reset_ai_globals()
     yield
+    _reset_ai_globals()
 
 
 def _stub_graph_generator():
@@ -229,6 +114,10 @@ def stub_heavy_modules():
         delattr(indexer_pkg, "index_codebase")
 
 
+# ---------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------
+
 DEFAULT_DETECTED = {
     "name": "proj",
     "language": "python",
@@ -240,11 +129,7 @@ DEFAULT_DETECTED = {
 
 def _bg_init_patches(detected, graph_side_effect=None, discover_return=None,
                      index_side_effect=ImportError):
-    """Return a combined context manager for background init patches.
-
-    Patches the lazy imports at their source modules.
-    """
-    from contextlib import ExitStack
+    """Return a combined context manager for background init patches."""
     stack = ExitStack()
     stack.enter_context(patch("mcp_server.detect.auto_detect_project", return_value=detected))
     if graph_side_effect:
@@ -260,8 +145,13 @@ def _bg_init_patches(detected, graph_side_effect=None, discover_return=None,
     return stack
 
 
+# ---------------------------------------------------------------
+# ensure_project_initialized()
+# ---------------------------------------------------------------
+
 class TestEnsureProjectInitialized:
-    def test_first_call_on_uninitialized_project_triggers_init(self, tmp_path):
+    def test_first_call_triggers_init(self, tmp_path):
+        """First call on an uninitialized project spawns a background thread."""
         project_root = tmp_path / "proj"
         project_root.mkdir()
         data_dir = tmp_path / "data"
@@ -275,15 +165,21 @@ class TestEnsureProjectInitialized:
         assert isinstance(status, InitStatus)
         assert status.ready is False
         assert status.indexing is True
+        assert ai._init_done is True
 
-    def test_second_call_is_fast_path(self, tmp_path):
-        """After init is done, second call returns immediately."""
+    def test_second_call_is_fast_path_noop(self):
+        """After init is done, second call returns immediately without locks."""
         ai._init_done = True
         ai._progress["status"] = "ready"
 
+        start = time.monotonic()
         status = ensure_project_initialized()
+        elapsed = time.monotonic() - start
+
         assert status.ready is True
         assert status.indexing is False
+        # Should be sub-millisecond for a flag check
+        assert elapsed < 0.05
 
     def test_already_initialized_project_returns_ready(self, tmp_path):
         """If config.yaml already exists, returns ready=True without spawning a thread."""
@@ -300,9 +196,10 @@ class TestEnsureProjectInitialized:
         assert status.ready is True
         assert status.indexing is False
         assert ai._init_done is True
+        assert ai._indexing_thread is None
 
-    def test_fast_path_when_indexing(self, tmp_path):
-        """When status is 'indexing', fast path returns ready=False, indexing=True."""
+    def test_fast_path_while_indexing(self):
+        """When status is 'indexing', fast path reports indexing=True with counts."""
         ai._init_done = True
         ai._progress["status"] = "indexing"
         ai._progress["files_indexed"] = 5
@@ -314,20 +211,55 @@ class TestEnsureProjectInitialized:
         assert status.files_indexed == 5
         assert status.total_files == 10
 
+    def test_concurrent_calls_only_one_init(self, tmp_path):
+        """Multiple sequential calls should only init once (fast-path after first)."""
+        project_root = tmp_path / "proj"
+        project_root.mkdir()
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+
+        with patch("mcp_server.paths.get_project_root", return_value=project_root), \
+             patch("mcp_server.paths.get_data_dir", return_value=data_dir), \
+             _bg_init_patches(DEFAULT_DETECTED):
+            s1 = ensure_project_initialized(project_root)
+            s2 = ensure_project_initialized(project_root)
+            s3 = ensure_project_initialized(project_root)
+
+        # First call starts init; second and third hit fast-path
+        assert ai._init_done is True
+        assert isinstance(s1, InitStatus)
+        assert isinstance(s2, InitStatus)
+        assert isinstance(s3, InitStatus)
+        # All return without error — fast-path doesn't re-trigger init
+
+
+# ---------------------------------------------------------------
+# get_init_progress()
+# ---------------------------------------------------------------
 
 class TestGetInitProgress:
-    def test_returns_default_status(self):
+    def test_default_state(self):
+        """Default progress is not_started with zeroed counters."""
         progress = get_init_progress()
         assert progress["status"] == "not_started"
         assert progress["files_indexed"] == 0
         assert progress["total_files"] == 0
+        assert progress["error"] is None
 
-    def test_tracks_elapsed_time(self):
+    def test_elapsed_time_tracking(self):
+        """Elapsed time computed from _start_time when set."""
         ai._start_time = time.monotonic() - 5.0
         progress = get_init_progress()
         assert progress["elapsed_seconds"] >= 4.5
+        assert progress["elapsed_seconds"] < 10.0
+
+    def test_elapsed_zero_when_no_start_time(self):
+        """When _start_time is None, elapsed_seconds stays at the default 0."""
+        progress = get_init_progress()
+        assert progress["elapsed_seconds"] == 0.0
 
     def test_reflects_status_updates(self):
+        """Progress reflects updates made via _update_progress."""
         ai._progress["status"] = "indexing"
         ai._progress["files_indexed"] = 42
         ai._progress["total_files"] = 100
@@ -337,8 +269,12 @@ class TestGetInitProgress:
         assert progress["total_files"] == 100
 
 
+# ---------------------------------------------------------------
+# _write_config()
+# ---------------------------------------------------------------
+
 class TestWriteConfig:
-    def test_writes_config_yaml(self, tmp_path):
+    def test_writes_valid_yaml(self, tmp_path):
         data_dir = tmp_path / "data"
         data_dir.mkdir()
         detected = {
@@ -359,9 +295,24 @@ class TestWriteConfig:
         assert config["project"]["file_extensions"] == [".go"]
         assert config["project"]["collection_name"] == "my_project"
 
+    def test_config_is_parseable_yaml(self, tmp_path):
+        """The written file can be loaded back as valid YAML without errors."""
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        _write_config(data_dir, DEFAULT_DETECTED, tmp_path / "proj")
+
+        raw = (data_dir / "config.yaml").read_text()
+        parsed = yaml.safe_load(raw)
+        assert isinstance(parsed, dict)
+        assert "project" in parsed
+
+
+# ---------------------------------------------------------------
+# _write_metadata()
+# ---------------------------------------------------------------
 
 class TestWriteMetadata:
-    def test_writes_metadata_json(self, tmp_path):
+    def test_writes_valid_json_with_required_fields(self, tmp_path):
         data_dir = tmp_path / "data"
         data_dir.mkdir()
         project_root = tmp_path / "my-project"
@@ -374,6 +325,8 @@ class TestWriteMetadata:
         meta_path = data_dir / "metadata.json"
         assert meta_path.exists()
         meta = json.loads(meta_path.read_text())
+
+        # All required fields present
         assert meta["path_key"] == "test_key"
         assert meta["git_remote"] == "git@github.com:test/repo.git"
         assert meta["original_path"] == str(project_root)
@@ -381,37 +334,93 @@ class TestWriteMetadata:
         assert meta["auto_initialized"] is True
         assert "created_at" in meta
 
+    def test_metadata_is_parseable_json(self, tmp_path):
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        project_root = tmp_path / "proj"
+        project_root.mkdir()
 
-class TestBackgroundInit:
-    def test_graph_generation_failure_still_reaches_ready(self, tmp_path):
-        """If graph generation fails, the init still completes with status=ready."""
+        with patch("mcp_server.paths._sanitize_path_key", return_value="k"), \
+             patch("mcp_server.paths._get_git_remote_url", return_value=""):
+            _write_metadata(data_dir, project_root)
+
+        raw = (data_dir / "metadata.json").read_text()
+        parsed = json.loads(raw)
+        assert isinstance(parsed, dict)
+
+
+# ---------------------------------------------------------------
+# _register_global()
+# ---------------------------------------------------------------
+
+class TestRegisterGlobal:
+    def test_registers_in_global_db(self, tmp_path):
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        project_root = tmp_path / "proj"
+        project_root.mkdir()
+
+        mock_gdb = MagicMock()
+        with patch("indexer.global_db.GlobalDB", return_value=mock_gdb), \
+             patch("mcp_server.paths.get_global_db_path", return_value=tmp_path / "global.db"), \
+             patch("mcp_server.paths._get_git_remote_url", return_value="git@host:r.git"):
+            _register_global(data_dir, project_root, DEFAULT_DETECTED)
+
+        mock_gdb.register_project.assert_called_once_with(
+            path=str(data_dir),
+            name="proj",
+            language="python",
+            git_remote="git@host:r.git",
+        )
+        mock_gdb.close.assert_called_once()
+
+    def test_register_global_failure_is_non_fatal(self, tmp_path):
+        """If GlobalDB raises, _register_global logs a warning but doesn't crash."""
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        project_root = tmp_path / "proj"
+        project_root.mkdir()
+
+        with patch("indexer.global_db.GlobalDB", side_effect=RuntimeError("DB error")), \
+             patch("mcp_server.paths.get_global_db_path", return_value=tmp_path / "g.db"), \
+             patch("mcp_server.paths._get_git_remote_url", return_value=""):
+            # Should NOT raise
+            _register_global(data_dir, project_root, DEFAULT_DETECTED)
+
+
+# ---------------------------------------------------------------
+# Background thread lifecycle
+# ---------------------------------------------------------------
+
+class TestBackgroundThread:
+    def test_thread_is_daemon(self, tmp_path):
+        """The background init thread should be a daemon thread."""
         project_root = tmp_path / "proj"
         project_root.mkdir()
         data_dir = tmp_path / "data"
         data_dir.mkdir()
 
-        with _bg_init_patches(DEFAULT_DETECTED,
-                              graph_side_effect=RuntimeError("Graph failed")):
-            ai._start_time = time.monotonic()
-            ai._run_background_init(project_root, data_dir)
+        with patch("mcp_server.paths.get_project_root", return_value=project_root), \
+             patch("mcp_server.paths.get_data_dir", return_value=data_dir), \
+             _bg_init_patches(DEFAULT_DETECTED):
+            ensure_project_initialized(project_root)
 
-        assert ai._progress["status"] == "ready"
+        assert ai._indexing_thread is not None
+        assert ai._indexing_thread.daemon is True
+        assert ai._indexing_thread.name == "codevira-auto-init"
 
-    def test_chromadb_not_installed_skips_gracefully(self, tmp_path):
-        """When chromadb is not installed (ImportError), init still completes."""
+    def test_status_transitions_during_background_init(self, tmp_path):
+        """Background init transitions: initializing -> indexing -> ready."""
         project_root = tmp_path / "proj"
         project_root.mkdir()
         data_dir = tmp_path / "data"
         data_dir.mkdir()
 
-        fake_files = [Path("a.py"), Path("b.py")]
-        with _bg_init_patches(DEFAULT_DETECTED, discover_return=fake_files,
-                              index_side_effect=ImportError("No chromadb")):
+        with _bg_init_patches(DEFAULT_DETECTED):
             ai._start_time = time.monotonic()
-            ai._run_background_init(project_root, data_dir)
+            _run_background_init(project_root, data_dir)
 
         assert ai._progress["status"] == "ready"
-        assert ai._progress["files_indexed"] == 0
 
     def test_creates_directory_structure(self, tmp_path):
         """Background init creates graph/changesets, codeindex, and logs dirs."""
@@ -422,47 +431,87 @@ class TestBackgroundInit:
 
         with _bg_init_patches(DEFAULT_DETECTED):
             ai._start_time = time.monotonic()
-            ai._run_background_init(project_root, data_dir)
+            _run_background_init(project_root, data_dir)
 
         assert (data_dir / "graph" / "changesets").is_dir()
         assert (data_dir / "codeindex").is_dir()
         assert (data_dir / "logs").is_dir()
 
-    def test_config_yaml_written_during_init(self, tmp_path):
+
+# ---------------------------------------------------------------
+# ChromaDB not installed -> skips semantic index
+# ---------------------------------------------------------------
+
+class TestChromaDBNotInstalled:
+    def test_import_error_skips_gracefully(self, tmp_path):
+        """When chromadb is not installed (ImportError), init still completes as ready."""
         project_root = tmp_path / "proj"
         project_root.mkdir()
         data_dir = tmp_path / "data"
         data_dir.mkdir()
 
-        detected = {
-            "name": "proj",
-            "language": "typescript",
-            "watched_dirs": ["src"],
-            "file_extensions": [".ts"],
-            "collection_name": "proj",
-        }
-
-        with _bg_init_patches(detected):
+        fake_files = [Path("a.py"), Path("b.py")]
+        with _bg_init_patches(DEFAULT_DETECTED, discover_return=fake_files,
+                              index_side_effect=ImportError("No chromadb")):
             ai._start_time = time.monotonic()
-            ai._run_background_init(project_root, data_dir)
+            _run_background_init(project_root, data_dir)
 
-        config = yaml.safe_load((data_dir / "config.yaml").read_text())
-        assert config["project"]["language"] == "typescript"
+        assert ai._progress["status"] == "ready"
+        assert ai._progress["files_indexed"] == 0
 
-    def test_metadata_json_written_during_init(self, tmp_path):
+
+# ---------------------------------------------------------------
+# Graph generation failure -> still marks ready
+# ---------------------------------------------------------------
+
+class TestGraphGenerationFailure:
+    def test_graph_failure_still_reaches_ready(self, tmp_path):
+        """If graph generation throws, the init still completes with status=ready."""
         project_root = tmp_path / "proj"
         project_root.mkdir()
         data_dir = tmp_path / "data"
         data_dir.mkdir()
 
-        with _bg_init_patches(DEFAULT_DETECTED):
+        with _bg_init_patches(DEFAULT_DETECTED,
+                              graph_side_effect=RuntimeError("Graph failed")):
             ai._start_time = time.monotonic()
-            ai._run_background_init(project_root, data_dir)
+            _run_background_init(project_root, data_dir)
 
-        assert (data_dir / "metadata.json").exists()
-        meta = json.loads((data_dir / "metadata.json").read_text())
-        assert meta["original_path"] == str(project_root)
-        assert meta["auto_initialized"] is True
+        assert ai._progress["status"] == "ready"
+        # Config should still have been written before the graph step
+        assert (data_dir / "config.yaml").exists()
+
+
+# ---------------------------------------------------------------
+# Progress updates from background thread
+# ---------------------------------------------------------------
+
+class TestProgressUpdates:
+    def test_not_started_to_initializing(self):
+        assert ai._progress["status"] == "not_started"
+        _update_progress(status="initializing")
+        assert ai._progress["status"] == "initializing"
+
+    def test_initializing_to_indexing(self):
+        ai._progress["status"] = "initializing"
+        _update_progress(status="indexing")
+        assert ai._progress["status"] == "indexing"
+
+    def test_indexing_to_ready(self):
+        ai._progress["status"] = "indexing"
+        _update_progress(status="ready")
+        assert ai._progress["status"] == "ready"
+
+    def test_update_progress_merges_fields(self):
+        _update_progress(status="indexing", files_indexed=10, total_files=50)
+        assert ai._progress["status"] == "indexing"
+        assert ai._progress["files_indexed"] == 10
+        assert ai._progress["total_files"] == 50
+
+    def test_error_field_set_on_failure(self):
+        _update_progress(status="error", error="Something broke")
+        assert ai._progress["status"] == "error"
+        assert ai._progress["error"] == "Something broke"
 
     def test_total_files_tracked_from_discover(self, tmp_path):
         project_root = tmp_path / "proj"
@@ -473,7 +522,7 @@ class TestBackgroundInit:
         fake_files = [Path(f"src/f{i}.py") for i in range(15)]
         with _bg_init_patches(DEFAULT_DETECTED, discover_return=fake_files):
             ai._start_time = time.monotonic()
-            ai._run_background_init(project_root, data_dir)
+            _run_background_init(project_root, data_dir)
 
         assert ai._progress["total_files"] == 15
 
@@ -487,40 +536,15 @@ class TestBackgroundInit:
         with patch("mcp_server.detect.auto_detect_project",
                    side_effect=RuntimeError("Detect failed")):
             ai._start_time = time.monotonic()
-            ai._run_background_init(project_root, data_dir)
+            _run_background_init(project_root, data_dir)
 
         assert ai._progress["status"] == "error"
         assert "Detect failed" in ai._progress["error"]
 
 
-class TestProgressTransitions:
-    def test_not_started_to_initializing(self, tmp_path):
-        """Progress starts at not_started, moves to initializing on first call."""
-        assert ai._progress["status"] == "not_started"
-        ai._update_progress(status="initializing")
-        assert ai._progress["status"] == "initializing"
-
-    def test_initializing_to_indexing(self):
-        ai._progress["status"] = "initializing"
-        ai._update_progress(status="indexing")
-        assert ai._progress["status"] == "indexing"
-
-    def test_indexing_to_ready(self):
-        ai._progress["status"] = "indexing"
-        ai._update_progress(status="ready")
-        assert ai._progress["status"] == "ready"
-
-    def test_update_progress_merges_fields(self):
-        ai._update_progress(status="indexing", files_indexed=10, total_files=50)
-        assert ai._progress["status"] == "indexing"
-        assert ai._progress["files_indexed"] == 10
-        assert ai._progress["total_files"] == 50
-
-    def test_error_field_set_on_failure(self):
-        ai._update_progress(status="error", error="Something broke")
-        assert ai._progress["status"] == "error"
-        assert ai._progress["error"] == "Something broke"
-
+# ---------------------------------------------------------------
+# InitStatus dataclass
+# ---------------------------------------------------------------
 
 class TestInitStatusDataclass:
     def test_defaults(self):

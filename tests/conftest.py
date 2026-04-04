@@ -7,6 +7,18 @@ import mcp_server.paths as paths
 from indexer.sqlite_graph import SQLiteGraph
 
 
+@pytest.fixture(autouse=True)
+def _isolate_global_home(tmp_path, monkeypatch):
+    """Prevent ALL tests from writing to the real ~/.codevira/.
+
+    This autouse fixture ensures no test pollutes the real centralized
+    storage directory. Each test gets its own fake global home.
+    """
+    fake_home = tmp_path / "isolated-global-home"
+    fake_home.mkdir(exist_ok=True)
+    monkeypatch.setattr(paths, "get_global_home", lambda: fake_home)
+
+
 @pytest.fixture
 def project_env(tmp_path, monkeypatch):
     """Isolated project with .codevira dir, config.yaml, and SQLiteGraph."""
@@ -21,10 +33,7 @@ def project_env(tmp_path, monkeypatch):
 
     monkeypatch.setattr(paths, "_project_dir_override", None)
     monkeypatch.chdir(project.resolve())
-    # Patch get_global_home to avoid polluting real ~/.codevira
-    fake_home = tmp_path / "global-home"
-    fake_home.mkdir()
-    monkeypatch.setattr(paths, "get_global_home", lambda: fake_home)
+    # get_global_home is already patched by the autouse _isolate_global_home fixture
 
     db = SQLiteGraph(data_dir / "graph" / "graph.db")
     yield project, data_dir, db

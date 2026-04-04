@@ -1,8 +1,12 @@
 """
-Tests for mcp_server/tools/graph.py — extended coverage for graph querying,
-impact analysis, hotspot detection, git-based diff/analysis, and refresh.
+Tests for mcp_server/tools/graph.py -- full coverage for graph CRUD,
+querying, impact analysis, hotspot detection, git-based diff/analysis,
+export, and refresh.
 
 Covers:
+  - add_node: basic, all optional params (stability, do_not_revert, key_functions, tests, rules)
+  - update_node: update rules, stability, key_functions; non-existent node error
+  - get_node: node found with full fields, index staleness detection, not-found fallback
   - list_nodes: filter by layer, stability, do_not_revert
   - query_graph: callers, callees, tests, symbols, dependents
   - find_hotspots: large functions, high fan-in, high fan-out
@@ -11,6 +15,15 @@ Covers:
   - get_graph_diff: mocked git subprocess
   - analyze_changes: mocked git subprocess, risk scoring
   - refresh_graph: auto-generate stubs (mocked)
+  - _check_staleness: file doesn't exist on disk, index missing, file newer than index
+
+Chaos tests:
+  - add_node with empty strings
+  - update_node for non-existent node
+  - get_impact on deeply nested chain (A->B->C->D->E)
+  - export_graph with 50+ nodes (performance)
+  - query_graph with None symbol
+  - find_hotspots with threshold=0 (everything is a hotspot)
 
 Edge cases: empty graph, isolated nodes, circular deps, deep chains,
 filter combinations, no git repo.
@@ -19,6 +32,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import time
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
@@ -99,6 +113,224 @@ def _add_symbols(db: SQLiteGraph) -> None:
     # Multiple callers for sanitize (high fan-in scenario)
     db.add_call_edge("file:src/api.py::validate_input", "file:src/utils.py::sanitize")
     db.add_call_edge("file:src/core.py::transform", "file:src/utils.py::sanitize")
+
+
+# =====================================================================
+# add_node
+# =====================================================================
+
+class TestAddNode:
+    def test_add_node_basic(self, tmp_path, monkeypatch):
+        """Adding a basic node with required params should succeed."""
+        _, _, db = _setup_project(tmp_path, monkeypatch)
+        db.close()
+        result = graph.add_node("src/new.py", role="New module", layer="service")
+        assert "status" in result
+        assert "src/new.py" in result["status"]
+
+        # Verify node was persisted
+        node_result = graph.get_node("src/new.py")
+        assert node_result["found"] is True
+        assert node_result["node"]["role"] == "New module"
+        assert node_result["node"]["layer"] == "service"
+
+    def test_add_node_with_all_optional_params(self, tmp_path, monkeypatch):
+        """Adding a node with stability, do_not_revert, key_functions, tests, rules."""
+        _, _, db = _setup_project(tmp_path, monkeypatch)
+        db.close()
+        result = graph.add_node(
+            file_path="src/critical.py",
+            role="Critical payment handler",
+            layer="core",
+            stability="high",
+            do_not_revert=True,
+            key_functions=["process_payment", "validate_card"],
+            rules=["Never remove error handling", "Keep retry logic"],
+            tests=["tests/test_payment.py"],
+            connects_to=[{"target": "src/db.py", "edge": "imports", "via": "sqlalchemy"}],
+        )
+        assert "status" in result
+        assert "src/critical.py" in result["status"]
+
+        # Verify all fields persisted
+        node_result = graph.get_node("src/critical.py")
+        assert node_result["found"] is True
+        node = node_result["node"]
+        assert node["stability"] == "high"
+        assert bool(node["do_not_revert"]) is True
+        assert "process_payment" in node["key_functions"]
+        assert "validate_card" in node["key_functions"]
+        assert "Never remove error handling" in node["rules"]
+        assert "Keep retry logic" in node["rules"]
+
+    def test_add_node_default_stability_is_medium(self, tmp_path, monkeypatch):
+        """Default stability should be 'medium' when not specified."""
+        _, _, db = _setup_project(tmp_path, monkeypatch)
+        db.close()
+        graph.add_node("src/default.py", role="Default module", layer="misc")
+        node_result = graph.get_node("src/default.py")
+        assert node_result["node"]["stability"] == "medium"
+
+    def test_add_node_empty_strings_chaos(self, tmp_path, monkeypatch):
+        """Chaos: add_node with empty string params should not crash."""
+        _, _, db = _setup_project(tmp_path, monkeypatch)
+        db.close()
+        result = graph.add_node(file_path="", role="", layer="")
+        # Should succeed without crashing -- the node is created with empty strings
+        assert "status" in result
+
+
+# =====================================================================
+# update_node
+# =====================================================================
+
+class TestUpdateNode:
+    def test_update_rules_list(self, tmp_path, monkeypatch):
+        """Updating rules should merge with existing rules."""
+        _, _, db = _setup_project(tmp_path, monkeypatch)
+        db.close()
+        graph.add_node("src/svc.py", role="Service", layer="service",
+                       rules=["Rule A"])
+        result = graph.update_node("src/svc.py", {"rules": ["Rule B", "Rule C"]})
+        assert "status" in result
+        assert "Updated" in result["status"]
+
+        node = graph.get_node("src/svc.py")["node"]
+        assert "Rule A" in node["rules"]
+        assert "Rule B" in node["rules"]
+        assert "Rule C" in node["rules"]
+
+    def test_update_stability(self, tmp_path, monkeypatch):
+        """Updating stability should replace the value."""
+        _, _, db = _setup_project(tmp_path, monkeypatch)
+        db.close()
+        graph.add_node("src/evolve.py", role="Evolving module", layer="core",
+                       stability="low")
+        graph.update_node("src/evolve.py", {"stability": "high"})
+        node = graph.get_node("src/evolve.py")["node"]
+        assert node["stability"] == "high"
+
+    def test_update_key_functions(self, tmp_path, monkeypatch):
+        """Updating key_functions should merge with existing ones."""
+        _, _, db = _setup_project(tmp_path, monkeypatch)
+        db.close()
+        graph.add_node("src/funcs.py", role="Functions", layer="utils",
+                       key_functions=["func_a"])
+        graph.update_node("src/funcs.py", {"key_functions": ["func_b"]})
+        node = graph.get_node("src/funcs.py")["node"]
+        assert "func_a" in node["key_functions"]
+        assert "func_b" in node["key_functions"]
+
+    def test_update_do_not_revert(self, tmp_path, monkeypatch):
+        """Updating do_not_revert should change the flag."""
+        _, _, db = _setup_project(tmp_path, monkeypatch)
+        db.close()
+        graph.add_node("src/protect.py", role="Protected", layer="core")
+        graph.update_node("src/protect.py", {"do_not_revert": True})
+        node = graph.get_node("src/protect.py")["node"]
+        assert bool(node["do_not_revert"]) is True
+
+    def test_update_nonexistent_node_returns_error(self, tmp_path, monkeypatch):
+        """Chaos: update_node for a node that doesn't exist should return error."""
+        _, _, db = _setup_project(tmp_path, monkeypatch)
+        db.close()
+        result = graph.update_node("nonexistent/file.py", {"stability": "high"})
+        assert "error" in result
+        assert "not found" in result["error"].lower()
+
+
+# =====================================================================
+# get_node
+# =====================================================================
+
+class TestGetNode:
+    def test_get_node_found_with_full_fields(self, tmp_path, monkeypatch):
+        """get_node should return all fields including parsed JSON."""
+        _, _, db = _setup_project(tmp_path, monkeypatch)
+        db.close()
+        graph.add_node(
+            "src/full.py",
+            role="Full node",
+            layer="api",
+            stability="high",
+            key_functions=["main", "init"],
+            rules=["Do not modify"],
+            connects_to=[{"target": "src/db.py", "edge": "imports"}],
+            do_not_revert=True,
+        )
+        result = graph.get_node("src/full.py")
+        assert result["found"] is True
+        assert result["file_path"] == "src/full.py"
+        node = result["node"]
+        assert node["role"] == "Full node"
+        assert node["layer"] == "api"
+        assert node["stability"] == "high"
+        assert isinstance(node["key_functions"], list)
+        assert "main" in node["key_functions"]
+        assert isinstance(node["rules"], list)
+        assert "Do not modify" in node["rules"]
+        assert bool(node["do_not_revert"]) is True
+        # index_status should be present
+        assert "index_status" in result
+        assert "stale" in result["index_status"]
+        # hint should be present
+        assert "hint" in result
+
+    def test_get_node_not_found(self, tmp_path, monkeypatch):
+        """get_node for a non-existent path should return found=False."""
+        _, _, db = _setup_project(tmp_path, monkeypatch)
+        db.close()
+        result = graph.get_node("does/not/exist.py")
+        assert result["found"] is False
+        assert "hint" in result
+
+    def test_staleness_file_does_not_exist(self, tmp_path, monkeypatch):
+        """_check_staleness should flag stale=True if file is missing from disk."""
+        _, _, db = _setup_project(tmp_path, monkeypatch)
+        db.close()
+        # Add a node for a file that doesn't exist on disk
+        graph.add_node("src/ghost.py", role="Ghost", layer="core")
+        result = graph.get_node("src/ghost.py")
+        assert result["found"] is True
+        staleness = result["index_status"]
+        assert staleness["stale"] is True
+        assert "does not exist" in staleness["reason"].lower() or "missing" in staleness["reason"].lower()
+
+    def test_staleness_index_missing(self, tmp_path, monkeypatch):
+        """_check_staleness should flag stale when .last_indexed file is missing."""
+        project_root, data_dir, db = _setup_project(tmp_path, monkeypatch)
+        db.close()
+        # Create the actual file on disk so file_mtime is not None
+        src_dir = project_root / "src"
+        src_dir.mkdir(parents=True)
+        (src_dir / "real.py").write_text("x = 1")
+        graph.add_node("src/real.py", role="Real file", layer="core")
+
+        result = graph.get_node("src/real.py")
+        staleness = result["index_status"]
+        # No .last_indexed file exists, so index_ts is None -> stale
+        assert staleness["stale"] is True
+        assert "index missing" in staleness["reason"].lower() or "last_indexed" in staleness["reason"].lower()
+
+    def test_staleness_file_newer_than_index(self, tmp_path, monkeypatch):
+        """_check_staleness should flag stale when file is newer than index."""
+        project_root, data_dir, db = _setup_project(tmp_path, monkeypatch)
+        db.close()
+        src_dir = project_root / "src"
+        src_dir.mkdir(parents=True)
+        (src_dir / "fresh.py").write_text("y = 2")
+
+        # Create index timestamp in the past
+        index_dir = data_dir / "codeindex"
+        index_dir.mkdir(parents=True)
+        past_ts = time.time() - 3600  # 1 hour ago
+        (index_dir / ".last_indexed").write_text(str(past_ts))
+
+        graph.add_node("src/fresh.py", role="Fresh file", layer="core")
+        result = graph.get_node("src/fresh.py")
+        staleness = result["index_status"]
+        assert staleness["stale"] is True
+        assert "modified after" in staleness["reason"].lower()
 
 
 # =====================================================================
@@ -251,6 +483,15 @@ class TestQueryGraph:
         result = graph.query_graph("src/api.py", symbol="handle_request", query_type="invalid")
         assert "error" in result
 
+    def test_query_with_none_symbol_chaos(self, tmp_path, monkeypatch):
+        """Chaos: query_graph with None symbol for callers should return error, not crash."""
+        _, _, db = _setup_project(tmp_path, monkeypatch)
+        _populate_graph(db)
+        _add_symbols(db)
+        db.close()
+        result = graph.query_graph("src/api.py", symbol=None, query_type="callers")
+        assert "error" in result
+
 
 # =====================================================================
 # find_hotspots
@@ -312,6 +553,21 @@ class TestFindHotspots:
         assert result["high_fan_in"] == []
         assert result["high_fan_out"] == []
 
+    def test_threshold_zero_everything_is_hotspot(self, tmp_path, monkeypatch):
+        """Chaos: threshold=0 should make every function a 'large function'."""
+        _, _, db = _setup_project(tmp_path, monkeypatch)
+        _populate_graph(db)
+        _add_symbols(db)
+        db.close()
+        result = graph.find_hotspots(threshold=0)
+        large = result["large_functions"]
+        # All 6 symbols should appear (every function has lines > 0)
+        assert len(large) >= 5
+        names = {f["name"] for f in large}
+        assert "handle_request" in names
+        assert "sanitize" in names
+        assert "process_data" in names
+
 
 # =====================================================================
 # get_impact (BFS blast radius)
@@ -370,7 +626,7 @@ class TestGetImpact:
         db.close()
         result = graph.get_impact("x.py")
         assert result["found"] is True
-        # Should not hang or crash — circular path detection in SQL prevents infinite recursion
+        # Should not hang or crash -- circular path detection in SQL prevents infinite recursion
         assert isinstance(result["blast_radius"], int)
 
     def test_impact_partial_match(self, tmp_path, monkeypatch):
@@ -383,6 +639,23 @@ class TestGetImpact:
         result = graph.get_impact("src/utils.py")
         assert result["found"] is True
         assert result["target_file"] == "src/utils.py"
+
+    def test_impact_deeply_nested_five_levels_chaos(self, tmp_path, monkeypatch):
+        """Chaos: A->B->C->D->E chain, check that impact analysis does not crash."""
+        _, _, db = _setup_project(tmp_path, monkeypatch)
+        chain = ["alpha.py", "bravo.py", "charlie.py", "delta.py", "echo.py"]
+        for f in chain:
+            db.add_node(f"file:{f}", "file", f, f, layer="deep")
+        for i in range(len(chain) - 1):
+            db.add_edge(f"file:{chain[i]}", f"file:{chain[i+1]}", kind="imports")
+        db.close()
+
+        # Impact from the leaf node
+        result = graph.get_impact("echo.py")
+        assert result["found"] is True
+        # delta.py should definitely be affected (depth 1)
+        affected = {a["file"] for a in result["affected_files"]}
+        assert "delta.py" in affected
 
 
 # =====================================================================
@@ -431,6 +704,26 @@ class TestExportGraph:
         assert result["node_count"] == 0
         assert result["edge_count"] == 0
         assert "graph LR" in result["output"]
+
+    def test_export_fifty_plus_nodes_performance_chaos(self, tmp_path, monkeypatch):
+        """Chaos: export_graph with 55 nodes should complete without error."""
+        _, _, db = _setup_project(tmp_path, monkeypatch)
+        for i in range(55):
+            db.add_node(f"file:src/mod_{i}.py", "file", f"mod_{i}.py",
+                        f"src/mod_{i}.py", layer="gen")
+        # Add some edges too
+        for i in range(54):
+            db.add_edge(f"file:src/mod_{i}.py", f"file:src/mod_{i+1}.py", kind="imports")
+        db.close()
+
+        result = graph.export_graph(format="mermaid")
+        assert result["node_count"] == 55
+        assert result["edge_count"] == 54
+        assert "graph LR" in result["output"]
+
+        result_dot = graph.export_graph(format="dot")
+        assert result_dot["node_count"] == 55
+        assert "digraph codevira" in result_dot["output"]
 
 
 # =====================================================================

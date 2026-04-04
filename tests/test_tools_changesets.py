@@ -15,7 +15,9 @@ from mcp_server.tools.changesets import (
     complete_changeset,
     get_changeset,
     list_open_changesets,
+    update_node_after_change,
 )
+from mcp_server.tools import graph
 
 
 # =====================================================================
@@ -291,3 +293,39 @@ class TestListOpenChangesets:
         result = list_open_changesets()
         assert result["count"] == 0
         assert result["warning"] is None
+
+
+# =====================================================================
+# Ported from test_stability.py: update_node_after_change
+# =====================================================================
+
+class TestUpdateNodeAfterChange:
+    def test_update_node_after_change_updates_sqlite_graph(self, project_env):
+        """Ported from test_stability.py: update_node_after_change should persist
+        new_rules, new_connections, key_functions, and do_not_revert into the
+        SQLite graph node."""
+        _project, _data_dir, _db = project_env
+
+        graph.add_node(
+            file_path="src/example.py",
+            role="Example module",
+            layer="service",
+            rules=["Keep responses stable"],
+        )
+
+        result = update_node_after_change(
+            "src/example.py",
+            {
+                "new_rules": ["Preserve legacy payload shape"],
+                "new_connections": [{"target": "src/other.py", "edge": "uses", "via": "import"}],
+                "do_not_revert": True,
+                "key_functions": ["run"],
+            },
+        )
+        node = graph.get_node("src/example.py")["node"]
+
+        assert result["success"] is True
+        assert "Preserve legacy payload shape" in node["rules"]
+        assert any(dep["target"] == "src/other.py" for dep in node["dependencies"])
+        assert "run" in node["key_functions"]
+        assert bool(node["do_not_revert"]) is True

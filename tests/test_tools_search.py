@@ -299,3 +299,106 @@ class TestRefreshIndex:
             refresh_index([])
         _, kwargs = mock_cmd.call_args
         assert kwargs["file_paths"] is None
+
+    def test_refresh_index_passes_explicit_file_paths(self, project_env, monkeypatch):
+        """Ported from test_stability.py: explicit file_paths are forwarded to cmd_incremental."""
+        from indexer import index_codebase
+
+        calls = []
+
+        def fake_cmd_incremental(*, quiet, file_paths=None):
+            calls.append({"quiet": quiet, "file_paths": file_paths})
+            return 0
+
+        monkeypatch.setattr(index_codebase, "cmd_incremental", fake_cmd_incremental)
+
+        result = refresh_index(["src/app.py"])
+
+        assert calls == [{"quiet": True, "file_paths": ["src/app.py"]}]
+        assert result["mode"] == "targeted"
+        assert result["file_paths"] == ["src/app.py"]
+
+
+# ---------------------------------------------------------------------------
+# Ported from tests/test_search.py: search_decisions via get_data_dir
+# ---------------------------------------------------------------------------
+
+class TestSearchDecisionsPorted:
+    def test_search_decisions_via_direct_db(self, project_env):
+        """Ported from test_search.py: search_decisions finds seeded decisions."""
+        _project, data_dir, db = project_env
+        db.log_session(
+            "test-1", "Test summary", "phase 1",
+            [{"file_path": "a.py", "decision": "Made a decision"}],
+        )
+        with patch("mcp_server.tools.search._get_db", return_value=db):
+            res = search_decisions("Made a decision")
+        assert len(res["results"]) > 0
+        assert "Made a decision" in [r["decision"] for r in res["results"]]
+
+
+# ---------------------------------------------------------------------------
+# New: search_codebase with layer filter parameter
+# ---------------------------------------------------------------------------
+
+class TestSearchCodebaseLayerFilter:
+    def test_search_codebase_with_layer_filter(self, project_env):
+        """search_codebase passes query to ChromaDB; layer filtering is client-side."""
+        mock_client = MagicMock()
+        mock_embed = MagicMock()
+        mock_collection = MagicMock()
+        mock_client.get_collection.return_value = mock_collection
+        mock_collection.query.return_value = {
+            "documents": [["def handler():\n    pass", "class Util:\n    pass"]],
+            "metadatas": [[
+                {"file_path": "src/api/handler.py", "chunk_type": "function",
+                 "name": "handler"},
+                {"file_path": "src/utils/util.py", "chunk_type": "class",
+                 "name": "Util"},
+            ]],
+            "distances": [[0.1, 0.3]],
+        }
+        with patch("mcp_server.tools.search._get_chroma_client",
+                    return_value=(mock_client, mock_embed)):
+            result = search_codebase("handler", top_k=5)
+        assert "matches" in result
+        assert len(result["matches"]) == 2
+        # Verify the first match has a higher relevance score
+        assert result["matches"][0]["relevance_score"] > result["matches"][1]["relevance_score"]
+
+
+# ---------------------------------------------------------------------------
+# New: get_history with SQL injection attempt
+# ---------------------------------------------------------------------------
+
+class TestGetHistorySQLInjection:
+    def test_sql_injection_in_file_path_is_safe(self, project_env):
+        """get_history uses parameterized queries, so SQL injection strings are harmless."""
+        _project, _data_dir, db = project_env
+        malicious_path = "'; DROP TABLE sessions; --"
+        with patch("mcp_server.tools.search._get_db", return_value=db):
+            result = get_history(malicious_path)
+        # Should not crash, should just return empty history
+        assert result["file_path"] == malicious_path
+        assert result["history"] == []
+        # Verify the sessions table still exists by querying it
+        from indexer.sqlite_graph import SQLiteGraph
+        verify_db = SQLiteGraph(_data_dir / "graph" / "graph.db")
+        cur = verify_db.conn.execute("SELECT COUNT(*) FROM sessions")
+        row = cur.fetchone()
+        assert row is not None
+        verify_db.close()
+
+
+# ---------------------------------------------------------------------------
+# New: refresh_index with empty file list -> incremental mode
+# ---------------------------------------------------------------------------
+
+class TestRefreshIndexEmptyList:
+    def test_empty_file_list_uses_incremental_mode(self, project_env):
+        """refresh_index([]) should use incremental mode (file_paths=None)."""
+        with patch("indexer.index_codebase.cmd_incremental") as mock_cmd:
+            result = refresh_index([])
+        mock_cmd.assert_called_once_with(quiet=True, file_paths=None)
+        assert result["mode"] == "incremental"
+        assert "all changed" in result["status"].lower()

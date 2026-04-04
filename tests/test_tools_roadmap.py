@@ -476,3 +476,57 @@ class TestEdgeCases:
         result = roadmap.get_full_roadmap()
         assert len(result["upcoming_phases"]) == 8
         assert "summary" in result
+
+
+# =====================================================================
+# Ported from test_stability.py: legacy migration
+# =====================================================================
+
+class TestLegacyMigration:
+    def test_get_roadmap_migrates_legacy_current_phase(self, tmp_path, monkeypatch):
+        """Ported from test_stability.py: legacy roadmap with integer current_phase
+        should be migrated to the new dict-based format on first access."""
+        project_root = tmp_path / "legacy-project"
+        data_dir = project_root / ".codevira"
+        data_dir.mkdir(parents=True)
+        (data_dir / "config.yaml").write_text("project:\n  name: test\n")
+        monkeypatch.setattr(paths, "_project_dir_override", None)
+        monkeypatch.chdir(project_root.resolve())
+
+        legacy_roadmap = {
+            "current_phase": 1,
+            "next_action": "Finish bootstrapping",
+            "open_changesets": ["cs-1"],
+            "phases": [
+                {
+                    "number": 1,
+                    "name": "Bootstrap",
+                    "description": "Initialize the project",
+                    "status": "in_progress",
+                },
+                {
+                    "number": 2,
+                    "name": "Next Phase",
+                    "description": "Follow-up work",
+                    "status": "pending",
+                },
+            ],
+            "deferred": [],
+        }
+        _write_roadmap(data_dir, legacy_roadmap)
+
+        compact = roadmap.get_roadmap()
+        full = roadmap.get_full_roadmap()
+
+        assert compact["current_phase"]["number"] == 1
+        assert compact["current_phase"]["name"] == "Bootstrap"
+        assert compact["current_phase"]["open_changesets"] == ["cs-1"]
+        assert compact["upcoming"][0]["phase"] == 2
+        assert full["current_phase"]["number"] == 1
+        assert full["upcoming_phases"][0]["number"] == 2
+
+        migrated = _read_roadmap(data_dir)
+
+        assert isinstance(migrated["current_phase"], dict)
+        assert migrated["current_phase"]["number"] == 1
+        assert migrated["upcoming_phases"][0]["phase"] == 2

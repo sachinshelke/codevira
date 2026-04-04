@@ -597,6 +597,8 @@ class TestResolveCommand:
     def test_fallback_returns_python_exe(self, tmp_path, monkeypatch):
         monkeypatch.setattr("shutil.which", lambda name: None)
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        # Also ensure sibling binary doesn't exist (venv may have codevira-mcp installed)
+        monkeypatch.setattr(Path, "exists", lambda self: False)
         cmd_path, python_exe = _resolve_command()
         assert cmd_path == python_exe
         assert python_exe == sys.executable

@@ -162,6 +162,14 @@ def migrate_to_centralized(project_root: Path) -> dict:
         if gdb is not None:
             gdb.close()
 
+    # Invalidate the data-dir cache so get_data_dir() now returns the newly
+    # populated centralized directory, not the old legacy path.
+    try:
+        from mcp_server.paths import invalidate_data_dir_cache
+        invalidate_data_dir_cache(project_root)
+    except Exception:
+        pass  # Cache invalidation is best-effort; migration proceeds regardless
+
     # 7. Rename old .codevira/ → .codevira.migrated/ (safety net, not deleted)
     migrated_backup = project_root / ".codevira.migrated"
     if migrated_backup.exists():

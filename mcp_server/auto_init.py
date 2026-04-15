@@ -24,7 +24,10 @@ logger = logging.getLogger(__name__)
 
 # Module-level state — initialized once per process
 _init_lock = threading.Lock()
-_init_done: bool = False
+# True once the init thread has been *started* (not necessarily finished).
+# Named _init_started to be precise — use _progress["status"] to know if
+# initialization has *completed*.
+_init_started: bool = False
 _indexing_thread: threading.Thread | None = None
 _progress: dict = {
     "status": "not_started",   # not_started | initializing | indexing | ready | error
@@ -67,10 +70,10 @@ def ensure_project_initialized(project_root: Path | None = None) -> InitStatus:
     Returns:
         InitStatus with ready/indexing flags and progress counts.
     """
-    global _init_done, _indexing_thread, _start_time
+    global _init_started, _indexing_thread, _start_time
 
-    # Fast path — already initialized this process
-    if _init_done:
+    # Fast path — init thread already started this process
+    if _init_started:
         with _progress_lock:
             status = _progress["status"]
             files_indexed = _progress["files_indexed"]
@@ -84,7 +87,7 @@ def ensure_project_initialized(project_root: Path | None = None) -> InitStatus:
 
     with _init_lock:
         # Double-checked locking
-        if _init_done:
+        if _init_started:
             with _progress_lock:
                 return InitStatus(
                     ready=(_progress["status"] == "ready"),
@@ -99,7 +102,7 @@ def ensure_project_initialized(project_root: Path | None = None) -> InitStatus:
 
         # Check if already initialized (config.yaml exists)
         if (data_dir / "config.yaml").is_file():
-            _init_done = True
+            _init_started = True
             with _progress_lock:
                 _progress["status"] = "ready"
             return InitStatus(ready=True, indexing=False)
@@ -117,7 +120,8 @@ def ensure_project_initialized(project_root: Path | None = None) -> InitStatus:
             name="codevira-auto-init",
         )
         _indexing_thread.start()
-        _init_done = True  # Prevent duplicate init threads
+        _init_started = True  # Prevent duplicate init threads — thread completion
+                               # is tracked via _progress["status"], not this flag.
 
         return InitStatus(ready=False, indexing=True)
 
@@ -143,6 +147,11 @@ def _run_background_init(project_root: Path, data_dir: Path) -> None:
 
         # Step 4: Write metadata.json (centralized storage marker)
         _write_metadata(data_dir, project_root)
+
+        # Invalidate the data-dir cache so get_data_dir() now returns the newly
+        # created centralized directory instead of the pre-init default path.
+        from mcp_server.paths import invalidate_data_dir_cache
+        invalidate_data_dir_cache(project_root)
 
         # Step 5: Register in global.db
         _register_global(data_dir, project_root, detected)
@@ -171,7 +180,12 @@ def _run_background_init(project_root: Path, data_dir: Path) -> None:
             from indexer.index_codebase import start_background_full_index
             _update_progress(status="indexing")
             idx_thread = start_background_full_index()
-            idx_thread.join()  # we're already in a daemon thread; wait for completion
+            # Wait up to 5 minutes; if ChromaDB or embedding model hangs we still
+            # surface "ready" so tool calls aren't blocked indefinitely.
+            idx_thread.join(timeout=300)
+            if idx_thread.is_alive():
+                logger.warning("Auto-init: semantic indexing timed out after 5 min; "
+                               "continuing in graph-only mode")
             _update_progress(files_indexed=len(files), status="ready")
         except ImportError:
             # ChromaDB not installed — graph-only mode is fine

@@ -12,6 +12,12 @@ Project root discovery (get_project_root()):
   - Walks upward from cwd looking for project markers:
     .git, pyproject.toml, package.json, go.mod, Cargo.toml, .codevira/
   - Falls back to cwd if no marker found
+
+Performance notes:
+  - get_data_dir() result is cached per project root (_data_dir_cache).
+    First call may spawn one `git remote` subprocess and scan metadata files;
+    every subsequent call for the same root is a dict lookup (~0µs).
+  - Call invalidate_data_dir_cache() after init/migration to force re-resolution.
 """
 from __future__ import annotations
 
@@ -144,16 +150,60 @@ def get_project_root() -> Path:
 # Data directory resolution (v1.6 centralized + legacy fallback)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Data directory cache — avoids re-running subprocess + glob on every tool call.
+# Keyed by resolved project root Path.  Invalidated after init/migration.
+# ---------------------------------------------------------------------------
+_data_dir_cache: dict[Path, Path] = {}
+
+
+def invalidate_data_dir_cache(project_root: Path | None = None) -> None:
+    """Clear the data-dir cache so the next call re-resolves from disk.
+
+    Call this after codevira init or after a migration completes, when the
+    centralized directory has just been created and the cache entry would
+    still point to the old (non-existent) default path.
+
+    Args:
+        project_root: If given, only invalidate that project's entry.
+                      If None, clear the entire cache.
+    """
+    if project_root is None:
+        _data_dir_cache.clear()
+    else:
+        _data_dir_cache.pop(Path(project_root).resolve(), None)
+
+
 def get_data_dir() -> Path:
     """Return the Codevira data directory for the current project.
 
-    Resolution chain:
+    Resolution chain (run once per project root, then cached):
       1. Centralized ~/.codevira/projects/<key>/ if config.yaml exists there
       2. Git remote lookup — finds centralized dir even after directory rename
       3. Legacy <project_root>/.codevira/ if config.yaml exists there
       4. Default to centralized path (new projects land here automatically)
+
+    After the first call for a given project root the result is cached in
+    _data_dir_cache.  Subsequent calls are O(1) dict lookups with no I/O.
+    Call invalidate_data_dir_cache() after init or migration to force refresh.
     """
     project_root = get_project_root()
+
+    # Fast path — already resolved for this root
+    if project_root in _data_dir_cache:
+        return _data_dir_cache[project_root]
+
+    result = _resolve_data_dir(project_root)
+    _data_dir_cache[project_root] = result
+    return result
+
+
+def _resolve_data_dir(project_root: Path) -> Path:
+    """Perform the actual (potentially slow) data-dir resolution.
+
+    This is the only place that spawns subprocesses or reads metadata files.
+    Always call get_data_dir() in production code — it caches this result.
+    """
     key = _sanitize_path_key(project_root)
     centralized = get_global_home() / "projects" / key
 
@@ -161,7 +211,10 @@ def get_data_dir() -> Path:
     if (centralized / "config.yaml").is_file():
         return centralized
 
-    # 2. Try git remote lookup (survives directory renames)
+    # 2. Try git remote lookup (survives directory renames).
+    #    _get_git_remote_url() and _find_project_by_git_remote() are the
+    #    potentially expensive operations — subprocess + metadata file scan.
+    #    They only run once per project root thanks to the cache above.
     remote_url = _get_git_remote_url(project_root)
     if remote_url:
         found = _find_project_by_git_remote(remote_url)

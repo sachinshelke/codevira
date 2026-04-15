@@ -26,11 +26,12 @@ _bg_status: str = "idle"   # idle | running | done | error
 _bg_lock = threading.Lock()
 
 
-def _project_root():
+def _project_root() -> Path:
     return get_project_root()
 
 
-def _index_dir():
+def _index_dir() -> Path:
+    # get_data_dir() is cached in paths.py (_data_dir_cache), so this is fast.
     return get_data_dir() / "codeindex"
 
 def _load_config() -> dict:

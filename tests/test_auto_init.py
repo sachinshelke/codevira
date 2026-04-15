@@ -36,7 +36,7 @@ from mcp_server.auto_init import (
 # ---------------------------------------------------------------
 
 def _reset_ai_globals():
-    ai._init_done = False
+    ai._init_started = False
     ai._indexing_thread = None
     ai._progress = {
         "status": "not_started",
@@ -165,11 +165,11 @@ class TestEnsureProjectInitialized:
         assert isinstance(status, InitStatus)
         assert status.ready is False
         assert status.indexing is True
-        assert ai._init_done is True
+        assert ai._init_started is True
 
     def test_second_call_is_fast_path_noop(self):
         """After init is done, second call returns immediately without locks."""
-        ai._init_done = True
+        ai._init_started = True
         ai._progress["status"] = "ready"
 
         start = time.monotonic()
@@ -195,12 +195,12 @@ class TestEnsureProjectInitialized:
 
         assert status.ready is True
         assert status.indexing is False
-        assert ai._init_done is True
+        assert ai._init_started is True
         assert ai._indexing_thread is None
 
     def test_fast_path_while_indexing(self):
         """When status is 'indexing', fast path reports indexing=True with counts."""
-        ai._init_done = True
+        ai._init_started = True
         ai._progress["status"] = "indexing"
         ai._progress["files_indexed"] = 5
         ai._progress["total_files"] = 10
@@ -226,7 +226,7 @@ class TestEnsureProjectInitialized:
             s3 = ensure_project_initialized(project_root)
 
         # First call starts init; second and third hit fast-path
-        assert ai._init_done is True
+        assert ai._init_started is True
         assert isinstance(s1, InitStatus)
         assert isinstance(s2, InitStatus)
         assert isinstance(s3, InitStatus)

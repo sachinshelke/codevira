@@ -157,14 +157,14 @@ codevira serve --install-service    # start server automatically on login
 codevira serve --uninstall-service  # remove auto-start
 ```
 
-**Google Antigravity** (`~/.gemini/settings/mcp_config.json`):
+**Google Antigravity** (`~/.gemini/antigravity/mcp_config.json`):
 ```json
 {
   "mcpServers": {
-    "codevira-yourproject": {
+    "codevira": {
       "$typeName": "exa.cascade_plugins_pb.CascadePluginCommandTemplate",
       "command": "codevira",
-      "args": ["--project-dir", "/path/to/your-project"]
+      "args": []
     }
   }
 }
@@ -188,6 +188,14 @@ codevira serve --uninstall-service  # remove auto-start
 ```
 
 > Legacy `.codevira/` directories inside project repos are auto-migrated to centralized storage on first server start.
+
+### Uninstall / Reset
+
+```bash
+codevira clean              # remove global data + IDE configs + launchd service
+codevira clean --all        # also remove per-project artifacts
+codevira clean --dry-run    # preview what would be removed
+```
 
 ---
 
@@ -308,7 +316,7 @@ This loop keeps every session fast, focused, and resumable.
 | `add_node(file_path, role, type, ...)` | Register a new file in the graph |
 | `update_node(file_path, changes)` | Append rules, connections, key_functions |
 | `refresh_graph(file_paths?)` | Auto-generate stubs for unregistered files |
-| `refresh_index(file_paths?)` | Re-embed specific files in the search index |
+| `refresh_index(file_paths?)` | Refresh context graph + semantic index (graph-only if chromadb not installed) |
 | `export_graph(format, scope?)` | Export dependency graph as Mermaid or DOT diagram |
 | `get_graph_diff(base_ref?, head_ref?)` | Show changed nodes, stability flags, and blast radius between git refs |
 

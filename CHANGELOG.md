@@ -11,32 +11,61 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-### Performance
-- **`get_data_dir()` caching**: Result cached per project root in `_data_dir_cache`.
-  First call runs the full resolution chain (subprocess + metadata scan); all
-  subsequent calls for the same root are O(1) dict lookups with zero I/O.
-- **`set_project_dir()` cache invalidation**: Changing the project root now clears
-  the data-dir cache so subsequent `get_data_dir()` calls resolve correctly.
+---
+
+## [1.6.1] — 2026-04-16 — Stability, Graceful Degradation & Cleanup
+
+### Added
+- **`codevira clean` command**: One-shot removal of all Codevira data, IDE configs,
+  and services. Supports `--all` (per-project artifacts), `--dry-run` (preview),
+  and `-y` (skip confirmation).
+- **Google Antigravity global mode**: `codevira register` now includes Antigravity
+  with a single global entry — no per-project hardcoded paths.
 
 ### Fixed
-- **Test isolation**: Autouse fixture now clears `_data_dir_cache` and resets
-  `_project_dir_override` between every test, preventing cross-test pollution.
-- **`auto_init._init_done` renamed to `_init_started`**: The flag is set when the
-  background thread *starts*, not when it *finishes* — name now matches semantics.
-- **Unbounded `join()` in auto-init**: Background semantic indexing thread now has
-  a 5-minute timeout; if it hangs, the server continues in graph-only mode.
-- **`install_launchd()` missing `project_dir`**: Added optional `project_dir`
-  parameter. When provided, adds `--project-dir` to ProgramArguments and
-  `WorkingDirectory` to the launchd plist.
-- **CLI `project_dir` not forwarded to launchd**: `cmd_serve()` now passes
-  `project_dir` through to `install_launchd()`.
-- **`run_http_server()` ignoring `project_dir`**: Now calls `set_project_dir()`
-  when `project_dir` is not None, so direct callers get correct path resolution.
+- **Graceful degradation when chromadb not installed**: `refresh_index` and
+  `cmd_incremental` now work in graph-only mode instead of crashing with
+  ImportError. Background file watcher no longer generates noisy exceptions
+  on every file save.
+- **`sys.exit()` crashes eliminated**: `server.py` module-level import failure
+  now uses stderr + raise instead of corrupting the MCP stdio protocol.
+  `cmd_incremental` no longer kills the MCP server process from background
+  watcher threads.
+- **Binary resolution in user-facing output**: `codevira init` "For other AI
+  tools" section now shows the resolved `codevira` binary path instead of a
+  hardcoded Python interpreter path (e.g. `/opt/homebrew/...`).
+- **Antigravity config path**: Fixed from `~/.gemini/settings/mcp_config.json`
+  (wrong) to `~/.gemini/antigravity/mcp_config.json` (correct).
+- **Rich markup escaping**: `codevira[search]` install hints now display
+  correctly — Rich no longer strips `[search]` as a style tag.
+- **`codevira status` without chromadb**: Shows "Semantic Search: not installed"
+  with install tip instead of crashing. Added graph node count to status.
+- **Git hook uses full binary resolution**: Post-commit hook now uses
+  `_resolve_command()` instead of simple `shutil.which`.
+
+### Performance
+- **`get_data_dir()` caching**: Result cached per project root. First call runs
+  subprocess + metadata scan; subsequent calls are O(1) dict lookups.
+- **`set_project_dir()` cache invalidation**: Changing the project root now
+  clears the data-dir cache automatically.
+- **Unbounded join timeout**: Background semantic indexing thread capped at
+  5 minutes; server continues in graph-only mode if it hangs.
 
 ### Changed
-- **README.md**: Updated for v1.6.0 — version badge, Quick Start flow (`register`
-  instead of `init`), centralized storage diagram, documented `codevira register`,
-  `--install-service`/`--uninstall-service`, auto-init, and legacy migration.
+- **Package renamed**: `codevira-mcp` → `codevira`. Install with `pip install
+  codevira`. CLI command is now `codevira` (not `codevira-mcp`).
+- **Removed unused `gitpython` dependency**: CodeVira uses `subprocess` for
+  all git operations. Saves ~20MB install weight.
+- **Removed out-of-scope rule files**: REST API standards, SSE/UI events,
+  TUI layout/keybinding rules — none apply to an MCP server.
+- **Removed vendor-specific secret patterns from crash logger**: Stripe, AWS,
+  GitHub token regexes were irrelevant to CodeVira's scope.
+- **Test isolation hardened**: Autouse fixture clears `_data_dir_cache` and
+  resets `_project_dir_override` between every test.
+- **`_init_done` renamed to `_init_started`**: Name matches semantics — the
+  flag signals thread launch, not completion.
+- **`install_launchd()` accepts `project_dir`**: Adds `--project-dir` to
+  ProgramArguments and `WorkingDirectory` to the plist.
 
 ---
 

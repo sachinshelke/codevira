@@ -541,7 +541,7 @@ def cmd_status():
     console.print(panel)
 
     if not search_available:
-        console.print("\n[dim]  Tip: pip install 'codevira[search]' to enable semantic code search[/dim]")
+        console.print("\n[dim]  Tip: pip install 'codevira\\[search]' to enable semantic code search[/dim]")
 
     if stale_files:
         console.print("\n[yellow]Files requiring re-indexing:[/yellow]")

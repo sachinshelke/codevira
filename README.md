@@ -204,6 +204,17 @@ codevira clean --dry-run    # preview what would be removed
 
 ## How It Works
 
+### Setup Flow
+
+```mermaid
+flowchart LR
+
+A["pipx install codevira"] --> B["codevira register"]
+B --> C["Open project in\nClaude Code / Cursor /\nWindsurf / Antigravity"]
+C --> D["First MCP tool call\ntriggers auto-init"]
+D --> E["✓ Config written\n✓ Graph built\n✓ Roadmap created\n✓ Ready"]
+```
+
 ### Agent Session Lifecycle
 
 ```mermaid
@@ -211,23 +222,20 @@ flowchart TB
 
 Start([Start Session])
 
-subgraph Orientation
-A[Check Open Changesets]
-B[Get Project Roadmap]
-C[Search Past Decisions]
-D[Load Graph Context\nget_node - get_impact]
+subgraph "Orientation (single call)"
+A["get_session_context()\nroadmap + changesets +\ndecisions + global intelligence"]
 end
 
-subgraph Execution
-E[Plan Task]
-F[Implement Code]
-G[Run Tests / Validation]
+subgraph "Work"
+B[get_node / get_impact\nbefore touching files]
+C[Plan + Implement + Test]
+D[refresh_index\nafter changes]
 end
 
-subgraph Completion
-H[Update Graph Metadata]
-I[Write Session Log]
-J[Complete Changeset]
+subgraph "Session End"
+E[update_node — record changes]
+F[write_session_log — decisions]
+G[update_next_action — handoff]
 end
 
 Start --> A
@@ -237,48 +245,58 @@ C --> D
 D --> E
 E --> F
 F --> G
-G --> H
-H --> I
-I --> J
 ```
 
-### Code Intelligence Model
+### Architecture
 
 ```mermaid
 flowchart TB
 
-A[Source Code]
+A[Source Code\n15+ languages]
 
-subgraph Structural Analysis
+subgraph "Indexing Pipeline"
 B[Tree-sitter AST Parser]
-C[Function / Class Extraction]
-D[Dependency + Call Graph Analysis]
+C[Function / Class / Call Extraction]
+D[Background File Watcher\nauto-reindex on save]
 end
 
-subgraph Knowledge Stores
-E[(Semantic Index\nChromaDB — optional)]
-F[(Context Graph + Call Graph\nSQLite DB)]
-G[(Global Memory\n~/.codevira/global.db)]
+subgraph "Centralized Storage — ~/.codevira/"
+E[(Context Graph + Call Graph\nSQLite DB)]
+F[(Semantic Index\nChromaDB — optional)]
+G[(Global Memory\ncross-project intelligence)]
+H[(Session Logs + Decisions\nsearchable history)]
 end
 
-subgraph Runtime Access
-H[MCP Query Layer\n36 tools + 5 prompts]
+subgraph "Adaptive Learning"
+I[Outcome Tracking]
+J[Rule Inference]
+K[Preference Learning]
 end
 
-I[AI Coding Agent\nClaude Code - Cursor - Windsurf - Antigravity]
+subgraph "MCP Server"
+L[36 Tools + 5 Prompts\nstdio or HTTP transport]
+end
+
+M[AI Coding Agent\nClaude Code · Cursor · Windsurf · Antigravity]
 
 A --> B
 B --> C
 C --> E
+C --> F
+D --> B
 
-B --> D
-D --> F
+E --> L
+F --> L
+G --> L
+H --> L
 
-F --> H
-E --> H
-G --> H
+I --> G
+J --> G
+K --> G
 
-H --> I
+E --> I
+
+L --> M
 ```
 
 ---

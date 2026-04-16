@@ -588,6 +588,24 @@ def main() -> None:
         help="Inject an HTTP URL config into Claude Code (e.g. https://localhost:7443/mcp)",
     )
 
+    # clean
+    clean_parser = subparsers.add_parser(
+        "clean",
+        help="Remove all Codevira data, IDE configs, and services",
+    )
+    clean_parser.add_argument(
+        "--all", action="store_true",
+        help="Also clean per-project artifacts (legacy .codevira/, git hooks, per-project IDE configs)",
+    )
+    clean_parser.add_argument(
+        "--dry-run", action="store_true",
+        help="Show what would be removed without deleting anything",
+    )
+    clean_parser.add_argument(
+        "-y", "--yes", action="store_true",
+        help="Skip confirmation prompt",
+    )
+
     args = parser.parse_args(raw_args)
 
     if args.command == "init":
@@ -626,9 +644,194 @@ def main() -> None:
             claude_desktop=getattr(args, "claude_desktop", False),
             http_url=getattr(args, "http_url", None),
         )
+    elif args.command == "clean":
+        cmd_clean(
+            clean_all=getattr(args, "all", False),
+            dry_run=getattr(args, "dry_run", False),
+            yes=getattr(args, "yes", False),
+        )
     else:
         # No subcommand → start MCP server (stdio transport)
         cmd_server()
+
+
+# ---------------------------------------------------------------------------
+# cmd_clean
+# ---------------------------------------------------------------------------
+
+def cmd_clean(clean_all: bool = False, dry_run: bool = False, yes: bool = False) -> None:
+    """Remove all Codevira data, IDE configs, and services."""
+    import shutil
+
+    from mcp_server.paths import get_global_home
+    from mcp_server.ide_inject import (
+        _claude_global_config_path,
+        _claude_desktop_config_path,
+        _cursor_global_config_path,
+        _windsurf_global_config_path,
+        _antigravity_config_path,
+        remove_codevira_from_config,
+    )
+
+    actions: list[tuple[str, callable]] = []
+    print()
+    print("  Codevira — Clean Setup")
+    print("  " + "─" * 40)
+    print()
+
+    # 1. Global data directory
+    global_home = get_global_home()
+    if global_home.exists():
+        # Count projects and size
+        projects_dir = global_home / "projects"
+        project_count = len(list(projects_dir.iterdir())) if projects_dir.exists() else 0
+        try:
+            total_size = sum(f.stat().st_size for f in global_home.rglob("*") if f.is_file())
+            size_str = f"{total_size / 1024 / 1024:.1f} MB"
+        except Exception:
+            size_str = "unknown size"
+        print(f"    • ~/.codevira/ ({project_count} projects, {size_str})")
+        actions.append(("Removed ~/.codevira/", lambda: shutil.rmtree(global_home, ignore_errors=True)))
+
+    # 2. IDE configs
+    ide_configs = [
+        ("Claude Code global", _claude_global_config_path()),
+        ("Claude Desktop", _claude_desktop_config_path()),
+        ("Cursor global", _cursor_global_config_path()),
+        ("Windsurf global", _windsurf_global_config_path()),
+        ("Antigravity", _antigravity_config_path()),
+    ]
+    for ide_name, config_path in ide_configs:
+        if config_path.exists():
+            from mcp_server.ide_inject import _read_json_safe
+            data = _read_json_safe(config_path)
+            servers = data.get("mcpServers", {})
+            has_codevira = any(k == "codevira" or k.startswith("codevira-") for k in servers)
+            if has_codevira:
+                print(f"    • {ide_name} config (mcpServers.codevira)")
+                actions.append(
+                    (f"Removed codevira from {ide_name}",
+                     lambda p=config_path: remove_codevira_from_config(p))
+                )
+
+    # 3. Launchd service
+    plist_path = Path.home() / "Library" / "LaunchAgents" / "com.codevira.mcp-serve.plist"
+    if plist_path.exists():
+        print("    • Launchd service (com.codevira.mcp-serve)")
+        def _unload_launchd():
+            try:
+                from mcp_server.launchd import uninstall_launchd
+                uninstall_launchd()
+            except Exception:
+                plist_path.unlink(missing_ok=True)
+        actions.append(("Unloaded launchd service", _unload_launchd))
+
+    # 4. Server log
+    log_path = Path.home() / "Library" / "Logs" / "codevira.log"
+    if log_path.exists():
+        print(f"    • ~/Library/Logs/codevira.log")
+        actions.append(("Removed server log", lambda: log_path.unlink(missing_ok=True)))
+
+    # 5. Per-project artifacts (only with --all)
+    if clean_all and global_home.exists():
+        projects_dir = global_home / "projects"
+        if projects_dir.exists():
+            for meta_file in projects_dir.glob("*/metadata.json"):
+                try:
+                    import json
+                    meta = json.loads(meta_file.read_text())
+                    project_path = Path(meta.get("original_path", ""))
+                    if project_path.exists():
+                        _collect_project_cleanup(project_path, actions)
+                except Exception:
+                    continue
+
+    if not actions:
+        print("    Nothing to clean — Codevira is not installed.")
+        print()
+        return
+
+    print()
+
+    # Confirmation
+    if dry_run:
+        print("  [dry-run] No changes made.")
+        print()
+        return
+
+    if not yes:
+        answer = input("  Remove all of the above? [y/N] ").strip().lower()
+        if answer != "y":
+            print("  Aborted.")
+            print()
+            return
+
+    print()
+    for label, action in actions:
+        try:
+            action()
+            print(f"    {label:<45} done")
+        except Exception as e:
+            print(f"    {label:<45} FAILED ({e})")
+
+    print()
+    print("  ✓ Codevira fully removed.")
+    print("    To reinstall: pipx install codevira && codevira register")
+    print()
+
+
+def _collect_project_cleanup(project_path: Path, actions: list) -> None:
+    """Collect per-project cleanup actions."""
+    import shutil
+    from mcp_server.ide_inject import remove_codevira_from_config
+
+    name = project_path.name
+
+    # Legacy .codevira/ dir
+    legacy = project_path / ".codevira"
+    if legacy.exists():
+        print(f"    • {name}/.codevira/")
+        actions.append((f"Removed {name}/.codevira/", lambda p=legacy: shutil.rmtree(p, ignore_errors=True)))
+
+    # Migration backup
+    migrated = project_path / ".codevira.migrated"
+    if migrated.exists():
+        print(f"    • {name}/.codevira.migrated/")
+        actions.append((f"Removed {name}/.codevira.migrated/", lambda p=migrated: shutil.rmtree(p, ignore_errors=True)))
+
+    # Git hook
+    hook = project_path / ".git" / "hooks" / "post-commit"
+    if hook.exists():
+        try:
+            content = hook.read_text()
+            if "codevira" in content.lower() or "Codevira" in content:
+                print(f"    • {name}/.git/hooks/post-commit")
+                # Check if hook has backup
+                backup = hook.with_suffix(".bak")
+                if backup.exists():
+                    actions.append((f"Restored {name} git hook from backup",
+                                    lambda h=hook, b=backup: b.rename(h)))
+                else:
+                    actions.append((f"Removed {name} git hook",
+                                    lambda h=hook: h.unlink(missing_ok=True)))
+        except Exception:
+            pass
+
+    # Per-project IDE configs
+    for ide_name, config_path in [
+        ("claude", project_path / ".claude" / "settings.json"),
+        ("cursor", project_path / ".cursor" / "mcp.json"),
+        ("windsurf", project_path / ".windsurf" / "mcp.json"),
+    ]:
+        if config_path.exists():
+            from mcp_server.ide_inject import _read_json_safe
+            data = _read_json_safe(config_path)
+            if "codevira" in data.get("mcpServers", {}):
+                print(f"    • {name}/.{ide_name} config")
+                actions.append(
+                    (f"Removed codevira from {name}/{ide_name}",
+                     lambda p=config_path: remove_codevira_from_config(p))
+                )
 
 
 if __name__ == "__main__":

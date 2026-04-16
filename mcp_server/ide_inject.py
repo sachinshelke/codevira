@@ -128,6 +128,36 @@ def _merge_mcp_config(existing: dict, server_name: str, server_config: dict) -> 
     return result
 
 
+def remove_codevira_from_config(config_path: Path, key_prefix: str = "codevira") -> bool:
+    """Remove all codevira entries from an IDE config file.
+
+    Deletes keys from mcpServers that match `key_prefix` exactly or start
+    with `key_prefix-` (for Antigravity per-project entries like codevira-udap).
+
+    Returns True if any keys were removed, False if nothing to do.
+    """
+    if not config_path.exists():
+        return False
+
+    data = _read_json_safe(config_path)
+    servers = data.get("mcpServers", {})
+    if not servers:
+        return False
+
+    keys_to_remove = [
+        k for k in servers
+        if k == key_prefix or k.startswith(f"{key_prefix}-")
+    ]
+    if not keys_to_remove:
+        return False
+
+    for k in keys_to_remove:
+        del servers[k]
+
+    _write_json_safe(config_path, data)
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Resolve the best command to run codevira
 # ---------------------------------------------------------------------------

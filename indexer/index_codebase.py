@@ -61,9 +61,10 @@ def _get_chroma_client():
     try:
         import chromadb
     except ImportError:
-        print("ERROR: semantic search requires chromadb.")
-        print("       Install it with: pip install 'codevira[search]'")
-        sys.exit(1)
+        raise ImportError(
+            "Semantic search requires chromadb. "
+            "Install it with: pip install 'codevira[search]'"
+        )
     db_dir = str(_index_dir())
     return chromadb.PersistentClient(path=db_dir)
 
@@ -72,9 +73,10 @@ def _get_embedding_fn():
         from chromadb.utils import embedding_functions
         return embedding_functions.SentenceTransformerEmbeddingFunction(model_name="all-MiniLM-L6-v2")
     except ImportError:
-        print("ERROR: semantic search requires sentence-transformers.")
-        print("       Install it with: pip install 'codevira[search]'")
-        sys.exit(1)
+        raise ImportError(
+            "Semantic search requires sentence-transformers. "
+            "Install it with: pip install 'codevira[search]'"
+        )
 
 def _compute_hash(file_path: Path) -> str:
     hasher = hashlib.sha256()

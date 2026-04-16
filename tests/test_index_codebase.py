@@ -538,14 +538,14 @@ class TestGetChromaClientAndEmbedFn:
             result = _get_chroma_client()
         assert result is mock_client
 
-    def test_get_chroma_client_sys_exit_if_no_chromadb(self, project_env):
+    def test_get_chroma_client_raises_import_error_if_no_chromadb(self, project_env):
         import sys
         # Simulate chromadb being unimportable by removing it from sys.modules
         saved = sys.modules.pop("chromadb", None)
         try:
             with patch.dict("sys.modules", {"chromadb": None}):
                 from indexer.index_codebase import _get_chroma_client
-                with pytest.raises(SystemExit):
+                with pytest.raises(ImportError, match="codevira"):
                     _get_chroma_client()
         finally:
             if saved is not None:
@@ -659,11 +659,9 @@ class TestStartBackgroundWatcher:
 # ---------------------------------------------------------------------------
 
 class TestGetEmbeddingFnExit:
-    def test_sys_exit_when_chromadb_utils_missing(self, project_env):
-        """_get_embedding_fn exits if chromadb.utils cannot be imported."""
+    def test_import_error_when_chromadb_utils_missing(self, project_env):
+        """_get_embedding_fn raises ImportError if chromadb.utils unavailable."""
         import sys
-        # Remove chromadb.utils* from sys.modules so the import inside
-        # _get_embedding_fn raises ImportError, triggering sys.exit(1).
         original_mods = {
             "chromadb.utils": sys.modules.pop("chromadb.utils", None),
             "chromadb.utils.embedding_functions": sys.modules.pop(
@@ -674,9 +672,8 @@ class TestGetEmbeddingFnExit:
             sys.modules["chromadb.utils"] = None  # type: ignore[assignment]
             sys.modules["chromadb.utils.embedding_functions"] = None  # type: ignore[assignment]
             from indexer.index_codebase import _get_embedding_fn
-            with pytest.raises(SystemExit) as exc_info:
+            with pytest.raises(ImportError, match="codevira"):
                 _get_embedding_fn()
-            assert exc_info.value.code == 1
         finally:
             for k, v in original_mods.items():
                 if v is None:

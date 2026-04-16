@@ -216,6 +216,13 @@ def run_http_server(
     """
     import uvicorn
 
+    # If a project directory was passed explicitly, set it so all path
+    # resolution in this process uses it.  The CLI also calls set_project_dir()
+    # globally, but a direct caller of run_http_server() may not have done so.
+    if project_dir is not None:
+        from mcp_server.paths import set_project_dir
+        set_project_dir(project_dir)
+
     # ---- Startup side effects (mirror server.py main()) ----
     try:
         from mcp_server.crash_logger import install_global_handler

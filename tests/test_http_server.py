@@ -552,3 +552,29 @@ class TestRunHttpServer:
              patch("uvicorn.run"):
             run_http_server(use_https=True)
         mock_gen.assert_not_called()
+
+    def test_project_dir_calls_set_project_dir(self, tmp_path):
+        """When project_dir is passed, run_http_server calls set_project_dir."""
+        with patch("mcp_server.paths.set_project_dir") as mock_set, \
+             patch("mcp_server.crash_logger.install_global_handler"), \
+             patch("mcp_server.migrate.detect_migration_needed", return_value=False), \
+             patch("indexer.index_codebase.start_background_watcher", return_value=MagicMock()), \
+             patch("indexer.outcome_tracker.analyze_session_outcomes"), \
+             patch("indexer.rule_learner.run_rule_inference"), \
+             patch("mcp_server.global_sync.import_global_to_project", return_value=None), \
+             patch("uvicorn.run"):
+            run_http_server(project_dir=tmp_path)
+        mock_set.assert_called_once_with(tmp_path)
+
+    def test_no_project_dir_skips_set_project_dir(self):
+        """When project_dir is None (default), set_project_dir is not called."""
+        with patch("mcp_server.paths.set_project_dir") as mock_set, \
+             patch("mcp_server.crash_logger.install_global_handler"), \
+             patch("mcp_server.migrate.detect_migration_needed", return_value=False), \
+             patch("indexer.index_codebase.start_background_watcher", return_value=MagicMock()), \
+             patch("indexer.outcome_tracker.analyze_session_outcomes"), \
+             patch("indexer.rule_learner.run_rule_inference"), \
+             patch("mcp_server.global_sync.import_global_to_project", return_value=None), \
+             patch("uvicorn.run"):
+            run_http_server()
+        mock_set.assert_not_called()

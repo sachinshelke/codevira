@@ -738,7 +738,7 @@ class TestCmdServe:
             from mcp_server.cli import cmd_serve
             cmd_serve(port=7007, use_https=False, host="127.0.0.1", install_service=True)
 
-        mock_install.assert_called_once_with(port=7007, use_https=False, host="127.0.0.1")
+        mock_install.assert_called_once_with(port=7007, use_https=False, host="127.0.0.1", project_dir=None)
         captured = capsys.readouterr()
         assert "Launchd service installed" in captured.out
         assert "com.codevira.plist" in captured.out

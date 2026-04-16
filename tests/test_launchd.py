@@ -165,6 +165,32 @@ class TestInstallLaunchd:
         with pytest.raises(RuntimeError, match="launchctl load failed"):
             install_launchd()
 
+    def test_project_dir_adds_flag_and_working_directory(
+        self, mock_darwin, mock_plist_path, mock_resolve_command, mock_subprocess
+    ):
+        """When project_dir is provided, plist includes --project-dir and WorkingDirectory."""
+        install_launchd(project_dir=Path("/tmp/my-project"))
+
+        with open(mock_plist_path, "rb") as f:
+            plist = plistlib.load(f)
+
+        args = plist["ProgramArguments"]
+        assert "--project-dir" in args
+        assert "/tmp/my-project" in args
+        assert plist["WorkingDirectory"] == "/tmp/my-project"
+
+    def test_no_project_dir_omits_working_directory(
+        self, mock_darwin, mock_plist_path, mock_resolve_command, mock_subprocess
+    ):
+        """When project_dir is omitted, plist has no WorkingDirectory or --project-dir."""
+        install_launchd()
+
+        with open(mock_plist_path, "rb") as f:
+            plist = plistlib.load(f)
+
+        assert "WorkingDirectory" not in plist
+        assert "--project-dir" not in plist["ProgramArguments"]
+
 
 # ---------------------------------------------------------------
 # uninstall_launchd()

@@ -28,6 +28,7 @@ def install_launchd(
     port: int = 7007,
     use_https: bool = False,
     host: str = "127.0.0.1",
+    project_dir: Path | None = None,
 ) -> Path:
     """Generate and load a launchd plist for the Codevira MCP HTTP server.
 
@@ -35,9 +36,12 @@ def install_launchd(
     Logs go to ~/Library/Logs/codevira-mcp.log.
 
     Args:
-        port:      TCP port for the server (default: 7007).
-        use_https: If True, adds --https flag (requires mkcert CA to be trusted).
-        host:      Bind address (default: 127.0.0.1).
+        port:        TCP port for the server (default: 7007).
+        use_https:   If True, adds --https flag (requires mkcert CA to be trusted).
+        host:        Bind address (default: 127.0.0.1).
+        project_dir: If provided, adds --project-dir to ProgramArguments and
+                     sets WorkingDirectory in the plist so the server resolves
+                     the correct project root.
 
     Returns:
         Path to the installed plist file.
@@ -52,6 +56,8 @@ def install_launchd(
     cmd_path, _ = _resolve_command()
 
     args = [cmd_path, "serve", "--host", host, "--port", str(port)]
+    if project_dir is not None:
+        args.extend(["--project-dir", str(project_dir)])
     if use_https:
         args.append("--https")
 
@@ -69,6 +75,8 @@ def install_launchd(
         "StandardOutPath": log_path,
         "StandardErrorPath": log_path,
     }
+    if project_dir is not None:
+        plist_data["WorkingDirectory"] = str(project_dir)
 
     _PLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
 

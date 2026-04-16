@@ -388,7 +388,7 @@ def cmd_serve(
     if install_service:
         from mcp_server.launchd import install_launchd
         try:
-            plist = install_launchd(port=port, use_https=use_https, host=host)
+            plist = install_launchd(port=port, use_https=use_https, host=host, project_dir=project_dir)
             print(f"  Launchd service installed: {plist}")
             print("  Codevira MCP server will start automatically on login.")
         except RuntimeError as e:

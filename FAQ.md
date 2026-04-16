@@ -8,13 +8,13 @@
 
 ```bash
 # Recommended: global install via pipx
-pipx install codevira-mcp
+pipx install codevira
 
 # Alternative: pip
-pip install codevira-mcp
+pip install codevira
 
 # With semantic search (adds ChromaDB + sentence-transformers)
-pip install 'codevira-mcp[search]'
+pip install 'codevira[search]'
 ```
 
 Then run `codevira init` in any project. It auto-detects everything and auto-injects IDE configs.
@@ -30,7 +30,7 @@ No. Run `codevira init` once when you first set up a project. After that:
 
 ChromaDB powers the `search_codebase()` semantic search tool. It's **optional** — all other 35 tools work without it.
 
-Install with search support: `pip install 'codevira-mcp[search]'`
+Install with search support: `pip install 'codevira[search]'`
 
 Without it, you still get the full context graph, roadmap, changesets, call graph, learning, and all code reader tools.
 
@@ -83,9 +83,9 @@ This happens automatically. No configuration needed.
 | Cursor, Windsurf | stdio | These tools use `command`+`args` config |
 | Google Antigravity | stdio | Same |
 
-**Stdio** (default): the MCP client spawns `codevira-mcp` as a subprocess. No server to manage.
+**Stdio** (default): the MCP client spawns `codevira` as a subprocess. No server to manage.
 
-**HTTP** (`codevira-mcp serve`): run a persistent HTTP server, register it by URL. Useful when you want one server shared across multiple Claude Code sessions, or when you need to test with Claude.ai.
+**HTTP** (`codevira serve`): run a persistent HTTP server, register it by URL. Useful when you want one server shared across multiple Claude Code sessions, or when you need to test with Claude.ai.
 
 ### How do I configure Claude Desktop specifically?
 
@@ -96,20 +96,20 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
 {
   "mcpServers": {
     "codevira": {
-      "command": "/path/to/codevira-mcp",
+      "command": "/path/to/codevira",
       "args": ["--project-dir", "/path/to/your-project"]
     }
   }
 }
 ```
 
-Find the full binary path with: `which codevira-mcp`
+Find the full binary path with: `which codevira`
 
 ### How do I use the HTTP transport with Claude Code?
 
 Start the server in a terminal:
 ```bash
-codevira-mcp serve --https --port 7443 --project-dir /path/to/your-project
+codevira serve --https --port 7443 --project-dir /path/to/your-project
 ```
 
 Register in `~/.claude/settings.json`:
@@ -138,11 +138,11 @@ Common causes:
 
 1. **MCP config not written** — run `codevira init` in your project; it auto-injects config into Claude Code, Cursor, Windsurf, and Antigravity
 2. **IDE needs restart** — most AI tools require a restart to pick up new MCP servers
-3. **Binary not in PATH** — check that `codevira-mcp` is accessible; if installed via pipx, verify `~/.local/bin` is in your PATH
+3. **Binary not in PATH** — check that `codevira` is accessible; if installed via pipx, verify `~/.local/bin` is in your PATH
 4. **Wrong project directory** — the config's `cwd` (stdio) or `--project-dir` (HTTP) must point to the project where `.codevira/config.yaml` exists
 5. **Claude Desktop config format** — Claude Desktop uses `command`+`args`, not `url`. The `url` format only works in Claude Code CLI
 
-Test manually: run `codevira-mcp` from your project directory — it should start without errors.
+Test manually: run `codevira` from your project directory — it should start without errors.
 
 ### What happens if I skip PROTOCOL.md?
 
@@ -165,12 +165,12 @@ This happens with global MCP clients like Google Antigravity that share config a
   "mcpServers": {
     "codevira-project-a": {
       "$typeName": "exa.cascade_plugins_pb.CascadePluginCommandTemplate",
-      "command": "codevira-mcp",
+      "command": "codevira",
       "args": ["--project-dir", "/path/to/project-a"]
     },
     "codevira-project-b": {
       "$typeName": "exa.cascade_plugins_pb.CascadePluginCommandTemplate",
-      "command": "codevira-mcp",
+      "command": "codevira",
       "args": ["--project-dir", "/path/to/project-b"]
     }
   }
@@ -224,11 +224,11 @@ Your code never leaves your machine.
 
 ```bash
 # Verify the binary works
-codevira-mcp --help
+codevira --help
 
 # Test server startup from your project dir
 cd your-project
-codevira-mcp
+codevira
 ```
 
 Common causes: wrong Python version (requires 3.10+), missing `mcp` package, or `.codevira/config.yaml` not found (run `codevira init` first).

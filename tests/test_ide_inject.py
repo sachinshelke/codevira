@@ -93,15 +93,15 @@ class TestMergeMcpConfig:
 
 class TestBuildServerConfig:
     def test_binary_with_cwd(self, tmp_path):
-        config = _build_server_config("/usr/bin/codevira-mcp", "python3", tmp_path, use_cwd=True)
-        assert config["command"] == "/usr/bin/codevira-mcp"
+        config = _build_server_config("/usr/bin/codevira", "python3", tmp_path, use_cwd=True)
+        assert config["command"] == "/usr/bin/codevira"
         assert config["args"] == []
         assert config["cwd"] == str(tmp_path)
         assert "--project-dir" not in config.get("args", [])
 
     def test_binary_without_cwd_uses_project_dir_arg(self, tmp_path):
-        config = _build_server_config("/usr/bin/codevira-mcp", "python3", tmp_path, use_cwd=False)
-        assert config["command"] == "/usr/bin/codevira-mcp"
+        config = _build_server_config("/usr/bin/codevira", "python3", tmp_path, use_cwd=False)
+        assert config["command"] == "/usr/bin/codevira"
         assert "--project-dir" in config["args"]
         assert str(tmp_path) in config["args"]
         assert "cwd" not in config
@@ -114,7 +114,7 @@ class TestBuildServerConfig:
         assert "--project-dir" in config["args"]
 
     def test_binary_with_cwd_no_project_dir_in_args(self, tmp_path):
-        config = _build_server_config("/usr/bin/codevira-mcp", "python3", tmp_path, use_cwd=True)
+        config = _build_server_config("/usr/bin/codevira", "python3", tmp_path, use_cwd=True)
         assert "--project-dir" not in config["args"]
 
 
@@ -124,8 +124,8 @@ class TestBuildServerConfig:
 
 class TestBuildGlobalServerConfig:
     def test_binary_global_has_empty_args(self):
-        config = _build_global_server_config("/usr/bin/codevira-mcp", "python3")
-        assert config["command"] == "/usr/bin/codevira-mcp"
+        config = _build_global_server_config("/usr/bin/codevira", "python3")
+        assert config["command"] == "/usr/bin/codevira"
         assert config["args"] == []
         assert "cwd" not in config
         assert "--project-dir" not in str(config)
@@ -149,11 +149,11 @@ class TestClaudeDesktopInject:
 
         project = tmp_path / "my-project"
         project.mkdir()
-        _inject_claude_desktop(project, "/usr/bin/codevira-mcp", "python3")
+        _inject_claude_desktop(project, "/usr/bin/codevira", "python3")
 
         data = json.loads(config_file.read_text())
         entry = data["mcpServers"]["codevira"]
-        assert entry["command"] == "/usr/bin/codevira-mcp"
+        assert entry["command"] == "/usr/bin/codevira"
         assert "--project-dir" in entry["args"]
         assert str(project) in entry["args"]
         assert "cwd" not in entry
@@ -169,7 +169,7 @@ class TestClaudeDesktopInject:
 
         project = tmp_path / "proj"
         project.mkdir()
-        _inject_claude_desktop(project, "/usr/bin/codevira-mcp", "python3")
+        _inject_claude_desktop(project, "/usr/bin/codevira", "python3")
 
         data = json.loads(config_file.read_text())
         assert data["globalShortcut"] == "Ctrl+Shift+C"
@@ -182,7 +182,7 @@ class TestClaudeDesktopInject:
 
         project = tmp_path / "proj"
         project.mkdir()
-        full_path = "/usr/local/bin/codevira-mcp"
+        full_path = "/usr/local/bin/codevira"
         _inject_claude_desktop(project, full_path, "python3")
 
         data = json.loads(config_file.read_text())
@@ -209,14 +209,14 @@ class TestInjectClaude:
     def test_writes_per_project_settings(self, tmp_path):
         project = tmp_path / "proj"
         project.mkdir()
-        result = _inject_claude(project, "/usr/bin/codevira-mcp", "python3")
+        result = _inject_claude(project, "/usr/bin/codevira", "python3")
         config_path = Path(result)
         assert config_path.exists()
         assert config_path == project / ".claude" / "settings.json"
         data = json.loads(config_path.read_text())
         assert "codevira" in data["mcpServers"]
         entry = data["mcpServers"]["codevira"]
-        assert entry["command"] == "/usr/bin/codevira-mcp"
+        assert entry["command"] == "/usr/bin/codevira"
         assert entry["cwd"] == str(project)
 
     def test_preserves_existing_settings(self, tmp_path):
@@ -226,7 +226,7 @@ class TestInjectClaude:
         settings = claude_dir / "settings.json"
         settings.write_text(json.dumps({"mcpServers": {"other": {"command": "x"}}, "theme": "dark"}))
 
-        _inject_claude(project, "/usr/bin/codevira-mcp", "python3")
+        _inject_claude(project, "/usr/bin/codevira", "python3")
         data = json.loads(settings.read_text())
         assert "other" in data["mcpServers"]
         assert "codevira" in data["mcpServers"]
@@ -237,14 +237,14 @@ class TestInjectCursor:
     def test_writes_per_project_mcp_json(self, tmp_path):
         project = tmp_path / "proj"
         project.mkdir()
-        result = _inject_cursor(project, "/usr/bin/codevira-mcp", "python3")
+        result = _inject_cursor(project, "/usr/bin/codevira", "python3")
         config_path = Path(result)
         assert config_path.exists()
         assert config_path == project / ".cursor" / "mcp.json"
         data = json.loads(config_path.read_text())
         assert "codevira" in data["mcpServers"]
         entry = data["mcpServers"]["codevira"]
-        assert entry["command"] == "/usr/bin/codevira-mcp"
+        assert entry["command"] == "/usr/bin/codevira"
         assert entry["cwd"] == str(project)
 
     def test_preserves_existing_cursor_config(self, tmp_path):
@@ -254,7 +254,7 @@ class TestInjectCursor:
         mcp_json = cursor_dir / "mcp.json"
         mcp_json.write_text(json.dumps({"mcpServers": {"existing": {"command": "y"}}}))
 
-        _inject_cursor(project, "/usr/bin/codevira-mcp", "python3")
+        _inject_cursor(project, "/usr/bin/codevira", "python3")
         data = json.loads(mcp_json.read_text())
         assert "existing" in data["mcpServers"]
         assert "codevira" in data["mcpServers"]
@@ -264,14 +264,14 @@ class TestInjectWindsurf:
     def test_writes_per_project_mcp_json(self, tmp_path):
         project = tmp_path / "proj"
         project.mkdir()
-        result = _inject_windsurf(project, "/usr/bin/codevira-mcp", "python3")
+        result = _inject_windsurf(project, "/usr/bin/codevira", "python3")
         config_path = Path(result)
         assert config_path.exists()
         assert config_path == project / ".windsurf" / "mcp.json"
         data = json.loads(config_path.read_text())
         assert "codevira" in data["mcpServers"]
         entry = data["mcpServers"]["codevira"]
-        assert entry["command"] == "/usr/bin/codevira-mcp"
+        assert entry["command"] == "/usr/bin/codevira"
         assert entry["cwd"] == str(project)
 
     def test_preserves_existing_windsurf_config(self, tmp_path):
@@ -281,7 +281,7 @@ class TestInjectWindsurf:
         mcp_json = ws_dir / "mcp.json"
         mcp_json.write_text(json.dumps({"mcpServers": {"other-ws": {"command": "z"}}}))
 
-        _inject_windsurf(project, "/usr/bin/codevira-mcp", "python3")
+        _inject_windsurf(project, "/usr/bin/codevira", "python3")
         data = json.loads(mcp_json.read_text())
         assert "other-ws" in data["mcpServers"]
         assert "codevira" in data["mcpServers"]
@@ -296,7 +296,7 @@ class TestGlobalModeInject:
         config_file = tmp_path / "settings.json"
         monkeypatch.setattr(ide_inject, "_claude_global_config_path", lambda: config_file)
 
-        inject_global_claude_code("/usr/bin/codevira-mcp", "python3")
+        inject_global_claude_code("/usr/bin/codevira", "python3")
 
         data = json.loads(config_file.read_text())
         entry = data["mcpServers"]["codevira"]
@@ -308,7 +308,7 @@ class TestGlobalModeInject:
         config_file = tmp_path / "mcp.json"
         monkeypatch.setattr(ide_inject, "_cursor_global_config_path", lambda: config_file)
 
-        inject_global_cursor("/usr/bin/codevira-mcp", "python3")
+        inject_global_cursor("/usr/bin/codevira", "python3")
 
         data = json.loads(config_file.read_text())
         entry = data["mcpServers"]["codevira"]
@@ -319,7 +319,7 @@ class TestGlobalModeInject:
         config_file = tmp_path / "mcp_config.json"
         monkeypatch.setattr(ide_inject, "_windsurf_global_config_path", lambda: config_file)
 
-        inject_global_windsurf("/usr/bin/codevira-mcp", "python3")
+        inject_global_windsurf("/usr/bin/codevira", "python3")
 
         data = json.loads(config_file.read_text())
         entry = data["mcpServers"]["codevira"]
@@ -333,7 +333,7 @@ class TestGlobalModeInject:
         }))
         monkeypatch.setattr(ide_inject, "_claude_global_config_path", lambda: config_file)
 
-        inject_global_claude_code("/usr/bin/codevira-mcp", "python3")
+        inject_global_claude_code("/usr/bin/codevira", "python3")
 
         data = json.loads(config_file.read_text())
         assert "some-other" in data["mcpServers"]
@@ -383,7 +383,7 @@ class TestAntigravityNameSanitization:
 
         project = tmp_path / "proj"
         project.mkdir()
-        ide_inject._inject_antigravity(project, "/usr/bin/codevira-mcp", "python3", "my@project/2024")
+        ide_inject._inject_antigravity(project, "/usr/bin/codevira", "python3", "my@project/2024")
 
         data = json.loads(config_file.read_text())
         keys = list(data["mcpServers"].keys())
@@ -399,7 +399,7 @@ class TestAntigravityNameSanitization:
 
         project = tmp_path / "proj"
         project.mkdir()
-        ide_inject._inject_antigravity(project, "/usr/bin/codevira-mcp", "python3", "My Cool Project")
+        ide_inject._inject_antigravity(project, "/usr/bin/codevira", "python3", "My Cool Project")
 
         data = json.loads(config_file.read_text())
         keys = list(data["mcpServers"].keys())
@@ -411,7 +411,7 @@ class TestAntigravityNameSanitization:
 
         project = tmp_path / "proj"
         project.mkdir()
-        ide_inject._inject_antigravity(project, "/usr/bin/codevira-mcp", "python3", "proj--name__test")
+        ide_inject._inject_antigravity(project, "/usr/bin/codevira", "python3", "proj--name__test")
 
         data = json.loads(config_file.read_text())
         keys = list(data["mcpServers"].keys())
@@ -423,7 +423,7 @@ class TestAntigravityNameSanitization:
 
         project = tmp_path / "proj"
         project.mkdir()
-        ide_inject._inject_antigravity(project, "/usr/bin/codevira-mcp", "python3", "UPPER_CASE")
+        ide_inject._inject_antigravity(project, "/usr/bin/codevira", "python3", "UPPER_CASE")
 
         data = json.loads(config_file.read_text())
         keys = list(data["mcpServers"].keys())
@@ -435,7 +435,7 @@ class TestAntigravityNameSanitization:
 
         project = tmp_path / "proj"
         project.mkdir()
-        ide_inject._inject_antigravity(project, "/usr/bin/codevira-mcp", "python3", "myproj")
+        ide_inject._inject_antigravity(project, "/usr/bin/codevira", "python3", "myproj")
 
         data = json.loads(config_file.read_text())
         entry = list(data["mcpServers"].values())[0]
@@ -448,7 +448,7 @@ class TestAntigravityNameSanitization:
 
         project = tmp_path / "proj"
         project.mkdir()
-        ide_inject._inject_antigravity(project, "/usr/bin/codevira-mcp", "python3", "myproj")
+        ide_inject._inject_antigravity(project, "/usr/bin/codevira", "python3", "myproj")
 
         data = json.loads(config_file.read_text())
         entry = list(data["mcpServers"].values())[0]
@@ -579,15 +579,15 @@ class TestDetectInstalledIdes:
 
 class TestResolveCommand:
     def test_shutil_which_finds_binary(self, monkeypatch):
-        monkeypatch.setattr("shutil.which", lambda name: "/usr/local/bin/codevira-mcp" if name == "codevira-mcp" else None)
+        monkeypatch.setattr("shutil.which", lambda name: "/usr/local/bin/codevira" if name == "codevira" else None)
         cmd_path, python_exe = _resolve_command()
-        assert cmd_path == "/usr/local/bin/codevira-mcp"
+        assert cmd_path == "/usr/local/bin/codevira"
         assert python_exe == sys.executable
 
     def test_pipx_venv_found(self, tmp_path, monkeypatch):
         monkeypatch.setattr("shutil.which", lambda name: None)
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        pipx_bin = tmp_path / ".local" / "pipx" / "venvs" / "codevira-mcp" / "bin" / "codevira-mcp"
+        pipx_bin = tmp_path / ".local" / "pipx" / "venvs" / "codevira" / "bin" / "codevira"
         pipx_bin.parent.mkdir(parents=True)
         pipx_bin.write_text("#!/bin/bash\n")
         cmd_path, python_exe = _resolve_command()
@@ -597,7 +597,7 @@ class TestResolveCommand:
     def test_fallback_returns_python_exe(self, tmp_path, monkeypatch):
         monkeypatch.setattr("shutil.which", lambda name: None)
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        # Also ensure sibling binary doesn't exist (venv may have codevira-mcp installed)
+        # Also ensure sibling binary doesn't exist (venv may have codevira installed)
         monkeypatch.setattr(Path, "exists", lambda self: False)
         cmd_path, python_exe = _resolve_command()
         assert cmd_path == python_exe
@@ -621,7 +621,7 @@ class TestInjectIdeConfigIntegration:
         monkeypatch.setattr(ide_inject, "_claude_desktop_config_path",
                             lambda: fakehome / "nonexistent" / "config.json")
         monkeypatch.setattr(ide_inject, "_resolve_command",
-                            lambda: ("/usr/bin/codevira-mcp", sys.executable))
+                            lambda: ("/usr/bin/codevira", sys.executable))
 
         results = inject_ide_config(project, project_name="myproject")
         assert "Claude Code" in results
@@ -643,7 +643,7 @@ class TestInjectIdeConfigIntegration:
         monkeypatch.setattr(ide_inject, "_claude_desktop_config_path",
                             lambda: fakehome / "nonexistent" / "config.json")
         monkeypatch.setattr(ide_inject, "_resolve_command",
-                            lambda: ("/usr/bin/codevira-mcp", sys.executable))
+                            lambda: ("/usr/bin/codevira", sys.executable))
         monkeypatch.setattr(ide_inject, "_claude_global_config_path",
                             lambda: fakehome / ".claude" / "settings.json")
 
@@ -667,7 +667,7 @@ class TestInjectIdeConfigIntegration:
         monkeypatch.setattr(ide_inject, "_claude_desktop_config_path",
                             lambda: fakehome / "nonexistent" / "config.json")
         monkeypatch.setattr(ide_inject, "_resolve_command",
-                            lambda: ("/usr/bin/codevira-mcp", sys.executable))
+                            lambda: ("/usr/bin/codevira", sys.executable))
 
         results = inject_ide_config(project, project_name="emptyproject")
         assert results == {}
@@ -689,7 +689,7 @@ class TestInjectIdeConfigIntegration:
         monkeypatch.setattr("shutil.which", lambda name: None)
         monkeypatch.setattr(ide_inject, "_claude_desktop_config_path", lambda: desktop_config)
         monkeypatch.setattr(ide_inject, "_resolve_command",
-                            lambda: ("/usr/bin/codevira-mcp", sys.executable))
+                            lambda: ("/usr/bin/codevira", sys.executable))
 
         results = inject_ide_config(project, global_mode=True)
         # Claude Desktop should NOT appear in global mode results
@@ -709,7 +709,7 @@ class TestInjectIdeConfigIntegration:
         monkeypatch.setattr(ide_inject, "_claude_desktop_config_path",
                             lambda: fakehome / "nonexistent" / "config.json")
         monkeypatch.setattr(ide_inject, "_resolve_command",
-                            lambda: ("/usr/bin/codevira-mcp", sys.executable))
+                            lambda: ("/usr/bin/codevira", sys.executable))
 
         results = inject_ide_config(project, global_mode=True)
         assert "Antigravity" not in results
@@ -730,7 +730,7 @@ class TestInjectIdeConfigIntegration:
         monkeypatch.setattr(ide_inject, "_claude_desktop_config_path",
                             lambda: fakehome / "nonexistent" / "config.json")
         monkeypatch.setattr(ide_inject, "_resolve_command",
-                            lambda: ("/usr/bin/codevira-mcp", sys.executable))
+                            lambda: ("/usr/bin/codevira", sys.executable))
 
         # Make _inject_claude raise, but _inject_cursor should still succeed
         original_inject_claude = ide_inject._inject_claude
@@ -763,7 +763,7 @@ class TestInjectIdeConfigIntegration:
         monkeypatch.setattr("shutil.which", lambda name: None)
         monkeypatch.setattr(ide_inject, "_claude_desktop_config_path", lambda: desktop_config)
         monkeypatch.setattr(ide_inject, "_resolve_command",
-                            lambda: ("/usr/bin/codevira-mcp", sys.executable))
+                            lambda: ("/usr/bin/codevira", sys.executable))
         monkeypatch.setattr(ide_inject, "_antigravity_config_path",
                             lambda: tmp_path / "ag_config.json")
 
@@ -787,7 +787,7 @@ class TestInjectIdeConfigIntegration:
         monkeypatch.setattr(ide_inject, "_claude_desktop_config_path",
                             lambda: fakehome / "nonexistent" / "config.json")
         monkeypatch.setattr(ide_inject, "_resolve_command",
-                            lambda: ("/usr/bin/codevira-mcp", sys.executable))
+                            lambda: ("/usr/bin/codevira", sys.executable))
 
         results = inject_ide_config(project)
         assert "Claude Code" in results
@@ -827,7 +827,7 @@ class TestChaosIdeInject:
             # the .tmp write may fail if the parent dir is writable but the
             # existing file is not. The key is no unhandled crash.
             try:
-                _inject_claude(project, "/usr/bin/codevira-mcp", "python3")
+                _inject_claude(project, "/usr/bin/codevira", "python3")
             except (PermissionError, OSError):
                 pass  # Expected on strict systems
         finally:
@@ -868,7 +868,7 @@ class TestChaosIdeInject:
             deep = deep / f"level_{i:02d}"
         deep.mkdir(parents=True)
 
-        result = _inject_claude(deep, "/usr/bin/codevira-mcp", "python3")
+        result = _inject_claude(deep, "/usr/bin/codevira", "python3")
         config_path = Path(result)
         assert config_path.exists()
         data = json.loads(config_path.read_text())
@@ -894,7 +894,7 @@ class TestChaosIdeInject:
 
         project = tmp_path / "proj"
         project.mkdir()
-        ide_inject._inject_antigravity(project, "/usr/bin/codevira-mcp", "python3", "projet-caf\u00e9-\u00e9l\u00e8ve")
+        ide_inject._inject_antigravity(project, "/usr/bin/codevira", "python3", "projet-caf\u00e9-\u00e9l\u00e8ve")
 
         data = json.loads(config_file.read_text())
         keys = list(data["mcpServers"].keys())

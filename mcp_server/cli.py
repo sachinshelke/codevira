@@ -1,18 +1,18 @@
 """
-cli.py — Entry point for the `codevira-mcp` command.
+cli.py — Entry point for the `codevira` command.
 
 Dispatches subcommands:
-  codevira-mcp                      → start MCP server (default)
-  codevira-mcp init                 → initialize project in centralized storage
-  codevira-mcp register             → one-time global IDE registration (v1.6)
-  codevira-mcp index                → run incremental index update
-  codevira-mcp index --full         → full index rebuild
-  codevira-mcp status               → show index health and stats
-  codevira-mcp report               → show recent crash logs
-  codevira-mcp report --clear       → clear the crash log
-  codevira-mcp serve                → start MCP HTTP server
-  codevira-mcp serve --install-service   → install macOS launchd auto-start
-  codevira-mcp serve --uninstall-service → remove macOS launchd service
+  codevira                      → start MCP server (default)
+  codevira init                 → initialize project in centralized storage
+  codevira register             → one-time global IDE registration (v1.6)
+  codevira index                → run incremental index update
+  codevira index --full         → full index rebuild
+  codevira status               → show index health and stats
+  codevira report               → show recent crash logs
+  codevira report --clear       → clear the crash log
+  codevira serve                → start MCP HTTP server
+  codevira serve --install-service   → install macOS launchd auto-start
+  codevira serve --uninstall-service → remove macOS launchd service
 
 Global flags:
   --project-dir <path>          → override project directory (for Google Antigravity,
@@ -72,7 +72,7 @@ def cmd_init() -> None:
             print()
             answer = input("  Continue initializing here anyway? [y/N] ").strip().lower()
             if answer != "y":
-                print("  Aborted. Run `codevira-mcp init` from your project root.")
+                print("  Aborted. Run `codevira init` from your project root.")
                 sys.exit(0)
             print()
 
@@ -236,9 +236,9 @@ def cmd_init() -> None:
             hooks_dir.mkdir(exist_ok=True)
             hook_path = hooks_dir / "post-commit"
 
-            # Find codevira-mcp executable path
+            # Find codevira executable path
             import shutil as _shutil
-            cmd_path = _shutil.which("codevira-mcp") or "codevira-mcp"
+            cmd_path = _shutil.which("codevira") or "codevira"
 
             hook_content = (
                 "#!/bin/sh\n"
@@ -497,7 +497,7 @@ def main() -> None:
         set_project_dir(project_dir)
 
     parser = argparse.ArgumentParser(
-        prog="codevira-mcp",
+        prog="codevira",
         description="Codevira — AI context layer for your codebase",
     )
     parser.add_argument(

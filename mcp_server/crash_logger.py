@@ -152,7 +152,7 @@ def log_crash(
         lines.append(f"PYTHON: {sys.version.split()[0]}")
         try:
             from importlib.metadata import version as pkg_version
-            lines.append(f"CODEVIRA: {pkg_version('codevira-mcp')}")
+            lines.append(f"CODEVIRA: {pkg_version('codevira')}")
         except Exception:
             pass
 

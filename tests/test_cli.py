@@ -121,7 +121,7 @@ class TestMainDispatch:
         """Invoke main() with the given argv and all handlers mocked."""
         from mcp_server.cli import main
 
-        with patch.object(sys, "argv", ["codevira-mcp"] + argv_list):
+        with patch.object(sys, "argv", ["codevira"] + argv_list):
             # Also patch set_project_dir to avoid side effects
             with patch("mcp_server.cli.set_project_dir", create=True):
                 main()
@@ -811,7 +811,7 @@ class TestCmdRegister:
         """Common patches needed for cmd_register's import block."""
         return {
             "mcp_server.paths.get_project_root": patch("mcp_server.paths.get_project_root", return_value=Path("/tmp/proj")),
-            "mcp_server.ide_inject._resolve_command": patch("mcp_server.ide_inject._resolve_command", return_value=("codevira-mcp", "/usr/bin/python3")),
+            "mcp_server.ide_inject._resolve_command": patch("mcp_server.ide_inject._resolve_command", return_value=("codevira", "/usr/bin/python3")),
             "mcp_server.ide_inject.detect_installed_ides": patch("mcp_server.ide_inject.detect_installed_ides", return_value=[]),
             "mcp_server.ide_inject.inject_global_claude_code": patch("mcp_server.ide_inject.inject_global_claude_code", return_value="/path/to/claude"),
             "mcp_server.ide_inject.inject_global_cursor": patch("mcp_server.ide_inject.inject_global_cursor", return_value="/path/to/cursor"),
@@ -936,7 +936,7 @@ class TestMainServeWithProjectDir:
             p.start()
         try:
             from mcp_server.cli import main
-            with patch.object(sys, "argv", ["codevira-mcp", "serve", "--project-dir", project_path]):
+            with patch.object(sys, "argv", ["codevira", "serve", "--project-dir", project_path]):
                 main()
         finally:
             for p in patchers:

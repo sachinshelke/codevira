@@ -129,18 +129,18 @@ def _merge_mcp_config(existing: dict, server_name: str, server_config: dict) -> 
 
 
 # ---------------------------------------------------------------------------
-# Resolve the best command to run codevira-mcp
+# Resolve the best command to run codevira
 # ---------------------------------------------------------------------------
 
 def _resolve_command() -> tuple[str, str]:
     """
     Returns (cmd_path, python_exe).
-    cmd_path is the absolute path to codevira-mcp binary.
+    cmd_path is the absolute path to codevira binary.
     python_exe is the Python interpreter that runs this process.
 
     Search order for the binary:
       1. shutil.which (works when ~/.local/bin is in PATH)
-      2. pipx default venv location  ~/.local/pipx/venvs/codevira-mcp/bin/
+      2. pipx default venv location  ~/.local/pipx/venvs/codevira/bin/
       3. pip --user install location  ~/Library/Python/X.Y/bin/ (macOS) or %APPDATA% (Windows)
       4. Same bin dir as current Python interpreter
       5. Fallback: run as `python -m mcp_server` using current interpreter
@@ -148,14 +148,14 @@ def _resolve_command() -> tuple[str, str]:
     python_exe = sys.executable
 
     # 1. Standard PATH lookup
-    exe = shutil.which("codevira-mcp")
+    exe = shutil.which("codevira")
     if exe:
         return exe, python_exe
 
     # 2. pipx default venv
-    pipx_bin = Path.home() / ".local" / "pipx" / "venvs" / "codevira-mcp" / "bin" / "codevira-mcp"
+    pipx_bin = Path.home() / ".local" / "pipx" / "venvs" / "codevira" / "bin" / "codevira"
     if sys.platform == "win32":
-        pipx_bin = Path.home() / ".local" / "pipx" / "venvs" / "codevira-mcp" / "Scripts" / "codevira-mcp.exe"
+        pipx_bin = Path.home() / ".local" / "pipx" / "venvs" / "codevira" / "Scripts" / "codevira.exe"
     if pipx_bin.exists():
         return str(pipx_bin), python_exe
 
@@ -169,7 +169,7 @@ def _resolve_command() -> tuple[str, str]:
         user_scripts = sysconfig.get_path("scripts", scripts_scheme)
         if user_scripts:
             suffix = ".exe" if sys.platform == "win32" else ""
-            user_bin = Path(user_scripts) / f"codevira-mcp{suffix}"
+            user_bin = Path(user_scripts) / f"codevira{suffix}"
             if user_bin.exists():
                 return str(user_bin), python_exe
     except Exception:
@@ -177,7 +177,7 @@ def _resolve_command() -> tuple[str, str]:
 
     # 4. Same bin dir as current Python
     suffix = ".exe" if sys.platform == "win32" else ""
-    sibling_bin = Path(python_exe).parent / f"codevira-mcp{suffix}"
+    sibling_bin = Path(python_exe).parent / f"codevira{suffix}"
     if sibling_bin.exists():
         return str(sibling_bin), python_exe
 
@@ -194,7 +194,7 @@ def _build_server_config(cmd_path: str, python_exe: str, project_root: Path, use
     Build the MCP server config dict for per-project mode.
 
     If cmd_path is the Python interpreter (fallback), use `-m mcp_server --project-dir`.
-    If cmd_path is the codevira-mcp binary:
+    If cmd_path is the codevira binary:
       - use_cwd=True:  {"command": ..., "args": [], "cwd": ...}   (Claude / Cursor / Windsurf)
       - use_cwd=False: {"command": ..., "args": ["--project-dir", ...]}  (tools that ignore cwd)
     """
@@ -248,7 +248,7 @@ def _inject_claude_desktop(project_root: Path, cmd_path: str, python_exe: str) -
     Claude Desktop:
       - Does NOT support the 'url' format — only 'command' + 'args'
       - Does NOT support 'cwd' — must use '--project-dir' arg
-      - Requires the FULL absolute binary path (not just 'codevira-mcp')
+      - Requires the FULL absolute binary path (not just 'codevira')
     """
     config_path = _claude_desktop_config_path()
     existing = _read_json_safe(config_path)
@@ -373,7 +373,7 @@ def inject_ide_config(
         project_root: Project directory (used in per-project mode).
         project_name: Display name for the project.
         global_mode: If True, inject global config (no project path) instead of
-                     per-project config. Use for 'codevira-mcp register'.
+                     per-project config. Use for 'codevira register'.
 
     Returns:
         Dict of {ide_name: config_path_written} for each configured tool.

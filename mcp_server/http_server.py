@@ -11,9 +11,9 @@ Endpoint layout:
   GET  /      — Health check → {"status": "ok", "transport": "streamable-http"}
 
 Usage:
-  codevira-mcp serve                       # HTTP on 127.0.0.1:7007
-  codevira-mcp serve --port 7443 --https   # HTTPS on 127.0.0.1:7443
-  codevira-mcp serve --host 0.0.0.0        # Expose on all interfaces (LAN)
+  codevira serve                       # HTTP on 127.0.0.1:7007
+  codevira serve --port 7443 --https   # HTTPS on 127.0.0.1:7443
+  codevira serve --host 0.0.0.0        # Expose on all interfaces (LAN)
 """
 from __future__ import annotations
 
@@ -127,7 +127,7 @@ def generate_mkcert_certs() -> tuple[Path, Path]:
             "mkcert not found.\n"
             "  Install:  brew install mkcert\n"
             "  Trust CA: mkcert -install\n"
-            "Then re-run: codevira-mcp serve --https"
+            "Then re-run: codevira serve --https"
         )
 
     cert_f = _cert_file()

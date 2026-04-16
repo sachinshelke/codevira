@@ -52,13 +52,13 @@ Codevira is a [Model Context Protocol](https://modelcontextprotocol.io) server t
 
 ```bash
 # Recommended: global install via pipx (isolated, works everywhere)
-pipx install codevira-mcp
+pipx install codevira
 
 # Alternative: pip install
-pip install codevira-mcp
+pip install codevira
 
 # With semantic search support (adds ChromaDB + sentence-transformers)
-pip install 'codevira-mcp[search]'
+pip install 'codevira[search]'
 ```
 
 ### 2. Register with your AI tools
@@ -100,7 +100,7 @@ Codevira supports two transports. Use the right one for your client:
 {
   "mcpServers": {
     "codevira": {
-      "command": "codevira-mcp",
+      "command": "codevira",
       "args": [],
       "cwd": "/path/to/your-project"
     }
@@ -113,22 +113,22 @@ Codevira supports two transports. Use the right one for your client:
 {
   "mcpServers": {
     "codevira": {
-      "command": "/path/to/codevira-mcp",
+      "command": "/path/to/codevira",
       "args": ["--project-dir", "/path/to/your-project"]
     }
   }
 }
 ```
 
-> Tip: find the full binary path with `which codevira-mcp`
+> Tip: find the full binary path with `which codevira`
 
-**HTTP transport** — Claude Code CLI via `codevira-mcp serve` (`.claude/settings.json`):
+**HTTP transport** — Claude Code CLI via `codevira serve` (`.claude/settings.json`):
 
 First start the HTTP server in a terminal:
 ```bash
-codevira-mcp serve --port 7007 --project-dir /path/to/your-project
+codevira serve --port 7007 --project-dir /path/to/your-project
 # For HTTPS (required by some clients):
-codevira-mcp serve --https --port 7443 --project-dir /path/to/your-project
+codevira serve --https --port 7443 --project-dir /path/to/your-project
 ```
 
 Then register the URL:
@@ -153,8 +153,8 @@ Then register the URL:
 
 **Auto-start on login (macOS):**
 ```bash
-codevira-mcp serve --install-service    # start server automatically on login
-codevira-mcp serve --uninstall-service  # remove auto-start
+codevira serve --install-service    # start server automatically on login
+codevira serve --uninstall-service  # remove auto-start
 ```
 
 **Google Antigravity** (`~/.gemini/settings/mcp_config.json`):
@@ -163,7 +163,7 @@ codevira-mcp serve --uninstall-service  # remove auto-start
   "mcpServers": {
     "codevira-yourproject": {
       "$typeName": "exa.cascade_plugins_pb.CascadePluginCommandTemplate",
-      "command": "codevira-mcp",
+      "command": "codevira",
       "args": ["--project-dir", "/path/to/your-project"]
     }
   }
@@ -399,9 +399,9 @@ Supported languages: Python, TypeScript, JavaScript, Go, Rust, Java, Kotlin, C#,
 
 - **Python 3.10+**
 
-Base install (`pip install codevira-mcp`): includes everything except semantic search. All 36 MCP tools work — graph, roadmap, changesets, code reader, learning, call graph.
+Base install (`pip install codevira`): includes everything except semantic search. All 36 MCP tools work — graph, roadmap, changesets, code reader, learning, call graph.
 
-With semantic search (`pip install 'codevira-mcp[search]'`): adds ChromaDB + sentence-transformers for `search_codebase()`. Downloads a ~90MB embedding model on first use.
+With semantic search (`pip install 'codevira[search]'`): adds ChromaDB + sentence-transformers for `search_codebase()`. Downloads a ~90MB embedding model on first use.
 
 ---
 

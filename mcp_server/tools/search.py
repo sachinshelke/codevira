@@ -47,7 +47,7 @@ def search_codebase(description: str, top_k: int = 5) -> dict[str, Any]:
             pass
         return {
             "error": "Semantic index not found.",
-            "hint": "Install search deps with: pip install 'codevira-mcp[search]', then run: codevira index --full",
+            "hint": "Install search deps with: pip install 'codevira[search]', then run: codevira index --full",
         }
 
     try:

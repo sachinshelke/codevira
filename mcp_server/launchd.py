@@ -1,12 +1,12 @@
 """
 launchd.py — macOS launchd service management for Codevira MCP HTTP server.
 
-Generates a launchd plist so that `codevira-mcp serve` starts automatically
+Generates a launchd plist so that `codevira serve` starts automatically
 on login and stays running as a background service.
 
 Usage (via CLI):
-    codevira-mcp serve --install-service    # install + load
-    codevira-mcp serve --uninstall-service  # unload + remove
+    codevira serve --install-service    # install + load
+    codevira serve --uninstall-service  # unload + remove
 
 This is macOS-only. Windows and Linux service support is planned for v2.0.
 """
@@ -32,8 +32,8 @@ def install_launchd(
 ) -> Path:
     """Generate and load a launchd plist for the Codevira MCP HTTP server.
 
-    The plist starts `codevira-mcp serve` on login with the given options.
-    Logs go to ~/Library/Logs/codevira-mcp.log.
+    The plist starts `codevira serve` on login with the given options.
+    Logs go to ~/Library/Logs/codevira.log.
 
     Args:
         port:        TCP port for the server (default: 7007).
@@ -63,7 +63,7 @@ def install_launchd(
 
     log_dir = Path.home() / "Library" / "Logs"
     log_dir.mkdir(parents=True, exist_ok=True)
-    log_path = str(log_dir / "codevira-mcp.log")
+    log_path = str(log_dir / "codevira.log")
 
     # Build plist via plistlib (safe from XML injection — values are properly
     # escaped regardless of content in host, port, or cmd_path).

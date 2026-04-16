@@ -46,7 +46,7 @@ def mock_plist_path(tmp_path):
 def mock_resolve_command():
     """Mock _resolve_command at the source module (it's imported lazily inside install_launchd)."""
     with patch("mcp_server.ide_inject._resolve_command",
-               return_value=("/usr/local/bin/codevira-mcp", "codevira-mcp")):
+               return_value=("/usr/local/bin/codevira", "codevira")):
         yield
 
 
@@ -114,7 +114,7 @@ class TestInstallLaunchd:
             plist = plistlib.load(f)
 
         args = plist["ProgramArguments"]
-        assert args[0] == "/usr/local/bin/codevira-mcp"
+        assert args[0] == "/usr/local/bin/codevira"
         assert "serve" in args
         assert "--host" in args
         assert "0.0.0.0" in args

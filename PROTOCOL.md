@@ -164,7 +164,7 @@ The MCP server must be running for this protocol to work.
 
 **Quick setup (recommended):**
 ```bash
-pip install codevira-mcp    # or: pipx install codevira-mcp
+pip install codevira    # or: pipx install codevira
 cd your-project
 codevira init               # auto-detects everything, auto-injects IDE configs
 ```
@@ -173,14 +173,14 @@ Restart your AI tool after init. Verify: ask your agent to call `get_roadmap()`.
 
 **Manual config (if auto-inject didn't work):**
 
-Codevira supports two MCP transports — stdio (default) and HTTP (via `codevira-mcp serve`).
+Codevira supports two MCP transports — stdio (default) and HTTP (via `codevira serve`).
 
 **Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`) — stdio only:
 ```json
 {
   "mcpServers": {
     "codevira": {
-      "command": "/path/to/codevira-mcp",
+      "command": "/path/to/codevira",
       "args": ["--project-dir", "/path/to/your-project"]
     }
   }
@@ -192,7 +192,7 @@ Codevira supports two MCP transports — stdio (default) and HTTP (via `codevira
 {
   "mcpServers": {
     "codevira": {
-      "command": "codevira-mcp",
+      "command": "codevira",
       "args": [],
       "cwd": "/path/to/your-project"
     }
@@ -202,7 +202,7 @@ Codevira supports two MCP transports — stdio (default) and HTTP (via `codevira
 
 **Claude Code CLI** — HTTP transport (start server first, then register URL):
 ```bash
-codevira-mcp serve --https --port 7443 --project-dir /path/to/your-project
+codevira serve --https --port 7443 --project-dir /path/to/your-project
 ```
 ```json
 {
@@ -220,7 +220,7 @@ codevira-mcp serve --https --port 7443 --project-dir /path/to/your-project
   "mcpServers": {
     "codevira": {
       "$typeName": "exa.cascade_plugins_pb.CascadePluginCommandTemplate",
-      "command": "codevira-mcp",
+      "command": "codevira",
       "args": ["--project-dir", "/path/to/your-project"]
     }
   }

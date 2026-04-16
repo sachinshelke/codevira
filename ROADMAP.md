@@ -47,7 +47,7 @@ Make setup and daily use smoother.
 - **`codevira` CLI** — single entry point: `codevira init`, `codevira status`, `codevira index`
 - **Progress bar for indexing** — visual feedback during `--full` builds on large codebases
 - **Index health dashboard** — `codevira status` shows stale files, graph coverage, last indexed
-- **Global install support** — `pipx install codevira-mcp` works across all projects without per-project virtual environments
+- **Global install support** — `pipx install codevira` works across all projects without per-project virtual environments
 
 ---
 
@@ -75,9 +75,9 @@ Make Codevira instant to set up and intelligent across all projects.
 - **Zero-config init** — auto-detects language, source dirs, file extensions from project markers (15+ languages); no interactive prompts
 - **Smart directory scanning** — scans actual project tree for source files instead of relying on fixed folder conventions; skips known noise dirs (`node_modules`, `.venv`, `build`, etc.)
 - **IDE auto-inject** — writes MCP config directly into Claude Code, Cursor, Windsurf, and Google Antigravity on `init`; non-destructive merge preserves existing settings
-- **Reliable binary resolution** — finds `codevira-mcp` binary across PATH, pipx venvs, pip --user, and sibling bin; falls back to `python -m mcp_server` if needed
+- **Reliable binary resolution** — finds `codevira` binary across PATH, pipx venvs, pip --user, and sibling bin; falls back to `python -m mcp_server` if needed
 - **Cross-project global memory** — `~/.codevira/global.db` aggregates preferences and rules across all projects; imported on startup with confidence decay
-- **Optional ML dependencies** — base install is lightweight (~50MB); `pip install 'codevira-mcp[search]'` adds ChromaDB + sentence-transformers for semantic search
+- **Optional ML dependencies** — base install is lightweight (~50MB); `pip install 'codevira[search]'` adds ChromaDB + sentence-transformers for semantic search
 - **Function-level call graph** — `symbols` + `call_edges` tables; knows which function calls which, across files
 - **3 new tools**: `query_graph()` (callers/callees/tests), `analyze_changes()` (function-level risk scoring), `find_hotspots()` (complexity heatmap)
 - **5 MCP workflow prompts** — `review_changes`, `debug_issue`, `onboard_session`, `pre_commit_check`, `architecture_overview`
@@ -92,7 +92,7 @@ Make Codevira instant to set up and intelligent across all projects.
 Today a developer must: install → `cd project` → `codevira init` → restart IDE → repeat per project. v1.6 reduces this to: install → done.
 
 ### One-Time Global Registration
-- Single MCP entry in each IDE config: `{"command": "codevira-mcp"}` — no project path, no `cwd` override, no per-project config files
+- Single MCP entry in each IDE config: `{"command": "codevira"}` — no project path, no `cwd` override, no per-project config files
 - Works for every project the developer opens, forever
 - `codevira init` becomes optional (power-user override for custom settings)
 
@@ -120,7 +120,7 @@ Today a developer must: install → `cd project` → `codevira init` → restart
 - Status indicator: `get_session_context()` includes indexing progress
 
 ### Distribution
-- **Publish to PyPI** — `pipx install codevira-mcp` works for anyone worldwide
+- **Publish to PyPI** — `pipx install codevira` works for anyone worldwide
 - **List on MCP registries** — Anthropic MCP registry, Cursor marketplace, Windsurf plugin store
 
 ---

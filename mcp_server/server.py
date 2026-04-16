@@ -23,7 +23,7 @@ Usage (Claude Code .claude/settings.json):
   {
     "mcpServers": {
       "codevira": {
-        "command": "codevira-mcp",
+        "command": "codevira",
         "args": [],
         "cwd": "/path/to/your-project"
       }

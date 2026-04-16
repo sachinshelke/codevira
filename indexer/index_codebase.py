@@ -62,7 +62,7 @@ def _get_chroma_client():
         import chromadb
     except ImportError:
         print("ERROR: semantic search requires chromadb.")
-        print("       Install it with: pip install 'codevira-mcp[search]'")
+        print("       Install it with: pip install 'codevira[search]'")
         sys.exit(1)
     db_dir = str(_index_dir())
     return chromadb.PersistentClient(path=db_dir)
@@ -73,7 +73,7 @@ def _get_embedding_fn():
         return embedding_functions.SentenceTransformerEmbeddingFunction(model_name="all-MiniLM-L6-v2")
     except ImportError:
         print("ERROR: semantic search requires sentence-transformers.")
-        print("       Install it with: pip install 'codevira-mcp[search]'")
+        print("       Install it with: pip install 'codevira[search]'")
         sys.exit(1)
 
 def _compute_hash(file_path: Path) -> str:
@@ -177,7 +177,7 @@ def cmd_full_rebuild():
     db = SQLiteGraph(get_data_dir() / "graph" / "graph.db")
 
     if not _check_search_deps():
-        console.print("[yellow]⚠[/yellow]  Semantic search skipped — install with: [bold]pip install 'codevira-mcp\\[search\\]'[/bold]")
+        console.print("[yellow]⚠[/yellow]  Semantic search skipped — install with: [bold]pip install 'codevira\\[search\\]'[/bold]")
         # Still build the graph even without search deps
         from indexer.graph_generator import generate_graph_sqlite
         result = generate_graph_sqlite(str(_project_root()), str(get_data_dir() / "graph" / "graph.db"))

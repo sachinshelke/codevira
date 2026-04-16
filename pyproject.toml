@@ -3,7 +3,7 @@ requires = ["setuptools>=68,<77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "codevira-mcp"
+name = "codevira"
 version = "1.6.0"
 description = "Persistent adaptive memory for AI coding agents — MCP server with context graph, semantic search, adaptive learning, roadmap tracking, and cross-tool continuity."
 readme = "README.md"
@@ -66,7 +66,6 @@ all = [
 
 [project.scripts]
 codevira = "mcp_server.cli:main"
-codevira-mcp = "mcp_server.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/sachinshelke/codevira"

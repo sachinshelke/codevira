@@ -36,18 +36,18 @@ def _patch_data_dir(tmp_path):
 # ---------------------------------------------------------------
 
 class TestValidTaskTypes:
-    def test_add_route(self, tmp_path):
+    def test_add_tool(self, tmp_path):
         rules_dir = tmp_path / "rules"
         _create_all_rule_files(rules_dir)
 
         with _patch_data_dir(tmp_path):
-            result = get_playbook("add_route")
+            result = get_playbook("add_tool")
 
         assert result["found"] is True
-        assert result["task_type"] == "add_route"
+        assert result["task_type"] == "add_tool"
         assert len(result["rules"]) == 2
-        assert result["rules"][0]["file"] == "api-standards.md"
-        assert "api-standards.md" in result["rules"][0]["content"]
+        assert result["rules"][0]["file"] == "coding-standards.md"
+        assert "coding-standards.md" in result["rules"][0]["content"]
 
     def test_add_service(self, tmp_path):
         rules_dir = tmp_path / "rules"
@@ -73,7 +73,7 @@ class TestValidTaskTypes:
         assert result["task_type"] == "add_schema"
         assert len(result["rules"]) == 2
         assert result["rules"][0]["file"] == "coding-standards.md"
-        assert result["rules"][1]["file"] == "api-standards.md"
+        assert result["rules"][1]["file"] == "persistence.md"
 
     def test_debug_pipeline(self, tmp_path):
         rules_dir = tmp_path / "rules"
@@ -144,17 +144,17 @@ class TestMissingRuleFile:
     def test_missing_file_returns_placeholder_error_text(self, tmp_path):
         rules_dir = tmp_path / "rules"
         rules_dir.mkdir()
-        # Only create one of the two expected files for add_route
-        (rules_dir / "api-standards.md").write_text("# API Standards")
-        # coding-standards.md is intentionally missing
+        # Only create one of the two expected files for add_tool
+        (rules_dir / "coding-standards.md").write_text("# Coding Standards")
+        # testing-standards.md is intentionally missing
 
         with _patch_data_dir(tmp_path):
-            result = get_playbook("add_route")
+            result = get_playbook("add_tool")
 
         assert result["found"] is True
         missing = [r for r in result["rules"] if "File not found" in r["content"]]
         assert len(missing) == 1
-        assert missing[0]["file"] == "coding-standards.md"
+        assert missing[0]["file"] == "testing-standards.md"
 
     def test_all_files_missing_returns_all_placeholders(self, tmp_path):
         rules_dir = tmp_path / "rules"
@@ -162,7 +162,7 @@ class TestMissingRuleFile:
         # Create NO rule files
 
         with _patch_data_dir(tmp_path):
-            result = get_playbook("add_route")
+            result = get_playbook("add_tool")
 
         assert result["found"] is True
         assert all("File not found" in r["content"] for r in result["rules"])
@@ -178,10 +178,10 @@ class TestCaseInsensitivityAndWhitespace:
         _create_all_rule_files(rules_dir)
 
         with _patch_data_dir(tmp_path):
-            result = get_playbook("  ADD_ROUTE  ")
+            result = get_playbook("  ADD_TOOL  ")
 
         assert result["found"] is True
-        assert result["task_type"] == "add_route"
+        assert result["task_type"] == "add_tool"
 
     def test_mixed_case(self, tmp_path):
         rules_dir = tmp_path / "rules"
@@ -225,7 +225,7 @@ class TestRuleCountsPerTaskType:
 
     def test_exactly_six_task_types_defined(self):
         """PLAYBOOKS should contain exactly 6 task types."""
-        expected = {"add_route", "add_service", "add_schema",
+        expected = {"add_tool", "add_service", "add_schema",
                     "debug_pipeline", "commit", "write_test"}
         assert set(PLAYBOOKS.keys()) == expected
 

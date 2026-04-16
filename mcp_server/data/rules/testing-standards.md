@@ -4,14 +4,13 @@
 
 | Category | Location | Purpose | I/O |
 |----------|----------|---------|-----|
-| Unit | `tests/unit/` | Isolated functions | None |
-| Integration | `tests/integration/` | Cross-context flows | Real |
-| Contract | `tests/contracts/` | Provider compliance | Mocked |
+| Unit | `tests/` | Isolated functions, 1:1 per source file | None |
+| Integration | `tests/integration/` | Cross-module flows | Real |
 | E2E | `tests/e2e/` | Full system verify | Real |
 
-## 2. Mandatory Contract Tests
-- Every provider in `providers/` MUST pass its corresponding contract test in `tests/contracts/`.
-- Providers implementing `AbstractLLMProvider`, `AbstractVectorStore`, etc., must be verified against identical test suites.
+## 2. Test Coverage Requirements
+- Every new MCP tool MUST have corresponding unit tests.
+- Every new module MUST have a matching `tests/test_<module>.py` file.
 
 ## 3. Test Naming & Structure
 

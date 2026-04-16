@@ -104,7 +104,7 @@ This ensures future agents can find it via `get_node()` and `get_impact()`.
 
 | Task type | Read this rule file |
 |---|---|
-| Adding an API route | `rules/api-standards.md` |
+| Adding an MCP tool | `rules/coding-standards.md` + `rules/testing-standards.md` |
 | Adding a service | `rules/resilience-observability.md` |
 | Modifying imports | Review your project's layer/import rules |
 | Writing tests | `rules/testing-standards.md` |

@@ -2,18 +2,16 @@
 
 ## 1. Fault Tolerance
 
-- **Circuit Breakers**: Recommended for all external provider calls (LLM, databases, external APIs). Use your project's circuit breaker abstraction or a library like `tenacity`.
-- **Retries**: Use exponential backoff for transient failures.
-- **Timeouts**: Every external call MUST have a defined timeout.
+- **Retries**: Use exponential backoff for transient failures (git subprocess calls, file I/O).
+- **Timeouts**: Every subprocess call MUST have a defined timeout (e.g., `timeout=3` for git commands).
+- **Graceful Degradation**: When optional dependencies are missing (chromadb, tree-sitter), tools MUST continue with reduced functionality rather than crashing.
 
 ## 2. Observability
 
-- **Tracing**: Every request SHOULD have a trace/correlation ID propagated through the call chain.
-- **Structured Logging**: Log events with context metadata (request_id, user_id where applicable) rather than raw strings.
-- **Health Checks**: Every service MUST implement a `/health` endpoint returning current status.
+- **Structured Logging**: Use Python `logging` module with context metadata rather than raw print statements.
+- **Crash Logging**: All unhandled exceptions are captured to `~/.codevira/logs/crashes.log` with automatic sanitization of sensitive data (connection strings, passwords, private IPs).
 
-## 3. Telemetry & Security
+## 3. Security
 
-- **Metrics and Traces**: Export via OpenTelemetry-compatible sinks (OTEL, Prometheus, Datadog, etc.) when available.
-- **Production logs MUST NOT contain PII**: Mask sensitive fields before logging.
-- **API responses MUST NOT expose raw secrets**: Connection strings, API keys, and tokens MUST be masked before serialization. See Rule 019: API Standards § 2.
+- **Crash logs MUST NOT contain PII**: The crash logger sanitizes connection strings, key=value secrets, and home directory paths before writing to disk.
+- **MCP tool responses MUST NOT expose raw secrets**: Connection strings, API keys, and tokens MUST be masked before returning to the AI agent.

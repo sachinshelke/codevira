@@ -29,4 +29,4 @@
 
 - **Tagging**: Releases are triggered by git tags (e.g., `v0.8.0`).
 - **Changelog**: `CHANGELOG.md` must be updated BEFORE the version tag is created.
-- **Immutable Artifacts**: Production docker images must be tagged with the version and commit SHA, never just `latest`.
+- **Immutable Artifacts**: PyPI packages must match the version tag. Never publish over an existing version.

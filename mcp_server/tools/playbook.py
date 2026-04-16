@@ -13,10 +13,11 @@ def _rules_dir() -> Path:
     return get_package_data_dir() / "rules"
 
 # Task type → relevant rule files (ordered by importance)
+# These map common development tasks to the rule files that govern them.
 PLAYBOOKS: dict[str, list[str]] = {
-    "add_route": [
-        "api-standards.md",
+    "add_tool": [
         "coding-standards.md",
+        "testing-standards.md",
     ],
     "add_service": [
         "coding-standards.md",
@@ -24,7 +25,7 @@ PLAYBOOKS: dict[str, list[str]] = {
     ],
     "add_schema": [
         "coding-standards.md",
-        "api-standards.md",
+        "persistence.md",
     ],
     "debug_pipeline": [
         "resilience-observability.md",

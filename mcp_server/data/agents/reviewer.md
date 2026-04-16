@@ -46,9 +46,9 @@ For each changed file:
 - [ ] New fields have appropriate defaults (not required unless truly required)
 - [ ] Serialization/deserialization behavior is unchanged for existing fields
 
-### 4. API Changes
-- [ ] All new endpoints return the standard response envelope
-- [ ] New routes are registered in the appropriate router/main file
+### 4. MCP Tool Changes
+- [ ] New tools are registered in `server.py` with correct `inputSchema`
+- [ ] Tool handlers return structured dicts, not raw strings
 - [ ] Error cases use typed exceptions, not generic exceptions
 
 ### 5. Agent Framework Changes

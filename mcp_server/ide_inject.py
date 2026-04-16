@@ -93,7 +93,7 @@ def _windsurf_global_config_path() -> Path:
     return Path.home() / ".windsurf" / "mcp_config.json"
 
 def _antigravity_config_path() -> Path:
-    return Path.home() / ".gemini" / "settings" / "mcp_config.json"
+    return Path.home() / ".gemini" / "antigravity" / "mcp_config.json"
 
 
 # ---------------------------------------------------------------------------
@@ -335,6 +335,21 @@ def inject_global_windsurf(cmd_path: str, python_exe: str) -> str | None:
     config_path = _windsurf_global_config_path()
     existing = _read_json_safe(config_path)
     server_config = _build_global_server_config(cmd_path, python_exe)
+    merged = _merge_mcp_config(existing, "codevira", server_config)
+    _write_json_safe(config_path, merged)
+    return str(config_path)
+
+
+def inject_global_antigravity(cmd_path: str, python_exe: str) -> str | None:
+    """Inject global codevira config into Google Antigravity.
+
+    Uses a single 'codevira' entry with no project path. Antigravity
+    sets the working directory when it starts the MCP server process.
+    """
+    config_path = _antigravity_config_path()
+    existing = _read_json_safe(config_path)
+    base_config = _build_global_server_config(cmd_path, python_exe)
+    server_config = {"$typeName": "exa.cascade_plugins_pb.CascadePluginCommandTemplate", **base_config}
     merged = _merge_mcp_config(existing, "codevira", server_config)
     _write_json_safe(config_path, merged)
     return str(config_path)

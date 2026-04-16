@@ -481,6 +481,11 @@ def cmd_register(
                 path = _inject_claude_desktop(project_root, cmd_path, python_exe)
                 if path:
                     results["Claude Desktop"] = path
+            elif ide == "antigravity":
+                from mcp_server.ide_inject import inject_global_antigravity
+                path = inject_global_antigravity(cmd_path, python_exe)
+                if path:
+                    results["Antigravity (global)"] = path
         except Exception as e:
             print(f"  Warning: could not configure {ide}: {e}")
 

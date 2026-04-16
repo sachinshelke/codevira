@@ -32,9 +32,14 @@ _project_dir_override: Path | None = None
 
 
 def set_project_dir(path: str | Path) -> None:
-    """Override the project directory (called by CLI when --project-dir is passed)."""
+    """Override the project directory (called by CLI when --project-dir is passed).
+
+    Also clears the data-dir cache so subsequent get_data_dir() calls
+    resolve against the new project root, not a stale cached entry.
+    """
     global _project_dir_override
     _project_dir_override = Path(path).resolve()
+    invalidate_data_dir_cache()
 
 
 # ---------------------------------------------------------------------------

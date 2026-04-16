@@ -13,44 +13,69 @@ from pathlib import Path
 # file imports modules that depend on it. This mock provides all attributes
 # that code_reader.py, chunker.py, and graph_generator.py import.
 #
-# This runs at conftest load time (before collection), so it covers all tests.
+# We only mock when the real packages are NOT installed. If tree-sitter and
+# tree-sitter-language-pack are available (e.g. in the dev venv),
+# test_treesitter_parser.py will use the real implementations.
 # ---------------------------------------------------------------------------
-if "tree_sitter_language_pack" not in sys.modules:
-    _ts_lang_pack = types.ModuleType("tree_sitter_language_pack")
-    _ts_lang_pack.__dict__["__all__"] = []
-    sys.modules["tree_sitter_language_pack"] = _ts_lang_pack
+_ts_available = True
+try:
+    import tree_sitter_language_pack  # noqa: F401
+    import tree_sitter  # noqa: F401
+except ImportError:
+    _ts_available = False
 
-if "tree_sitter" not in sys.modules:
-    _ts_mod = types.ModuleType("tree_sitter")
-    _ts_mod.Node = MagicMock()
-    sys.modules["tree_sitter"] = _ts_mod
+if not _ts_available:
+    if "tree_sitter_language_pack" not in sys.modules:
+        _ts_lang_pack = types.ModuleType("tree_sitter_language_pack")
+        _ts_lang_pack.__dict__["__all__"] = []
+        sys.modules["tree_sitter_language_pack"] = _ts_lang_pack
 
-if "indexer.treesitter_parser" not in sys.modules:
-    _fake_ts = types.ModuleType("indexer.treesitter_parser")
-    _fake_ts.parse_file = MagicMock(return_value=None)
-    _fake_ts.get_language = MagicMock(return_value=None)
-    _fake_ts.get_symbol_source = MagicMock(return_value={"found": False})
-    _fake_ts.EXTENSION_MAP = {}
-    # ParsedSymbol dataclass stub (used by graph_generator)
-    from dataclasses import dataclass, field as dc_field
-    from typing import Optional, List
+    if "tree_sitter" not in sys.modules:
+        _ts_mod = types.ModuleType("tree_sitter")
+        _ts_mod.Node = MagicMock()
+        sys.modules["tree_sitter"] = _ts_mod
 
-    @dataclass
-    class _ParsedSymbol:
-        name: str = ""
-        kind: str = ""
-        signature_line: str = ""
-        start_line: int = 0
-        end_line: int = 0
-        docstring: Optional[str] = None
-        is_public: bool = True
-        methods: List[str] = dc_field(default_factory=list)
+    if "indexer.treesitter_parser" not in sys.modules:
+        _fake_ts = types.ModuleType("indexer.treesitter_parser")
+        _fake_ts.parse_file = MagicMock(return_value=None)
+        _fake_ts.get_language = MagicMock(return_value=None)
+        _fake_ts.get_symbol_source = MagicMock(return_value={"found": False})
+        _fake_ts.EXTENSION_MAP = {}
+        # ParsedSymbol dataclass stub (used by graph_generator)
+        from dataclasses import dataclass, field as dc_field
+        from typing import Optional, List
 
-    _fake_ts.ParsedSymbol = _ParsedSymbol
-    sys.modules["indexer.treesitter_parser"] = _fake_ts
-    # Also set on parent package so `from indexer.treesitter_parser import X` works
-    import indexer as _indexer_pkg
-    _indexer_pkg.treesitter_parser = _fake_ts
+        @dataclass
+        class _ParsedSymbol:
+            name: str = ""
+            kind: str = ""
+            signature_line: str = ""
+            start_line: int = 0
+            end_line: int = 0
+            docstring: Optional[str] = None
+            is_public: bool = True
+            methods: List[str] = dc_field(default_factory=list)
+
+        @dataclass
+        class _ParsedImport:
+            module: str = ""
+            raw_line: str = ""
+
+        @dataclass
+        class _ParsedFile:
+            file_path: str = ""
+            language: str = ""
+            symbols: List[_ParsedSymbol] = dc_field(default_factory=list)
+            imports: List[_ParsedImport] = dc_field(default_factory=list)
+            module_docstring: Optional[str] = None
+
+        _fake_ts.ParsedSymbol = _ParsedSymbol
+        _fake_ts.ParsedImport = _ParsedImport
+        _fake_ts.ParsedFile = _ParsedFile
+        sys.modules["indexer.treesitter_parser"] = _fake_ts
+        # Also set on parent package so `from indexer.treesitter_parser import X` works
+        import indexer as _indexer_pkg
+        _indexer_pkg.treesitter_parser = _fake_ts
 
 import mcp_server.paths as paths
 from indexer.sqlite_graph import SQLiteGraph
@@ -66,6 +91,9 @@ def _isolate_global_home(tmp_path, monkeypatch):
     fake_home = tmp_path / "isolated-global-home"
     fake_home.mkdir(exist_ok=True)
     monkeypatch.setattr(paths, "get_global_home", lambda: fake_home)
+    # Clear module-level caches that carry state between tests:
+    paths._data_dir_cache.clear()
+    monkeypatch.setattr(paths, "_project_dir_override", None)
 
 
 @pytest.fixture

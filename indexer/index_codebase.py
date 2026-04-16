@@ -274,50 +274,62 @@ def cmd_incremental(quiet: bool = False, file_paths: list[str] | None = None):
     file_label = "requested file(s)" if explicit_files else "changed file(s)"
     console.print(f"[bold cyan]Incremental update:[/bold cyan] {len(changed_items)} {file_label}")
 
-    client = _get_chroma_client()
-    embed_fn = _get_embedding_fn()
-    try:
-        collection = client.get_collection(COLLECTION_NAME, embedding_function=embed_fn)
-    except Exception:
-        console.print("[red]No existing index found.[/red] Run codevira index --full first.")
-        db.close()
-        raise RuntimeError("No existing search index. Run: codevira index --full")
+    # Check if semantic search deps are available
+    has_search = _check_search_deps()
+    collection = None
+
+    if has_search:
+        try:
+            client = _get_chroma_client()
+            embed_fn = _get_embedding_fn()
+            collection = client.get_collection(COLLECTION_NAME, embedding_function=embed_fn)
+        except Exception:
+            # No existing collection — skip semantic indexing, still update graph
+            collection = None
+            if not quiet:
+                console.print("[yellow]⚠[/yellow]  No semantic index found — updating graph only.")
 
     indexed_any = False
-    # Acquire ChromaDB write lock to prevent concurrent writes with the
-    # background watcher or background full-index thread.
-    with _chroma_write_lock:
+
+    if collection is not None:
+        # Semantic search + graph update
+        with _chroma_write_lock:
+            for fpath, fhash in changed_items:
+                try:
+                    collection.delete(where={"file_path": fpath})
+                except Exception as e:
+                    try:
+                        from mcp_server.crash_logger import log_crash
+                        log_crash(e, context=f"incremental index: delete old chunks for {fpath}")
+                    except Exception: pass
+
+                try:
+                    chunks = chunk_file(str(_project_root() / fpath), str(_project_root()))
+                    if chunks:
+                        ids, docs, metas = [], [], []
+                        for chunk in chunks:
+                            doc_id, doc, meta = _chunk_to_document(chunk)
+                            ids.append(doc_id)
+                            docs.append(doc)
+                            metas.append(meta)
+                        collection.add(ids=ids, documents=docs, metadatas=metas)
+
+                    db.update_file_hash(fpath, fhash)
+                    indexed_any = True
+                    console.print(f"  [green]+[/green] Re-indexed {len(chunks)} chunks for {fpath}")
+
+                except Exception as e:
+                    console.print(f"[red]Error indexing {fpath}: {e}[/red]")
+                    try:
+                        from mcp_server.crash_logger import log_crash
+                        log_crash(e, context=f"incremental index: indexing {fpath}")
+                    except Exception: pass
+                    continue
+    else:
+        # Graph-only mode: update file hashes without semantic indexing
         for fpath, fhash in changed_items:
-            try:
-                collection.delete(where={"file_path": fpath})
-            except Exception as e:
-                try:
-                    from mcp_server.crash_logger import log_crash
-                    log_crash(e, context=f"incremental index: delete old chunks for {fpath}")
-                except Exception: pass
-
-            try:
-                chunks = chunk_file(str(_project_root() / fpath), str(_project_root()))
-                if chunks:
-                    ids, docs, metas = [], [], []
-                    for chunk in chunks:
-                        doc_id, doc, meta = _chunk_to_document(chunk)
-                        ids.append(doc_id)
-                        docs.append(doc)
-                        metas.append(meta)
-                    collection.add(ids=ids, documents=docs, metadatas=metas)
-
-                db.update_file_hash(fpath, fhash)
-                indexed_any = True
-                console.print(f"  [green]+[/green] Re-indexed {len(chunks)} chunks for {fpath}")
-
-            except Exception as e:
-                console.print(f"[red]Error indexing {fpath}: {e}[/red]")
-                try:
-                    from mcp_server.crash_logger import log_crash
-                    log_crash(e, context=f"incremental index: indexing {fpath}")
-                except Exception: pass
-                continue
+            db.update_file_hash(fpath, fhash)
+            indexed_any = True
 
     if indexed_any:
         generate_graph_sqlite(str(_project_root()), str(db.db_path))

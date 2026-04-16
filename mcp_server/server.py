@@ -486,6 +486,8 @@ async def list_tools() -> list[Tool]:
             name="refresh_index",
             description=(
                 "Trigger an incremental reindex of changed files. "
+                "Always refreshes the context graph (no extra deps needed). "
+                "Also updates the semantic search index if chromadb is installed. "
                 "Call when get_node() returns index_status.stale=true, or before searching "
                 "files you know have changed. Pass file_paths to reindex specific files only."
             ),

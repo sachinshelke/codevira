@@ -270,53 +270,48 @@ class TestGetHistory:
 # ---------------------------------------------------------------------------
 
 class TestRefreshIndex:
+    """refresh_index always refreshes the graph, and optionally updates semantic index."""
+
     def test_targeted_mode_with_specific_files(self, project_env):
         """refresh_index with file_paths returns targeted mode result."""
-        with patch("indexer.index_codebase.cmd_incremental") as mock_cmd:
+        with patch("mcp_server.tools.graph.refresh_graph") as mock_graph, \
+             patch("indexer.index_codebase._check_search_deps", return_value=False):
             result = refresh_index(["src/api.py", "src/db.py"])
-        mock_cmd.assert_called_once_with(quiet=True, file_paths=["src/api.py", "src/db.py"])
+        mock_graph.assert_called_once_with(file_paths=["src/api.py", "src/db.py"])
         assert result["mode"] == "targeted"
         assert result["file_paths"] == ["src/api.py", "src/db.py"]
-        assert "2" in result["status"]  # "2 requested file(s)"
+        assert result["graph_refreshed"] is True
 
     def test_incremental_mode_no_files(self, project_env):
         """refresh_index with empty file list uses incremental mode."""
-        with patch("indexer.index_codebase.cmd_incremental") as mock_cmd:
+        with patch("mcp_server.tools.graph.refresh_graph"), \
+             patch("indexer.index_codebase._check_search_deps", return_value=False):
             result = refresh_index([])
-        mock_cmd.assert_called_once_with(quiet=True, file_paths=None)
         assert result["mode"] == "incremental"
-        assert "all changed" in result["status"].lower()
+        assert result["graph_refreshed"] is True
 
     def test_targeted_mode_count_matches_files(self, project_env):
-        """In targeted mode, the status message reflects the file count."""
-        with patch("indexer.index_codebase.cmd_incremental"):
+        """In targeted mode, result includes file_paths."""
+        with patch("mcp_server.tools.graph.refresh_graph"), \
+             patch("indexer.index_codebase._check_search_deps", return_value=False):
             result = refresh_index(["a.py", "b.py", "c.py"])
-        assert "3" in result["status"]
+        assert len(result["file_paths"]) == 3
 
     def test_passes_none_for_empty_list(self, project_env):
-        """Empty list is converted to None for cmd_incremental."""
-        with patch("indexer.index_codebase.cmd_incremental") as mock_cmd:
+        """Empty list calls refresh_graph with file_paths=None."""
+        with patch("mcp_server.tools.graph.refresh_graph") as mock_graph, \
+             patch("indexer.index_codebase._check_search_deps", return_value=False):
             refresh_index([])
-        _, kwargs = mock_cmd.call_args
-        assert kwargs["file_paths"] is None
+        mock_graph.assert_called_once_with(file_paths=None)
 
-    def test_refresh_index_passes_explicit_file_paths(self, project_env, monkeypatch):
-        """Ported from test_stability.py: explicit file_paths are forwarded to cmd_incremental."""
-        from indexer import index_codebase
-
-        calls = []
-
-        def fake_cmd_incremental(*, quiet, file_paths=None):
-            calls.append({"quiet": quiet, "file_paths": file_paths})
-            return 0
-
-        monkeypatch.setattr(index_codebase, "cmd_incremental", fake_cmd_incremental)
-
-        result = refresh_index(["src/app.py"])
-
-        assert calls == [{"quiet": True, "file_paths": ["src/app.py"]}]
-        assert result["mode"] == "targeted"
-        assert result["file_paths"] == ["src/app.py"]
+    def test_graph_only_when_no_chromadb(self, project_env):
+        """Without chromadb, refresh_index does graph-only and reports it."""
+        with patch("mcp_server.tools.graph.refresh_graph"), \
+             patch("indexer.index_codebase._check_search_deps", return_value=False):
+            result = refresh_index(["src/app.py"])
+        assert result["graph_refreshed"] is True
+        assert result["search_refreshed"] is False
+        assert "graph-only" in result["status"].lower() or "not installed" in result["status"].lower()
 
 
 # ---------------------------------------------------------------------------
@@ -396,12 +391,12 @@ class TestGetHistorySQLInjection:
 
 class TestRefreshIndexEmptyList:
     def test_empty_file_list_uses_incremental_mode(self, project_env):
-        """refresh_index([]) should use incremental mode (file_paths=None)."""
-        with patch("indexer.index_codebase.cmd_incremental") as mock_cmd:
+        """refresh_index([]) should use incremental mode."""
+        with patch("mcp_server.tools.graph.refresh_graph"), \
+             patch("indexer.index_codebase._check_search_deps", return_value=False):
             result = refresh_index([])
-        mock_cmd.assert_called_once_with(quiet=True, file_paths=None)
         assert result["mode"] == "incremental"
-        assert "all changed" in result["status"].lower()
+        assert result["graph_refreshed"] is True
 
 
 # ---------------------------------------------------------------------------

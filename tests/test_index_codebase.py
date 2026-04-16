@@ -501,7 +501,8 @@ class TestCmdIncremental:
             result = cmd_incremental()
         assert result == 0
 
-    def test_no_collection_raises_runtime_error(self, project_env):
+    def test_no_collection_falls_back_to_graph_only(self, project_env):
+        """When chromadb collection doesn't exist, cmd_incremental falls back to graph-only."""
         _project, data_dir, db = project_env
         mock_client = MagicMock()
         mock_client.get_collection.side_effect = Exception("collection missing")
@@ -510,9 +511,9 @@ class TestCmdIncremental:
              patch("indexer.index_codebase._get_embedding_fn", return_value=MagicMock()), \
              patch("indexer.index_codebase.SQLiteGraph", return_value=db), \
              patch("indexer.index_codebase._check_search_deps", return_value=True), \
-             pytest.raises(RuntimeError, match="No existing search index"):
+             patch("indexer.graph_generator.generate_graph_sqlite", return_value={}):
             from indexer.index_codebase import cmd_incremental
-            cmd_incremental()
+            cmd_incremental()  # Should not raise — falls back to graph-only
 
     def test_explicit_files_no_match_returns_zero(self, project_env):
         _project, data_dir, db = project_env
@@ -728,6 +729,7 @@ class TestCmdIncrementalLoop:
         mock_chunk.layer = "api"
 
         with patch.dict(sys.modules, self._rich_mods()), \
+             patch("indexer.index_codebase._check_search_deps", return_value=True), \
              patch("indexer.index_codebase._get_changed_files", return_value=[("src/api.py", "newhash123")]), \
              patch("indexer.index_codebase._get_chroma_client", return_value=mock_client), \
              patch("indexer.index_codebase._get_embedding_fn", return_value=MagicMock()), \

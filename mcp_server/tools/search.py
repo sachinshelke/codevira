@@ -128,18 +128,47 @@ def get_history(file_path: str) -> dict[str, Any]:
     }
 
 def refresh_index(file_paths: list[str]) -> dict:
-    from indexer.index_codebase import cmd_incremental
-    requested_files = file_paths or None
-    cmd_incremental(quiet=True, file_paths=requested_files)
+    """Trigger an incremental reindex of changed files.
 
-    if requested_files:
-        return {
-            "status": f"Index refreshed for {len(requested_files)} requested file(s).",
-            "file_paths": requested_files,
-            "mode": "targeted",
-        }
+    If chromadb is installed, updates both the semantic search index and the
+    context graph. If chromadb is NOT installed, refreshes the graph only
+    (which is the primary data structure for all non-search tools).
+    """
+    from indexer.index_codebase import _check_search_deps
+
+    requested_files = file_paths or None
+    graph_refreshed = False
+    search_refreshed = False
+
+    # Always refresh the graph (no optional deps required)
+    try:
+        from mcp_server.tools.graph import refresh_graph
+        refresh_graph(file_paths=file_paths if file_paths else None)
+        graph_refreshed = True
+    except Exception as e:
+        return {"error": f"Graph refresh failed: {e}"}
+
+    # If semantic search deps are available, also refresh the search index
+    if _check_search_deps():
+        try:
+            from indexer.index_codebase import cmd_incremental
+            cmd_incremental(quiet=True, file_paths=requested_files)
+            search_refreshed = True
+        except Exception as e:
+            # Search index failure is non-fatal — graph is already refreshed
+            pass
+
+    mode = "targeted" if requested_files else "incremental"
+    status_parts = ["Graph refreshed"]
+    if search_refreshed:
+        status_parts.append("semantic index updated")
+    elif not _check_search_deps():
+        status_parts.append("semantic search not installed (graph-only mode)")
 
     return {
-        "status": "Index refreshed for all changed files.",
-        "mode": "incremental",
+        "status": ". ".join(status_parts) + ".",
+        "mode": mode,
+        "graph_refreshed": graph_refreshed,
+        "search_refreshed": search_refreshed,
+        **({"file_paths": requested_files} if requested_files else {}),
     }

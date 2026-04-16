@@ -5,7 +5,7 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![MCP](https://img.shields.io/badge/protocol-MCP-purple)](https://modelcontextprotocol.io)
-[![Version](https://img.shields.io/badge/version-1.5.2-orange)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.6.0-orange)](CHANGELOG.md)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](CONTRIBUTING.md)
 
 **Works with:** Claude Code · Claude Desktop · Cursor · Windsurf · Google Antigravity · any MCP-compatible AI tool
@@ -61,22 +61,21 @@ pip install codevira-mcp
 pip install 'codevira-mcp[search]'
 ```
 
-### 2. Initialize in your project
+### 2. Register with your AI tools
 
 ```bash
 cd your-project
-codevira init
+codevira register
 ```
 
 This single command — with zero prompts:
 - Auto-detects language, source directories, and file extensions from project markers
-- Creates `.codevira/` with config, graph database, and index
-- Adds `.codevira/` to `.gitignore`
-- Builds the full code index (with progress bar)
-- Auto-generates graph stubs for all source files
-- Bootstraps the roadmap from git history
-- Installs a `post-commit` git hook for automatic reindexing
 - **Auto-injects MCP config** into Claude Code, Cursor, Windsurf, and Google Antigravity
+- Installs a `post-commit` git hook for automatic reindexing
+
+No explicit `codevira init` needed — the project is automatically initialized on the first MCP tool call (auto-init creates config, graph database, index, and roadmap on demand).
+
+> **Note:** `codevira init` is still available if you prefer to initialize upfront, but it is no longer a required step.
 
 ### 3. Verify
 
@@ -152,6 +151,12 @@ Then register the URL:
 > ```
 > Then restart Claude Code.
 
+**Auto-start on login (macOS):**
+```bash
+codevira-mcp serve --install-service    # start server automatically on login
+codevira-mcp serve --uninstall-service  # remove auto-start
+```
+
 **Google Antigravity** (`~/.gemini/settings/mcp_config.json`):
 ```json
 {
@@ -165,20 +170,24 @@ Then register the URL:
 }
 ```
 
-### Project structure after init
+### Codevira data layout (v1.6)
 
 ```
-your-project/
-├── src/                   <- your code (indexed)
-├── .codevira/             <- Codevira data directory (git-ignored)
-│   ├── config.yaml        <- project configuration (auto-generated)
-│   ├── graph/
-│   │   ├── graph.db       <- SQLite: context graph, symbols, sessions, decisions
-│   │   └── changesets/    <- active multi-file change records
-│   ├── codeindex/         <- semantic search index (optional, requires [search])
-│   └── logs/              <- session logs
-└── .claude/settings.json  <- MCP config (auto-injected by init)
+~/.codevira/                         <- global Codevira home
+├── global.db                        <- cross-project intelligence
+├── projects/
+│   └── <project-key>/               <- per-project data (keyed by path)
+│       ├── config.yaml
+│       ├── metadata.json
+│       ├── graph/
+│       │   ├── graph.db
+│       │   └── changesets/
+│       ├── codeindex/               <- semantic search (optional)
+│       └── logs/
+└── certs/                           <- HTTPS certs (if using --https)
 ```
+
+> Legacy `.codevira/` directories inside project repos are auto-migrated to centralized storage on first server start.
 
 ---
 

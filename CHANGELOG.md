@@ -11,6 +11,33 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Performance
+- **`get_data_dir()` caching**: Result cached per project root in `_data_dir_cache`.
+  First call runs the full resolution chain (subprocess + metadata scan); all
+  subsequent calls for the same root are O(1) dict lookups with zero I/O.
+- **`set_project_dir()` cache invalidation**: Changing the project root now clears
+  the data-dir cache so subsequent `get_data_dir()` calls resolve correctly.
+
+### Fixed
+- **Test isolation**: Autouse fixture now clears `_data_dir_cache` and resets
+  `_project_dir_override` between every test, preventing cross-test pollution.
+- **`auto_init._init_done` renamed to `_init_started`**: The flag is set when the
+  background thread *starts*, not when it *finishes* — name now matches semantics.
+- **Unbounded `join()` in auto-init**: Background semantic indexing thread now has
+  a 5-minute timeout; if it hangs, the server continues in graph-only mode.
+- **`install_launchd()` missing `project_dir`**: Added optional `project_dir`
+  parameter. When provided, adds `--project-dir` to ProgramArguments and
+  `WorkingDirectory` to the launchd plist.
+- **CLI `project_dir` not forwarded to launchd**: `cmd_serve()` now passes
+  `project_dir` through to `install_launchd()`.
+- **`run_http_server()` ignoring `project_dir`**: Now calls `set_project_dir()`
+  when `project_dir` is not None, so direct callers get correct path resolution.
+
+### Changed
+- **README.md**: Updated for v1.6.0 — version badge, Quick Start flow (`register`
+  instead of `init`), centralized storage diagram, documented `codevira register`,
+  `--install-service`/`--uninstall-service`, auto-init, and legacy migration.
+
 ---
 
 ## [1.6.0] — 2026-04-03 — True Zero-Friction: No Init, No Config, Just Works

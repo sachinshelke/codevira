@@ -179,7 +179,7 @@ def cmd_full_rebuild():
     db = SQLiteGraph(get_data_dir() / "graph" / "graph.db")
 
     if not _check_search_deps():
-        console.print("[yellow]⚠[/yellow]  Semantic search skipped — install with: [bold]pip install 'codevira\\[search\\]'[/bold]")
+        console.print("[yellow]⚠[/yellow]  Semantic search skipped — install with: [bold]pip install 'codevira\\[search]'[/bold]")
         # Still build the graph even without search deps
         from indexer.graph_generator import generate_graph_sqlite
         result = generate_graph_sqlite(str(_project_root()), str(get_data_dir() / "graph" / "graph.db"))

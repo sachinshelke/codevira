@@ -1,4 +1,4 @@
-# Codevira MCP
+# Codevira
 
 > Persistent adaptive memory for AI coding agents — learns from every session, works with every tool, remembers across every project.
 
@@ -64,24 +64,27 @@ pip install 'codevira[search]'
 ### 2. Register with your AI tools
 
 ```bash
-cd your-project
 codevira register
 ```
 
-This single command — with zero prompts:
-- Auto-detects language, source directories, and file extensions from project markers
-- **Auto-injects MCP config** into Claude Code, Cursor, Windsurf, and Google Antigravity
+This one-time global command injects Codevira's MCP config into all detected AI tools — Claude Code, Cursor, Windsurf, Claude Desktop, and Google Antigravity. Run it from anywhere; no project directory needed.
+
+### 3. Start using
+
+Open any project in your AI tool. On the first MCP tool call, Codevira **auto-initializes**:
+- Detects language, source directories, and file extensions from project markers
+- Creates the context graph and roadmap
 - Installs a `post-commit` git hook for automatic reindexing
 
-No explicit `codevira init` needed — the project is automatically initialized on the first MCP tool call (auto-init creates config, graph database, index, and roadmap on demand).
+No explicit `codevira init` needed — everything happens on demand.
 
-> **Note:** `codevira init` is still available if you prefer to initialize upfront, but it is no longer a required step.
+> **Note:** `codevira init` is still available for explicit per-project setup with custom settings.
 
-### 3. Verify
+### 4. Verify
 
 Ask your AI agent to call `get_roadmap()` — it should return your current phase and next action.
 
-> **Note:** After `codevira init`, restart your AI tool to pick up the new MCP server config.
+> **Note:** Restart your AI tool after running `codevira register` to pick up the new MCP config.
 
 ### Manual config (only if auto-inject didn't detect your tool)
 
@@ -93,7 +96,7 @@ Codevira supports two transports. Use the right one for your client:
 | Claude Code (CLI) | stdio or HTTP | `.claude/settings.json` |
 | Cursor | stdio | `.cursor/mcp.json` |
 | Windsurf | stdio | `.windsurf/mcp.json` |
-| Google Antigravity | stdio | `~/.gemini/settings/mcp_config.json` |
+| Google Antigravity | stdio | `~/.gemini/antigravity/mcp_config.json` |
 
 **Stdio transport** — Claude Desktop, Cursor, Windsurf (`.claude/settings.json` / `.cursor/mcp.json` / `.windsurf/mcp.json`):
 ```json
@@ -373,7 +376,7 @@ This loop keeps every session fast, focused, and resumable.
 ### Playbook Tool
 | Tool | Description |
 |---|---|
-| `get_playbook(task_type)` | Curated rules for: `add_route`, `add_service`, `add_schema`, `debug_pipeline`, `commit`, `write_test` |
+| `get_playbook(task_type)` | Curated rules for: `add_tool`, `add_service`, `add_schema`, `debug_pipeline`, `commit`, `write_test` |
 
 ### MCP Workflow Prompts (v1.5)
 | Prompt | Description |

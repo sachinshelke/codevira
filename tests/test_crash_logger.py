@@ -2,7 +2,8 @@
 Tests for mcp_server/crash_logger.py
 
 Covers:
-  - _sanitize(): all 26 secret patterns + home dir replacement + env dump
+  - _sanitize(): structural patterns (PEM, connection strings, IPs, key=value,
+    env vars) + home dir replacement + env dump
   - log_crash(): file writing, structured output, metadata fields
   - read_recent_crashes(): limit, empty log, missing log
   - get_crash_log_path(): returns correct path
@@ -55,123 +56,6 @@ def log_dir(tmp_path, monkeypatch):
 # _sanitize() — secret pattern coverage
 # ===========================================================================
 
-class TestSanitizeJWT:
-    def test_jwt_redacted(self):
-        token = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
-        assert "***JWT_REDACTED***" in _sanitize(f"auth: {token}")
-
-    def test_jwt_not_false_positive(self):
-        """A string starting with 'eyJ' but too short should not match."""
-        short = "eyJshort.eyJshort.abc"
-        result = _sanitize(short)
-        assert "***JWT_REDACTED***" not in result
-
-
-class TestSanitizeAWS:
-    def test_aws_key(self):
-        assert "***AWS_KEY***" in _sanitize("AKIAIOSFODNN7EXAMPLE")
-
-    def test_aws_key_in_context(self):
-        text = "AccessKeyId=AKIAIOSFODNN7EXAMPLE secret=foo"
-        result = _sanitize(text)
-        assert "AKIAIOSFODNN7EXAMPLE" not in result
-
-
-class TestSanitizeGitHub:
-    def test_classic_ghp(self):
-        token = "ghp_ABCDEFabcdef1234567890abcdef123456789"
-        assert "***GITHUB_TOKEN***" in _sanitize(token)
-
-    def test_fine_grained_pat(self):
-        token = "github_pat_ABCDEFGHIJKLMNOPQRSTUV"
-        assert "***GITHUB_TOKEN***" in _sanitize(token)
-
-    def test_gho_token(self):
-        token = "gho_ABCDEFabcdef1234567890abcdef123456789"
-        assert "***GITHUB_TOKEN***" in _sanitize(token)
-
-
-class TestSanitizeGitLab:
-    def test_gitlab_pat(self):
-        token = "glpat-abcdefghijklmnopqrstuv"
-        assert "***GITLAB_TOKEN***" in _sanitize(token)
-
-
-class TestSanitizeSlack:
-    def test_slack_bot_token(self):
-        token = "xoxb-12345678-abcdefghij"
-        assert "***SLACK_TOKEN***" in _sanitize(token)
-
-    def test_slack_user_token(self):
-        token = "xoxp-12345678-abcdefghij"
-        assert "***SLACK_TOKEN***" in _sanitize(token)
-
-
-class TestSanitizeAnthropic:
-    def test_anthropic_key(self):
-        key = "sk-ant-api03-abcdefghijklmnopqrstuvwxyz"
-        assert "***ANTHROPIC_KEY***" in _sanitize(key)
-
-
-class TestSanitizeOpenAI:
-    def test_openai_legacy(self):
-        key = "sk-abcdefghijklmnopqrstuvwxyz1234"
-        result = _sanitize(key)
-        # Should match either OPENAI_KEY or ANTHROPIC_KEY (Anthropic matches first for sk-ant-,
-        # but plain sk- should hit OPENAI_KEY)
-        assert "sk-abcdefgh" not in result
-
-    def test_openai_project_key(self):
-        key = "sk-proj-abcdefghijklmnopqrstuvwxyz"
-        result = _sanitize(key)
-        assert "sk-proj-" not in result
-
-    def test_openai_service_key(self):
-        key = "sk-svcacct-abcdefghijklmnopqrstuvwxyz"
-        result = _sanitize(key)
-        assert "sk-svcacct-" not in result
-
-
-class TestSanitizeGoogle:
-    def test_google_api_key(self):
-        key = "AIzaSyA-abcdefghijklmnopqrstuvwxyz12345"
-        assert "***GOOGLE_KEY***" in _sanitize(key)
-
-
-class TestSanitizeSendGrid:
-    def test_sendgrid_key(self):
-        key = "SG.abcdefghijklmnopqrstuv.abcdefghijklmnopqrstuv1234"
-        assert "***SENDGRID_KEY***" in _sanitize(key)
-
-
-class TestSanitizeStripe:
-    def test_stripe_secret_live(self):
-        key = "PLACEHOLDER_REMOVED"
-        assert "***STRIPE_KEY***" in _sanitize(key)
-
-    def test_stripe_publishable_test(self):
-        key = "PLACEHOLDER_REMOVED"
-        assert "***STRIPE_KEY***" in _sanitize(key)
-
-
-class TestSanitizeHuggingFace:
-    def test_hf_token(self):
-        token = "hf_abcdefghijklmnopqrstuv"
-        assert "***HF_TOKEN***" in _sanitize(token)
-
-
-class TestSanitizeNpm:
-    def test_npm_token(self):
-        token = "npm_abcdefghijklmnopqrstuvwxyz1234567890"
-        assert "***NPM_TOKEN***" in _sanitize(token)
-
-
-class TestSanitizeVercel:
-    def test_vercel_token(self):
-        token = "vercel_abcdefghijklmnopqrstuv"
-        assert "***VERCEL_TOKEN***" in _sanitize(token)
-
-
 class TestSanitizePEM:
     def test_private_key_block(self):
         pem = (
@@ -208,17 +92,6 @@ class TestSanitizeConnectionStrings:
         url = "redis://default:mysecret@redis.internal:6379"
         result = _sanitize(url)
         assert "mysecret" not in result
-
-
-class TestSanitizeEmail:
-    def test_email_redacted(self):
-        assert "***EMAIL***" in _sanitize("contact user@example.com for help")
-
-    def test_multiple_emails(self):
-        text = "From: alice@corp.io To: bob@other.org"
-        result = _sanitize(text)
-        assert "alice@corp.io" not in result
-        assert "bob@other.org" not in result
 
 
 class TestSanitizeInternalIP:
@@ -263,13 +136,6 @@ class TestSanitizeJSONSecrets:
         text = """'api_key': 'some-secret-value'"""
         result = _sanitize(text)
         assert "some-secret-value" not in result
-
-
-class TestSanitizeHexTokens:
-    def test_long_hex_after_keyword(self):
-        text = "secret: 0123456789abcdef0123456789abcdef01"
-        result = _sanitize(text)
-        assert "0123456789abcdef" not in result
 
 
 class TestSanitizeEnvDumps:
@@ -386,12 +252,12 @@ class TestLogCrash:
 
     def test_sanitizes_secrets_in_log(self, log_dir):
         try:
-            raise ValueError("key=PLACEHOLDER_REMOVED")
+            raise ValueError("url=postgres://admin:s3cret@db.host/mydb")
         except ValueError as e:
-            log_crash(e, context="stripe key leak")
+            log_crash(e, context="connection string leak")
 
         content = (log_dir / "crashes.log").read_text()
-        assert "sk_live_" not in content
+        assert "s3cret" not in content
 
     def test_multiple_crashes_append(self, log_dir):
         for i in range(3):

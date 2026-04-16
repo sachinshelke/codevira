@@ -21,57 +21,26 @@ from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Secret patterns — matched and replaced BEFORE writing to disk.
-# Order matters: more specific patterns first, generic catch-alls last.
+#
+# CodeVira is a code-indexing/memory tool. Crash tracebacks may contain
+# file paths, config values, or connection strings from the user's project.
+# We sanitize structural patterns (connection strings, key=value, PEM blocks)
+# rather than vendor-specific token formats — CodeVira never handles those.
 # ---------------------------------------------------------------------------
 _SECRET_PATTERNS: list[tuple[re.Pattern, str]] = [
-    # ---- Vendor-specific tokens (most specific first) ----
-
-    # JWT tokens (three dot-separated base64 segments)
-    (re.compile(r'eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+'), '***JWT_REDACTED***'),
-    # AWS access keys
-    (re.compile(r'AKIA[0-9A-Z]{16}'), '***AWS_KEY***'),
-    # GitHub tokens: classic (ghp_/gho_/ghu_/ghs_/ghr_) and fine-grained (github_pat_)
-    (re.compile(r'(?:gh[pousr]_[A-Za-z0-9_]{36,}|github_pat_[A-Za-z0-9_]{22,})'), '***GITHUB_TOKEN***'),
-    # GitLab personal access tokens
-    (re.compile(r'glpat-[A-Za-z0-9_-]{20,}'), '***GITLAB_TOKEN***'),
-    # Slack tokens (bot, user, app-level, config)
-    (re.compile(r'xox[bpas]-[A-Za-z0-9-]{10,}'), '***SLACK_TOKEN***'),
-    # Anthropic API keys (sk-ant-api03-...)
-    (re.compile(r'sk-ant-[A-Za-z0-9_-]{20,}'), '***ANTHROPIC_KEY***'),
-    # OpenAI API keys: legacy (sk-XXX), project (sk-proj-XXX), service (sk-svcacct-XXX)
-    (re.compile(r'sk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{20,}'), '***OPENAI_KEY***'),
-    # Google API keys
-    (re.compile(r'AIza[A-Za-z0-9_-]{35}'), '***GOOGLE_KEY***'),
-    # SendGrid API keys
-    (re.compile(r'SG\.[A-Za-z0-9_-]{22,}\.[A-Za-z0-9_-]{22,}'), '***SENDGRID_KEY***'),
-    # Stripe keys (secret and publishable)
-    (re.compile(r'(?:sk|pk)_(?:live|test)_[A-Za-z0-9]{24,}'), '***STRIPE_KEY***'),
-    # HuggingFace tokens
-    (re.compile(r'hf_[A-Za-z0-9]{20,}'), '***HF_TOKEN***'),
-    # npm tokens
-    (re.compile(r'npm_[A-Za-z0-9]{36,}'), '***NPM_TOKEN***'),
-    # Vercel tokens
-    (re.compile(r'vercel_[A-Za-z0-9_-]{20,}'), '***VERCEL_TOKEN***'),
-
-    # ---- Structural patterns ----
-
     # Private key PEM blocks
     (re.compile(r'-----BEGIN\s+\w+\s+PRIVATE\s+KEY-----[\s\S]*?-----END\s+\w+\s+PRIVATE\s+KEY-----'), '***PRIVATE_KEY***'),
     # Connection strings with embedded passwords (postgres://, mongodb://, redis://, amqp://, etc.)
     (re.compile(r'(?i)(://[^:]*:)[^@]+(@)'), r'\1***@'),
-    # Email addresses
-    (re.compile(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'), '***EMAIL***'),
     # Private/internal IP addresses (RFC 1918)
     (re.compile(r'\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3})\b'), '***INTERNAL_IP***'),
 
-    # ---- Generic keyword-value patterns (catch-all, last) ----
+    # ---- Generic keyword-value patterns (catch-all) ----
 
     # key=value / key: value / key = value (in text and logs)
     (re.compile(r'(?i)(api[_-]?key|token|secret|password|authorization|bearer|credential)\s*[:=]\s*\S+'), r'\1=***REDACTED***'),
     # JSON-style: "password": "value" or 'password': 'value'
     (re.compile(r"""(?i)(["'](?:password|secret|token|api_key|api-key|auth|credential)["'])\s*:\s*["'][^"']+["']"""), r'\1: "***REDACTED***"'),
-    # Long hex strings after secret-like keywords
-    (re.compile(r'(?i)(?:key|token|secret|password|auth|credential)["\s:=]+[0-9a-f]{32,}'), '***HEX_REDACTED***'),
     # .env file values for known secret variable names
     (re.compile(r'(?i)((?:DATABASE_URL|REDIS_URL|MONGO_URL|SECRET_KEY|PRIVATE_KEY|ACCESS_TOKEN|REFRESH_TOKEN|API_KEY|AUTH_TOKEN|ENCRYPTION_KEY)\s*=\s*)\S+'), r'\1***REDACTED***'),
 ]

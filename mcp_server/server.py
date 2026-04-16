@@ -41,9 +41,10 @@ try:
     from mcp.server import Server
     from mcp.types import Tool, TextContent
 except ImportError:
-    print("ERROR: mcp package not installed.")
-    print("Run: pip install 'mcp>=1.0.0'")
-    sys.exit(1)
+    # Use stderr — stdout is the MCP protocol channel in stdio mode.
+    # Printing to stdout here would corrupt the MCP handshake.
+    print("ERROR: mcp package not installed. Run: pip install 'mcp>=1.0.0'", file=sys.stderr)
+    raise
 
 import json
 from mcp_server.tools.graph import (

@@ -501,7 +501,7 @@ class TestCmdIncremental:
             result = cmd_incremental()
         assert result == 0
 
-    def test_no_collection_prints_error_and_exits(self, project_env):
+    def test_no_collection_raises_runtime_error(self, project_env):
         _project, data_dir, db = project_env
         mock_client = MagicMock()
         mock_client.get_collection.side_effect = Exception("collection missing")
@@ -510,7 +510,7 @@ class TestCmdIncremental:
              patch("indexer.index_codebase._get_embedding_fn", return_value=MagicMock()), \
              patch("indexer.index_codebase.SQLiteGraph", return_value=db), \
              patch("indexer.index_codebase._check_search_deps", return_value=True), \
-             pytest.raises(SystemExit):
+             pytest.raises(RuntimeError, match="No existing search index"):
             from indexer.index_codebase import cmd_incremental
             cmd_incremental()
 

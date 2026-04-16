@@ -281,7 +281,7 @@ def cmd_incremental(quiet: bool = False, file_paths: list[str] | None = None):
     except Exception:
         console.print("[red]No existing index found.[/red] Run codevira index --full first.")
         db.close()
-        sys.exit(1)
+        raise RuntimeError("No existing search index. Run: codevira index --full")
 
     indexed_any = False
     # Acquire ChromaDB write lock to prevent concurrent writes with the
@@ -518,8 +518,18 @@ def cmd_status():
 
     stale_files = _get_changed_files(db)
 
+    # Count graph nodes
+    try:
+        nodes = db.conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
+    except Exception:
+        nodes = 0
+
     table = Table(show_header=False, box=None)
-    table.add_row("[cyan]ChromaDB Chunks:[/cyan]", str(chunk_count))
+    table.add_row("[cyan]Graph Nodes:[/cyan]", str(nodes))
+    if search_available:
+        table.add_row("[cyan]ChromaDB Chunks:[/cyan]", str(chunk_count))
+    else:
+        table.add_row("[cyan]Semantic Search:[/cyan]", "[dim]not installed[/dim]")
     table.add_row("[cyan]Outdated Files:[/cyan]", str(len(stale_files)))
 
     panel = Panel(
@@ -530,13 +540,16 @@ def cmd_status():
     )
     console.print(panel)
 
+    if not search_available:
+        console.print("\n[dim]  Tip: pip install 'codevira[search]' to enable semantic code search[/dim]")
+
     if stale_files:
         console.print("\n[yellow]Files requiring re-indexing:[/yellow]")
         for fp, _ in stale_files[:10]:
             console.print(f"  - {fp}")
         if len(stale_files) > 10:
             console.print(f"  ... and {len(stale_files) - 10} more.")
-            
+
     db.close()
 
 def cmd_generate_graph():

@@ -236,9 +236,12 @@ def cmd_init() -> None:
             hooks_dir.mkdir(exist_ok=True)
             hook_path = hooks_dir / "post-commit"
 
-            # Find codevira executable path
-            import shutil as _shutil
-            cmd_path = _shutil.which("codevira") or "codevira"
+            # Find codevira executable path using full resolution chain
+            from mcp_server.ide_inject import _resolve_command
+            resolved_cmd, _py = _resolve_command()
+            # For git hooks, use the resolved binary if found; otherwise bare name
+            # (git hooks inherit the user's shell PATH)
+            cmd_path = resolved_cmd if resolved_cmd != _py else "codevira"
 
             hook_content = (
                 "#!/bin/sh\n"
@@ -311,20 +314,25 @@ def cmd_init() -> None:
             log_crash(e, context="codevira init: global memory register", project_path=str(cwd))
         except Exception: pass
 
-    # Print fallback for undetected tools
-    import shutil as _shutil
-    import sys as _sys
-    python_exe = _sys.executable
+    # Print config for undetected tools — use the resolved binary path,
+    # not the Python interpreter, so users get a clean command.
+    from mcp_server.ide_inject import _resolve_command
+    cmd_path, python_exe = _resolve_command()
     project_path = str(cwd)
 
+    is_python_fallback = (cmd_path == python_exe)
     print()
     print("  For other AI tools, add this to their MCP config:")
     print()
     print('  {')
     print('    "mcpServers": {')
     print('      "codevira": {')
-    print(f'        "command": "{python_exe}",')
-    print(f'        "args": ["-m", "mcp_server", "--project-dir", "{project_path}"]')
+    if is_python_fallback:
+        print(f'        "command": "{python_exe}",')
+        print(f'        "args": ["-m", "mcp_server", "--project-dir", "{project_path}"]')
+    else:
+        print(f'        "command": "{cmd_path}",')
+        print(f'        "args": ["--project-dir", "{project_path}"]')
     print('      }')
     print('    }')
     print('  }')

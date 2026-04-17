@@ -530,6 +530,8 @@ def cmd_status(check_stale: bool = False, show_global: bool = False):
 
     # Fast path: project not initialized. Skip rich/sqlite/chromadb imports
     # entirely and print a plain-text one-liner.
+    # If --global was requested, still show the global panel after — global
+    # stats don't depend on the current project being initialized.
     if not graph_db_path.exists():
         print()
         print("  Codevira — Not initialized for this project")
@@ -538,6 +540,11 @@ def cmd_status(check_stale: bool = False, show_global: bool = False):
         print("  Run `codevira init` to initialize, or use this project")
         print("  in an AI tool — auto-init triggers on first MCP tool call.")
         print()
+        if show_global:
+            from rich.console import Console
+            from rich.table import Table
+            from rich.panel import Panel
+            _print_global_status(Console(), Table, Panel)
         return
 
     from rich.console import Console

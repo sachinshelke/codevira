@@ -425,11 +425,22 @@ def cmd_register(
     global_mode: bool = True,
     claude_desktop: bool = False,
     http_url: str | None = None,
+    autostart: bool = False,
+    autostart_port: int = 7443,
+    autostart_project_dir: str | None = None,
 ) -> None:
     """One-time global IDE registration (v1.6).
 
     Injects codevira into all detected AI tools' global configs so that
     every project the developer opens automatically has Codevira memory.
+
+    Args:
+        autostart: If True, also installs a macOS launchd service to run the
+                   HTTPS MCP server in the background + injects the HTTPS URL
+                   into Claude Code's global config. Runs on login forever.
+        autostart_port: Port for the HTTPS server (default 7443).
+        autostart_project_dir: Project to bind the autostart server to.
+                               Defaults to cwd.
     """
     from mcp_server.paths import get_project_root
     from mcp_server.ide_inject import (
@@ -497,6 +508,73 @@ def cmd_register(
         print("  Every project you open will now have Codevira memory automatically.")
     else:
         print("  No AI tools detected. Install Claude Code, Cursor, or Windsurf first.")
+    print()
+
+    # --autostart: install HTTPS launchd service + inject URL into Claude Code
+    if autostart:
+        _autostart_https_service(
+            port=autostart_port,
+            project_dir=autostart_project_dir,
+        )
+
+
+def _autostart_https_service(port: int = 7443, project_dir: str | None = None) -> None:
+    """Install macOS launchd service for HTTPS MCP server + inject URL into Claude Code."""
+    import sys as _sys
+
+    if _sys.platform != "darwin":
+        print("  ⚠  --autostart is macOS-only (requires launchd).")
+        print("     On Linux/Windows, run `codevira serve --https --port 7443` manually")
+        print("     in a terminal, or use systemd.")
+        print()
+        return
+
+    # Resolve project directory
+    if project_dir:
+        pdir = Path(project_dir).expanduser().resolve()
+    else:
+        pdir = Path.cwd()
+
+    if not pdir.exists():
+        print(f"  ⚠  Project dir does not exist: {pdir}")
+        print()
+        return
+
+    print("  Setting up HTTPS auto-start service")
+    print("  " + "─" * 44)
+    print(f"  Project: {pdir}")
+    print(f"  Port:    {port}")
+    print()
+
+    # Install launchd service
+    try:
+        from mcp_server.launchd import install_launchd
+        plist = install_launchd(port=port, use_https=True, project_dir=pdir)
+        print(f"  ✓ Launchd service: {plist}")
+    except RuntimeError as e:
+        print(f"  ⚠  Could not install service: {e}")
+        print()
+        return
+
+    # Inject HTTPS URL into Claude Code global config
+    url = f"https://localhost:{port}/mcp"
+    try:
+        from mcp_server.ide_inject import inject_claude_http_url
+        path = inject_claude_http_url(url)
+        if path:
+            print(f"  ✓ Claude Code (HTTP URL) → {url}")
+    except Exception as e:
+        print(f"  ⚠  Could not inject HTTP URL into Claude Code: {e}")
+
+    print()
+    print(f"  Codevira HTTPS server starts automatically on login.")
+    print(f"  Check status:  codevira status --global")
+    print(f"  Stop service:  codevira serve --uninstall-service")
+    print()
+    print("  ── First-time HTTPS trust setup (run once) ────────")
+    print("    brew install mkcert && mkcert -install")
+    print('    launchctl setenv NODE_EXTRA_CA_CERTS "$(mkcert -CAROOT)/rootCA.pem"')
+    print('    echo \'export NODE_EXTRA_CA_CERTS="$(mkcert -CAROOT)/rootCA.pem"\' >> ~/.zshrc')
     print()
 
 
@@ -598,6 +676,23 @@ def main() -> None:
         metavar="URL",
         help="Inject an HTTP URL config into Claude Code (e.g. https://localhost:7443/mcp)",
     )
+    register_parser.add_argument(
+        "--autostart",
+        action="store_true",
+        help="macOS only: also install a launchd service to run the HTTPS MCP server "
+             "in the background on every login, and inject its URL into Claude Code",
+    )
+    register_parser.add_argument(
+        "--autostart-port",
+        type=int,
+        default=7443,
+        help="Port for the autostart HTTPS server (default 7443)",
+    )
+    register_parser.add_argument(
+        "--autostart-project-dir",
+        metavar="PATH",
+        help="Project to bind the autostart server to (default: current directory)",
+    )
 
     # clean
     clean_parser = subparsers.add_parser(
@@ -661,6 +756,9 @@ def main() -> None:
         cmd_register(
             claude_desktop=getattr(args, "claude_desktop", False),
             http_url=getattr(args, "http_url", None),
+            autostart=getattr(args, "autostart", False),
+            autostart_port=getattr(args, "autostart_port", 7443),
+            autostart_project_dir=getattr(args, "autostart_project_dir", None),
         )
     elif args.command == "clean":
         cmd_clean(

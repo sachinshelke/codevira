@@ -28,7 +28,7 @@ from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, HTMLResponse
 from starlette.routing import Mount, Route
 
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
@@ -41,6 +41,60 @@ logger = logging.getLogger(__name__)
 
 # Bearer token file — auto-generated on first non-loopback serve
 _TOKEN_FILE_NAME = "http_bearer_token"
+
+# Landing page shown when a browser hits GET / — avoids the confusing
+# JSON-RPC "Not Acceptable" error users see when they open the server URL.
+_LANDING_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Codevira MCP Server</title>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+       max-width: 680px; margin: 60px auto; padding: 0 20px; color: #24292f; }
+h1 { color: #0969da; }
+code { background: #f6f8fa; padding: 2px 6px; border-radius: 4px; font-size: 0.9em; }
+pre { background: #f6f8fa; padding: 16px; border-radius: 8px; overflow-x: auto; }
+.ok { color: #1a7f37; font-weight: 600; }
+a { color: #0969da; }
+.note { background: #fff8c5; border-left: 4px solid #d4a72c; padding: 12px 16px;
+        border-radius: 4px; margin: 20px 0; }
+</style>
+</head>
+<body>
+<h1>Codevira MCP Server</h1>
+<p class="ok">✓ Server is running (streamable-http transport)</p>
+
+<h2>This is not a web app</h2>
+<p>Codevira is a <strong>Model Context Protocol</strong> server. It's designed to
+be consumed by AI coding tools (Claude Code, Cursor, Windsurf), not visited in a browser.</p>
+
+<div class="note">
+<strong>Note:</strong> The <code>/mcp</code> endpoint requires <code>Accept: text/event-stream</code>
+headers. Browsers can't speak MCP directly — you'll see a JSON-RPC error if you visit it.
+</div>
+
+<h2>Using this server</h2>
+<p>Add this to your AI tool's MCP config:</p>
+<pre>{
+  "mcpServers": {
+    "codevira": {
+      "url": "http://localhost:7007/mcp"
+    }
+  }
+}</pre>
+
+<h2>Endpoints</h2>
+<ul>
+  <li><code>GET /</code> — this page (or JSON with <code>Accept: application/json</code>)</li>
+  <li><code>POST /mcp</code> — MCP Streamable HTTP transport (JSON-RPC)</li>
+</ul>
+
+<p>See <a href="https://github.com/sachinshelke/codevira">github.com/sachinshelke/codevira</a>
+for documentation.</p>
+</body>
+</html>
+"""
 
 
 def _certs_dir() -> Path:
@@ -178,8 +232,17 @@ def create_app(bearer_token: str | None = None) -> Starlette:
         async with session_manager.run():
             yield
 
-    async def health(_req: Request) -> JSONResponse:
-        return JSONResponse({"status": "ok", "transport": "streamable-http", "server": "codevira"})
+    async def health(req: Request):
+        # Return HTML for browsers, JSON for API clients
+        accept = req.headers.get("accept", "")
+        if "text/html" in accept:
+            return HTMLResponse(_LANDING_HTML)
+        return JSONResponse({
+            "status": "ok",
+            "transport": "streamable-http",
+            "server": "codevira",
+            "mcp_endpoint": "/mcp",
+        })
 
     middleware = []
     if bearer_token:

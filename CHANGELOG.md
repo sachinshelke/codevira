@@ -13,6 +13,24 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [1.6.2] — 2026-04-16 — Crash Log Isolation & Browser UX
+
+### Fixed
+- **Crash log test isolation**: `crash_logger._get_log_dir()` now uses
+  `get_global_home()` instead of hardcoding `~/.codevira/logs/`. Tests
+  no longer pollute the real user's crash log with pytest mock tracebacks.
+- **`_get_embedding_fn` ValueError not caught**: When chromadb is installed
+  but sentence-transformers isn't, chromadb wraps the ImportError as a
+  ValueError. `_get_embedding_fn` now catches both and re-raises as
+  ImportError for consistent handling by callers.
+
+### Added
+- **Browser-friendly landing page**: `GET /` on the HTTP server now returns
+  a helpful HTML page for browsers (with setup instructions) instead of
+  just JSON. API clients with `Accept: application/json` still get JSON.
+
+---
+
 ## [1.6.1] — 2026-04-16 — Stability, Graceful Degradation & Cleanup
 
 ### Added

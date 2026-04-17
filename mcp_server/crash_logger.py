@@ -66,8 +66,13 @@ def _sanitize(text: str) -> str:
 
 
 def _get_log_dir() -> Path:
-    """Return ~/.codevira/logs/, creating it if needed."""
-    log_dir = Path.home() / ".codevira" / "logs"
+    """Return <global_home>/logs/, creating it if needed.
+
+    Uses get_global_home() so tests (which patch it to a tmp dir) don't
+    pollute the real ~/.codevira/logs/crashes.log file.
+    """
+    from mcp_server.paths import get_global_home
+    log_dir = get_global_home() / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     return log_dir
 

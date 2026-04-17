@@ -69,13 +69,16 @@ def _get_chroma_client():
     return chromadb.PersistentClient(path=db_dir)
 
 def _get_embedding_fn():
+    # chromadb's SentenceTransformerEmbeddingFunction raises ValueError
+    # (not ImportError) when sentence_transformers isn't installed, because
+    # it catches the ImportError internally and re-raises. We catch both.
     try:
         from chromadb.utils import embedding_functions
         return embedding_functions.SentenceTransformerEmbeddingFunction(model_name="all-MiniLM-L6-v2")
-    except ImportError:
+    except (ImportError, ValueError) as e:
         raise ImportError(
-            "Semantic search requires sentence-transformers. "
-            "Install it with: pip install 'codevira[search]'"
+            f"Semantic search requires sentence-transformers. "
+            f"Install it with: pip install 'codevira[search]'. Details: {e}"
         )
 
 def _compute_hash(file_path: Path) -> str:

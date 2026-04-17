@@ -351,10 +351,10 @@ def cmd_index(full: bool = False, quiet: bool = False) -> None:
         cmd_incremental(quiet=quiet)
 
 
-def cmd_status(check_stale: bool = False) -> None:
+def cmd_status(check_stale: bool = False, show_global: bool = False) -> None:
     """Show index health and statistics."""
     from indexer.index_codebase import cmd_status as _cmd_status
-    _cmd_status(check_stale=check_stale)
+    _cmd_status(check_stale=check_stale, show_global=show_global)
 
 
 def cmd_report(limit: int = 20, clear: bool = False) -> None:
@@ -541,6 +541,12 @@ def main() -> None:
         action="store_true",
         help="Scan source files to detect changes since last index (slower)",
     )
+    status_parser.add_argument(
+        "--global",
+        dest="show_global",
+        action="store_true",
+        help="Also show cross-project memory stats and launchd service status",
+    )
 
     # report
     report_parser = subparsers.add_parser("report", help="Show recent crash logs")
@@ -610,6 +616,10 @@ def main() -> None:
         "-y", "--yes", action="store_true",
         help="Skip confirmation prompt",
     )
+    clean_parser.add_argument(
+        "--legacy", action="store_true",
+        help="Only remove .codevira.migrated/ backup dirs from project repos (post-v1.6 migration)",
+    )
 
     args = parser.parse_args(raw_args)
 
@@ -626,7 +636,10 @@ def main() -> None:
     elif args.command == "index":
         cmd_index(full=args.full, quiet=args.quiet)
     elif args.command == "status":
-        cmd_status(check_stale=getattr(args, "check_stale", False))
+        cmd_status(
+            check_stale=getattr(args, "check_stale", False),
+            show_global=getattr(args, "show_global", False),
+        )
     elif args.command == "report":
         cmd_report(limit=args.limit, clear=args.clear)
     elif args.command == "serve":
@@ -654,6 +667,7 @@ def main() -> None:
             clean_all=getattr(args, "all", False),
             dry_run=getattr(args, "dry_run", False),
             yes=getattr(args, "yes", False),
+            legacy_only=getattr(args, "legacy", False),
         )
     else:
         # No subcommand → start MCP server (stdio transport)
@@ -664,9 +678,17 @@ def main() -> None:
 # cmd_clean
 # ---------------------------------------------------------------------------
 
-def cmd_clean(clean_all: bool = False, dry_run: bool = False, yes: bool = False) -> None:
-    """Remove all Codevira data, IDE configs, and services."""
+def cmd_clean(clean_all: bool = False, dry_run: bool = False, yes: bool = False, legacy_only: bool = False) -> None:
+    """Remove all Codevira data, IDE configs, and services.
+
+    With --legacy, ONLY removes .codevira.migrated/ backup directories from
+    project repos (left over from the v1.5 → v1.6 storage migration).
+    """
     import shutil
+
+    if legacy_only:
+        _cmd_clean_legacy_only(dry_run=dry_run, yes=yes)
+        return
 
     from mcp_server.paths import get_global_home
     from mcp_server.ide_inject import (
@@ -837,6 +859,78 @@ def _collect_project_cleanup(project_path: Path, actions: list) -> None:
                     (f"Removed codevira from {name}/{ide_name}",
                      lambda p=config_path: remove_codevira_from_config(p))
                 )
+
+
+def _cmd_clean_legacy_only(dry_run: bool = False, yes: bool = False) -> None:
+    """Remove .codevira.migrated/ backup dirs from all known projects.
+
+    These directories are created by the v1.5 → v1.6 storage migration as
+    safety-net backups. They're harmless but accumulate over time.
+    """
+    import json
+    from mcp_server.paths import get_global_home
+    from mcp_server.migrate import cleanup_legacy_dir
+
+    print()
+    print("  Codevira — Clean Legacy Migration Backups")
+    print("  " + "─" * 44)
+    print()
+
+    global_home = get_global_home()
+    projects_dir = global_home / "projects"
+
+    found: list[Path] = []
+    if projects_dir.exists():
+        for meta_file in projects_dir.glob("*/metadata.json"):
+            try:
+                meta = json.loads(meta_file.read_text())
+                project_path = Path(meta.get("original_path", ""))
+                if project_path.exists():
+                    backup = project_path / ".codevira.migrated"
+                    if backup.exists():
+                        found.append(project_path)
+            except Exception:
+                continue
+
+    if not found:
+        print("  No legacy backup directories found. Nothing to clean.")
+        print()
+        return
+
+    print(f"  Found {len(found)} project(s) with .codevira.migrated/ backups:")
+    for p in found:
+        try:
+            size_kb = sum(f.stat().st_size for f in (p / ".codevira.migrated").rglob("*") if f.is_file()) / 1024
+            print(f"    • {p}/.codevira.migrated/  ({size_kb:.0f} KB)")
+        except Exception:
+            print(f"    • {p}/.codevira.migrated/")
+
+    print()
+    if dry_run:
+        print("  [dry-run] No changes made.")
+        print()
+        return
+
+    if not yes:
+        answer = input(f"  Delete {len(found)} backup dir(s)? [y/N] ").strip().lower()
+        if answer != "y":
+            print("  Aborted.")
+            print()
+            return
+
+    print()
+    removed = 0
+    for project_path in found:
+        try:
+            if cleanup_legacy_dir(project_path):
+                removed += 1
+                print(f"    ✓ Removed {project_path.name}/.codevira.migrated/")
+        except Exception as e:
+            print(f"    ✗ {project_path.name}/.codevira.migrated/  FAILED ({e})")
+
+    print()
+    print(f"  ✓ Removed {removed} of {len(found)} legacy backup directories.")
+    print()
 
 
 if __name__ == "__main__":

@@ -674,8 +674,11 @@ class TestMigrateChaos:
 
         assert result["migrated"] is True
 
-        # Verify registration
+        # Verify registration via direct query
         gdb = GlobalDB(fake_home / "global.db")
-        found = gdb.find_project_by_remote("https://github.com/org/gdb-test.git")
+        row = gdb.conn.execute(
+            "SELECT path FROM projects WHERE git_remote = ?",
+            ("https://github.com/org/gdb-test.git",),
+        ).fetchone()
         gdb.close()
-        assert found is not None
+        assert row is not None

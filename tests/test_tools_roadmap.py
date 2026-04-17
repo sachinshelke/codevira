@@ -344,37 +344,6 @@ class TestUpdateNextAction:
 # add_open_changeset / remove_open_changeset
 # =====================================================================
 
-class TestChangesetTracking:
-    def test_add_changeset(self, tmp_path, monkeypatch):
-        _, data_dir = _setup_project(tmp_path, monkeypatch)
-        result = roadmap.add_open_changeset("auth-refactor")
-        assert result["success"] is True
-        assert "auth-refactor" in result["open_changesets"]
-
-    def test_add_changeset_idempotent(self, tmp_path, monkeypatch):
-        """Adding the same changeset twice should not create duplicates."""
-        _, data_dir = _setup_project(tmp_path, monkeypatch)
-        roadmap.add_open_changeset("fix-123")
-        roadmap.add_open_changeset("fix-123")
-        result = roadmap.get_roadmap()
-        assert result["current_phase"]["open_changesets"].count("fix-123") == 1
-
-    def test_remove_changeset(self, tmp_path, monkeypatch):
-        _, data_dir = _setup_project(tmp_path, monkeypatch)
-        roadmap.add_open_changeset("fix-123")
-        roadmap.add_open_changeset("fix-456")
-        result = roadmap.remove_open_changeset("fix-123")
-        assert result["success"] is True
-        assert "fix-123" not in result["open_changesets"]
-        assert "fix-456" in result["open_changesets"]
-
-    def test_remove_nonexistent_changeset(self, tmp_path, monkeypatch):
-        """Removing a changeset that doesn't exist should succeed silently."""
-        _, data_dir = _setup_project(tmp_path, monkeypatch)
-        result = roadmap.remove_open_changeset("nonexistent")
-        assert result["success"] is True
-
-
 # =====================================================================
 # Full Lifecycle Test
 # =====================================================================

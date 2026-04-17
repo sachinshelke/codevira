@@ -84,17 +84,6 @@ class GlobalDB:
         )
         self.conn.commit()
 
-    def find_project_by_remote(self, remote_url: str) -> str | None:
-        """Return the registered path for a project matching the given git remote URL, or None."""
-        try:
-            row = self.conn.execute(
-                "SELECT path FROM projects WHERE git_remote = ? LIMIT 1",
-                (remote_url,),
-            ).fetchone()
-            return row["path"] if row else None
-        except Exception:
-            return None
-
     def get_project_count(self) -> int:
         row = self.conn.execute("SELECT COUNT(*) FROM projects").fetchone()
         return row[0] if row else 0

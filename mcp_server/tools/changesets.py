@@ -139,8 +139,10 @@ def complete_changeset(changeset_id: str, decisions: list[str]) -> dict[str, Any
     return {"success": True, "changeset_id": changeset_id, "decisions_recorded": len(decisions)}
 
 
-def get_changeset(changeset_id: str) -> dict[str, Any]:
-    """Get the current state of a changeset."""
+def _get_changeset(changeset_id: str) -> dict[str, Any]:
+    """Internal: load a single changeset by id. Public callers should use
+    list_open_changesets(); update_changeset_progress() and complete_changeset()
+    use this internally."""
     path = _changeset_path(changeset_id)
     if not path.exists():
         return {"found": False, "message": f"Changeset '{changeset_id}' not found."}

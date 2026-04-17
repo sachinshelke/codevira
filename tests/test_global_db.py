@@ -141,8 +141,12 @@ class TestRegisterProject:
             git_remote="https://github.com/org/repo.git",
         )
 
-        found = db.find_project_by_remote("https://github.com/org/repo.git")
-        assert found == "/proj"
+        # Verify git_remote column was set
+        row = db.conn.execute(
+            "SELECT git_remote FROM projects WHERE path = ?", ("/proj",)
+        ).fetchone()
+        assert row is not None
+        assert row["git_remote"] == "https://github.com/org/repo.git"
         db.close()
 
     def test_register_without_git_remote(self, tmp_path):
@@ -216,65 +220,6 @@ class TestGetProjectCount:
         for i in range(10):
             db.register_project(f"/proj-{i}", f"proj-{i}", "python")
         assert db.get_project_count() == 10
-        db.close()
-
-
-# ===================================================================
-# find_project_by_remote
-# ===================================================================
-
-class TestFindProjectByRemote:
-    def test_found(self, tmp_path):
-        db = _make_db(tmp_path)
-        db.register_project("/proj", "TestProj", "python",
-                            git_remote="https://github.com/org/repo.git")
-        found = db.find_project_by_remote("https://github.com/org/repo.git")
-        assert found == "/proj"
-        db.close()
-
-    def test_not_found(self, tmp_path):
-        db = _make_db(tmp_path)
-        db.register_project("/proj", "TestProj", "python",
-                            git_remote="https://github.com/org/other.git")
-        found = db.find_project_by_remote("https://github.com/org/nonexistent.git")
-        assert found is None
-        db.close()
-
-    def test_none_url_returns_none(self, tmp_path):
-        """Searching with None does not crash."""
-        db = _make_db(tmp_path)
-        db.register_project("/proj", "TestProj", "python")
-        # find_project_by_remote with None URL — should not find anything
-        found = db.find_project_by_remote(None)
-        # Returns None because no project has git_remote=None matched via WHERE
-        assert found is None
-        db.close()
-
-    def test_empty_database(self, tmp_path):
-        db = _make_db(tmp_path)
-        found = db.find_project_by_remote("https://github.com/org/repo.git")
-        assert found is None
-        db.close()
-
-    def test_ssh_remote_url(self, tmp_path):
-        """SSH-style remote URLs work."""
-        db = _make_db(tmp_path)
-        db.register_project("/proj", "TestProj", "python",
-                            git_remote="git@github.com:org/repo.git")
-        found = db.find_project_by_remote("git@github.com:org/repo.git")
-        assert found == "/proj"
-        db.close()
-
-    def test_multiple_projects_finds_correct_one(self, tmp_path):
-        db = _make_db(tmp_path)
-        db.register_project("/proj-a", "A", "python",
-                            git_remote="https://github.com/org/a.git")
-        db.register_project("/proj-b", "B", "python",
-                            git_remote="https://github.com/org/b.git")
-        db.register_project("/proj-c", "C", "go",
-                            git_remote="https://github.com/org/c.git")
-
-        assert db.find_project_by_remote("https://github.com/org/b.git") == "/proj-b"
         db.close()
 
 
@@ -629,8 +574,12 @@ class TestGitRemoteColumnUpgrade:
         db = GlobalDB(db_path)
         db.register_project("/proj", "Test", "python", git_remote="https://git.example.com/repo")
 
-        found = db.find_project_by_remote("https://git.example.com/repo")
-        assert found == "/proj"
+        # Verify the column was added and the value persisted
+        row = db.conn.execute(
+            "SELECT git_remote FROM projects WHERE path = ?", ("/proj",)
+        ).fetchone()
+        assert row is not None
+        assert row["git_remote"] == "https://git.example.com/repo"
         db.close()
 
 
@@ -798,10 +747,3 @@ class TestGlobalDBChaos:
         assert rules[0]["language"] is None
         db.close()
 
-    def test_find_project_by_remote_handles_exception(self, tmp_path):
-        """find_project_by_remote catches internal exceptions gracefully."""
-        db = _make_db(tmp_path)
-        # Close the connection to force an error inside find_project_by_remote
-        db.conn.close()
-        result = db.find_project_by_remote("https://example.com/repo.git")
-        assert result is None

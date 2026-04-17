@@ -604,21 +604,3 @@ def update_next_action(next_action: str) -> dict[str, Any]:
     return {"success": True, "next_action": next_action}
 
 
-def add_open_changeset(changeset_id: str) -> dict[str, Any]:
-    """Register a changeset as open in the current phase."""
-    data = _load_roadmap()
-    open_cs = data.get("current_phase", {}).get("open_changesets", [])
-    if changeset_id not in open_cs:
-        open_cs.append(changeset_id)
-    data["current_phase"]["open_changesets"] = open_cs
-    _save_roadmap(data)
-    return {"success": True, "open_changesets": open_cs}
-
-
-def remove_open_changeset(changeset_id: str) -> dict[str, Any]:
-    """Remove a resolved changeset from the current phase open list."""
-    data = _load_roadmap()
-    open_cs = data.get("current_phase", {}).get("open_changesets", [])
-    data["current_phase"]["open_changesets"] = [c for c in open_cs if c != changeset_id]
-    _save_roadmap(data)
-    return {"success": True, "open_changesets": data["current_phase"]["open_changesets"]}

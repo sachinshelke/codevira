@@ -513,14 +513,17 @@ def start_background_full_index(callback=None) -> "threading.Thread":
     return t
 
 
-def cmd_status(check_stale: bool = False):
+def cmd_status(check_stale: bool = False, show_global: bool = False):
     """Print index health summary.
 
     Fast by default (~100ms): queries SQLite counts only, skips ChromaDB
     embedding-function init and file-hash walk.
 
-    Pass check_stale=True to scan all source files and count how many
-    have changed since last index (slow: O(n) SHA256 hashes).
+    Args:
+        check_stale: Scan all source files and count how many have changed
+                     since last index (slow: O(n) SHA256 hashes).
+        show_global: Add a panel showing cross-project intelligence stats
+                     and the macOS launchd service status (if running).
     """
     data_dir = get_data_dir()
     graph_db_path = data_dir / "graph" / "graph.db"
@@ -611,6 +614,49 @@ def cmd_status(check_stale: bool = False):
             console.print(f"  ... and {len(stale_files) - 10} more.")
 
     db.close()
+
+    if show_global:
+        _print_global_status(console, Table, Panel)
+
+
+def _print_global_status(console, Table, Panel):
+    """Print cross-project intelligence + launchd service status."""
+    # Cross-project intelligence stats
+    try:
+        from mcp_server.global_sync import get_global_stats
+        stats = get_global_stats() or {}
+    except Exception as e:
+        stats = {"error": str(e)}
+
+    g_table = Table(show_header=False, box=None)
+    if "error" in stats:
+        g_table.add_row("[cyan]Cross-Project Memory:[/cyan]", f"[dim]error: {stats['error']}[/dim]")
+    else:
+        g_table.add_row("[cyan]Projects Tracked:[/cyan]", str(stats.get("projects_count", 0)))
+        g_table.add_row("[cyan]Global Preferences:[/cyan]", str(stats.get("preferences_count", 0)))
+        g_table.add_row("[cyan]Global Rules:[/cyan]", str(stats.get("rules_count", 0)))
+
+    # Launchd service status (macOS only)
+    try:
+        from mcp_server.launchd import launchd_status
+        ls = launchd_status()
+        if ls.get("platform") == "not_macos":
+            g_table.add_row("[cyan]Launchd Service:[/cyan]", "[dim]macOS only[/dim]")
+        elif not ls.get("installed"):
+            g_table.add_row("[cyan]Launchd Service:[/cyan]", "[dim]not installed[/dim]")
+        elif ls.get("running"):
+            g_table.add_row("[cyan]Launchd Service:[/cyan]", "[green]running[/green]")
+        else:
+            g_table.add_row("[cyan]Launchd Service:[/cyan]", "[yellow]installed (not running)[/yellow]")
+    except Exception:
+        pass
+
+    console.print(Panel(
+        g_table,
+        title="[bold blue]Global Status[/bold blue]",
+        expand=False,
+        border_style="blue",
+    ))
 
 def cmd_generate_graph():
     from indexer.graph_generator import generate_graph_sqlite

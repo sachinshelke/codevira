@@ -300,34 +300,3 @@ class TestGitErrorHandling:
 # get_file_outcome_summary
 # ---------------------------------------------------------------------------
 
-class TestGetFileOutcomeSummary:
-    """Tests for get_file_outcome_summary()."""
-
-    @patch("indexer.outcome_tracker.get_data_dir")
-    def test_returns_aggregated_outcomes(self, mock_data_dir, populated_db):
-        """Should return outcomes and confidence for a known file."""
-        project, data_dir, db = _get_db(populated_db)
-        mock_data_dir.return_value = data_dir
-
-        from indexer.outcome_tracker import get_file_outcome_summary
-        result = get_file_outcome_summary("src/api.py")
-
-        assert result["file_path"] == "src/api.py"
-        assert isinstance(result["outcomes"], list)
-        assert len(result["outcomes"]) >= 1
-        assert isinstance(result["confidence"], dict)
-        assert "confidence" in result["confidence"]
-
-    @patch("indexer.outcome_tracker.get_data_dir")
-    def test_empty_outcomes_for_unknown_file(self, mock_data_dir, populated_db):
-        """Unknown file should return empty outcomes and zero confidence."""
-        project, data_dir, db = _get_db(populated_db)
-        mock_data_dir.return_value = data_dir
-
-        from indexer.outcome_tracker import get_file_outcome_summary
-        result = get_file_outcome_summary("nonexistent/file.py")
-
-        assert result["file_path"] == "nonexistent/file.py"
-        assert result["outcomes"] == []
-        assert result["confidence"]["total_decisions"] == 0
-        assert result["confidence"]["confidence"] == 0.0

@@ -13,7 +13,7 @@ from mcp_server.tools.changesets import (
     start_changeset,
     update_changeset_progress,
     complete_changeset,
-    get_changeset,
+    _get_changeset as get_changeset,  # internal helper, aliased for tests
     list_open_changesets,
     update_node_after_change,
 )

@@ -58,14 +58,12 @@ from mcp_server.tools.roadmap import (
     get_roadmap, get_full_roadmap, get_phase,
     add_phase, update_phase_status, defer_phase,
     complete_phase, update_next_action,
-    add_open_changeset, remove_open_changeset,
 )
 from mcp_server.tools.search import search_codebase, refresh_index, search_decisions, get_history, write_session_log
 from mcp_server.tools.changesets import (
     start_changeset,
     update_changeset_progress,
     complete_changeset,
-    get_changeset,
     list_open_changesets,
 )
 from mcp_server.tools.playbook import get_playbook

@@ -157,16 +157,3 @@ def _learn_from_modification(db: SQLiteGraph, file_path: str, delta: str):
         db.record_preference("structure", f"Developer modifies AI output in {ext} files", example=file_path)
 
 
-def get_file_outcome_summary(file_path: str) -> dict:
-    """Get a summary of all outcomes for a specific file."""
-    db = SQLiteGraph(get_data_dir() / "graph" / "graph.db")
-    try:
-        outcomes = db.get_outcomes_for_file(file_path)
-        confidence = db.get_decision_confidence(file_path=file_path)
-        return {
-            "file_path": file_path,
-            "outcomes": outcomes,
-            "confidence": confidence,
-        }
-    finally:
-        db.close()

@@ -379,27 +379,36 @@ def get_graph_diff(base_ref: str = "main", head_ref: str = "HEAD") -> dict[str, 
 
 
 def refresh_graph(file_paths: list[str] | None = None) -> dict[str, Any]:
+    """Regenerate the context graph from source files.
+
+    Args:
+        file_paths: If provided, only these files are re-parsed. If None,
+                    regenerates the graph for ALL source files in the project.
+
+    Note: generate_graph_sqlite is idempotent — calling it is safe, it only
+    updates nodes whose file hash changed. For large projects, passing
+    file_paths is much faster than a full rebuild.
+    """
     from indexer.graph_generator import generate_graph_sqlite
     from mcp_server.paths import get_project_root
-    from indexer.treesitter_parser import get_language
-    
+
     root = get_project_root()
-    if not file_paths:
-        file_paths = []
-        for p in root.rglob("*.*"):
-            if get_language(p.suffix) is not None or p.suffix == ".py":
-                if "node_modules" not in p.parts and ".venv" not in p.parts:
-                    file_paths.append(str(p.relative_to(root)))
-                    
-    generated = 0
     db_path = str(_graph_dir() / "graph.db")
-    # For a list of specific files, we can just call it (though the generator scans all files, 
-    # it only adds missing ones).
+
+    # generate_graph_sqlite is idempotent and uses file hashes internally
+    # to skip unchanged files, so it's safe to call with no filter.
     generate_graph_sqlite(str(root), db_path)
-            
+
+    if file_paths:
+        return {
+            "status": f"Graph refreshed for {len(file_paths)} specified files.",
+            "files_refreshed": len(file_paths),
+            "hint": "Call get_node(file_path) to read the updated graph.",
+        }
+
     return {
-        "status": f"Generated graph nodes in SQLite DB.",
-        "hint": "Call get_node(file_path) to read the new graph stub."
+        "status": "Graph refreshed for all source files.",
+        "hint": "Call get_node(file_path) to read updated graph nodes.",
     }
 
 

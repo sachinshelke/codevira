@@ -270,48 +270,45 @@ class TestGetHistory:
 # ---------------------------------------------------------------------------
 
 class TestRefreshIndex:
-    """refresh_index always refreshes the graph, and optionally updates semantic index."""
+    """refresh_index returns immediately; actual work runs in background thread."""
 
     def test_targeted_mode_with_specific_files(self, project_env):
         """refresh_index with file_paths returns targeted mode result."""
-        with patch("mcp_server.tools.graph.refresh_graph") as mock_graph, \
-             patch("indexer.index_codebase._check_search_deps", return_value=False):
+        with patch("indexer.index_codebase._check_search_deps", return_value=False):
             result = refresh_index(["src/api.py", "src/db.py"])
-        mock_graph.assert_called_once_with(file_paths=["src/api.py", "src/db.py"])
         assert result["mode"] == "targeted"
         assert result["file_paths"] == ["src/api.py", "src/db.py"]
-        assert result["graph_refreshed"] is True
+        assert "started" in result["status"].lower() or "background" in result["status"].lower()
 
     def test_incremental_mode_no_files(self, project_env):
         """refresh_index with empty file list uses incremental mode."""
-        with patch("mcp_server.tools.graph.refresh_graph"), \
-             patch("indexer.index_codebase._check_search_deps", return_value=False):
+        with patch("indexer.index_codebase._check_search_deps", return_value=False):
             result = refresh_index([])
         assert result["mode"] == "incremental"
-        assert result["graph_refreshed"] is True
+        assert "started" in result["status"].lower() or "background" in result["status"].lower()
 
     def test_targeted_mode_count_matches_files(self, project_env):
         """In targeted mode, result includes file_paths."""
-        with patch("mcp_server.tools.graph.refresh_graph"), \
-             patch("indexer.index_codebase._check_search_deps", return_value=False):
+        with patch("indexer.index_codebase._check_search_deps", return_value=False):
             result = refresh_index(["a.py", "b.py", "c.py"])
         assert len(result["file_paths"]) == 3
 
-    def test_passes_none_for_empty_list(self, project_env):
-        """Empty list calls refresh_graph with file_paths=None."""
-        with patch("mcp_server.tools.graph.refresh_graph") as mock_graph, \
-             patch("indexer.index_codebase._check_search_deps", return_value=False):
-            refresh_index([])
-        mock_graph.assert_called_once_with(file_paths=None)
+    def test_returns_immediately(self, project_env):
+        """refresh_index should return fast — not block on actual indexing."""
+        import time
+        with patch("indexer.index_codebase._check_search_deps", return_value=False):
+            start = time.monotonic()
+            result = refresh_index([])
+            elapsed = time.monotonic() - start
+        # Should return in well under 1 second even though background work may take minutes
+        assert elapsed < 1.0
+        assert "mode" in result
 
     def test_graph_only_when_no_chromadb(self, project_env):
-        """Without chromadb, refresh_index does graph-only and reports it."""
-        with patch("mcp_server.tools.graph.refresh_graph"), \
-             patch("indexer.index_codebase._check_search_deps", return_value=False):
+        """Without chromadb, note mentions graph-only mode."""
+        with patch("indexer.index_codebase._check_search_deps", return_value=False):
             result = refresh_index(["src/app.py"])
-        assert result["graph_refreshed"] is True
-        assert result["search_refreshed"] is False
-        assert "graph-only" in result["status"].lower() or "not installed" in result["status"].lower()
+        assert "not installed" in result["note"].lower() or "graph only" in result["note"].lower()
 
 
 # ---------------------------------------------------------------------------
@@ -392,11 +389,10 @@ class TestGetHistorySQLInjection:
 class TestRefreshIndexEmptyList:
     def test_empty_file_list_uses_incremental_mode(self, project_env):
         """refresh_index([]) should use incremental mode."""
-        with patch("mcp_server.tools.graph.refresh_graph"), \
-             patch("indexer.index_codebase._check_search_deps", return_value=False):
+        with patch("indexer.index_codebase._check_search_deps", return_value=False):
             result = refresh_index([])
         assert result["mode"] == "incremental"
-        assert result["graph_refreshed"] is True
+        assert "started" in result["status"].lower() or "background" in result["status"].lower()
 
 
 # ---------------------------------------------------------------------------

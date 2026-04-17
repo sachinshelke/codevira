@@ -128,47 +128,53 @@ def get_history(file_path: str) -> dict[str, Any]:
     }
 
 def refresh_index(file_paths: list[str]) -> dict:
-    """Trigger an incremental reindex of changed files.
+    """Trigger an incremental reindex of changed files (non-blocking).
 
-    If chromadb is installed, updates both the semantic search index and the
-    context graph. If chromadb is NOT installed, refreshes the graph only
-    (which is the primary data structure for all non-search tools).
+    Returns immediately with a "started" status. The actual work (graph
+    update + optional semantic indexing) runs in a background thread.
+
+    For large projects, semantic reindexing can take minutes. If this ran
+    synchronously, the MCP tool call would hang the calling AI agent.
+    Use get_session_context() to check progress via indexing_progress field.
     """
+    import threading
     from indexer.index_codebase import _check_search_deps
 
     requested_files = file_paths or None
-    graph_refreshed = False
-    search_refreshed = False
 
-    # Always refresh the graph (no optional deps required)
-    try:
-        from mcp_server.tools.graph import refresh_graph
-        refresh_graph(file_paths=file_paths if file_paths else None)
-        graph_refreshed = True
-    except Exception as e:
-        return {"error": f"Graph refresh failed: {e}"}
-
-    # If semantic search deps are available, also refresh the search index
-    if _check_search_deps():
+    def _background_refresh():
         try:
-            from indexer.index_codebase import cmd_incremental
-            cmd_incremental(quiet=True, file_paths=requested_files)
-            search_refreshed = True
+            from mcp_server.tools.graph import refresh_graph
+            refresh_graph(file_paths=file_paths if file_paths else None)
         except Exception as e:
-            # Search index failure is non-fatal — graph is already refreshed
-            pass
+            try:
+                from mcp_server.crash_logger import log_crash
+                log_crash(e, context="refresh_index: graph refresh (background)")
+            except Exception:
+                pass
+
+        if _check_search_deps():
+            try:
+                from indexer.index_codebase import cmd_incremental
+                cmd_incremental(quiet=True, file_paths=requested_files)
+            except Exception as e:
+                try:
+                    from mcp_server.crash_logger import log_crash
+                    log_crash(e, context="refresh_index: semantic index (background)")
+                except Exception:
+                    pass
+
+    t = threading.Thread(target=_background_refresh, daemon=True, name="codevira-refresh-index")
+    t.start()
 
     mode = "targeted" if requested_files else "incremental"
-    status_parts = ["Graph refreshed"]
-    if search_refreshed:
-        status_parts.append("semantic index updated")
-    elif not _check_search_deps():
-        status_parts.append("semantic search not installed (graph-only mode)")
+    note = "Search index will update in background."
+    if not _check_search_deps():
+        note = "Graph only (semantic search not installed)."
 
     return {
-        "status": ". ".join(status_parts) + ".",
+        "status": "Refresh started in background.",
         "mode": mode,
-        "graph_refreshed": graph_refreshed,
-        "search_refreshed": search_refreshed,
+        "note": note,
         **({"file_paths": requested_files} if requested_files else {}),
     }

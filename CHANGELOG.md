@@ -13,6 +13,31 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [1.7.1] — 2026-04-16 — Non-blocking refresh_index + Robust File Walk
+
+### Fixed
+- **`refresh_index` hung AI agents on large projects**: The MCP tool call ran
+  full graph regeneration + semantic embedding synchronously. On projects with
+  500+ files, this took minutes — long enough to appear as a hang.
+  Now returns immediately with `{"status": "Refresh started in background"}`
+  and runs the heavy work in a daemon thread.
+- **`refresh_graph` ignored its `file_paths` parameter**: Built a list of
+  files but never used it — always regenerated the entire graph. Cleaned up
+  the dead code.
+- **`generate_graph_sqlite` crashed on OS system paths**: `rglob` follows
+  symlinks by default on macOS, which could walk into `~/Library/Group
+  Containers/` and hit `OSError: [Errno 4] Interrupted system call`. Now:
+  - Skips common non-source dirs (`node_modules`, `.venv`, `__pycache__`, etc.)
+  - Skips OS-level dirs reachable via symlinks (`Library`, `System`, `Applications`)
+  - Catches `OSError` / `ValueError` per-entry so one bad path doesn't abort the walk
+
+### Changed
+- **`refresh_index` is now fire-and-forget**: Agents no longer wait for
+  embedding to finish. Check progress via `get_session_context()` →
+  `indexing_progress` field.
+
+---
+
 ## [1.7.0] — 2026-04-16 — All 36 Tools Out of the Box
 
 ### Changed

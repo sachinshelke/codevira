@@ -195,10 +195,42 @@ def generate_graph_sqlite(project_root: str, db_path: str | None = None) -> dict
         
     db = SQLiteGraph(db_path)
     
-    file_paths = []
-    for ext in TS_EXTENSION_MAP.keys():
-        file_paths.extend([str(p.relative_to(project_root)) for p in Path(project_root).rglob(f"*{ext}")])
-    file_paths.extend([str(p.relative_to(project_root)) for p in Path(project_root).rglob("*.py")])
+    # Skip dirs that commonly contain symlinks to system/OS directories,
+    # or are otherwise not user source code. rglob() follows symlinks by
+    # default on macOS, which can walk into ~/Library/Group Containers/
+    # and similar OS-managed paths.
+    _SKIP_DIRS = frozenset({
+        "node_modules", ".venv", "venv", ".git", "__pycache__",
+        ".pytest_cache", ".tox", "dist", "build", ".next", ".nuxt",
+        ".codevira", ".codevira.migrated", "htmlcov", ".coverage",
+        # macOS system paths that can appear via symlinks
+        "Library", "System", "Applications",
+    })
+
+    def _walk_sources(root: Path, extensions: list[str]) -> list[str]:
+        """Walk project_root safely: skip known-bad dirs, ignore OSError on walk."""
+        collected: list[str] = []
+        try:
+            for p in root.rglob("*"):
+                try:
+                    if not p.is_file():
+                        continue
+                    # Bail on any path that contains a skip dir anywhere
+                    if any(part in _SKIP_DIRS for part in p.parts):
+                        continue
+                    if p.suffix not in extensions:
+                        continue
+                    collected.append(str(p.relative_to(root)))
+                except (OSError, ValueError):
+                    # Path can't be stat'd, is outside root, or symlink loop
+                    continue
+        except OSError:
+            # rglob itself hit EINTR or permission error at some level
+            pass
+        return collected
+
+    all_exts = list(TS_EXTENSION_MAP.keys()) + [".py"]
+    file_paths = _walk_sources(Path(project_root), all_exts)
     
     added = 0
     skipped = 0

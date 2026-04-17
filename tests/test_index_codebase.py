@@ -1059,7 +1059,7 @@ class TestCmdStatusStaleFiles:
              patch("indexer.index_codebase._get_embedding_fn", return_value=MagicMock()), \
              patch("indexer.index_codebase._get_changed_files", return_value=stale):
             from indexer.index_codebase import cmd_status
-            cmd_status()  # should not raise
+            cmd_status(check_stale=True)  # opt-in to stale check
 
     def test_cmd_status_many_stale_files_truncated(self, project_env):
         """cmd_status truncates stale file list after 10 items."""
@@ -1079,4 +1079,4 @@ class TestCmdStatusStaleFiles:
              patch("indexer.index_codebase._get_embedding_fn", return_value=MagicMock()), \
              patch("indexer.index_codebase._get_changed_files", return_value=stale):
             from indexer.index_codebase import cmd_status
-            cmd_status()  # should not raise
+            cmd_status(check_stale=True)  # opt-in to stale check

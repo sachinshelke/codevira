@@ -510,34 +510,55 @@ def start_background_full_index(callback=None) -> "threading.Thread":
     return t
 
 
-def cmd_status():
+def cmd_status(check_stale: bool = False):
+    """Print index health summary.
+
+    Fast by default (~100ms): queries SQLite counts only, skips ChromaDB
+    embedding-function init and file-hash walk.
+
+    Pass check_stale=True to scan all source files and count how many
+    have changed since last index (slow: O(n) SHA256 hashes).
+    """
     from rich.console import Console
     from rich.table import Table
     from rich.panel import Panel
 
     console = Console()
     db = SQLiteGraph(get_data_dir() / "graph" / "graph.db")
-    
-    search_available = True
-    try:
-        client = _get_chroma_client()
-        embed_fn = _get_embedding_fn()
-        collection = client.get_collection(COLLECTION_NAME, embedding_function=embed_fn)
-        chunk_count = collection.count()
-    except ImportError:
-        chunk_count = 0
-        search_available = False
-    except Exception as e:
-        chunk_count = 0
-        console.print(f"[yellow]Warning: could not read search index: {e}[/yellow]")
 
-    stale_files = _get_changed_files(db)
-
-    # Count graph nodes
+    # Count graph nodes — fast SQLite query
     try:
         nodes = db.conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
     except Exception:
         nodes = 0
+
+    # Count chromadb chunks — but avoid importing chromadb if no index exists.
+    # chromadb's import alone takes ~700ms cold; we don't want that cost for
+    # `codevira status` on a project that hasn't been indexed yet.
+    chunk_count = 0
+    search_available = True
+    index_dir = _index_dir()
+    chroma_db_file = index_dir / "chroma.sqlite3"
+    if chroma_db_file.exists():
+        # Index exists — read chunk count (triggers chromadb import)
+        try:
+            client = _get_chroma_client()
+            try:
+                collection = client.get_collection(COLLECTION_NAME)
+                chunk_count = collection.count()
+            except Exception:
+                chunk_count = 0
+        except ImportError:
+            search_available = False
+    else:
+        # No index yet — check if chromadb is installed (cheap — just checks
+        # for package metadata, no real import). If not, show "not installed".
+        try:
+            import importlib.util
+            if importlib.util.find_spec("chromadb") is None:
+                search_available = False
+        except Exception:
+            pass
 
     table = Table(show_header=False, box=None)
     table.add_row("[cyan]Graph Nodes:[/cyan]", str(nodes))
@@ -545,20 +566,26 @@ def cmd_status():
         table.add_row("[cyan]ChromaDB Chunks:[/cyan]", str(chunk_count))
     else:
         table.add_row("[cyan]Semantic Search:[/cyan]", "[dim]not installed[/dim]")
-    table.add_row("[cyan]Outdated Files:[/cyan]", str(len(stale_files)))
+
+    # Stale file scan is slow (SHA256 every source file) — only run on demand
+    if check_stale:
+        stale_files = _get_changed_files(db)
+        table.add_row("[cyan]Outdated Files:[/cyan]", str(len(stale_files)))
+    else:
+        table.add_row("[cyan]Outdated Files:[/cyan]", "[dim]run with --check-stale[/dim]")
 
     panel = Panel(
         table,
         title="[bold green]Codevira Index Status[/bold green]",
         expand=False,
-        border_style="green"
+        border_style="green",
     )
     console.print(panel)
 
     if not search_available:
         console.print("\n[dim]  Tip: pip install 'codevira\\[search]' to enable semantic code search[/dim]")
 
-    if stale_files:
+    if check_stale and stale_files:
         console.print("\n[yellow]Files requiring re-indexing:[/yellow]")
         for fp, _ in stale_files[:10]:
             console.print(f"  - {fp}")

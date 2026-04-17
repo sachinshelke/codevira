@@ -351,10 +351,10 @@ def cmd_index(full: bool = False, quiet: bool = False) -> None:
         cmd_incremental(quiet=quiet)
 
 
-def cmd_status() -> None:
+def cmd_status(check_stale: bool = False) -> None:
     """Show index health and statistics."""
     from indexer.index_codebase import cmd_status as _cmd_status
-    _cmd_status()
+    _cmd_status(check_stale=check_stale)
 
 
 def cmd_report(limit: int = 20, clear: bool = False) -> None:
@@ -535,7 +535,12 @@ def main() -> None:
     index_parser.add_argument("--quiet", action="store_true", help="Suppress output (used by git hook)")
 
     # status
-    subparsers.add_parser("status", help="Show index health and statistics")
+    status_parser = subparsers.add_parser("status", help="Show index health and statistics")
+    status_parser.add_argument(
+        "--check-stale",
+        action="store_true",
+        help="Scan source files to detect changes since last index (slower)",
+    )
 
     # report
     report_parser = subparsers.add_parser("report", help="Show recent crash logs")
@@ -621,7 +626,7 @@ def main() -> None:
     elif args.command == "index":
         cmd_index(full=args.full, quiet=args.quiet)
     elif args.command == "status":
-        cmd_status()
+        cmd_status(check_stale=getattr(args, "check_stale", False))
     elif args.command == "report":
         cmd_report(limit=args.limit, clear=args.clear)
     elif args.command == "serve":

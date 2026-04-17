@@ -1,6 +1,11 @@
 # Roadmap Lifecycle Guide
 
-The `.codevira/roadmap.yaml` file is the AI agent's living memory of your project's progress. It answers the question: *"Where are we, and what needs doing next?"*
+The `roadmap.yaml` file is the AI agent's living memory of your project's progress. It answers the question: *"Where are we, and what needs doing next?"*
+
+> **v1.6+ note:** As of v1.6, project data lives centrally at
+> `~/.codevira/projects/<project-key>/` instead of inside the project repo
+> at `<project>/.codevira/`. Legacy in-repo `.codevira/` directories are
+> auto-migrated to centralized storage on first server start.
 
 ---
 
@@ -17,7 +22,7 @@ The `.codevira/roadmap.yaml` file is the AI agent's living memory of your projec
 
 ## What is the roadmap?
 
-The roadmap is a YAML file at `.codevira/roadmap.yaml` that tracks:
+The roadmap is a YAML file at `~/.codevira/projects/<project-key>/roadmap.yaml` that tracks:
 
 - **What phase of development you're in** (e.g., "Phase 2 — Auth System")
 - **What the agent should do next** (`next_action` field — updated at session end)
@@ -35,7 +40,7 @@ When you run `codevira init`, the initializer:
 1. **Reads your git history** — extracts tags (e.g., `v0.1`, `v1.0-auth`) as completed phase milestones
 2. **Detects your framework** — looks for `pyproject.toml`, `package.json`, `Cargo.toml`, `go.mod` etc. to infer the project type
 3. **Infers phase state** — if very few source files exist, creates a "Getting Started" phase; if the project is active, creates a "Feature Development" phase
-4. **Creates a stub** at `.codevira/roadmap.yaml` — only if the file doesn't already exist (never overwrites)
+4. **Creates a stub** at `~/.codevira/projects/<project-key>/roadmap.yaml` — only if the file doesn't already exist (never overwrites)
 
 ### Auto-generated stub example
 
@@ -60,7 +65,7 @@ deferred_phases: []
 ```
 
 **What to do after init:**
-- Open `.codevira/roadmap.yaml` in your editor
+- Open `~/.codevira/projects/<project-key>/roadmap.yaml` in your editor
 - Replace "Getting Started" with your actual current phase name
 - Update `goal` with what you're actually building
 - Add `upcoming_phases` for future work
@@ -151,7 +156,7 @@ Next session:
 
 ## Manual editing guide
 
-You can always edit `.codevira/roadmap.yaml` directly. The agent will pick up changes on the next `get_roadmap()` call.
+You can always edit `~/.codevira/projects/<project-key>/roadmap.yaml` directly. The agent will pick up changes on the next `get_roadmap()` call.
 
 ### When to edit manually
 
@@ -227,11 +232,11 @@ deferred_phases:
 
 ### "Roadmap not found" error
 
-Run `codevira init` from your project root. The roadmap is created at `.codevira/roadmap.yaml`.
+Run `codevira init` from your project root. The roadmap is created at `~/.codevira/projects/<project-key>/roadmap.yaml`.
 
 ### Roadmap is out of sync with actual progress
 
-Edit `.codevira/roadmap.yaml` directly to set the correct `current_phase.number` and `status`. The agent will read the updated file on the next tool call.
+Edit `~/.codevira/projects/<project-key>/roadmap.yaml` directly to set the correct `current_phase.number` and `status`. The agent will read the updated file on the next tool call.
 
 ### Agent keeps doing work from a completed phase
 
@@ -250,20 +255,20 @@ current_phase:
 
 ### Roadmap corrupted (YAML parse error)
 
-Run the following to validate:
+Run the following to validate (replace `<project-key>` with your actual project key — find it via `codevira status` or by listing `~/.codevira/projects/`):
 ```bash
-python -c "import yaml; yaml.safe_load(open('.codevira/roadmap.yaml'))"
+python -c "import yaml; yaml.safe_load(open('$HOME/.codevira/projects/<project-key>/roadmap.yaml'))"
 ```
 
 If the file is corrupted beyond repair, delete it and restart:
 ```bash
-rm .codevira/roadmap.yaml
-codevira index --full  # This also regenerates the roadmap stub
+rm ~/.codevira/projects/<project-key>/roadmap.yaml
+codevira index --full  # Regenerates the roadmap stub on next get_roadmap() call
 ```
 
 ### Agent's `next_action` doesn't match what I want
 
-Directly edit the `next_action` field in `.codevira/roadmap.yaml`, or ask the agent:
+Directly edit the `next_action` field in `~/.codevira/projects/<project-key>/roadmap.yaml`, or ask the agent:
 > "Update next_action to say: [your intent]"
 
 The agent will call `update_next_action()` and save it.
@@ -274,7 +279,9 @@ The agent will call `update_next_action()` and save it.
 
 **Q: Is the roadmap committed to git?**
 
-No. `.codevira/` is added to `.gitignore` by `codevira init`. Each developer's roadmap is local to their machine. If you want to share roadmap state across a team, commit the file manually and remove it from `.gitignore`.
+No. As of v1.6, the roadmap lives at `~/.codevira/projects/<key>/roadmap.yaml` — outside your project repo entirely. Each developer's roadmap is local to their machine.
+
+If you want to share roadmap state across a team, you can manually copy the file into your repo (e.g. `docs/roadmap.yaml`) and commit it. But Codevira itself is local-first by design — team-shared memory is on the v2.0 roadmap.
 
 **Q: Can multiple agents update the roadmap concurrently?**
 

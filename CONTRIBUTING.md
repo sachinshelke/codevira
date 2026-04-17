@@ -36,7 +36,7 @@ By participating, you agree to uphold a respectful and welcoming environment for
    ```
 3. **Install** in development mode:
    ```bash
-   pip install -e '.[all]'
+   pip install -e .
    ```
 4. **Create a branch** for your change:
    ```bash
@@ -57,7 +57,7 @@ Codevira exists to make AI-assisted coding better. Using it while contributing t
 ```bash
 # After cloning your fork
 cd codevira
-pip install -e '.[all]'
+pip install -e .
 codevira init
 ```
 
@@ -185,7 +185,7 @@ git clone https://github.com/sachinshelke/codevira.git
 cd codevira
 
 # Install in development mode (editable, with all optional deps)
-pip install -e '.[all]'
+pip install -e .
 
 # Verify MCP server starts
 python -m mcp_server

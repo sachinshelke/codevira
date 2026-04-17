@@ -191,6 +191,61 @@ codevira serve --uninstall-service  # remove auto-start
 
 > Legacy `.codevira/` directories inside project repos are auto-migrated to centralized storage on first server start.
 
+### Configuration
+
+Each project has a `config.yaml` at `~/.codevira/projects/<project-key>/config.yaml`. It's auto-generated on first use with sensible defaults, but you can edit it to customize what Codevira indexes:
+
+```yaml
+project:
+  name: my-project
+  language: python
+  collection_name: my_project
+  # Which directories to scan for source files
+  watched_dirs:
+    - src
+    - tests
+    - scripts
+  # Which file extensions count as "source" for indexing + change detection
+  file_extensions:
+    - .py
+    - .ts
+    - .tsx
+  # Directories to skip even if inside watched_dirs
+  skip_dirs:
+    - node_modules
+    - .venv
+    - __pycache__
+    - dist
+    - build
+logs:
+  retention_days: 30
+```
+
+**Common gotchas:**
+
+- `file_extensions` must be a proper YAML list — **each extension on its own line**. This is wrong:
+  ```yaml
+  file_extensions:
+    - .py, .md, .html    # ❌ one item containing commas, not three extensions
+  ```
+  This is correct:
+  ```yaml
+  file_extensions:
+    - .py
+    - .md
+    - .html
+  ```
+  Or inline:
+  ```yaml
+  file_extensions: [.py, .md, .html]
+  ```
+
+- `file_extensions` is intended for **source code** (Python, TypeScript, Go, Rust, etc.). Codevira uses tree-sitter AST parsing — putting `.md` or `.html` here may produce malformed graph nodes since tree-sitter parsers for those languages are different.
+
+- Files are only scanned if they live inside `watched_dirs`. Adding an extension alone isn't enough — make sure the directory is listed too.
+
+**After editing the config**, run `codevira index --full` to rebuild the graph from scratch, or `codevira index` for incremental changes.
+
 ### Uninstall / Reset
 
 ```bash

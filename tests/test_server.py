@@ -164,7 +164,7 @@ class TestCallToolDispatch:
         with patch("mcp_server.server.get_impact", return_value=sentinel) as mock_fn, \
              patch("mcp_server.auto_init.ensure_project_initialized"):
             result = _run(call_tool("get_impact", {"file_path": "src/core.py"}))
-        mock_fn.assert_called_once_with("src/core.py")
+        mock_fn.assert_called_once_with("src/core.py", limit=20)
         parsed = json.loads(result[0].text)
         assert parsed["blast_radius"] == 3
 
@@ -318,12 +318,12 @@ class TestCallToolAdditionalRoutes:
     """Tests for tool dispatch routes not covered by TestCallToolDispatch."""
 
     def test_dispatch_list_nodes_no_filters(self):
-        """list_nodes dispatches with no filters."""
+        """list_nodes dispatches with default pagination."""
         sentinel = {"nodes": []}
         with patch("mcp_server.server.list_nodes", return_value=sentinel) as mock_fn, \
              patch("mcp_server.auto_init.ensure_project_initialized"):
             result = _run(call_tool("list_nodes", {}))
-        mock_fn.assert_called_once_with(layer=None, do_not_revert=None, stability=None)
+        mock_fn.assert_called_once_with(layer=None, do_not_revert=None, stability=None, limit=50, offset=0)
         assert len(result) == 1
         parsed = json.loads(result[0].text)
         assert parsed == sentinel
@@ -334,7 +334,7 @@ class TestCallToolAdditionalRoutes:
         with patch("mcp_server.server.list_nodes", return_value=sentinel) as mock_fn, \
              patch("mcp_server.auto_init.ensure_project_initialized"):
             result = _run(call_tool("list_nodes", {"layer": "api", "stability": "high", "do_not_revert": True}))
-        mock_fn.assert_called_once_with(layer="api", do_not_revert=True, stability="high")
+        mock_fn.assert_called_once_with(layer="api", do_not_revert=True, stability="high", limit=50, offset=0)
         parsed = json.loads(result[0].text)
         assert parsed == sentinel
 
@@ -615,7 +615,7 @@ class TestCallToolAdditionalRoutes:
         with patch("mcp_server.server.get_history", return_value=sentinel) as mock_fn, \
              patch("mcp_server.auto_init.ensure_project_initialized"):
             result = _run(call_tool("get_history", {"file_path": "src/core.py"}))
-        mock_fn.assert_called_once_with("src/core.py")
+        mock_fn.assert_called_once_with("src/core.py", limit=20)
         assert len(result) == 1
         parsed = json.loads(result[0].text)
         assert parsed["commits"][0]["hash"] == "abc123"

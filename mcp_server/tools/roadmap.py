@@ -247,15 +247,35 @@ def get_roadmap() -> dict[str, Any]:
     }
 
 
-def get_full_roadmap() -> dict[str, Any]:
+def get_full_roadmap(include_decisions: bool = False) -> dict[str, Any]:
     """
-    Return the complete roadmap: all completed phases with decisions,
-    current phase details, all upcoming phases, and all deferred items.
+    Return the roadmap: current phase, upcoming phases, deferred, and a
+    summary of completed phases.
 
-    Use this for planning sessions or when you need the full project history.
-    More expensive than get_roadmap() — only call when you need the full picture.
+    By default, completed phases are summarized (name + number + date) without
+    their `key_decisions` — on mature projects with many phases, inlining all
+    decisions can produce multi-kilobyte responses.
+
+    Pass `include_decisions=True` to get full history with all key_decisions
+    inline. Use `get_phase(number)` for a specific completed phase's decisions.
     """
     data = _load_roadmap()
+    completed = data.get("completed_phases", [])
+
+    if include_decisions:
+        completed_out = completed
+    else:
+        # Strip verbose fields from each completed phase to keep response lean
+        completed_out = [
+            {
+                "number": p.get("number"),
+                "name": p.get("name"),
+                "completed_at": p.get("completed_at"),
+                "decision_count": len(p.get("key_decisions", []) or []),
+            }
+            for p in completed
+        ]
+
     return {
         "project": data.get("project"),
         "version": data.get("version"),
@@ -263,12 +283,17 @@ def get_full_roadmap() -> dict[str, Any]:
         "upcoming_phases": data.get("upcoming_phases", []),
         "deferred": data.get("deferred", []),
         "deferred_phases": data.get("deferred", []),
-        "completed_phases": data.get("completed_phases", []),
+        "completed_phases": completed_out,
         "summary": {
-            "completed": len(data.get("completed_phases", [])),
+            "completed": len(completed),
             "upcoming": len(data.get("upcoming_phases", [])),
             "deferred": len(data.get("deferred", [])),
         },
+        "hint": (
+            None if include_decisions
+            else "Completed phases summarized. Call get_phase(number) for full details "
+                 "or get_full_roadmap(include_decisions=True) for all history inline."
+        ),
     }
 
 

@@ -144,9 +144,9 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="get_impact",
             description=(
-                "Get the full blast radius for a file before touching it. "
-                "BFS traversal of graph edges to find all downstream affected files. "
-                "ALWAYS call this before modifying any file."
+                "Get the blast radius for a file before touching it. "
+                "Returns up to `limit` most-relevant downstream files (default 20). "
+                "Full count is in `blast_radius`. ALWAYS call this before modifying any file."
             ),
             inputSchema={
                 "type": "object",
@@ -154,7 +154,11 @@ async def list_tools() -> list[Tool]:
                     "file_path": {
                         "type": "string",
                         "description": "File you are about to modify",
-                    }
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max affected files to return (default 20, max 100)",
+                    },
                 },
                 "required": ["file_path"],
             },
@@ -196,12 +200,20 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="get_full_roadmap",
             description=(
-                "Get the complete roadmap: all completed phases with key decisions, "
-                "current phase, all upcoming phases, and deferred items. "
-                "Use for planning sessions. More expensive than get_roadmap() — "
-                "only call when you need full project history."
+                "Get the roadmap with current phase, upcoming, deferred, and a summary "
+                "of completed phases. By default completed phases are summarized "
+                "(name + number) to keep response small. Pass include_decisions=true "
+                "for full history, or use get_phase(number) for one specific phase."
             ),
-            inputSchema={"type": "object", "properties": {}},
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "include_decisions": {
+                        "type": "boolean",
+                        "description": "Include full key_decisions from all completed phases (default false)",
+                    },
+                },
+            },
         ),
         Tool(
             name="get_phase",
@@ -377,9 +389,10 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="list_nodes",
             description=(
-                "List all nodes in the context graph with brief summaries. "
-                "Use at session start to discover what's in the graph and spot stale files. "
-                "Filter by layer, do_not_revert, or stability."
+                "List nodes in the context graph (PAGINATED: 50 per call by default). "
+                "Returns total count, layer distribution, and the requested page of nodes. "
+                "Use filters (layer, stability, do_not_revert) to narrow results. "
+                "For a specific file's full details, call get_node(file_path) instead."
             ),
             inputSchema={
                 "type": "object",
@@ -395,6 +408,14 @@ async def list_tools() -> list[Tool]:
                     "stability": {
                         "type": "string",
                         "description": "Filter by stability: low | medium | high",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max nodes to return per page (default 50, max 500)",
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "description": "Number of nodes to skip (for pagination)",
                     },
                 },
             },
@@ -445,13 +466,17 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="get_history",
             description=(
-                "Get the last N git commits that touched a file. "
-                "Links graph node last_changed_by to actual commits."
+                "Get recent decisions touching a file. Paginated — default 20, max 100. "
+                "Returns decisions from past sessions ordered by most recent first."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "file_path": {"type": "string", "description": "Relative file path"},
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max decisions to return (default 20, max 100)",
+                    },
                 },
                 "required": ["file_path"],
             },
@@ -807,11 +832,16 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         if name == "get_node":
             result = get_node(arguments["file_path"])
         elif name == "get_impact":
-            result = get_impact(arguments["file_path"])
+            result = get_impact(
+                arguments["file_path"],
+                limit=arguments.get("limit", 20),
+            )
         elif name == "get_roadmap":
             result = get_roadmap()
         elif name == "get_full_roadmap":
-            result = get_full_roadmap()
+            result = get_full_roadmap(
+                include_decisions=arguments.get("include_decisions", False),
+            )
         elif name == "get_phase":
             result = get_phase(arguments["phase_number"])
         elif name == "add_phase":
@@ -875,6 +905,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 layer=arguments.get("layer"),
                 do_not_revert=arguments.get("do_not_revert"),
                 stability=arguments.get("stability"),
+                limit=arguments.get("limit", 50),
+                offset=arguments.get("offset", 0),
             )
         elif name == "add_node":
             result = add_node(
@@ -896,7 +928,10 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 session_id=arguments.get("session_id"),
             )
         elif name == "get_history":
-            result = get_history(arguments["file_path"])
+            result = get_history(
+                arguments["file_path"],
+                limit=arguments.get("limit", 20),
+            )
         elif name == "write_session_log":
             result = write_session_log(
                 session_id=arguments["session_id"],

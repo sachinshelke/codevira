@@ -109,7 +109,17 @@ def search_decisions(query: str, limit: int = 10, session_id: str | None = None)
         "hint": "Use these past decisions to avoid repeating mistakes."
     }
 
-def get_history(file_path: str) -> dict[str, Any]:
+def get_history(file_path: str, limit: int = 20) -> dict[str, Any]:
+    """Return most recent decisions touching a file.
+
+    Paginated — default 20 entries, max 100. Decision text is kept short
+    (SQLite column limit); context may be longer but is capped per entry.
+    """
+    if limit < 1:
+        limit = 1
+    if limit > 100:
+        limit = 100
+
     db = _get_db()
     sql = '''
         SELECT d.decision, d.context, s.summary, d.created_at, d.session_id
@@ -117,13 +127,19 @@ def get_history(file_path: str) -> dict[str, Any]:
         JOIN sessions s ON d.session_id = s.session_id
         WHERE d.file_path = ? OR s.summary LIKE ?
         ORDER BY d.created_at DESC
+        LIMIT ?
     '''
-    cur = db.conn.execute(sql, (file_path, f'%{file_path}%'))
-    results = [dict(r) for r in cur.fetchall()]
+    cur = db.conn.execute(sql, (file_path, f'%{file_path}%', limit + 1))
+    rows = cur.fetchall()
+    has_more = len(rows) > limit
+    results = [dict(r) for r in rows[:limit]]
     db.close()
 
     return {
         "file_path": file_path,
+        "returned": len(results),
+        "limit": limit,
+        "has_more": has_more,
         "history": results,
     }
 

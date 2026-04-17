@@ -13,6 +13,31 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [1.7.2] — 2026-04-17 — Token Efficiency Pass
+
+### Fixed — MCP tool responses were exceeding context windows
+
+Four tools returned unbounded lists that could dump 10k–50k tokens into an
+agent's context in a single call — defeating Codevira's "92% token
+reduction" value prop. All now paginated or summarized:
+
+- **`list_nodes`**: now returns 50 nodes per call (configurable via `limit`
+  up to 500, with `offset` for pagination). Response includes total count
+  and per-layer distribution so agents can narrow before paginating.
+- **`get_impact`**: capped at 20 affected files by default (configurable,
+  max 100). Full `blast_radius` count still returned.
+- **`get_history`**: SQL query now has a `LIMIT` clause. Default 20 decisions,
+  max 100. Returns `has_more` flag.
+- **`get_full_roadmap`**: by default, completed phases are summarized
+  (number + name + date + decision_count) instead of inlining all
+  `key_decisions`. Pass `include_decisions=true` for the old behavior
+  or use `get_phase(number)` for a single phase's full data.
+
+On a 500-node mature project, a single `list_nodes()` call previously
+returned ~60,000 tokens. It now returns ~5,000.
+
+---
+
 ## [1.7.1] — 2026-04-16 — Non-blocking refresh_index + Robust File Walk
 
 ### Fixed

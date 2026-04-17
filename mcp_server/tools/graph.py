@@ -64,35 +64,72 @@ def _check_staleness(file_path: str) -> dict[str, Any]:
         "file_mtime": datetime.fromtimestamp(file_mtime).isoformat() if file_mtime else None,
     }
 
-def list_nodes(layer: str | None = None, do_not_revert: bool | None = None, stability: str | None = None) -> dict[str, Any]:
+def list_nodes(
+    layer: str | None = None,
+    do_not_revert: bool | None = None,
+    stability: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict[str, Any]:
+    """Query graph nodes by attribute with pagination.
+
+    Token-efficient: returns at most `limit` nodes per call (default 50) plus
+    a summary of total matches and layer distribution. For large projects,
+    callers should use filters (layer, stability, do_not_revert) to narrow
+    results before paginating.
+
+    Per-node "stale" status is NOT returned here — call get_node(file_path)
+    for full details including staleness.
+    """
     db = _get_db()
-    nodes = db.list_file_nodes(layer=layer, stability=stability, do_not_revert=do_not_revert)
+    all_nodes = db.list_file_nodes(layer=layer, stability=stability, do_not_revert=do_not_revert)
     db.close()
-    
-    index_ts = _get_index_timestamp()
-    result = []
-    
-    for n in nodes:
-        fp = n['file_path']
-        stale = None
-        if index_ts is not None:
-            file_mtime = _get_file_mtime(fp)
-            if file_mtime is not None:
-                stale = file_mtime > index_ts
-                
-        result.append({
-            "file_path": fp,
-            "role": n.get('role'),
-            "layer": n.get('layer'),
-            "stability": n.get('stability'),
-            "do_not_revert": bool(n.get('do_not_revert')),
-            "stale": stale
-        })
-        
+
+    total = len(all_nodes)
+
+    # Clamp pagination
+    if limit < 1:
+        limit = 1
+    if limit > 500:
+        limit = 500
+    if offset < 0:
+        offset = 0
+
+    # Summary: count by layer (helps agents pick narrower filters)
+    layer_counts: dict[str, int] = {}
+    for n in all_nodes:
+        lyr = n.get("layer") or "unknown"
+        layer_counts[lyr] = layer_counts.get(lyr, 0) + 1
+
+    # Slice requested page — keep response compact
+    page = all_nodes[offset : offset + limit]
+    result = [
+        {
+            "file_path": n["file_path"],
+            "role": n.get("role"),
+            "layer": n.get("layer"),
+            "stability": n.get("stability"),
+            "do_not_revert": bool(n.get("do_not_revert")),
+        }
+        for n in page
+    ]
+
+    has_more = (offset + len(page)) < total
+
     return {
-        "count": len(result),
+        "count": total,  # alias for `total` — keeps backward compat for callers
+        "total": total,
+        "returned": len(result),
+        "offset": offset,
+        "limit": limit,
+        "has_more": has_more,
+        "layer_counts": layer_counts,
         "nodes": result,
-        "hint": "Use get_node(file_path) to read the rules and dependencies for a specific file."
+        "hint": (
+            "Use get_node(file_path) for full details. "
+            "Narrow results with filters: layer, stability, do_not_revert. "
+            + (f"To see next page: offset={offset + limit}" if has_more else "")
+        ),
     }
 
 def add_node(file_path: str, role: str, layer: str, stability: str = "medium", node_type: str = "file", key_functions: list[str] | None = None, connects_to: list[dict] | None = None, rules: list[str] | None = None, do_not_revert: bool = False, tests: list[str] | None = None) -> dict[str, str]:
@@ -196,43 +233,64 @@ def get_node(file_path: str) -> dict[str, Any]:
         "hint": "Next: call get_signature(file_path) to see all public symbols and line ranges.",
     }
 
-def get_impact(file_path: str) -> dict[str, Any]:
+def get_impact(file_path: str, limit: int = 20) -> dict[str, Any]:
+    """Get the blast radius (downstream files) for a given file.
+
+    Returns up to `limit` most-relevant affected files (default 20, max 100).
+    The full count is in `blast_radius`. For large blast radii, prefer
+    filtering by protected status or querying specific files via get_node().
+    """
     db = _get_db()
-    
+
     node = db.get_node_by_path(file_path)
     if not node:
         nodes = db.list_file_nodes()
         matches = [n for n in nodes if file_path in n['file_path']]
         if len(matches) == 1:
             node = matches[0]
-            
+
     if not node:
         db.close()
         return {
             "found": False,
             "message": f"No graph node for '{file_path}'. Impact analysis unavailable.",
         }
-        
+
     file_path = node['file_path']
     blast_radius = db.get_blast_radius(node['id'], max_depth=3)
     db.close()
-    
+
+    # Clamp limit
+    if limit < 1:
+        limit = 1
+    if limit > 100:
+        limit = 100
+
     affected = []
+    seen_paths = set()
     for r in blast_radius:
         path = r['file_path']
-        if not any(a['file'] == path for a in affected) and path != file_path:
-            affected.append({
-                "file": path,
-                "role": r.get('role', 'Unknown'),
-                "stability": r.get('stability', 'medium'),
-                "do_not_revert": bool(r.get('do_not_revert'))
-            })
+        if path == file_path or path in seen_paths:
+            continue
+        seen_paths.add(path)
+        affected.append({
+            "file": path,
+            "role": r.get('role', 'Unknown'),
+            "stability": r.get('stability', 'medium'),
+            "do_not_revert": bool(r.get('do_not_revert')),
+        })
+
+    total = len(affected)
+    truncated = affected[:limit]
 
     return {
         "found": True,
         "target_file": file_path,
-        "blast_radius": len(affected),
-        "affected_files": affected,
+        "blast_radius": total,
+        "returned": len(truncated),
+        "affected_files": truncated,
+        "has_more": total > limit,
+        "hint": f"Showing {len(truncated)} of {total}. Pass limit=N for more." if total > limit else None,
     }
 
 def export_graph(format: str = "mermaid", scope: str | None = None) -> dict[str, Any]:

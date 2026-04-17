@@ -161,7 +161,8 @@ class TestCompletePhase:
         roadmap.update_phase_status("in_progress", started="2025-01-15")
         roadmap.add_phase(phase=2, name="Next", description="n")
         roadmap.complete_phase(phase_number=1, key_decisions=["d1"])
-        full = roadmap.get_full_roadmap()
+        # Use include_decisions=True to get full completed phase data (not summarized)
+        full = roadmap.get_full_roadmap(include_decisions=True)
         completed = full["completed_phases"]
         assert len(completed) == 1
         assert completed[0]["started"] == "2025-01-15"

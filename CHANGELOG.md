@@ -11,21 +11,9 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-### Changed
-- **HTTP/HTTPS transport marked as PREVIEW** (single-project only). The server
-  binds to one project at startup and cannot switch contexts per request.
-  Multi-project HTTPS routing via MCP `initialize` `rootUri` is the top v1.8
-  priority. `codevira serve` prints a preview warning on startup.
-- **Removed `codevira register --autostart`** that was added briefly. It
-  installed a single-project HTTPS launchd service, which misaligned with
-  Codevira's "one memory layer for every project" value prop. Returns in
-  v1.8 with multi-project routing.
-- **README / FAQ / PROTOCOL** updated: stdio is now clearly the recommended
-  transport for multi-project work; HTTP is positioned as advanced / preview.
-
 ---
 
-## [1.7.0] — 2026-04-17 — Token Efficiency & AI-First Tool Design
+## [1.7.0] — 2026-04-18 — Token Efficiency & AI-First Tool Design
 
 **The biggest release since v1.0.** We realized Codevira was dumping 15k-60k
 tokens per session into AI agent context windows — defeating the entire
@@ -109,6 +97,46 @@ still reference them server-side.
   in code but the description still said `add_route`. Fixed.
 - **Antigravity config path**: Was wrong (`~/.gemini/settings/`). Now uses
   the correct `~/.gemini/antigravity/mcp_config.json`.
+
+### Added — Post-release enhancements (merged into 1.7.0)
+
+- **`codevira status` is now fast** (~200ms for uninitialized projects,
+  ~1s for initialized). Was ~5-6s because it was loading the ~90MB
+  sentence-transformers embedding model just to count chunks. Now uses
+  `collection.count()` which doesn't need the embedding function, and
+  short-circuits entirely when there's no graph DB yet.
+- **`codevira status --global`** flag shows launchd service state +
+  cross-project memory stats in a dedicated panel. Works on both
+  initialized and uninitialized projects.
+- **`codevira status --check-stale`** flag opt-in for the slow SHA256
+  file-walk (was always-on, made status take 5s+).
+- **`codevira clean --legacy`** — remove `.codevira.migrated/` backup
+  directories accumulating across all initialized projects. Shows size
+  and confirms before deletion.
+- **`logs.retention_days` actually works now** (was dead config in earlier
+  versions). Opt-in only — default 0 keeps sessions/decisions forever.
+  Set > 0 for privacy-driven time-bounded history. Runs at most once
+  per 24h at server startup.
+- **HTTP/HTTPS transport marked as PREVIEW** (single-project only). The
+  server binds to one project at startup and cannot switch contexts per
+  request. Multi-project HTTPS routing via MCP `initialize` `rootUri` is
+  the top v1.8 priority. `codevira serve` prints a preview warning on
+  startup. README / FAQ / PROTOCOL updated to position stdio as the
+  clear recommendation for multi-project work.
+- **Dead-code audit** — removed 4 unused functions (`find_project_by_remote`
+  in global_db, `get_file_outcome_summary`, `add_open_changeset`,
+  `remove_open_changeset`), renamed `get_changeset` → `_get_changeset`
+  (was module-private usage only). Wired up 3 unused-but-useful functions
+  (`launchd_status`, `cleanup_legacy_dir`, `get_global_stats`) into the
+  CLI where they belong.
+- **Open-source readiness pass** — removed stray test-playground files
+  from git, fixed PR template typo (`mcp-server` → `mcp_server`), replaced
+  hardcoded author username in docstring examples (`/Users/sachin/...`
+  → `/Users/alice/...`), added `__all__` + `__version__` to
+  `mcp_server/__init__.py`, removed duplicate `requirements.txt`.
+
+### Tests
+- 1,306 tests passing (added 15 new tests for `log_retention.py`)
 
 ---
 

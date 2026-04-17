@@ -236,7 +236,9 @@ project:
     - dist
     - build
 logs:
-  retention_days: 30
+  # 0 = keep sessions/decisions forever (default).
+  # Only set > 0 if you have privacy reasons to time-bound history.
+  retention_days: 0
 ```
 
 **Common gotchas:**

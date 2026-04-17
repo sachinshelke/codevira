@@ -28,6 +28,9 @@ project:
   collection_name: agent_codebase
 
 logs:
-  # Automatically delete session logs older than this many days.
-  # 0 = keep forever (default)
+  # Delete sessions and their decisions from the graph DB after this many days.
+  # 0 = keep forever (default — Codevira's core value is persistent memory;
+  # only set a non-zero value if you have privacy/compliance reasons to
+  # time-bound your project history).
+  # Cleanup runs at most once per 24 hours at server startup.
   retention_days: 0

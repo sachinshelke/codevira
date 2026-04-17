@@ -333,6 +333,13 @@ def run_http_server(
     except Exception as e:
         logger.warning("Could not sync global memory: %s", e)
 
+    # v1.7: Enforce logs.retention_days (opt-in, default 0 = keep forever)
+    try:
+        from mcp_server.log_retention import enforce_retention
+        enforce_retention()
+    except Exception as e:
+        logger.warning("Log retention cleanup failed: %s", e)
+
     # ---- TLS certificate setup ----
     ssl_certfile: str | None = None
     ssl_keyfile: str | None = None

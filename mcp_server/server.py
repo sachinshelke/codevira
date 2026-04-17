@@ -1126,6 +1126,15 @@ def main():
         try: log_crash(e, context="global memory import")
         except Exception: pass
 
+    # v1.7: Enforce logs.retention_days from config (opt-in, default 0 = keep forever)
+    try:
+        from mcp_server.log_retention import enforce_retention
+        enforce_retention()
+    except Exception as e:
+        logger.warning("Log retention cleanup failed: %s", e)
+        try: log_crash(e, context="log retention cleanup")
+        except Exception: pass
+
     async def _run():
         async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
             await server.run(

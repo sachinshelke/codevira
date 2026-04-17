@@ -214,14 +214,14 @@ codevira serve --https --port 7443 --project-dir /path/to/your-project
 }
 ```
 
-**Google Antigravity** (`~/.gemini/settings/mcp_config.json`):
+**Google Antigravity** (`~/.gemini/antigravity/mcp_config.json`):
 ```json
 {
   "mcpServers": {
     "codevira": {
       "$typeName": "exa.cascade_plugins_pb.CascadePluginCommandTemplate",
       "command": "codevira",
-      "args": ["--project-dir", "/path/to/your-project"]
+      "args": []
     }
   }
 }

@@ -1,6 +1,6 @@
 # Codevira
 
-> Persistent adaptive memory for AI coding agents — learns from every session, works with every tool, remembers across every project.
+> **One memory layer for every AI coding tool you use.** Switch between Claude Code, Cursor, Windsurf, and Antigravity without losing context, decisions, or progress.
 
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
@@ -8,41 +8,59 @@
 [![Version](https://img.shields.io/badge/version-1.7.0-orange)](CHANGELOG.md)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](CONTRIBUTING.md)
 
+**Built for solo developers** working on local projects with AI agents. Codevira gives every AI tool you use access to the same persistent project memory — so you stop re-explaining your codebase every session, stop losing carefully-made decisions, and stop burning tokens on re-discovery.
+
 **Works with:** Claude Code · Claude Desktop · Cursor · Windsurf · Google Antigravity · any MCP-compatible AI tool
 
 ---
 
-## The Problem
+## The Problem (Four Pains Codevira Solves)
 
-Every time you start a new AI coding session, your agent starts from zero.
+If you code with AI agents on a project longer than a week, you've felt all of these:
 
-It re-reads files it has seen before. It re-discovers patterns already established. It makes decisions that contradict last week's decisions. It has no idea what phase the project is in, what's already been tried, or why certain files are off-limits.
+### 1. Re-explaining your codebase every session
+Every new chat starts from zero. The AI doesn't know your architecture, your conventions, your "we don't do it that way" decisions. You waste the first 10 minutes (and thousands of tokens) catching it up — only to do it again tomorrow.
 
-You end up spending thousands of tokens on re-discovery — every single session.
+### 2. AI undoing your careful decisions
+Last week you debugged a tricky retry policy for 3 hours. Today's AI session refactors it to a simpler version because it has no idea why the complexity exists. Now it's broken again.
 
-**Codevira fixes this.**
+### 3. Cross-tool amnesia
+You started planning in Claude Code. Switched to Cursor for autocomplete. Opened Antigravity to run tests. Three different agents, three different blind copies of your project state. Nothing carries over.
+
+### 4. Token budget burned on re-discovery
+Your AI agent reads the same 12 files every session before doing any actual work. You're paying API costs for the same lookups, over and over.
+
+**Codevira is a persistent memory layer that fixes all four — for every AI tool, on every project, on your local machine.**
 
 ---
 
-## What It Does
+## How It Works
 
-Codevira is a [Model Context Protocol](https://modelcontextprotocol.io) server that gives every AI agent working on your codebase a shared, persistent memory:
+Codevira is a [Model Context Protocol](https://modelcontextprotocol.io) server that runs locally and gives any AI tool a structured, queryable memory of your codebase:
 
-| Capability | What It Means |
+| Capability | What it means for you |
 |---|---|
-| **Zero-config setup** | Auto-detects language, source dirs, and file extensions; auto-injects IDE config — no prompts, no manual JSON editing |
-| **Live auto-watch** | Background file watcher auto-reindexes on every save — no manual trigger needed |
-| **Context graph** | Every source file has a node: role, rules, dependencies, stability, `do_not_revert` flags |
-| **Function-level call graph** | Knows which function calls which — callers, callees, test coverage, risk scoring |
-| **Semantic code search** | Natural language search across your codebase (optional — requires `[search]` extras) |
-| **Roadmap** | Phase-based tracker so agents always know what phase you're in and what comes next |
-| **Changeset tracking** | Multi-file changes tracked atomically; sessions resume cleanly after interruption |
-| **Decision log** | Every session writes a structured log; past decisions are searchable by any future agent |
-| **Adaptive learning** | Outcome tracking, confidence scoring, developer preference learning, and automatic rule inference |
-| **Cross-project memory** | Learned preferences and rules sync across all your projects via `~/.codevira/global.db` |
-| **Cross-tool continuity** | Single "catch me up" call for seamless switching between Cursor, Claude Code, Windsurf, and Antigravity |
+| **Zero-config setup** | `pipx install codevira && codevira register` — that's it. No prompts, no JSON editing. Auto-detects language, source dirs, and IDE configs |
+| **Cross-tool continuity** | One `get_session_context()` call brings any AI agent up to speed in ~800 tokens — works identically in Claude Code, Cursor, Windsurf, Antigravity |
+| **Decision protection** | `do_not_revert` flags + searchable decision log stop AI agents from undoing past architectural choices |
+| **Context graph** | Every source file has a node: role, rules, dependencies, stability, blast radius. AI calls `get_node(path)` instead of re-reading the file |
+| **Function-level call graph** | `get_impact(file)` answers "what breaks if I change this?" before the AI modifies anything |
+| **Semantic code search** | Natural-language search across your codebase (`search_codebase("auth flow")`) |
+| **Roadmap + changesets** | Multi-file work tracked atomically; sessions resume cleanly after interruption |
+| **Adaptive learning** | Tracks which past decisions panned out — gives confidence scores and surfaces patterns |
+| **Cross-project memory** | Learned preferences sync across all your local projects via `~/.codevira/global.db` |
+| **Auto-init on first call** | No `codevira init` needed — first MCP tool call triggers background project setup |
 
-**The result:** ~1,400 tokens of overhead per session instead of 15,000+ tokens of re-discovery.
+### Token-efficient by design
+
+Codevira is built around the principle that AI agent context windows are precious. Tools return **summaries by default** with opt-in full data:
+
+- `get_node(path)` — ~100 tokens by default (counts + flags). Pass `full=true` for the entire rules array.
+- `get_impact(path)` — 10 affected files. Pass `summary_only=true` for just counts (~80 tokens) before deciding to dig deeper.
+- `search_codebase(query)` — file/symbol pointers only. Pass `include_content=true` to inline source.
+- `search_decisions(query)` — 5 truncated matches. Pass `full=true` for verbatim text.
+
+The agent always asks for what it needs, in the size it needs.
 
 ---
 

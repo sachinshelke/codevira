@@ -1,10 +1,12 @@
 # Codevira — Project Roadmap
 
-**Universal persistent memory for AI coding agents.**
+**Local-first persistent memory for AI coding agents.**
 
 Codevira gives every AI coding tool — Claude Code, Cursor, Windsurf, Google Antigravity, or any MCP-compatible agent — persistent memory that survives across sessions, learns from developer behavior, and works on any project in any language.
 
-**Vision:** Install once. Register once. Every project gets intelligent memory automatically. No config files, no manual setup, no vendor lock-in.
+**Built for solo developers.** All memory lives on your machine in `~/.codevira/`. No cloud, no accounts, no team sharing (yet). One install handles every project you work on.
+
+**Vision:** Install once. Register once. Every project on your machine gets intelligent memory automatically. No config files, no manual setup, no vendor lock-in.
 
 Have a suggestion? [Open a feature request](https://github.com/sachinshelke/codevira/issues/new?template=feature_request.md).
 
@@ -68,7 +70,7 @@ Transform from static knowledge base into adaptive memory that learns from devel
 
 ---
 
-## ✅ v1.5 — Zero-Config + Deep Graph Intelligence (current)
+## ✅ v1.5 — Zero-Config + Deep Graph Intelligence (April 2026)
 
 Make Codevira instant to set up and intelligent across all projects.
 
@@ -85,7 +87,7 @@ Make Codevira instant to set up and intelligent across all projects.
 
 ---
 
-## ✅ v1.6 — True Zero-Friction: No Init, No Config, Just Works (current)
+## ✅ v1.6 — True Zero-Friction: No Init, No Config, Just Works (April 2026)
 
 **The big shift.** Eliminate every manual step between install and working memory.
 
@@ -125,37 +127,75 @@ Today a developer must: install → `cd project` → `codevira init` → restart
 
 ---
 
-## 🔜 v2.0 — Cloud Sync & Team Intelligence
+## ✅ v1.7 — Token Efficiency & AI-First Tool Design (current — April 2026)
 
-Bridge from local-first tool to team-connected platform. Memory stays local by default but can sync.
+The biggest design shift since v1.0. v1.6 made setup invisible; v1.7 makes the runtime efficient.
 
-### Cloud Sync
-- **`codevira sync` daemon** — lightweight local agent that pushes memory data to Codevira Cloud
-- **Cloud MCP server (SSE/HTTP transport)** — AI tools connect via URL + API key instead of local subprocess; enables mobile/web-based AI tools
-- **GitHub Actions integration** — run index + graph refresh in CI on every merge; keep cloud memory current even when developers aren't coding
+### The problem v1.7 solves
+Earlier versions returned bulk data when AI agents asked for context. A single `list_nodes()` call could dump 60,000 tokens. The "92% token reduction" value prop was being defeated by the very tools meant to deliver it.
 
-### Team Memory
-- **Shared team rules and preferences** — org-wide learned rules that apply across all team members' projects
-- **Multi-repo federated graph** — dependency graph spans multiple repositories in a workspace; "who depends on this shared library?"
-- **Remote semantic index** — shared ChromaDB or equivalent for team-wide code search
-- **Access control** — team admin controls what memory is shared vs. private
+### Token-efficient tool responses
+Every high-traffic tool now returns a **summary by default** with opt-in full data:
+- `get_session_context()` — compacted to ~800 tokens (was 4k+)
+- `get_node(path)` — counts + flags (~100 tokens), `full=true` for arrays
+- `get_impact(path)` — 10 affected files default, `summary_only=true` for ~80 tokens
+- `search_codebase(q)` — file/symbol pointers only, `include_content=true` to inline source
+- `search_decisions(q)` — 5 truncated matches, `full=true` for verbatim
+- `get_history(file)` — 5 truncated matches, `full=true` for verbatim
+- `get_full_roadmap()` — completed phases summarized, `include_decisions=true` for full
 
-### IDE Integrations
-- **VS Code extension** — one-click setup, inline memory indicators, "Codevira: Initialize" command palette
-- **JetBrains plugin** — native MCP integration for IntelliJ/PyCharm/WebStorm
+### AI-facing tool surface trimmed (36 → 23)
+12 admin/dashboard tools hidden from `list_tools()` but still callable via dispatch:
+- Bulk discovery (use targeted queries instead): `list_nodes`, `add_node`
+- Background automation (self-managed): `refresh_graph`, `refresh_index`
+- Dashboards/reports (CLI only): `get_full_roadmap`, `get_project_maturity`, `find_hotspots`, `analyze_changes`, `get_graph_diff`, `export_graph`
+- Redundant with `get_session_context`: `get_preferences`, `get_learned_rules`
+
+### Quality
+- Default install includes ChromaDB + sentence-transformers (was `[search]` extra)
+- `refresh_index` is now non-blocking (was hanging agents on large projects)
+- `codevira clean` command for full uninstall
+- Antigravity config + global mode fixed
+- Browser-friendly HTML landing at `GET /` on HTTP server
+- 1,304 tests passing
 
 ---
 
-## 🔜 v3.0 — Agent Orchestration Layer
+## 🔜 v1.8 — Better Defaults & Discovery
 
-Move from passive memory to active intelligence that drives agent workflows.
+Sharpen the v1.7 design with the things developers tell us are still rough.
 
-- **Workflow engine** — define multi-step agent workflows (review → test → deploy) that Codevira orchestrates across tools
-- **Cross-agent coordination** — when multiple AI tools work on the same project, Codevira mediates to prevent conflicts
-- **Predictive suggestions** — based on learned patterns, proactively suggest what to review, test, or refactor before the developer asks
-- **Natural language graph queries** — "show me all files that handle authentication" via semantic graph search
-- **Custom MCP tool plugins** — developers define project-specific tools without forking Codevira
-- **Webhook integrations** — trigger Codevira workflows from GitHub events, CI failures, Slack messages
+- **HTTP server reads `rootUri` from MCP initialize** — true multi-project HTTP support; today the HTTP server is single-project
+- **Auto-detect stale `.codevira.migrated/` cleanup** — `codevira clean --legacy` to reclaim disk space from migration backups
+- **Config validation on init** — warn on common mistakes (malformed `file_extensions`, watched_dirs that don't exist, etc.)
+- **`codevira doctor`** — diagnostic command that checks: PATH, IDE configs, project initialization, graph health, common misconfigurations
+- **Better tool descriptions** — embed concrete usage patterns in MCP tool descriptions so agents pick the right tool first time
+
+---
+
+## 🔜 v1.9+ — Solo Developer Power-Ups
+
+Stay local. Stay focused on the one developer working on their machine.
+
+- **Multi-project search** — `search_decisions("retry policy")` across ALL your local projects, not just current
+- **Project switcher** — `codevira switch <project>` for explicit per-project work outside an IDE
+- **Decision import/export** — share your `~/.codevira/global.db` between machines (laptop ↔ desktop) without cloud
+- **Custom MCP tool plugins** — define project-specific tools (e.g. `get_db_schema`) without forking Codevira
+- **Better Mermaid export** — interactive HTML diagram with click-to-drill-down (instead of static Mermaid text)
+- **VS Code extension** — for VS Code users who don't have Claude Code installed; same MCP server, native UI
+
+---
+
+## ❓ Considering (depends on user demand)
+
+These would change Codevira's positioning. We won't build them unless solo developers explicitly ask for them.
+
+- **Team / cloud sync** — currently out of scope (Codevira is local-first by design). If demand is high, we'd add an optional `codevira sync` daemon that pushes a subset of memory to a sync target you control.
+- **Chrome extension** — overlay Codevira's `get_node` / `get_impact` on GitHub PRs and file views. See README "How It Works" for what this would unlock.
+- **JetBrains plugin** — native MCP integration for IntelliJ/PyCharm/WebStorm.
+- **Natural language graph queries** — "show me all files that handle authentication" via semantic graph traversal.
+
+If you want one of these, [open a feature request](https://github.com/sachinshelke/codevira/issues/new?template=feature_request.md) — we prioritize by user demand.
 
 ---
 

@@ -2,6 +2,31 @@
 
 ---
 
+## Big Picture
+
+### What is Codevira in one line?
+
+A persistent memory layer for AI coding agents — so Claude Code, Cursor, Windsurf, and Antigravity all share the same project context, decisions, and history on your local machine.
+
+### Who is this for?
+
+**Solo developers** working on local projects with AI coding tools. If you switch between AI agents (Claude Code in the morning, Cursor for autocomplete, Antigravity to test), Codevira makes them all share one memory of your project.
+
+**Not for teams (yet)** — Codevira is local-first. Every developer has their own `~/.codevira/` directory with their own project memory. Team-shared memory is on the roadmap but not in v1.7.0.
+
+### What problems does Codevira actually solve?
+
+1. **No more re-explaining your project every session** — `get_session_context()` brings any AI agent up to speed in one call
+2. **Decisions stick** — `do_not_revert` flags + searchable decision log mean today's AI doesn't undo last week's careful work
+3. **Cross-tool continuity** — switch between Claude Code, Cursor, Windsurf, Antigravity; project state carries over
+4. **Lower token cost** — summary-first tool design means agents query for what they need, not "give me everything"
+
+### Does Codevira send my code anywhere?
+
+No. Everything runs locally. The context graph is a SQLite database in `~/.codevira/`. Embeddings (semantic search) are generated locally with `sentence-transformers`. Session logs, decisions, learned rules — all local. Your code never leaves your machine.
+
+---
+
 ## Setup
 
 ### How do I install Codevira?
@@ -14,22 +39,28 @@ pipx install codevira
 pip install codevira
 ```
 
-All 36 MCP tools including semantic search are installed by default. See README for the minimal (no-ML) install option.
+The full toolkit installs out of the box. Adds ~500MB (includes the ML stack for semantic search). Downloads a ~90MB embedding model on first `search_codebase()` call.
 
-Then run `codevira init` in any project. It auto-detects everything and auto-injects IDE configs.
+For a minimal install (no ML stack, no semantic search), see the README "Minimal install" section.
+
+### Do I need to run `codevira init` for every project?
+
+No. Just run `codevira register` once globally — it injects MCP config into all your AI tools. Then open any project; the first MCP tool call auto-initializes that project in the background.
+
+`codevira init` is still available if you want to set things up explicitly with custom settings, but it's optional.
 
 ### Do I need to run the indexer every time?
 
-No. Run `codevira init` once when you first set up a project. After that:
+No. Run `codevira init` once when you first set up a project (or just let auto-init handle it). After that:
 - The **live file watcher** auto-reindexes on every save (starts with the MCP server)
 - The **git post-commit hook** (auto-installed by init) reindexes on every commit
 - You can manually run `codevira index` or `codevira index --full` if needed
 
 ### What is ChromaDB and do I need it?
 
-ChromaDB powers the `search_codebase()` semantic search tool. As of v1.7.0 it's included in the default install, so all 36 tools work out of the box. The `[search]` extra is kept as a no-op alias for backwards compatibility.
+ChromaDB powers the `search_codebase()` semantic search tool. As of v1.7.0 it's included in the default install — all tools work out of the box. The `[search]` extra is kept as a no-op alias for backwards compatibility.
 
-Without it, you still get the full context graph, roadmap, changesets, call graph, learning, and all code reader tools.
+Without it (using the minimal install path), `search_codebase` is hidden from the AI agent's tool list. All other tools still work — context graph, roadmap, changesets, call graph, learning, code reader.
 
 ### Does this work with non-Python projects?
 
@@ -70,6 +101,18 @@ This happens automatically. No configuration needed.
 ---
 
 ## Usage
+
+### How does cross-tool continuity actually work?
+
+You start a session in Claude Code: "build the auth flow." You make decisions, write code, the AI calls `write_session_log()` at the end. Now you switch to Cursor for some autocomplete work — Cursor's AI calls `get_session_context()` and instantly sees:
+
+- Current phase: "Auth flow implementation"
+- Recent decisions: "Using JWT with 24h expiry (not session cookies — see decision log)"
+- Open changesets: "auth-flow-v2 — 3 of 5 files done"
+- Files touched recently: `src/auth.py`, `tests/test_auth.py`
+- Top learned preferences: pytest style, dataclasses over Pydantic
+
+No need to re-explain. Switch to Antigravity to run tests — same memory. The AI tools are interchangeable; the project state is persistent.
 
 ### Which transport should I use — stdio or HTTP?
 

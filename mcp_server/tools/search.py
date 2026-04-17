@@ -1,12 +1,8 @@
 from __future__ import annotations
 
-import json
-from datetime import datetime
-from pathlib import Path
 from typing import Any
 
-from mcp_server.paths import get_data_dir, get_project_root
-from mcp_server.tools.graph import get_impact
+from mcp_server.paths import get_data_dir
 from indexer.sqlite_graph import SQLiteGraph
 
 def _get_db() -> SQLiteGraph:
@@ -55,7 +51,7 @@ def search_codebase(description: str, top_k: int = 5, include_content: bool = Fa
             pass
         return {
             "error": "Semantic index not found.",
-            "hint": "Install search deps with: pip install 'codevira[search]', then run: codevira index --full",
+            "hint": "Reinstall codevira (chromadb is included by default): pip install --upgrade codevira, then run: codevira index --full",
         }
 
     # Cap top_k to avoid token bombs

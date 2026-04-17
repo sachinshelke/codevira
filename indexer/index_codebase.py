@@ -61,24 +61,27 @@ def _get_chroma_client():
     try:
         import chromadb
     except ImportError:
+        # chromadb is in the base install (v1.7.0+). If missing, the user
+        # likely did `pip install --no-deps` for a minimal install.
         raise ImportError(
             "Semantic search requires chromadb. "
-            "Install it with: pip install 'codevira[search]'"
+            "Reinstall codevira (chromadb is included in the default install): "
+            "pip install --upgrade codevira"
         )
     db_dir = str(_index_dir())
     return chromadb.PersistentClient(path=db_dir)
 
 def _get_embedding_fn():
     # chromadb's SentenceTransformerEmbeddingFunction raises ValueError
-    # (not ImportError) when sentence_transformers isn't installed, because
-    # it catches the ImportError internally and re-raises. We catch both.
+    # (not ImportError) when sentence_transformers isn't installed.
+    # We catch both and re-raise as ImportError for consistent handling.
     try:
         from chromadb.utils import embedding_functions
         return embedding_functions.SentenceTransformerEmbeddingFunction(model_name="all-MiniLM-L6-v2")
     except (ImportError, ValueError) as e:
         raise ImportError(
             f"Semantic search requires sentence-transformers. "
-            f"Install it with: pip install 'codevira[search]'. Details: {e}"
+            f"Reinstall codevira: pip install --upgrade codevira. Details: {e}"
         )
 
 def _compute_hash(file_path: Path) -> str:
@@ -182,7 +185,7 @@ def cmd_full_rebuild():
     db = SQLiteGraph(get_data_dir() / "graph" / "graph.db")
 
     if not _check_search_deps():
-        console.print("[yellow]⚠[/yellow]  Semantic search skipped — install with: [bold]pip install 'codevira\\[search]'[/bold]")
+        console.print("[yellow]⚠[/yellow]  Semantic search unavailable — reinstall codevira: [bold]pip install --upgrade codevira[/bold]")
         # Still build the graph even without search deps
         from indexer.graph_generator import generate_graph_sqlite
         result = generate_graph_sqlite(str(_project_root()), str(get_data_dir() / "graph" / "graph.db"))
@@ -598,7 +601,7 @@ def cmd_status(check_stale: bool = False):
     console.print(panel)
 
     if not search_available:
-        console.print("\n[dim]  Tip: pip install 'codevira\\[search]' to enable semantic code search[/dim]")
+        console.print("\n[dim]  Tip: reinstall with [bold]pip install --upgrade codevira[/bold] to enable semantic search[/dim]")
 
     if check_stale and stale_files:
         console.print("\n[yellow]Files requiring re-indexing:[/yellow]")

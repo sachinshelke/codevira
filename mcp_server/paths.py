@@ -65,8 +65,8 @@ def _sanitize_path_key(abs_path: str | Path) -> str:
     drive letters (D:\\Projects\\Foo vs C:\\Projects\\Foo).
 
     Examples:
-        /Users/sachin/Projects/Foo  → Users_sachin_Projects_Foo_a1b2c3d4
-        C:\\Users\\sachin\\Projects → Users_sachin_Projects_a1b2c3d4
+        /Users/alice/Projects/Foo   → Users_alice_Projects_Foo_a1b2c3d4
+        C:\\Users\\alice\\Projects  → Users_alice_Projects_a1b2c3d4
     """
     import hashlib
     resolved = str(Path(abs_path).resolve())

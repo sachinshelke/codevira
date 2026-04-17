@@ -10,7 +10,6 @@ These tools expose the feedback loop to AI agents:
 """
 from __future__ import annotations
 
-import json
 import logging
 from mcp_server.paths import get_data_dir
 from indexer.sqlite_graph import SQLiteGraph

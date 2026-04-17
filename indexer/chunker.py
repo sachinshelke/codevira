@@ -17,7 +17,6 @@ from typing import Iterator
 
 from indexer.treesitter_parser import (
     parse_file as ts_parse_file,
-    get_language as ts_get_language,
     EXTENSION_MAP as TS_EXTENSION_MAP,
 )
 

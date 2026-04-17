@@ -19,7 +19,6 @@ from mcp_server.paths import get_project_root
 from indexer.treesitter_parser import (
     parse_file as ts_parse_file,
     get_symbol_source as ts_get_symbol_source,
-    get_language as ts_get_language,
     EXTENSION_MAP as TS_EXTENSION_MAP,
 )
 

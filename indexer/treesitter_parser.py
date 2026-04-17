@@ -386,7 +386,6 @@ def _get_preceding_comment(node: Node, source_lines: list[str]) -> str | None:
 
 def _extract_module_docstring(root: Node, source_lines: list[str]) -> str | None:
     if not root.children: return None
-    first = root.children[0]
     for i in range(min(5, len(root.children))):
         n = root.children[i]
         if n.type == "comment" or n.type == "line_comment" or n.type == "block_comment":
@@ -409,10 +408,8 @@ def _is_public(name: str, node: Node, language: str) -> bool:
         for child in node.children:
             if child.type == "visibility_modifier" or child.type == "pub":
                 return True
-        # Also check the source text of the first line
+        # Also check the source text of the first line for "pub " keyword
         try:
-            first_line = node.start_point[0]
-            # Walk up through source bytes to find 'pub' keyword
             node_src = node.text.decode("utf-8", errors="replace") if node.text else ""
             return node_src.lstrip().startswith("pub ")
         except Exception:

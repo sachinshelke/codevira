@@ -58,3 +58,8 @@ docs/linkedin-*.md
 htmlcov/
 
 .mcp.json
+
+# Local test playground
+inc_project/
+push.py
+test_incremental.py

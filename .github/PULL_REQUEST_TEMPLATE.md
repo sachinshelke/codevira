@@ -26,6 +26,6 @@
 
 - [ ] I've tested my changes locally
 - [ ] I've updated documentation if needed (README, PROTOCOL.md, tool docstrings)
-- [ ] New MCP tools are registered in `mcp-server/server.py`
+- [ ] New MCP tools are registered in `mcp_server/server.py`
 - [ ] My commit message follows the [Conventional Commits](https://www.conventionalcommits.org/) format
 - [ ] This PR is focused on a single change (not bundling unrelated fixes)

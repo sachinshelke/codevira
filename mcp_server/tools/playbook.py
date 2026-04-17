@@ -48,7 +48,7 @@ def get_playbook(task_type: str) -> dict:
     Serves only the relevant 2-3 rule files, not all of them.
 
     Args:
-        task_type: One of add_route | add_service | add_schema |
+        task_type: One of add_tool | add_service | add_schema |
                    debug_pipeline | commit | write_test
 
     Returns:

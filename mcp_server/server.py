@@ -1,5 +1,5 @@
 """
-Agent MCP Server
+Codevira MCP Server
 
 Exposes the project context graph, roadmap, code index, and changeset tracker
 as MCP tools — usable by any MCP-compatible AI coding tool.

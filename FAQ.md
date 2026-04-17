@@ -12,10 +12,9 @@ pipx install codevira
 
 # Alternative: pip
 pip install codevira
-
-# With semantic search (adds ChromaDB + sentence-transformers)
-pip install 'codevira[search]'
 ```
+
+All 36 MCP tools including semantic search are installed by default. See README for the minimal (no-ML) install option.
 
 Then run `codevira init` in any project. It auto-detects everything and auto-injects IDE configs.
 
@@ -28,9 +27,7 @@ No. Run `codevira init` once when you first set up a project. After that:
 
 ### What is ChromaDB and do I need it?
 
-ChromaDB powers the `search_codebase()` semantic search tool. It's **optional** — all other 35 tools work without it.
-
-Install with search support: `pip install 'codevira[search]'`
+ChromaDB powers the `search_codebase()` semantic search tool. As of v1.7.0 it's included in the default install, so all 36 tools work out of the box. The `[search]` extra is kept as a no-op alias for backwards compatibility.
 
 Without it, you still get the full context graph, roadmap, changesets, call graph, learning, and all code reader tools.
 

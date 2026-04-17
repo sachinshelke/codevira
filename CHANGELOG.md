@@ -13,6 +13,25 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [1.7.0] — 2026-04-16 — All 36 Tools Out of the Box
+
+### Changed
+- **`chromadb` + `sentence-transformers` moved to required dependencies**.
+  `pip install codevira` now installs all 36 MCP tools out of the box.
+  Adds ~500MB to install size (includes ML runtime) but eliminates the
+  "why doesn't semantic search work?" confusion.
+- **`[search]` extra is now a no-op alias** for backwards compatibility.
+  Old install commands (`pip install codevira[search]`) still work.
+
+### Added
+- **Dynamic tool filtering**: `list_tools()` hides `search_codebase` when
+  chromadb isn't available. AI agents only see tools that will actually
+  work — no more confusing failures on features the install doesn't support.
+- **Minimal install documentation**: README now shows how to install without
+  the ML stack for users who only want the graph/roadmap tools.
+
+---
+
 ## [1.6.2] — 2026-04-16 — Crash Log Isolation & Browser UX
 
 ### Fixed

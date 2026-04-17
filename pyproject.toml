@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "codevira"
-version = "1.6.2"
+version = "1.7.0"
 description = "Persistent adaptive memory for AI coding agents — MCP server with context graph, semantic search, adaptive learning, roadmap tracking, and cross-tool continuity."
 readme = "README.md"
 license = { text = "MIT" }
@@ -52,17 +52,19 @@ dependencies = [
   "uvicorn>=0.27.0",
   "starlette>=0.36.0",
   "pathspec>=0.12.0",
+  # Semantic search — required so all 36 MCP tools work out of the box.
+  # Adds ~500MB (includes ML runtime). Downloads ~90MB model on first use.
+  # For a minimal install without semantic search, see:
+  # https://github.com/sachinshelke/codevira#minimal-install
+  "chromadb>=0.5.0",
+  "sentence-transformers>=2.7.0",
 ]
 
 [project.optional-dependencies]
-search = [
-  "chromadb>=0.5.0",
-  "sentence-transformers>=2.7.0",
-]
-all = [
-  "chromadb>=0.5.0",
-  "sentence-transformers>=2.7.0",
-]
+# Kept as no-op aliases for backwards compatibility with `pip install codevira[search]`.
+# Semantic search deps are now part of the base install.
+search = []
+all = []
 
 [project.scripts]
 codevira = "mcp_server.cli:main"

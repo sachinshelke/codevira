@@ -118,7 +118,11 @@ async def handle_get_prompt(name: str, arguments: dict | None = None):
 
 @server.list_tools()
 async def list_tools() -> list[Tool]:
-    return [
+    # Hide tools whose deps aren't installed — AI agents only see what works.
+    from indexer.index_codebase import _check_search_deps
+    _has_search = _check_search_deps()
+
+    tools = [
         Tool(
             name="get_node",
             description=(
@@ -780,6 +784,13 @@ async def list_tools() -> list[Tool]:
             },
         ),
     ]
+
+    # Filter out tools whose optional dependencies aren't installed.
+    # AI agents only see tools that will actually work.
+    if not _has_search:
+        tools = [t for t in tools if t.name != "search_codebase"]
+
+    return tools
 
 
 @server.call_tool()

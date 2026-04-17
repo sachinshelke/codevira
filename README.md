@@ -5,7 +5,7 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![MCP](https://img.shields.io/badge/protocol-MCP-purple)](https://modelcontextprotocol.io)
-[![Version](https://img.shields.io/badge/version-1.6.2-orange)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.7.0-orange)](CHANGELOG.md)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](CONTRIBUTING.md)
 
 **Works with:** Claude Code · Claude Desktop · Cursor · Windsurf · Google Antigravity · any MCP-compatible AI tool
@@ -56,10 +56,9 @@ pipx install codevira
 
 # Alternative: pip install
 pip install codevira
-
-# With semantic search support (adds ChromaDB + sentence-transformers)
-pip install 'codevira[search]'
 ```
+
+Installs all 36 MCP tools out of the box. Semantic search downloads a ~90MB embedding model on first use.
 
 ### 2. Register with your AI tools
 
@@ -427,10 +426,19 @@ Supported languages: Python, TypeScript, JavaScript, Go, Rust, Java, Kotlin, C#,
 ## Requirements
 
 - **Python 3.10+**
+- **~500MB install** (includes ChromaDB + sentence-transformers for semantic search)
+- **~90MB model download** on first `search_codebase()` call
 
-Base install (`pip install codevira`): includes everything except semantic search. All 36 MCP tools work — graph, roadmap, changesets, code reader, learning, call graph.
+`pip install codevira` includes all 36 MCP tools out of the box — graph, roadmap, changesets, code reader, learning, call graph, and semantic search.
 
-With semantic search (`pip install 'codevira[search]'`): adds ChromaDB + sentence-transformers for `search_codebase()`. Downloads a ~90MB embedding model on first use.
+### Minimal install (no semantic search)
+
+If you want to skip the ML stack and use only the graph-based tools (35 of 36), install without the search deps:
+```bash
+pip install codevira --no-deps
+pip install pyyaml mcp watchdog tree-sitter tree-sitter-language-pack rich uvicorn starlette pathspec
+```
+The `search_codebase` tool will be hidden from your AI agent; all other tools work normally.
 
 ---
 

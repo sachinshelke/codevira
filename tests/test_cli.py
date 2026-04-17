@@ -188,7 +188,6 @@ class TestMainDispatch:
             self._run_main(["register"], mocks)
             mocks["mcp_server.cli.cmd_register"].assert_called_once_with(
                 claude_desktop=False, http_url=None,
-                autostart=False, autostart_port=7443, autostart_project_dir=None,
             )
         finally:
             for p in patchers.values():
@@ -205,7 +204,6 @@ class TestMainDispatch:
             )
             mocks["mcp_server.cli.cmd_register"].assert_called_once_with(
                 claude_desktop=False, http_url="https://localhost:7443/mcp",
-                autostart=False, autostart_port=7443, autostart_project_dir=None,
             )
         finally:
             for p in patchers.values():

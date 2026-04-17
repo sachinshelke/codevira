@@ -116,16 +116,23 @@ No need to re-explain. Switch to Antigravity to run tests — same memory. The A
 
 ### Which transport should I use — stdio or HTTP?
 
+**Short answer: stdio.** `codevira register` sets this up globally, and it handles every project automatically.
+
 | Client | Use | Why |
 |--------|-----|-----|
-| Claude Desktop (app) | stdio only | Desktop app only supports `command`+`args` config |
-| Claude Code CLI | stdio **or** HTTP | Both work; HTTP lets you register via URL |
+| Claude Desktop (app) | stdio | Desktop app only supports `command`+`args` config |
+| Claude Code CLI | stdio | Both work; stdio handles multi-project automatically |
 | Cursor, Windsurf | stdio | These tools use `command`+`args` config |
 | Google Antigravity | stdio | Same |
 
-**Stdio** (default): the MCP client spawns `codevira` as a subprocess. No server to manage.
+**Stdio** (default + recommended): the MCP client spawns `codevira` as a subprocess per project. Each project gets its own process with its own memory from `~/.codevira/projects/<key>/`. Zero config after `codevira register`.
 
-**HTTP** (`codevira serve`): run a persistent HTTP server, register it by URL. Useful when you want one server shared across multiple Claude Code sessions, or when you need to test with Claude.ai.
+**HTTP/HTTPS** — **Preview in v1.7, single-project only.** The HTTP server binds to one project at startup and cannot switch contexts per request. Useful only when:
+- You need Claude.ai (web) support (single-project anyway)
+- You're running Codevira in a headless/remote environment
+- You want a long-lived process for diagnostics
+
+**Multi-project HTTPS is planned for v1.8** — the server will read the MCP `initialize` handshake's `rootUri` to route each AI session to the right project. Until then, stdio is the answer for multi-project work.
 
 ### How do I configure Claude Desktop specifically?
 

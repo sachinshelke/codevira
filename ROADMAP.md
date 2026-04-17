@@ -161,12 +161,26 @@ Every high-traffic tool now returns a **summary by default** with opt-in full da
 
 ---
 
-## 🔜 v1.8 — Better Defaults & Discovery
+## 🔜 v1.8 — Multi-Project HTTPS & Diagnostics
 
-Sharpen the v1.7 design with the things developers tell us are still rough.
+The **top priority** for v1.8 is making HTTPS transport match what stdio already delivers: **one server, every project, no per-project setup.**
 
-- **HTTP server reads `rootUri` from MCP initialize** — true multi-project HTTP support; today the HTTP server is single-project
-- **Auto-detect stale `.codevira.migrated/` cleanup** — `codevira clean --legacy` to reclaim disk space from migration backups
+### Multi-project HTTPS (the big one)
+
+Today (v1.7): the HTTPS server binds to ONE project at `codevira serve` startup. Users running multiple projects need either multiple servers on multiple ports, or just stick with stdio. This misaligns with Codevira's "one memory layer for every project" promise.
+
+v1.8 plan:
+- **Read `rootUri` from MCP `initialize` handshake** — each AI session that connects via HTTPS identifies its project, server routes the session accordingly
+- **Per-session project context** — the server maintains separate state for each connected project
+- **`codevira register --autostart` returns** — installs a launchd service that runs a multi-project HTTPS server on login; works for every project the developer opens forever (same guarantee as stdio)
+- **`codevira serve` deprecation of `--project-dir`** for use with `--install-service` — warn that it pins the server to one project
+
+Until v1.8 ships:
+- **stdio** (`codevira register`) is the correct choice for multi-project work
+- **HTTPS** (`codevira serve`) remains available as a preview for single-project deployments (Claude.ai, headless, one-project focus)
+
+### Other v1.8 items
+
 - **Config validation on init** — warn on common mistakes (malformed `file_extensions`, watched_dirs that don't exist, etc.)
 - **`codevira doctor`** — diagnostic command that checks: PATH, IDE configs, project initialization, graph health, common misconfigurations
 - **Better tool descriptions** — embed concrete usage patterns in MCP tool descriptions so agents pick the right tool first time

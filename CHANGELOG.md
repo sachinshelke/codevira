@@ -11,6 +11,18 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Changed
+- **HTTP/HTTPS transport marked as PREVIEW** (single-project only). The server
+  binds to one project at startup and cannot switch contexts per request.
+  Multi-project HTTPS routing via MCP `initialize` `rootUri` is the top v1.8
+  priority. `codevira serve` prints a preview warning on startup.
+- **Removed `codevira register --autostart`** that was added briefly. It
+  installed a single-project HTTPS launchd service, which misaligned with
+  Codevira's "one memory layer for every project" value prop. Returns in
+  v1.8 with multi-project routing.
+- **README / FAQ / PROTOCOL** updated: stdio is now clearly the recommended
+  transport for multi-project work; HTTP is positioned as advanced / preview.
+
 ---
 
 ## [1.7.0] — 2026-04-17 — Token Efficiency & AI-First Tool Design

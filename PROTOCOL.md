@@ -173,7 +173,9 @@ Restart your AI tool after init. Verify: ask your agent to call `get_roadmap()`.
 
 **Manual config (if auto-inject didn't work):**
 
-Codevira supports two MCP transports — stdio (default) and HTTP (via `codevira serve`).
+Codevira supports two MCP transports:
+- **stdio (default + recommended)** — the IDE spawns `codevira` per project. Multi-project out of the box.
+- **HTTP/HTTPS (preview, v1.7)** — single-project only; multi-project routing via MCP `rootUri` is planned for v1.8. Use stdio for multi-project work.
 
 **Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`) — stdio only:
 ```json

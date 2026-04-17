@@ -519,12 +519,27 @@ def cmd_status(check_stale: bool = False):
     Pass check_stale=True to scan all source files and count how many
     have changed since last index (slow: O(n) SHA256 hashes).
     """
+    data_dir = get_data_dir()
+    graph_db_path = data_dir / "graph" / "graph.db"
+
+    # Fast path: project not initialized. Skip rich/sqlite/chromadb imports
+    # entirely and print a plain-text one-liner.
+    if not graph_db_path.exists():
+        print()
+        print("  Codevira — Not initialized for this project")
+        print("  " + "─" * 44)
+        print()
+        print("  Run `codevira init` to initialize, or use this project")
+        print("  in an AI tool — auto-init triggers on first MCP tool call.")
+        print()
+        return
+
     from rich.console import Console
     from rich.table import Table
     from rich.panel import Panel
 
     console = Console()
-    db = SQLiteGraph(get_data_dir() / "graph" / "graph.db")
+    db = SQLiteGraph(graph_db_path)
 
     # Count graph nodes — fast SQLite query
     try:

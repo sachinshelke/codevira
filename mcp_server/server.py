@@ -126,9 +126,10 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="get_node",
             description=(
-                "Get the context graph node for a file. Returns role, connections, rules, "
-                "stability, tests, and do_not_revert flags. "
-                "Call this INSTEAD of reading the source file to understand what it does."
+                "Get the context graph node for a file. Returns a SUMMARY by default "
+                "(role, layer, stability, rules_count, deps_count, stale flag) — ~100 tokens. "
+                "Pass full=true for the complete rules/dependencies/key_functions arrays. "
+                "Call this INSTEAD of reading the source file."
             ),
             inputSchema={
                 "type": "object",
@@ -136,7 +137,11 @@ async def list_tools() -> list[Tool]:
                     "file_path": {
                         "type": "string",
                         "description": "Relative file path (e.g. 'src/services/generator.py')",
-                    }
+                    },
+                    "full": {
+                        "type": "boolean",
+                        "description": "Include full rules + dependencies arrays (default false — summary only)",
+                    },
                 },
                 "required": ["file_path"],
             },
@@ -144,9 +149,11 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="get_impact",
             description=(
-                "Get the blast radius for a file before touching it. "
-                "Returns up to `limit` most-relevant downstream files (default 20). "
-                "Full count is in `blast_radius`. ALWAYS call this before modifying any file."
+                "Get the blast radius for a file before modifying it. "
+                "Default: returns up to 10 affected files + counts (~400 tokens). "
+                "Pass summary_only=true for just counts (blast_radius, protected_count, "
+                "high_stability_count) — ~80 tokens, perfect for gate checks. "
+                "ALWAYS call before modifying any file."
             ),
             inputSchema={
                 "type": "object",
@@ -157,7 +164,11 @@ async def list_tools() -> list[Tool]:
                     },
                     "limit": {
                         "type": "integer",
-                        "description": "Max affected files to return (default 20, max 100)",
+                        "description": "Max affected files to return (default 10, max 100)",
+                    },
+                    "summary_only": {
+                        "type": "boolean",
+                        "description": "Return only counts, not the file list (default false)",
                     },
                 },
                 "required": ["file_path"],
@@ -174,8 +185,10 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="search_codebase",
             description=(
-                "Semantic search over the codebase. Returns relevant functions, "
-                "classes, or module docs. Use to find implementation patterns before writing code."
+                "Semantic search over the codebase. Returns file+symbol pointers "
+                "by default (~300 tokens for 5 matches). Call get_code(file_path, symbol) "
+                "to read source for a specific match. Pass include_content=true to inline "
+                "source code in results (500-3000 tokens per match — use sparingly)."
             ),
             inputSchema={
                 "type": "object",
@@ -186,8 +199,12 @@ async def list_tools() -> list[Tool]:
                     },
                     "limit": {
                         "type": "integer",
-                        "description": "Number of results (default 5, max 10)",
+                        "description": "Number of results (default 5, max 20)",
                         "default": 5,
+                    },
+                    "include_content": {
+                        "type": "boolean",
+                        "description": "Inline chunk source code in results (default false)",
                     },
                     "layer": {
                         "type": "string",
@@ -450,15 +467,17 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="search_decisions",
             description=(
-                "Search past decisions across all completed changesets, roadmap phases, and session logs. "
-                "Answers 'has anyone decided this before?' — gives agents institutional memory."
+                "Search past decisions across sessions, changesets, and roadmap phases. "
+                "Default: 5 matches with truncated context (~500 tokens). "
+                "Pass full=true for untruncated text. Answers 'has anyone decided this before?'"
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Keywords to search (e.g. 'threshold', 'uuid', 'retry')"},
-                    "limit": {"type": "integer", "description": "Max results (default 10)", "default": 10},
-                    "session_id": {"type": "string", "description": "Optional — filter results to a specific session only"},
+                    "limit": {"type": "integer", "description": "Max results (default 5, max 20)", "default": 5},
+                    "full": {"type": "boolean", "description": "Return untruncated decision text (default false)"},
+                    "session_id": {"type": "string", "description": "Optional — filter to a specific session"},
                 },
                 "required": ["query"],
             },
@@ -466,8 +485,9 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="get_history",
             description=(
-                "Get recent decisions touching a file. Paginated — default 20, max 100. "
-                "Returns decisions from past sessions ordered by most recent first."
+                "Get recent decisions touching a file. Default: 5 with truncated context "
+                "(~500 tokens). Pass full=true for untruncated text. "
+                "Ordered by most recent first."
             ),
             inputSchema={
                 "type": "object",
@@ -475,8 +495,9 @@ async def list_tools() -> list[Tool]:
                     "file_path": {"type": "string", "description": "Relative file path"},
                     "limit": {
                         "type": "integer",
-                        "description": "Max decisions to return (default 20, max 100)",
+                        "description": "Max decisions (default 5, max 50)",
                     },
+                    "full": {"type": "boolean", "description": "Untruncated decision text (default false)"},
                 },
                 "required": ["file_path"],
             },
@@ -536,7 +557,7 @@ async def list_tools() -> list[Tool]:
             description=(
                 "Get curated architectural rules for a specific task type. "
                 "Returns only the 2-3 relevant rule files — not all of them. "
-                "Use for: add_route | add_service | add_schema | "
+                "Valid task types: add_tool | add_service | add_schema | "
                 "debug_pipeline | commit | write_test"
             ),
             inputSchema={
@@ -544,7 +565,7 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "task_type": {
                         "type": "string",
-                        "description": "Task type (e.g. 'add_route', 'debug_pipeline', 'commit')",
+                        "description": "Task type (e.g. 'add_tool', 'debug_pipeline', 'commit')",
                     }
                 },
                 "required": ["task_type"],
@@ -815,6 +836,27 @@ async def list_tools() -> list[Tool]:
     if not _has_search:
         tools = [t for t in tools if t.name != "search_codebase"]
 
+    # Hide admin / reporting / dashboard tools from the AI-facing MCP tool list.
+    # These still work if called explicitly (via call_tool dispatch) but are
+    # not advertised — they dump too many tokens or serve human workflows only.
+    # Humans access them via the CLI (codevira index, codevira status) or
+    # dedicated MCP prompts (architecture_overview, pre_commit_check).
+    _ADMIN_TOOLS = {
+        "list_nodes",              # replaced by get_node(path) targeted queries
+        "add_node",                # auto-generated by refresh_graph
+        "refresh_graph",           # background/automatic
+        "refresh_index",           # background/automatic
+        "export_graph",            # 5k-50k token Mermaid/DOT dump
+        "get_graph_diff",          # PR review — use prompt instead
+        "analyze_changes",         # PR review — use prompt instead
+        "find_hotspots",           # dashboard metric — use prompt instead
+        "get_project_maturity",    # dashboard metric
+        "get_preferences",         # included in get_session_context
+        "get_learned_rules",       # included in get_session_context
+        "get_full_roadmap",        # rarely needed by agents — use get_phase(n)
+    }
+    tools = [t for t in tools if t.name not in _ADMIN_TOOLS]
+
     return tools
 
 
@@ -830,11 +872,15 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
     try:
         if name == "get_node":
-            result = get_node(arguments["file_path"])
+            result = get_node(
+                arguments["file_path"],
+                full=arguments.get("full", False),
+            )
         elif name == "get_impact":
             result = get_impact(
                 arguments["file_path"],
-                limit=arguments.get("limit", 20),
+                limit=arguments.get("limit", 10),
+                summary_only=arguments.get("summary_only", False),
             )
         elif name == "get_roadmap":
             result = get_roadmap()
@@ -874,6 +920,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             result = search_codebase(
                 arguments["query"],
                 top_k=arguments.get("limit", 5),
+                include_content=arguments.get("include_content", False),
             )
         elif name == "list_open_changesets":
             result = list_open_changesets()
@@ -924,13 +971,15 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         elif name == "search_decisions":
             result = search_decisions(
                 arguments["query"],
-                limit=arguments.get("limit", 10),
+                limit=arguments.get("limit", 5),
                 session_id=arguments.get("session_id"),
+                full=arguments.get("full", False),
             )
         elif name == "get_history":
             result = get_history(
                 arguments["file_path"],
-                limit=arguments.get("limit", 20),
+                limit=arguments.get("limit", 5),
+                full=arguments.get("full", False),
             )
         elif name == "write_session_log":
             result = write_session_log(

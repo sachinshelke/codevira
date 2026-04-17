@@ -131,8 +131,8 @@ class TestAddNode:
         # Verify node was persisted
         node_result = graph.get_node("src/new.py")
         assert node_result["found"] is True
-        assert node_result["node"]["role"] == "New module"
-        assert node_result["node"]["layer"] == "service"
+        assert node_result["role"] == "New module"
+        assert node_result["layer"] == "service"
 
     def test_add_node_with_all_optional_params(self, tmp_path, monkeypatch):
         """Adding a node with stability, do_not_revert, key_functions, tests, rules."""
@@ -152,16 +152,15 @@ class TestAddNode:
         assert "status" in result
         assert "src/critical.py" in result["status"]
 
-        # Verify all fields persisted
-        node_result = graph.get_node("src/critical.py")
+        # Verify all fields persisted — use full=True to get rules/key_functions arrays
+        node_result = graph.get_node("src/critical.py", full=True)
         assert node_result["found"] is True
-        node = node_result["node"]
-        assert node["stability"] == "high"
-        assert bool(node["do_not_revert"]) is True
-        assert "process_payment" in node["key_functions"]
-        assert "validate_card" in node["key_functions"]
-        assert "Never remove error handling" in node["rules"]
-        assert "Keep retry logic" in node["rules"]
+        assert node_result["stability"] == "high"
+        assert bool(node_result["do_not_revert"]) is True
+        assert "process_payment" in node_result["key_functions"]
+        assert "validate_card" in node_result["key_functions"]
+        assert "Never remove error handling" in node_result["rules"]
+        assert "Keep retry logic" in node_result["rules"]
 
     def test_add_node_default_stability_is_medium(self, tmp_path, monkeypatch):
         """Default stability should be 'medium' when not specified."""
@@ -169,7 +168,7 @@ class TestAddNode:
         db.close()
         graph.add_node("src/default.py", role="Default module", layer="misc")
         node_result = graph.get_node("src/default.py")
-        assert node_result["node"]["stability"] == "medium"
+        assert node_result["stability"] == "medium"
 
     def test_add_node_empty_strings_chaos(self, tmp_path, monkeypatch):
         """Chaos: add_node with empty string params should not crash."""
@@ -195,7 +194,7 @@ class TestUpdateNode:
         assert "status" in result
         assert "Updated" in result["status"]
 
-        node = graph.get_node("src/svc.py")["node"]
+        node = graph.get_node("src/svc.py", full=True)
         assert "Rule A" in node["rules"]
         assert "Rule B" in node["rules"]
         assert "Rule C" in node["rules"]
@@ -207,7 +206,7 @@ class TestUpdateNode:
         graph.add_node("src/evolve.py", role="Evolving module", layer="core",
                        stability="low")
         graph.update_node("src/evolve.py", {"stability": "high"})
-        node = graph.get_node("src/evolve.py")["node"]
+        node = graph.get_node("src/evolve.py")
         assert node["stability"] == "high"
 
     def test_update_key_functions(self, tmp_path, monkeypatch):
@@ -217,7 +216,7 @@ class TestUpdateNode:
         graph.add_node("src/funcs.py", role="Functions", layer="utils",
                        key_functions=["func_a"])
         graph.update_node("src/funcs.py", {"key_functions": ["func_b"]})
-        node = graph.get_node("src/funcs.py")["node"]
+        node = graph.get_node("src/funcs.py", full=True)
         assert "func_a" in node["key_functions"]
         assert "func_b" in node["key_functions"]
 
@@ -227,7 +226,7 @@ class TestUpdateNode:
         db.close()
         graph.add_node("src/protect.py", role="Protected", layer="core")
         graph.update_node("src/protect.py", {"do_not_revert": True})
-        node = graph.get_node("src/protect.py")["node"]
+        node = graph.get_node("src/protect.py")
         assert bool(node["do_not_revert"]) is True
 
     def test_update_nonexistent_node_returns_error(self, tmp_path, monkeypatch):
@@ -245,7 +244,7 @@ class TestUpdateNode:
 
 class TestGetNode:
     def test_get_node_found_with_full_fields(self, tmp_path, monkeypatch):
-        """get_node should return all fields including parsed JSON."""
+        """get_node with full=True should return parsed JSON for rules/deps/key_functions."""
         _, _, db = _setup_project(tmp_path, monkeypatch)
         db.close()
         graph.add_node(
@@ -258,22 +257,36 @@ class TestGetNode:
             connects_to=[{"target": "src/db.py", "edge": "imports"}],
             do_not_revert=True,
         )
-        result = graph.get_node("src/full.py")
+        result = graph.get_node("src/full.py", full=True)
         assert result["found"] is True
         assert result["file_path"] == "src/full.py"
-        node = result["node"]
-        assert node["role"] == "Full node"
-        assert node["layer"] == "api"
-        assert node["stability"] == "high"
-        assert isinstance(node["key_functions"], list)
-        assert "main" in node["key_functions"]
-        assert isinstance(node["rules"], list)
-        assert "Do not modify" in node["rules"]
-        assert bool(node["do_not_revert"]) is True
-        # index_status should be present
-        assert "index_status" in result
-        assert "stale" in result["index_status"]
-        # hint should be present
+        assert result["role"] == "Full node"
+        assert result["layer"] == "api"
+        assert result["stability"] == "high"
+        assert isinstance(result["key_functions"], list)
+        assert "main" in result["key_functions"]
+        assert isinstance(result["rules"], list)
+        assert "Do not modify" in result["rules"]
+        assert bool(result["do_not_revert"]) is True
+        assert "stale" in result
+
+    def test_get_node_summary_mode_default(self, tmp_path, monkeypatch):
+        """Default get_node returns counts, not full rules/deps arrays."""
+        _, _, db = _setup_project(tmp_path, monkeypatch)
+        db.close()
+        graph.add_node(
+            "src/summ.py",
+            role="Summary node",
+            layer="api",
+            rules=["rule1", "rule2"],
+        )
+        result = graph.get_node("src/summ.py")
+        assert result["found"] is True
+        assert result["rules_count"] == 2
+        # Full arrays should NOT be present in summary mode
+        assert "rules" not in result
+        assert "dependencies" not in result
+        assert "key_functions" not in result
         assert "hint" in result
 
     def test_get_node_not_found(self, tmp_path, monkeypatch):
@@ -292,9 +305,10 @@ class TestGetNode:
         graph.add_node("src/ghost.py", role="Ghost", layer="core")
         result = graph.get_node("src/ghost.py")
         assert result["found"] is True
-        staleness = result["index_status"]
-        assert staleness["stale"] is True
-        assert "does not exist" in staleness["reason"].lower() or "missing" in staleness["reason"].lower()
+        # Summary: stale flag at top; full mode includes stale_reason
+        assert result["stale"] is True
+        full = graph.get_node("src/ghost.py", full=True)
+        assert "does not exist" in full["stale_reason"].lower() or "missing" in full["stale_reason"].lower()
 
     def test_staleness_index_missing(self, tmp_path, monkeypatch):
         """_check_staleness should flag stale when .last_indexed file is missing."""
@@ -307,10 +321,10 @@ class TestGetNode:
         graph.add_node("src/real.py", role="Real file", layer="core")
 
         result = graph.get_node("src/real.py")
-        staleness = result["index_status"]
-        # No .last_indexed file exists, so index_ts is None -> stale
-        assert staleness["stale"] is True
-        assert "index missing" in staleness["reason"].lower() or "last_indexed" in staleness["reason"].lower()
+        # Summary: stale at top level
+        assert result["stale"] is True
+        full = graph.get_node("src/real.py", full=True)
+        assert "index missing" in full["stale_reason"].lower() or "last_indexed" in full["stale_reason"].lower()
 
     def test_staleness_file_newer_than_index(self, tmp_path, monkeypatch):
         """_check_staleness should flag stale when file is newer than index."""
@@ -328,9 +342,9 @@ class TestGetNode:
 
         graph.add_node("src/fresh.py", role="Fresh file", layer="core")
         result = graph.get_node("src/fresh.py")
-        staleness = result["index_status"]
-        assert staleness["stale"] is True
-        assert "modified after" in staleness["reason"].lower()
+        assert result["stale"] is True
+        full = graph.get_node("src/fresh.py", full=True)
+        assert "modified after" in full["stale_reason"].lower()
 
 
 # =====================================================================

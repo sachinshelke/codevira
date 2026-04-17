@@ -322,7 +322,7 @@ class TestUpdateNodeAfterChange:
                 "key_functions": ["run"],
             },
         )
-        node = graph.get_node("src/example.py")["node"]
+        node = graph.get_node("src/example.py", full=True)
 
         assert result["success"] is True
         assert "Preserve legacy payload shape" in node["rules"]

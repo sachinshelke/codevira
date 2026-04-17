@@ -91,97 +91,104 @@ def get_project_maturity() -> dict:
         db.close()
 
 
+def _truncate(text: str | None, max_chars: int = 120) -> str | None:
+    if not text:
+        return text
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 1] + "…"
+
+
 def get_session_context() -> dict:
-    """
-    Single 'catch me up' call for cross-tool continuity.
-    Returns everything a new agent session needs to understand the current state:
-    current roadmap phase, open changesets, recent decisions with confidence, and recent sessions.
+    """Single 'catch me up' call — designed to be the FIRST call in a session.
+
+    Returns a compact snapshot (~500 tokens target) so the agent gets oriented
+    without consuming its context window. Use follow-up tools (get_node,
+    get_impact, search_decisions) for targeted details.
+
+    Fields returned:
+      current_phase     - {name, next_action, status}
+      open_changesets   - up to 3 most recent, minimal fields
+      recent_sessions   - up to 2 most recent, summary truncated to 100 chars
+      recent_decisions  - up to 3 most recent, decision text truncated to 120 chars
+      confidence        - {positive, negative, neutral, overall_rate}
+      top_signals       - combined preferences + rules, top 3 each
+      hint              - instructions for follow-up calls
     """
     db = _get_db()
     try:
-        # Recent sessions
-        recent_sessions = db.get_recent_sessions(limit=3)
-
-        # Recent decisions with confidence
-        recent_decisions = db.get_recent_decisions(limit=5)
-
-        # Confidence overview
+        recent_sessions = db.get_recent_sessions(limit=2)
+        recent_decisions = db.get_recent_decisions(limit=3)
         confidence = db.get_decision_confidence()
+        prefs = db.get_preferences(min_frequency=2)[:3]
+        rules = db.get_learned_rules(min_confidence=0.6)[:3]
 
-        # Preferences summary (top 5 by frequency)
-        prefs = db.get_preferences(min_frequency=2)[:5]
+        # Roadmap: only current phase name + next action (skip upcoming/completed)
+        current_phase = {}
+        try:
+            from mcp_server.tools.roadmap import get_roadmap
+            roadmap = get_roadmap()
+            cp = roadmap.get("current_phase", {}) or {}
+            current_phase = {
+                "name": cp.get("name"),
+                "status": cp.get("status"),
+                "next_action": _truncate(cp.get("next_action"), 200),
+            }
+        except Exception:
+            pass
 
-        # Learned rules (high confidence only)
-        rules = db.get_learned_rules(min_confidence=0.6)[:5]
+        # Open changesets: minimal shape, max 3
+        open_changesets = []
+        try:
+            from mcp_server.tools.changesets import list_open_changesets
+            cs = list_open_changesets().get("changesets", [])
+            for c in cs[:3]:
+                open_changesets.append({
+                    "id": c.get("id"),
+                    "description": _truncate(c.get("description"), 100),
+                    "files_pending_count": len(c.get("files_pending", []) or []),
+                })
+        except Exception:
+            pass
 
-        context = {
+        return {
+            "current_phase": current_phase,
+            "open_changesets": open_changesets,
             "recent_sessions": [
                 {
                     "session_id": s["session_id"],
-                    "summary": s.get("summary"),
+                    "summary": _truncate(s.get("summary"), 100),
                     "phase": s.get("phase"),
                 }
                 for s in recent_sessions
             ],
             "recent_decisions": [
                 {
-                    "decision": d["decision"],
+                    "decision": _truncate(d.get("decision"), 120),
                     "file_path": d.get("file_path"),
-                    "phase": d.get("phase"),
                 }
                 for d in recent_decisions
             ],
-            "overall_confidence": confidence,
-            "top_preferences": [
-                {"category": p["category"], "signal": p["signal"], "frequency": p["frequency"]}
-                for p in prefs
-            ],
-            "top_rules": [
-                {"rule": r["rule_text"], "confidence": r["confidence"]}
-                for r in rules
-            ],
+            "confidence": {
+                "overall_rate": confidence.get("overall_rate"),
+                "total_decisions": confidence.get("total", 0),
+            },
+            "top_signals": {
+                "preferences": [
+                    {"category": p["category"], "signal": _truncate(p["signal"], 80)}
+                    for p in prefs
+                ],
+                "rules": [
+                    {"rule": _truncate(r["rule_text"], 100), "confidence": round(r["confidence"], 2)}
+                    for r in rules
+                ],
+            },
+            "hint": (
+                "Before touching a file: get_node(path) + get_impact(path). "
+                "For past decisions: search_decisions(query). "
+                "Admin tools (export_graph, find_hotspots) available via CLI."
+            ),
         }
-
-        # Add roadmap context if available
-        try:
-            from mcp_server.tools.roadmap import get_roadmap
-            roadmap = get_roadmap()
-            context["roadmap"] = {
-                "current_phase": roadmap.get("current_phase", {}).get("name"),
-                "next_action": roadmap.get("current_phase", {}).get("next_action"),
-                "status": roadmap.get("current_phase", {}).get("status"),
-            }
-        except Exception as e:
-            logger.warning("Could not load roadmap context: %s", e)
-            context["roadmap"] = None
-
-        # Add open changesets if any
-        try:
-            from mcp_server.tools.changesets import list_open_changesets
-            changesets = list_open_changesets()
-            context["open_changesets"] = changesets.get("changesets", [])
-        except Exception as e:
-            logger.warning("Could not load changesets context: %s", e)
-            context["open_changesets"] = []
-
-        # v1.5: Add global intelligence stats
-        try:
-            from mcp_server.global_sync import get_global_stats
-            context["global_intelligence"] = get_global_stats()
-        except Exception as e:
-            logger.warning("Could not load global intelligence: %s", e)
-            context["global_intelligence"] = None
-
-        # v1.6: Add indexing progress if background init is running
-        try:
-            from mcp_server.auto_init import get_init_progress
-            prog = get_init_progress()
-            if prog["status"] not in ("ready", "not_started"):
-                context["indexing_progress"] = prog
-        except Exception:
-            pass
-
-        return context
     finally:
         db.close()
 

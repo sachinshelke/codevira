@@ -13,72 +13,90 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [1.7.2] — 2026-04-17 — Token Efficiency Pass
+## [1.7.0] — 2026-04-17 — Token Efficiency & AI-First Tool Design
 
-### Fixed — MCP tool responses were exceeding context windows
+**The biggest release since v1.0.** We realized Codevira was dumping 15k-60k
+tokens per session into AI agent context windows — defeating the entire
+"92% token reduction" value prop. This release redesigns tool responses
+around what agents actually need, not what the database can return.
 
-Four tools returned unbounded lists that could dump 10k–50k tokens into an
-agent's context in a single call — defeating Codevira's "92% token
-reduction" value prop. All now paginated or summarized:
-
-- **`list_nodes`**: now returns 50 nodes per call (configurable via `limit`
-  up to 500, with `offset` for pagination). Response includes total count
-  and per-layer distribution so agents can narrow before paginating.
-- **`get_impact`**: capped at 20 affected files by default (configurable,
-  max 100). Full `blast_radius` count still returned.
-- **`get_history`**: SQL query now has a `LIMIT` clause. Default 20 decisions,
-  max 100. Returns `has_more` flag.
-- **`get_full_roadmap`**: by default, completed phases are summarized
-  (number + name + date + decision_count) instead of inlining all
-  `key_decisions`. Pass `include_decisions=true` for the old behavior
-  or use `get_phase(number)` for a single phase's full data.
-
-On a 500-node mature project, a single `list_nodes()` call previously
-returned ~60,000 tokens. It now returns ~5,000.
-
----
-
-## [1.7.1] — 2026-04-16 — Non-blocking refresh_index + Robust File Walk
-
-### Fixed
-- **`refresh_index` hung AI agents on large projects**: The MCP tool call ran
-  full graph regeneration + semantic embedding synchronously. On projects with
-  500+ files, this took minutes — long enough to appear as a hang.
-  Now returns immediately with `{"status": "Refresh started in background"}`
-  and runs the heavy work in a daemon thread.
-- **`refresh_graph` ignored its `file_paths` parameter**: Built a list of
-  files but never used it — always regenerated the entire graph. Cleaned up
-  the dead code.
-- **`generate_graph_sqlite` crashed on OS system paths**: `rglob` follows
-  symlinks by default on macOS, which could walk into `~/Library/Group
-  Containers/` and hit `OSError: [Errno 4] Interrupted system call`. Now:
-  - Skips common non-source dirs (`node_modules`, `.venv`, `__pycache__`, etc.)
-  - Skips OS-level dirs reachable via symlinks (`Library`, `System`, `Applications`)
-  - Catches `OSError` / `ValueError` per-entry so one bad path doesn't abort the walk
-
-### Changed
-- **`refresh_index` is now fire-and-forget**: Agents no longer wait for
-  embedding to finish. Check progress via `get_session_context()` →
-  `indexing_progress` field.
-
----
-
-## [1.7.0] — 2026-04-16 — All 36 Tools Out of the Box
-
-### Changed
-- **`chromadb` + `sentence-transformers` moved to required dependencies**.
-  `pip install codevira` now installs all 36 MCP tools out of the box.
-  Adds ~500MB to install size (includes ML runtime) but eliminates the
+### Changed — Dependency model
+- **`chromadb` + `sentence-transformers` now required** (was `[search]` extra).
+  `pip install codevira` installs all 36 MCP tools out of the box.
+  Trade-off: ~500MB install (ML runtime) vs. ~50MB. Eliminates the
   "why doesn't semantic search work?" confusion.
-- **`[search]` extra is now a no-op alias** for backwards compatibility.
-  Old install commands (`pip install codevira[search]`) still work.
+- **`[search]` extra kept as no-op alias** for backwards compatibility.
+
+### Changed — Token-efficient tool responses (the big one)
+
+Every high-traffic tool now returns a **summary by default**, with opt-in
+full data. On a 500-node project, a single agent session went from ~60k
+tokens to ~5k.
+
+- **`get_session_context`**: Compacted ~4k → ~800 tokens. Dropped
+  `global_intelligence`/`indexing_progress` (admin data, not session data).
+  Truncated decision/summary text. Nested `current_phase` at top level.
+- **`get_node(path)`**: Default returns counts (`rules_count`,
+  `dependencies_count`) + flags. Pass `full=True` for the full arrays.
+  Typical response: ~100 tokens (was 500-3000).
+- **`get_impact(path)`**: Default returns 10 affected files + protected/
+  high-stability counts. Pass `summary_only=True` for just counts
+  (~80 tokens — perfect for gate checks before modifying).
+- **`search_codebase(query)`**: Default returns file/symbol pointers only.
+  Pass `include_content=True` to inline chunk source (500-3000 tokens per
+  match). `limit` capped at 20.
+- **`search_decisions(query)`**: Default limit 5 (was 10), context truncated
+  to 150 chars. Pass `full=True` for untruncated text. `limit` capped at 20.
+- **`get_history(file)`**: Default limit 5 (was 20), text truncated.
+  Pass `full=True` for untruncated. `limit` capped at 50.
+- **`get_full_roadmap`**: Completed phases summarized (number + name + date
+  + decision_count) instead of inlining all `key_decisions`. Pass
+  `include_decisions=true` for the old behavior.
+- **`list_nodes`**: Paginated (50 per page, max 500) with `offset` support.
+  Response includes total count + per-layer distribution.
+
+### Changed — AI-facing MCP tool surface trimmed to 23 tools (was 36)
+
+12 tools moved to admin-only — they still work via `call_tool` dispatch
+but are **hidden from `list_tools()`**. AI agents only see tools they
+should use. The hidden tools are either:
+- Dashboard/reporting (human workflows): `get_full_roadmap`,
+  `get_project_maturity`, `find_hotspots`, `analyze_changes`, `get_graph_diff`
+- Bulk discovery (replaced by targeted queries): `list_nodes`, `add_node`
+- Background automation (self-managed): `refresh_graph`, `refresh_index`
+- Redundant with session_context: `get_preferences`, `get_learned_rules`
+- Dumps too many tokens: `export_graph` (can be 50k tokens)
+
+Admins can still call these via CLI. Prompts like `architecture_overview`
+still reference them server-side.
 
 ### Added
-- **Dynamic tool filtering**: `list_tools()` hides `search_codebase` when
-  chromadb isn't available. AI agents only see tools that will actually
-  work — no more confusing failures on features the install doesn't support.
-- **Minimal install documentation**: README now shows how to install without
-  the ML stack for users who only want the graph/roadmap tools.
+- **Non-blocking `refresh_index`**: Returns in <100ms with
+  `{"status": "Refresh started in background"}`. Heavy work (graph regen +
+  semantic embedding) runs in a daemon thread. Previously, this hung AI
+  agents for minutes on 500+ file projects.
+- **`codevira clean` command**: One-shot removal of all Codevira data, IDE
+  configs, and services. `--all`, `--dry-run`, `-y` supported.
+- **Google Antigravity global mode**: `codevira register` now includes
+  Antigravity with a single global entry (was missing + wrong config path).
+- **Browser-friendly landing page**: `GET /` on HTTP server returns helpful
+  HTML with setup instructions for browsers. API clients still get JSON.
+
+### Fixed
+- **`refresh_graph` ignored its `file_paths` parameter** — dead code that
+  always regenerated the entire graph. Cleaned up.
+- **`generate_graph_sqlite` crashed on macOS system paths**: Now skips
+  `Library`, `System`, `Applications`, `node_modules`, `.venv`, etc.,
+  and catches `OSError`/`ValueError` per-entry so one bad symlink doesn't
+  abort indexing.
+- **Crash log test isolation**: `crash_logger._get_log_dir()` now uses
+  `get_global_home()`. Tests no longer pollute the real user's crash log.
+- **`_get_embedding_fn` ValueError not caught**: When chromadb is installed
+  but sentence-transformers isn't, chromadb raises `ValueError`. Now caught.
+- **Playbook `add_route` → `add_tool`**: The valid task type was renamed
+  in code but the description still said `add_route`. Fixed.
+- **Antigravity config path**: Was wrong (`~/.gemini/settings/`). Now uses
+  the correct `~/.gemini/antigravity/mcp_config.json`.
 
 ---
 

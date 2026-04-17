@@ -180,7 +180,17 @@ def update_node(file_path: str, changes: dict[str, Any]) -> dict[str, str]:
     db.close()
     return {"status": f"Updated node '{file_path}'"}
 
-def get_node(file_path: str) -> dict[str, Any]:
+def get_node(file_path: str, full: bool = False) -> dict[str, Any]:
+    """Get context graph metadata for a file.
+
+    Default (summary mode): returns role, layer, stability, do_not_revert flag,
+    counts for rules/connections/key_functions, and stale flag. ~100 tokens.
+
+    full=True: returns complete rules, dependencies, key_functions lists.
+    Use sparingly — for a rich node this can be 1-3k tokens.
+
+    For source code itself, call get_signature(file) or get_code(file, symbol).
+    """
     db = _get_db()
     node = db.get_node_by_path(file_path)
     if not node:
@@ -189,12 +199,12 @@ def get_node(file_path: str) -> dict[str, Any]:
         if len(matches) == 1:
             node = matches[0]
             file_path = node['file_path']
-            
+
     db.close()
-    
+
     if not node:
         # v1.6: Check if auto-init is running
-        hint = "Use refresh_graph(['path/to/file']) to auto-generate a graph node for new files."
+        hint = "Call refresh_graph([path]) to generate a node, or verify the file exists."
         try:
             from mcp_server.auto_init import get_init_progress
             prog = get_init_progress()
@@ -204,41 +214,80 @@ def get_node(file_path: str) -> dict[str, Any]:
                     "status": "initializing",
                     "file_path": file_path,
                     "message": "Graph is being built in the background. Try again in a few seconds.",
-                    "indexing_progress": prog,
                     "hint": hint,
                 }
         except Exception:
             pass
         return {
             "found": False,
+            "file_path": file_path,
             "message": f"File '{file_path}' not found in the context graph.",
             "hint": hint,
         }
-        
-    staleness = _check_staleness(file_path)
-    
-    res_node = dict(node)
-    for k in ["rules", "key_functions", "dependencies"]:
-        if res_node.get(k):
-            try:
-                res_node[k] = json.loads(res_node[k])
-            except (json.JSONDecodeError, TypeError, ValueError):
-                pass
 
+    # Parse JSON fields once
+    def _parse(key: str) -> list:
+        val = node.get(key)
+        if not val:
+            return []
+        try:
+            result = json.loads(val)
+            return result if isinstance(result, list) else []
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return []
+
+    rules = _parse("rules")
+    deps = _parse("dependencies")
+    key_fns = _parse("key_functions")
+
+    staleness = _check_staleness(file_path)
+
+    if full:
+        # Full mode: everything the node has
+        return {
+            "found": True,
+            "file_path": file_path,
+            "role": node.get("role"),
+            "layer": node.get("layer"),
+            "stability": node.get("stability"),
+            "do_not_revert": bool(node.get("do_not_revert")),
+            "type": node.get("type"),
+            "rules": rules,
+            "dependencies": deps,
+            "key_functions": key_fns,
+            "last_changed_by": node.get("last_changed_by"),
+            "stale": staleness.get("stale"),
+            "stale_reason": staleness.get("reason"),
+        }
+
+    # Summary mode (default) — token-efficient
     return {
         "found": True,
         "file_path": file_path,
-        "node": res_node,
-        "index_status": staleness,
-        "hint": "Next: call get_signature(file_path) to see all public symbols and line ranges.",
+        "role": node.get("role"),
+        "layer": node.get("layer"),
+        "stability": node.get("stability"),
+        "do_not_revert": bool(node.get("do_not_revert")),
+        "rules_count": len(rules),
+        "dependencies_count": len(deps),
+        "key_functions_count": len(key_fns),
+        "stale": staleness.get("stale"),
+        "hint": (
+            "Call get_node(path, full=True) for rules+dependencies, "
+            "get_signature(path) for symbol list, "
+            "get_impact(path) for blast radius."
+        ),
     }
 
-def get_impact(file_path: str, limit: int = 20) -> dict[str, Any]:
-    """Get the blast radius (downstream files) for a given file.
+def get_impact(file_path: str, limit: int = 10, summary_only: bool = False) -> dict[str, Any]:
+    """Get the blast radius (downstream files) for a file.
 
-    Returns up to `limit` most-relevant affected files (default 20, max 100).
-    The full count is in `blast_radius`. For large blast radii, prefer
-    filtering by protected status or querying specific files via get_node().
+    Default: returns up to 10 affected files with metadata (~400 tokens).
+    The full count is always in `blast_radius`.
+
+    Pass summary_only=True to skip the file list entirely and just get
+    {blast_radius, protected_count, high_stability_count} — ~80 tokens.
+    Use this as a gate check before deciding to modify.
     """
     db = _get_db()
 
@@ -281,16 +330,39 @@ def get_impact(file_path: str, limit: int = 20) -> dict[str, Any]:
         })
 
     total = len(affected)
-    truncated = affected[:limit]
+    protected = sum(1 for a in affected if a["do_not_revert"])
+    high_stability = sum(1 for a in affected if a["stability"] == "high")
 
+    if summary_only:
+        # Just the gate-check data — ~80 tokens
+        return {
+            "found": True,
+            "target_file": file_path,
+            "blast_radius": total,
+            "protected_count": protected,
+            "high_stability_count": high_stability,
+            "hint": (
+                "Call get_impact(path, summary_only=False) to see the file list."
+                if total > 0 else "No downstream dependents."
+            ),
+        }
+
+    truncated = affected[:limit]
     return {
         "found": True,
         "target_file": file_path,
         "blast_radius": total,
+        "protected_count": protected,
+        "high_stability_count": high_stability,
         "returned": len(truncated),
         "affected_files": truncated,
         "has_more": total > limit,
-        "hint": f"Showing {len(truncated)} of {total}. Pass limit=N for more." if total > limit else None,
+        "hint": (
+            f"Showing {len(truncated)} of {total}. "
+            "Pass summary_only=True for just counts, or limit=N for more files."
+            if total > limit
+            else None
+        ),
     }
 
 def export_graph(format: str = "mermaid", scope: str | None = None) -> dict[str, Any]:

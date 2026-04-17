@@ -427,9 +427,10 @@ class TestGetSessionContext:
 
         assert "recent_sessions" in result
         assert "recent_decisions" in result
-        assert "overall_confidence" in result
-        assert "top_preferences" in result
-        assert "top_rules" in result
+        assert "confidence" in result
+        assert "top_signals" in result
+        assert "preferences" in result["top_signals"]
+        assert "rules" in result["top_signals"]
 
     def test_session_context_with_roadmap(self, tmp_path, monkeypatch):
         _, _, db = _setup_project(tmp_path, monkeypatch)
@@ -443,9 +444,9 @@ class TestGetSessionContext:
                        return_value={"changesets": []}):
                 result = learning.get_session_context()
 
-        assert result["roadmap"] is not None
-        assert result["roadmap"]["current_phase"] == "API Refactor"
-        assert result["roadmap"]["next_action"] == "Fix routes"
+        # New shape: current_phase at top level (no more nested `roadmap` key)
+        assert result["current_phase"]["name"] == "API Refactor"
+        assert result["current_phase"]["next_action"] == "Fix routes"
 
     def test_session_context_roadmap_failure_graceful(self, tmp_path, monkeypatch):
         """If roadmap import fails, session_context should still work."""
@@ -457,7 +458,8 @@ class TestGetSessionContext:
                        return_value={"changesets": []}):
                 result = learning.get_session_context()
 
-        assert result["roadmap"] is None
+        # On failure current_phase stays empty dict
+        assert result["current_phase"] == {}
 
     def test_session_context_changesets_failure_graceful(self, tmp_path, monkeypatch):
         """If changesets import fails, session_context should still work."""
@@ -486,8 +488,8 @@ class TestGetSessionContext:
 
         assert result["recent_sessions"] == []
         assert result["recent_decisions"] == []
-        assert result["top_preferences"] == []
-        assert result["top_rules"] == []
+        assert result["top_signals"]["preferences"] == []
+        assert result["top_signals"]["rules"] == []
 
 
 # =====================================================================
@@ -495,34 +497,24 @@ class TestGetSessionContext:
 # =====================================================================
 
 class TestGetSessionContextExceptions:
-    def test_global_stats_failure_sets_none(self, tmp_path, monkeypatch):
-        """get_session_context sets global_intelligence=None when get_global_stats raises."""
+    def test_graceful_on_dependent_failures(self, tmp_path, monkeypatch):
+        """get_session_context continues when sub-calls raise.
+
+        v1.7.0 dropped global_intelligence and indexing_progress from the
+        response (they belong in admin/status tools, not session context).
+        Verify the function still returns a valid response when sub-calls fail.
+        """
         _setup_project(tmp_path, monkeypatch)
 
         with patch("mcp_server.tools.roadmap.get_roadmap", side_effect=Exception("no roadmap")), \
              patch("mcp_server.tools.changesets.list_open_changesets",
-                   side_effect=Exception("no changesets")), \
-             patch("mcp_server.global_sync.get_global_stats",
-                   side_effect=RuntimeError("global fail")):
+                   side_effect=Exception("no changesets")):
             result = learning.get_session_context()
 
-        assert result["global_intelligence"] is None
-
-    def test_auto_init_progress_failure_continues(self, tmp_path, monkeypatch):
-        """get_session_context continues normally when get_init_progress raises."""
-        _setup_project(tmp_path, monkeypatch)
-
-        with patch("mcp_server.tools.roadmap.get_roadmap", side_effect=Exception("no roadmap")), \
-             patch("mcp_server.tools.changesets.list_open_changesets",
-                   side_effect=Exception("no changesets")), \
-             patch("mcp_server.global_sync.get_global_stats", return_value={}), \
-             patch("mcp_server.auto_init.get_init_progress",
-                   side_effect=RuntimeError("init fail")):
-            result = learning.get_session_context()
-
-        # Function should complete successfully despite get_init_progress failing
         assert result is not None
         assert "recent_sessions" in result
+        assert result["current_phase"] == {}
+        assert result["open_changesets"] == []
 
 
 # =====================================================================

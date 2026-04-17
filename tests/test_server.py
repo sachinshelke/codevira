@@ -111,7 +111,7 @@ class TestCallToolDispatch:
         with patch("mcp_server.server.get_node", return_value=sentinel) as mock_fn, \
              patch("mcp_server.auto_init.ensure_project_initialized"):
             result = _run(call_tool("get_node", {"file_path": "src/api.py"}))
-        mock_fn.assert_called_once_with("src/api.py")
+        mock_fn.assert_called_once_with("src/api.py", full=False)
         parsed = json.loads(result[0].text)
         assert parsed["role"] == "API handler"
 
@@ -121,7 +121,7 @@ class TestCallToolDispatch:
         with patch("mcp_server.server.search_codebase", return_value=sentinel) as mock_fn, \
              patch("mcp_server.auto_init.ensure_project_initialized"):
             result = _run(call_tool("search_codebase", {"query": "auth", "limit": 3}))
-        mock_fn.assert_called_once_with("auth", top_k=3)
+        mock_fn.assert_called_once_with("auth", top_k=3, include_content=False)
         parsed = json.loads(result[0].text)
         assert parsed["query"] == "auth"
 
@@ -131,7 +131,7 @@ class TestCallToolDispatch:
         with patch("mcp_server.server.search_codebase", return_value=sentinel) as mock_fn, \
              patch("mcp_server.auto_init.ensure_project_initialized"):
             _run(call_tool("search_codebase", {"query": "db"}))
-        mock_fn.assert_called_once_with("db", top_k=5)
+        mock_fn.assert_called_once_with("db", top_k=5, include_content=False)
 
     def test_dispatch_add_phase(self):
         """add_phase dispatches with all required and optional arguments."""
@@ -164,7 +164,7 @@ class TestCallToolDispatch:
         with patch("mcp_server.server.get_impact", return_value=sentinel) as mock_fn, \
              patch("mcp_server.auto_init.ensure_project_initialized"):
             result = _run(call_tool("get_impact", {"file_path": "src/core.py"}))
-        mock_fn.assert_called_once_with("src/core.py", limit=20)
+        mock_fn.assert_called_once_with("src/core.py", limit=10, summary_only=False)
         parsed = json.loads(result[0].text)
         assert parsed["blast_radius"] == 3
 
@@ -615,7 +615,7 @@ class TestCallToolAdditionalRoutes:
         with patch("mcp_server.server.get_history", return_value=sentinel) as mock_fn, \
              patch("mcp_server.auto_init.ensure_project_initialized"):
             result = _run(call_tool("get_history", {"file_path": "src/core.py"}))
-        mock_fn.assert_called_once_with("src/core.py", limit=20)
+        mock_fn.assert_called_once_with("src/core.py", limit=5, full=False)
         assert len(result) == 1
         parsed = json.loads(result[0].text)
         assert parsed["commits"][0]["hash"] == "abc123"

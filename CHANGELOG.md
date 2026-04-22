@@ -13,6 +13,37 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [1.7.1] — 2026-04-22 — Search Timeout Fix & Version Display
+
+Two small but user-visible fixes on top of v1.7.0.
+
+### Fixed
+
+- **`search_codebase` timeout on first call** (reported by a user testing
+  on Antigravity). The embedding model (`all-MiniLM-L6-v2`) was being
+  instantiated fresh on every MCP tool call, which triggered a ~90MB
+  download + PyTorch init on first ever use (30-60s on slow networks)
+  and 1-3s of re-init overhead on every subsequent call. Antigravity's
+  ~30s MCP tool timeout killed the query before the model finished loading.
+
+  Three-layer fix:
+  1. Module-level cache for the chroma client + embedding function,
+     keyed by `db_dir`. Subsequent calls are now instant.
+  2. Background `prewarm_embedding_model()` spawned at server startup
+     (both stdio and HTTP transports). Model loads in parallel with
+     the MCP handshake window.
+  3. Cold-path timeout guard: if a query arrives while warmup is still
+     in progress, returns `{"status": "warming", ...}` within 10 seconds
+     instead of blocking until the MCP timeout fires. The agent gets a
+     clean retryable response.
+
+- **`codevira register` banner showed hardcoded `v1.6`** after upgrading
+  to v1.7.0. Now reads `mcp_server.__version__` dynamically. Same fix
+  applied to `metadata.json` version field written during auto-init and
+  migration.
+
+---
+
 ## [1.7.0] — 2026-04-18 — Token Efficiency & AI-First Tool Design
 
 **The biggest release since v1.0.** We realized Codevira was dumping 15k-60k

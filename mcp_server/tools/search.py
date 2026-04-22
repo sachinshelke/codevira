@@ -9,6 +9,16 @@ def _get_db() -> SQLiteGraph:
     db_path = get_data_dir() / "graph" / "graph.db"
     return SQLiteGraph(db_path)
 
+
+# Module-level cache for the semantic search stack.
+# Creating SentenceTransformerEmbeddingFunction triggers:
+#   - ~90MB model download on first use (cached in ~/.cache/huggingface/)
+#   - PyTorch/onnxruntime init (~1-3s even after download)
+# Caching avoids paying this cost on every search_codebase call — first
+# call is still slow but subsequent calls are instant.
+_chroma_cache: dict = {"client": None, "embed_fn": None, "db_dir": None}
+
+
 def _get_chroma_client():
     try:
         import chromadb
@@ -20,11 +30,47 @@ def _get_chroma_client():
     if not db_dir.exists():
         return None, None
 
+    # Reuse cached client + embed_fn if we're hitting the same project's index
+    # (PersistentClient is tied to a specific path; invalidate if path changes).
+    if (
+        _chroma_cache["client"] is not None
+        and _chroma_cache["embed_fn"] is not None
+        and _chroma_cache["db_dir"] == str(db_dir)
+    ):
+        return _chroma_cache["client"], _chroma_cache["embed_fn"]
+
     client = chromadb.PersistentClient(path=str(db_dir))
     embed_fn = embedding_functions.SentenceTransformerEmbeddingFunction(
         model_name="all-MiniLM-L6-v2"
     )
+    _chroma_cache["client"] = client
+    _chroma_cache["embed_fn"] = embed_fn
+    _chroma_cache["db_dir"] = str(db_dir)
     return client, embed_fn
+
+
+def prewarm_embedding_model() -> None:
+    """Pre-load the embedding model in a background thread at server startup.
+
+    SentenceTransformerEmbeddingFunction triggers a ~90MB model download on
+    first use and 1-3s of PyTorch init. If we wait until the first
+    search_codebase() call, Antigravity's ~30s MCP timeout can kill the query.
+
+    Called from server.main() and http_server.run_http_server() via a daemon
+    thread — the server becomes ready immediately; search gets warmed up in
+    parallel. Safe to call multiple times (cached after first successful load).
+    """
+    import threading
+
+    def _warmup():
+        try:
+            _get_chroma_client()  # populates _chroma_cache
+        except Exception:
+            # Failure is non-fatal — search_codebase will retry on next call
+            pass
+
+    t = threading.Thread(target=_warmup, daemon=True, name="codevira-embed-prewarm")
+    t.start()
 
 def search_codebase(description: str, top_k: int = 5, include_content: bool = False) -> dict[str, Any]:
     """Semantic search over the codebase.
@@ -36,6 +82,39 @@ def search_codebase(description: str, top_k: int = 5, include_content: bool = Fa
     Pass include_content=True only when you explicitly need the chunk source
     inline (can be 500-3000 tokens per match).
     """
+    # Fast path: if another thread is still pre-warming the embedding model,
+    # return a "warming" status immediately instead of blocking for 30s+ and
+    # triggering the MCP client's timeout. Agent retries get served once
+    # warmup is done.
+    if _chroma_cache["embed_fn"] is None:
+        # Cache miss. Try to populate it (fast if model is already downloaded
+        # and cached on disk; slow only the first time ever across any project).
+        # Wrap in a short timeout so we don't block the MCP thread.
+        import threading as _th
+        load_done = _th.Event()
+        load_err = [None]
+
+        def _load():
+            try:
+                _get_chroma_client()
+            except Exception as e:
+                load_err[0] = e
+            finally:
+                load_done.set()
+
+        _th.Thread(target=_load, daemon=True, name="codevira-embed-sync-load").start()
+        # Wait up to 10 seconds — enough for warm-cache loads, short of MCP timeout
+        if not load_done.wait(timeout=10.0):
+            return {
+                "status": "warming",
+                "message": (
+                    "Semantic search model is loading (first-time setup downloads ~90MB). "
+                    "Try this query again in 30-60 seconds. Other tools work normally."
+                ),
+            }
+        if load_err[0] is not None:
+            return {"error": f"Embedding model load failed: {load_err[0]}"}
+
     client, embed_fn = _get_chroma_client()
     if not client:
         # v1.6: Check if auto-init is running and return a friendly status

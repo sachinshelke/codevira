@@ -1135,6 +1135,15 @@ def main():
         try: log_crash(e, context="log retention cleanup")
         except Exception: pass
 
+    # v1.7: Pre-warm the embedding model in a background thread so the first
+    # search_codebase() call doesn't hit the MCP client's ~30s timeout
+    # while waiting for PyTorch init / model download.
+    try:
+        from mcp_server.tools.search import prewarm_embedding_model
+        prewarm_embedding_model()
+    except Exception as e:
+        logger.warning("Embedding prewarm failed: %s", e)
+
     async def _run():
         async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
             await server.run(

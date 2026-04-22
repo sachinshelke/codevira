@@ -340,6 +340,13 @@ def run_http_server(
     except Exception as e:
         logger.warning("Log retention cleanup failed: %s", e)
 
+    # v1.7: Pre-warm the embedding model in a background thread
+    try:
+        from mcp_server.tools.search import prewarm_embedding_model
+        prewarm_embedding_model()
+    except Exception as e:
+        logger.warning("Embedding prewarm failed: %s", e)
+
     # ---- TLS certificate setup ----
     ssl_certfile: str | None = None
     ssl_keyfile: str | None = None

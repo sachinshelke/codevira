@@ -464,8 +464,9 @@ def cmd_register(
     project_root = get_project_root()
     cmd_path, python_exe = _resolve_command()
 
+    from mcp_server import __version__
     print()
-    print("  Codevira — Global IDE Registration (v1.6)")
+    print(f"  Codevira — Global IDE Registration (v{__version__})")
     print("  " + "─" * 44)
     print()
 

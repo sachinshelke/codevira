@@ -22,7 +22,12 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-_CODEVIRA_VERSION = "1.6.0"
+def _codevira_version() -> str:
+    try:
+        from mcp_server import __version__
+        return __version__
+    except Exception:
+        return "unknown"
 
 
 def detect_migration_needed(project_root: Path) -> bool:
@@ -140,7 +145,7 @@ def migrate_to_centralized(project_root: Path) -> dict:
         "git_remote": git_remote,
         "original_path": str(project_root),
         "migrated_at": datetime.now(timezone.utc).isoformat(),
-        "version": _CODEVIRA_VERSION,
+        "version": _codevira_version(),
     }
     (centralized / "metadata.json").write_text(json.dumps(metadata, indent=2))
 

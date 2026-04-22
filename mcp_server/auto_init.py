@@ -223,6 +223,14 @@ def _write_config(data_dir: Path, detected: dict, project_root: Path) -> None:
         yaml.dump(config, f, default_flow_style=False, sort_keys=False)
 
 
+def _codevira_version() -> str:
+    try:
+        from mcp_server import __version__
+        return __version__
+    except Exception:
+        return "unknown"
+
+
 def _write_metadata(data_dir: Path, project_root: Path) -> None:
     """Write metadata.json so the centralized dir is recognized."""
     import json
@@ -234,7 +242,7 @@ def _write_metadata(data_dir: Path, project_root: Path) -> None:
         "git_remote": _get_git_remote_url(project_root),
         "original_path": str(project_root),
         "created_at": datetime.now(timezone.utc).isoformat(),
-        "version": "1.6.0",
+        "version": _codevira_version(),
         "auto_initialized": True,
     }
     (data_dir / "metadata.json").write_text(json.dumps(metadata, indent=2))

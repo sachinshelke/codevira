@@ -330,7 +330,8 @@ class TestWriteMetadata:
         assert meta["path_key"] == "test_key"
         assert meta["git_remote"] == "git@github.com:test/repo.git"
         assert meta["original_path"] == str(project_root)
-        assert meta["version"] == "1.6.0"
+        from mcp_server import __version__
+        assert meta["version"] == __version__
         assert meta["auto_initialized"] is True
         assert "created_at" in meta
 

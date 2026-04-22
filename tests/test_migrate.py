@@ -237,7 +237,8 @@ class TestMigrateToCentralized:
         meta = json.loads(meta_file.read_text())
         assert meta["path_key"] == key
         assert meta["original_path"] == str(project)
-        assert meta["version"] == "1.6.0"
+        from mcp_server import __version__
+        assert meta["version"] == __version__
         assert "migrated_at" in meta
 
     def test_metadata_contains_git_remote(self, tmp_path, monkeypatch):

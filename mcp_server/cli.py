@@ -474,12 +474,16 @@ def cmd_register(
         path = inject_claude_http_url(http_url)
         print(f"  ✓ Claude Code (HTTP URL): {path}")
         print()
+        print("  Tip: run `codevira configure` in a project to customize which folders are indexed.")
+        print()
         return
 
     if claude_desktop:
         path = _inject_claude_desktop(project_root, cmd_path, python_exe)
         print(f"  ✓ Claude Desktop: {path}")
         print("  Note: Claude Desktop uses stdio — restart it to pick up changes.")
+        print()
+        print("  Tip: run `codevira configure` in a project to customize which folders are indexed.")
         print()
         return
 
@@ -519,6 +523,8 @@ def cmd_register(
         print()
         print("  Restart your AI tools to pick up the new configuration.")
         print("  Every project you open will now have Codevira memory automatically.")
+        print()
+        print("  Tip: run `codevira configure` in a project to customize which folders are indexed.")
     else:
         print("  No AI tools detected. Install Claude Code, Cursor, or Windsurf first.")
     print()
@@ -626,6 +632,35 @@ def main() -> None:
              "stick with the default stdio register.",
     )
 
+    # configure (v1.8: interactive multi-select to pick watched_dirs + file_extensions)
+    cfg_parser = subparsers.add_parser(
+        "configure",
+        help="Pick which folders/extensions Codevira indexes (interactive)",
+        description=(
+            "Pick which folders/extensions Codevira indexes. "
+            "Run with no flags for interactive mode (numbered-list prompts). "
+            "Use --dirs/--extensions for non-interactive (CI/scripts). "
+            "Auto-bootstraps config.yaml + metadata.json + global.db "
+            "registration on first run if they don't exist."
+        ),
+    )
+    cfg_parser.add_argument(
+        "--dirs",
+        help="Comma-separated directories to watch (non-interactive)",
+    )
+    cfg_parser.add_argument(
+        "--extensions",
+        help="Comma-separated file extensions, e.g. '.py,.ts' (non-interactive)",
+    )
+    cfg_parser.add_argument(
+        "--no-reindex", action="store_true",
+        help="Skip the 'rebuild index now?' prompt after writing config",
+    )
+    cfg_parser.add_argument(
+        "--dry-run", action="store_true",
+        help="Scan and print the proposed config; do not write",
+    )
+
     # clean
     clean_parser = subparsers.add_parser(
         "clean",
@@ -689,6 +724,26 @@ def main() -> None:
             claude_desktop=getattr(args, "claude_desktop", False),
             http_url=getattr(args, "http_url", None),
         )
+    elif args.command == "configure":
+        from mcp_server.cli_configure import cmd_configure
+        try:
+            rc = cmd_configure(
+                interactive=(args.dirs is None and args.extensions is None and not args.dry_run),
+                dirs_arg=args.dirs,
+                exts_arg=args.extensions,
+                reindex=not args.no_reindex,
+                dry_run=args.dry_run,
+            )
+        except KeyboardInterrupt:
+            # Outer-level guard: Ctrl+C anywhere cmd_configure didn't handle
+            # internally (e.g. during scan_project, during bootstrap, during
+            # auto_detect_project). Prompt-level and reindex-level handlers
+            # catch Ctrl+C with context-specific messages; this catches
+            # everything else and exits cleanly with the POSIX SIGINT code.
+            print()
+            print("Aborted.")
+            sys.exit(130)
+        sys.exit(rc)
     elif args.command == "clean":
         cmd_clean(
             clean_all=getattr(args, "all", False),

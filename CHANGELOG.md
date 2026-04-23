@@ -13,6 +13,227 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [1.8.0] — 2026-04-23 — Memory Sharpening + Config UX
+
+Three internal improvements that make the memory we already capture **sharper**,
+without making it heavier. Zero new MCP tools. Zero new tables. The public API
+shape changes only one thing: `get_session_context()` gains a `focus_source`
+field (~10 tokens, additive, backwards-compatible).
+
+The problem this release solves:
+- `get_session_context()` returned the 3 newest decisions by timestamp —
+  regardless of whether they had anything to do with the current task.
+- `search_decisions()` ordered purely by recency — a `file_path` match
+  was no better than a match buried in an unrelated session summary.
+- `log_session()` inserted every decision unconditionally — a day of
+  iterative agent work logged the same intent 5+ times.
+
+### Fixed
+
+- **MCP `serverInfo.version` reported the MCP library version, not codevira's**
+  (pre-existing bug, surfaced during v1.8 install verification on Python
+  3.13). `Server("codevira")` was constructed without a `version=` argument,
+  so the framework defaulted to its own pip-package version (e.g. `1.27.0`)
+  in the JSON-RPC `initialize` handshake response. Clients use this field
+  for telemetry and version gating, so the wrong value misled them.
+  One-line fix: `Server("codevira", version=__version__)`.
+- **`get_session_context()` read the wrong dict key** (pre-existing bug).
+  `list_open_changesets()` returns `{"open_changesets": [...], ...}`, but
+  `get_session_context` looked for `"changesets"`. The `open_changesets`
+  field in the session-context response was **always empty** in production.
+  Tests didn't catch it because mocks used the same wrong key.
+
+- **`GlobalDB` concurrent-open race condition** (pre-existing bug — latent
+  since v1.6's centralized storage introduced shared `~/.codevira/global.db`).
+  `PRAGMA journal_mode=WAL` requires an exclusive lock and — unlike normal
+  SQL — does NOT honour `sqlite3`'s `busy_timeout`. When multiple processes
+  or threads opened the same fresh database concurrently (e.g. several
+  projects' first-ever `codevira register` running in parallel, or the
+  `global_sync` background export racing the MCP server thread), one or
+  more would raise `OperationalError('database is locked')` and silently
+  fail to register. The test `test_concurrent_access_from_threads` was
+  flaky at 60% failure rate, hinting at the real issue. Fixed with WAL-
+  enable retry loop + short-circuit when WAL is already active. Stability
+  verified at 20/20 passes across 20 test runs.
+
+### Changed
+
+- **Focus-weighted `recent_decisions` in `get_session_context()`**. Instead
+  of chronological "newest 3", decisions are now ranked by what the agent
+  is currently focused on:
+  1. Open changeset with `files_pending` → focus = first file path of the
+     most-recently-created changeset.
+  2. Strong `current_phase.next_action` signal → focus = extracted keywords
+     (rejects short or stop-list-only actions like "continue work").
+  3. Otherwise → chronological fallback (unchanged behaviour).
+  If focus returns fewer than 3, the list pads with `get_recent_decisions()`.
+  New response field `focus_source` (`"open_changeset:<id>"`, `"next_action"`,
+  or `null`) lets the agent see *why* it got these decisions.
+
+- **Smarter `search_decisions()` ranking**. SQL now adds `file_path` to both
+  the WHERE clause and a CASE-based ORDER BY:
+  `file_path match (0) > decision text (1) > context (2) > summary-only (3)`,
+  then newest first within each tier. Searching for `"src/auth.py"` now
+  surfaces file-path matches even when the decision text doesn't mention
+  the path.
+
+- **Decision dedup on write**. `log_session()` now skips a new decision
+  if it has a `file_path` and its token-set overlaps ≥ 80% with any of
+  the 5 most recent decisions for that same file. The session row is
+  always created; only redundant *decisions* are dropped. Short
+  decisions (< 3 tokens) and decisions without `file_path` are always
+  inserted.
+
+### Added
+
+- `focus_source` field on `get_session_context()` response (≈10 tokens).
+- `mcp_server.tools.learning._infer_focus()` — pure helper, module-private.
+- `indexer.sqlite_graph._is_duplicate()` — pure token-overlap helper,
+  module-private, independently testable.
+- **`codevira configure`** — new CLI subcommand. Scans your project
+  (gitignore-aware via existing `discover_source_files()`), shows discovered
+  directories and file extensions with counts, lets you pick via a numbered-
+  list prompt, writes the choices back to `.codevira/config.yaml`, and offers
+  to rebuild the index. Non-interactive:
+  `codevira configure --dirs src,lib --extensions .py,.ts --no-reindex`.
+  Solves the AgentStore-style "0 chunks indexed" case where
+  `auto_detect_project()` mis-guesses a monorepo layout.
+  When `config.yaml` is missing (normal state after `codevira register` but
+  before the first MCP tool call), `configure` auto-bootstraps it in full
+  parity with `auto_init`'s first-init path: writes `metadata.json` (rename-
+  resilient lookup via `git_remote`) and registers the project in
+  `~/.codevira/global.db` for cross-project intelligence. Missing these on
+  earlier drafts would have left the project invisible to rename-resilient
+  path lookup and absent from global memory until the first session log.
+- **Zero-chunks safety hint at index time.** When `codevira index --full` or
+  `codevira index` (incremental, project-wide) matches no files against your
+  `watched_dirs` + `file_extensions`, the indexer now prints a one-line
+  remedy pointing at `codevira configure`. Output goes to **stderr** (not
+  stdout) so the hint never leaks into the MCP JSON-RPC wire when
+  `start_background_full_index` runs during auto_init inside the MCP server
+  process. Also logged at WARNING level so background invocations
+  (auto-init, launchd watcher) leave a trace regardless of terminal
+  capture. Does NOT fire for caller-scoped incremental runs (e.g. the
+  `refresh_index` MCP tool targeting a specific file) — zero matches there
+  is the caller's choice, not a misconfiguration.
+- `codevira register` success banner now nudges toward `codevira configure`.
+
+### Internal
+
+- 87 new tests:
+  - 34 for v1.8 memory sharpening (focus inference priority rules, ranking
+    tier ordering, dedup threshold behaviour, session-row-always-created
+    invariant, NULL file_path fallback, session_id filtering + new ranking SQL)
+  - 43 for `codevira configure` (scan_project with centralized-mode
+    decoupling + skip_dirs honoring, multi-select prompt incl. non-TTY
+    fallback + Ctrl+C clean-abort, config writer preserve/dedupe/idempotency,
+    orchestrator edge cases incl. bootstrap on missing config, dry-run disk
+    safety, corrupt-YAML handling, empty-extensions safety, PermissionError
+    friendly wrapper, `--dirs`/`--extensions` normalization)
+  - 10 for the zero-chunks hint (unit tests of the helper proving it writes
+    to stderr not stdout + integration tests proving it fires ONLY for full
+    or project-wide-incremental scans, not caller-scoped or normal "no files
+    changed")
+- Full test suite: **1,398 passing, 0 deterministic failures** (up from
+  1,306 at v1.7.1 → +92). The two "pre-existing watchdog failures" that
+  haunted earlier drafts of this CHANGELOG turned out to be an environment
+  issue in a single dev machine (system Python 3.9 without `watchdog`);
+  the pipx-installed v1.8.0 environment has all required deps. The one
+  pre-existing flaky test (`test_concurrent_access_from_threads`) is now
+  fixed by the `GlobalDB` WAL-enable retry loop described above.
+
+### Verified environments
+
+- **macOS (APFS)** + Python 3.9 system + Python 3.11 pipx: full regression
+  passes; all interactive + non-interactive flows manually verified on three
+  real projects (AgentStore, UDAP, ToolsConnector).
+- **Cross-process + thread concurrency**: stress-tested (12 threads × 20
+  writes, 8 subprocesses × 25 writes, 100 concurrent-read/write cycles) —
+  0 errors, 0 data loss.
+
+### Unverified environments / known gaps (candidates for v1.8.1 or v1.9)
+
+- **Windows**: `os.replace` atomicity weakens when the destination is open
+  by another process. If a Windows user has Claude Code reading
+  `config.yaml` at the moment `codevira configure` writes it, the write
+  may fail with `PermissionError`. Pre-existing risk; v1.8 does not fix
+  and does not regress. Windows smoke-testing is a v1.9 scope item.
+- **Network filesystems (NFS, SMB)**: atomic-replace guarantees are weaker
+  on network FS. Unlikely in solo-dev environments (codevira's target);
+  possible in enterprise setups.
+- **Python 3.10, 3.12**: The APIs `codevira configure` uses are stable
+  across 3.10+. Syntax-verified against 3.10+. **Python 3.13.7
+  empirically verified** during v1.8 install validation (full pipx
+  install + MCP handshake working). 3.10 and 3.12 are syntax-verified
+  only. CI on all Python versions is a v1.8.x task.
+- **Case-insensitive filesystem slugs**: On macOS APFS (default), paths
+  differing only in case (`~/Documents` vs `~/documents`) produce
+  different slugs for the same physical directory, creating split state.
+  Pre-existing since v1.5 — fixing requires a migration step for existing
+  users and is scoped to v1.9.
+- **Interactive TTY automated coverage**: The interactive prompt flow is
+  tested via mocked stdin + `sys.stdin.isatty`. A real terminal session
+  was manually verified during development; automated TTY testing (via
+  pexpect or similar) is a v1.8.x nice-to-have.
+- **MCP client post-upgrade reload**: `codevira register` writes config;
+  each MCP client (Claude Code, Cursor, Windsurf, Antigravity, Claude
+  Desktop) needs to reload to see changes. Verified for Claude Code.
+  Other clients may have edge cases that surface post-release.
+
+### Known test flake (NOT v1.8; pre-existing)
+
+- `test_chunk_error_continues_to_next_file` fails ~3/10 times in the full
+  suite on Python 3.9 (system) due to a chromadb+pydantic version
+  incompatibility raising `TypeError` during `import chromadb`, which
+  `_check_search_deps()` doesn't catch (it only catches `ImportError`).
+  **Not introduced by v1.8 and not touched by v1.8 code paths** — verified
+  by measuring the same 3/10 flake rate on clean v1.7.1. v1.8 deliberately
+  does not widen the exception catch because it would silently mask real
+  dep issues; a proper fix belongs in a targeted follow-up PR with its own
+  test coverage. Does not affect production users — the condition requires
+  a specific dev environment (Py 3.9 + mismatched chromadb/pydantic).
+- Regression guards added by the binocular review pass:
+  - `test_centralized_mode_data_dir_and_project_root_decoupled` — catches
+    the production bug where `data_dir.parent` was used where
+    `get_project_root()` was required (centralized mode v1.6+).
+  - `test_bootstraps_config_when_missing` — catches the workflow where
+    `codevira register` was run but config.yaml hasn't been written yet
+    (auto_init hadn't fired because no MCP tool call had happened).
+  - `test_bootstrap_respects_dry_run` — catches bootstrap writing disk
+    during `--dry-run`.
+  - `test_fires_on_stderr_when_not_quiet` — catches zero-chunks hint
+    leaking to stdout, which would corrupt the MCP JSON-RPC wire in stdio
+    mode.
+  - `test_empty_extensions_non_interactive_errors_exit_2` — catches
+    `--extensions ""` being silently accepted, which would write an empty
+    `file_extensions: []` and re-create the zero-chunks bug.
+  - `test_ctrl_c_in_prompt_returns_exit_0` — catches KeyboardInterrupt
+    propagating a traceback to the user.
+  - `test_permission_error_on_write_exits_1` — catches PermissionError /
+    OSError propagating a traceback when config.yaml isn't writable.
+  - `test_honors_user_skip_dirs_from_config` — catches scan_project
+    ignoring the user's explicit skip_dirs in config.yaml.
+
+### Known limitations
+
+- A running file-watcher or live MCP server session won't pick up config
+  changes until it restarts (the watcher snapshots `watched_dirs` at boot).
+  Restart your AI tool after `codevira configure` to apply changes.
+- `yaml.safe_dump` doesn't preserve comments in `config.yaml`. First-time
+  configs are auto-generated and have no comments; users who hand-edited
+  may see formatting normalized after `codevira configure` rewrites the file.
+
+### Unchanged (intentionally)
+
+- No new MCP tools. No new tables. No schema migration.
+- `search_decisions()` method signature unchanged.
+- `log_session()` method signature unchanged.
+- `get_session_context()` keys are additive — no removals.
+- `auto_init.py`, `detect.py`, `gitignore.py`, and `metadata.json` writer
+  untouched; `codevira configure` reuses all existing detection machinery.
+
+---
+
 ## [1.7.1] — 2026-04-22 — Search Timeout Fix & Version Display
 
 Two small but user-visible fixes on top of v1.7.0.

@@ -12,6 +12,8 @@ from pathlib import Path
 from mcp_server.paths import get_data_dir, get_project_root
 from indexer.sqlite_graph import SQLiteGraph
 
+logger = logging.getLogger(__name__)
+
 COLLECTION_NAME = "codebase_index"
 
 # Global lock — prevents the background watcher and background full-index from
@@ -90,6 +92,70 @@ def _compute_hash(file_path: Path) -> str:
         for chunk in iter(lambda: f.read(4096), b""):
             hasher.update(chunk)
     return hasher.hexdigest()
+
+
+def _warn_zero_chunks(
+    watched_dirs: list[str],
+    file_extensions: list[str],
+    quiet: bool = False,
+) -> None:
+    """Emit the zero-chunks safety hint to the module logger + stderr.
+
+    **Output goes to stderr, never stdout.** ``cmd_full_rebuild`` is called
+    from ``start_background_full_index()`` during auto_init, which runs
+    inside the MCP server process. The MCP stdio transport uses
+    ``sys.stdout.buffer`` for JSON-RPC — any stdout write from a background
+    thread would corrupt the protocol. Using stderr keeps the hint visible
+    to humans (CLI, logs) without risking client breakage in stdio mode.
+
+    Single source of truth for the hint text — shared by ``cmd_full_rebuild``
+    (when the filtered chunk set is empty) and ``cmd_incremental`` (when a
+    project-wide scan finds no files matching the config at all). The logger
+    side always fires so background invocations leave a trace; stderr is
+    suppressed when ``quiet=True``.
+    """
+    logger.warning(
+        "No files matched your watched_dirs/file_extensions. "
+        "watched_dirs=%s file_extensions=%s. Run `codevira configure`.",
+        list(watched_dirs),
+        list(file_extensions),
+    )
+    if quiet:
+        return
+    from rich.console import Console
+    c = Console(stderr=True)
+    c.print("[yellow]⚠[/yellow]  No files matched your watched_dirs/file_extensions.")
+    c.print(f"  watched_dirs:    {list(watched_dirs)}")
+    c.print(f"  file_extensions: {list(file_extensions)}")
+    c.print("  Run [bold]codevira configure[/bold] to scan your project and pick the right folders.")
+
+
+def _any_files_match(
+    watched_dirs: list[str],
+    file_extensions: list[str],
+    skip_dirs: list[str],
+) -> bool:
+    """Return True if ≥1 file under watched_dirs has a matching extension.
+
+    Short-circuits on the first match — cheap even on large trees. Used by
+    ``cmd_incremental`` to distinguish "no files changed" (normal) from "no
+    files at all match the config" (misconfiguration → fire hint).
+    """
+    root = _project_root()
+    for wd in watched_dirs:
+        base = root / wd
+        if not base.exists():
+            continue
+        for p in base.rglob("*"):
+            if not p.is_file():
+                continue
+            if p.suffix not in file_extensions:
+                continue
+            if any(s in p.parts for s in skip_dirs):
+                continue
+            return True
+    return False
+
 
 def _get_changed_files(db: SQLiteGraph) -> list[tuple[str, str]]:
     changed = []
@@ -250,6 +316,12 @@ def cmd_full_rebuild():
                     ids, docs, metadatas = [], [], []
             progress.update(task2, advance=1)
 
+    # v1.8: safety hint BEFORE the success print so it's the last thing a user
+    # sees when their config covers nothing. Logger fires unconditionally so
+    # background (auto-init) invocations also leave a trace.
+    if not all_chunks:
+        _warn_zero_chunks(watched_dirs, extensions)
+
     console.print(f"[green]✓[/green] Full rebuild complete: {len(all_chunks)} chunks indexed.")
     
     for path, f_hash in file_hashes.items():
@@ -271,9 +343,20 @@ def cmd_incremental(quiet: bool = False, file_paths: list[str] | None = None):
 
     if not changed_items:
         if explicit_files:
+            # Caller-scoped incremental — zero matches is the caller's business,
+            # not misconfiguration. Do NOT fire the zero-chunks hint.
             console.print("[green]✓[/green] No matching files found to re-index.")
         else:
-            console.print("[green]✓[/green] No files changed. Index is up to date.")
+            # Project-wide incremental scan: distinguish "nothing changed"
+            # (normal) from "config matches no files at all" (misconfig → hint).
+            config = _load_config()
+            wd = config.get("watched_dirs", ["src"])
+            exts = config.get("file_extensions", [".py", ".ts", ".tsx", ".go", ".rs"])
+            skip = config.get("skip_dirs", ["node_modules", ".venv", "__pycache__"])
+            if not _any_files_match(wd, exts, skip):
+                _warn_zero_chunks(wd, exts, quiet=quiet)
+            else:
+                console.print("[green]✓[/green] No files changed. Index is up to date.")
         db.close()
         return 0
 

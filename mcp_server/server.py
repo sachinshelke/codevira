@@ -76,7 +76,13 @@ from mcp_server.tools.learning import (
     get_session_context as learning_get_session_context,
 )
 
-server = Server("codevira")
+from mcp_server import __version__ as _codevira_version
+# Pass version so MCP's serverInfo handshake response reports the codevira
+# version (e.g. "1.8.0"). Without this, clients see serverInfo.version ==
+# the mcp framework library's own version (currently 1.27.0), which is
+# misleading — clients use serverInfo.version for telemetry and version
+# gating.
+server = Server("codevira", version=_codevira_version)
 
 
 # ---- MCP Prompts (workflow templates) ----

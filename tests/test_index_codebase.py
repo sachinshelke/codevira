@@ -1080,3 +1080,187 @@ class TestCmdStatusStaleFiles:
              patch("indexer.index_codebase._get_changed_files", return_value=stale):
             from indexer.index_codebase import cmd_status
             cmd_status(check_stale=True)  # opt-in to stale check
+
+
+
+# ============================================================================
+# v1.8: Zero-chunks safety hint — _warn_zero_chunks + _any_files_match +
+# integration with cmd_incremental.
+# ============================================================================
+
+
+@pytest.fixture
+def _restore_real_rich():
+    """Isolate from other tests that mutate rich.console.Console into a MagicMock.
+
+    Several tests in this file patch rich.console by grabbing the already-
+    imported module and reassigning ``Console`` to a MagicMock via
+    ``patch.dict(sys.modules, ...)``. patch.dict restores the ``sys.modules``
+    mapping but does NOT undo in-place attribute mutations on modules it
+    didn't own. This fixture reloads rich.console so our hint tests see the
+    real Console class.
+    """
+    import importlib
+    import rich.console as _rc
+    importlib.reload(_rc)
+    yield
+    importlib.reload(_rc)
+
+
+class TestWarnZeroChunks:
+    """Unit tests for the dual stdout + logger helper."""
+
+    @pytest.fixture(autouse=True)
+    def _rich(self, _restore_real_rich):
+        pass
+
+    def test_fires_on_stderr_when_not_quiet(self, capsys):
+        """Hint must go to STDERR, never stdout — stdout is the MCP wire."""
+        from indexer.index_codebase import _warn_zero_chunks
+        _warn_zero_chunks(["src"], [".py"], quiet=False)
+        captured = capsys.readouterr()
+        assert captured.out == "", "stdout must stay empty to protect MCP stdio"
+        assert "No files matched" in captured.err
+        assert "codevira configure" in captured.err
+        assert "src" in captured.err
+        assert ".py" in captured.err
+
+    def test_silent_on_stderr_when_quiet(self, capsys):
+        from indexer.index_codebase import _warn_zero_chunks
+        _warn_zero_chunks(["src"], [".py"], quiet=True)
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert captured.err == ""
+
+    def test_also_logged_regardless_of_quiet(self, caplog):
+        from indexer.index_codebase import _warn_zero_chunks
+        import logging as _logging
+        with caplog.at_level(_logging.WARNING, logger="indexer.index_codebase"):
+            _warn_zero_chunks(["src"], [".py"], quiet=True)
+        messages = [r.getMessage() for r in caplog.records]
+        assert any("No files matched" in m for m in messages)
+        assert any("codevira configure" in m for m in messages)
+
+
+class TestAnyFilesMatch:
+    """Unit tests for the project-wide presence check used by cmd_incremental."""
+
+    def test_returns_true_when_matching_file_exists(self, tmp_path, monkeypatch):
+        project = tmp_path / "proj"
+        (project / "src").mkdir(parents=True)
+        (project / "src" / "a.py").write_text("x=1")
+        monkeypatch.setattr("indexer.index_codebase._project_root", lambda: project)
+        from indexer.index_codebase import _any_files_match
+        assert _any_files_match(["src"], [".py"], ["node_modules"]) is True
+
+    def test_returns_false_when_no_matches(self, tmp_path, monkeypatch):
+        project = tmp_path / "proj"
+        (project / "src").mkdir(parents=True)
+        (project / "src" / "a.txt").write_text("x=1")  # wrong extension
+        monkeypatch.setattr("indexer.index_codebase._project_root", lambda: project)
+        from indexer.index_codebase import _any_files_match
+        assert _any_files_match(["src"], [".py"], ["node_modules"]) is False
+
+    def test_returns_false_when_dir_missing(self, tmp_path, monkeypatch):
+        project = tmp_path / "proj"
+        project.mkdir()
+        monkeypatch.setattr("indexer.index_codebase._project_root", lambda: project)
+        from indexer.index_codebase import _any_files_match
+        assert _any_files_match(["src"], [".py"], ["node_modules"]) is False
+
+    def test_skip_dirs_suppresses_match(self, tmp_path, monkeypatch):
+        project = tmp_path / "proj"
+        (project / "src" / "vendor").mkdir(parents=True)
+        (project / "src" / "vendor" / "lib.py").write_text("x=1")
+        monkeypatch.setattr("indexer.index_codebase._project_root", lambda: project)
+        from indexer.index_codebase import _any_files_match
+        assert _any_files_match(["src"], [".py"], ["vendor"]) is False
+
+
+
+class TestCmdIncrementalHint:
+    """Verify the hint fires from cmd_incremental ONLY for a project-wide scan
+    that matches nothing — not for caller-scoped incremental or for
+    files-exist-but-unchanged."""
+
+    @pytest.fixture(autouse=True)
+    def _rich(self, _restore_real_rich):
+        pass
+
+    def _run(self, tmp_path, monkeypatch, capsys, files, config, file_paths=None,
+             quiet=False, patch_changed=None):
+        import yaml as _yaml
+        project = tmp_path / "proj"
+        (project / ".codevira" / "graph").mkdir(parents=True)
+        (project / ".codevira" / "config.yaml").write_text(
+            _yaml.safe_dump({"project": config})
+        )
+        for rel, content in files.items():
+            p = project / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(content)
+        monkeypatch.setattr("indexer.index_codebase._project_root", lambda: project)
+        monkeypatch.setattr(
+            "indexer.index_codebase.get_data_dir",
+            lambda: project / ".codevira",
+        )
+        from mcp_server import paths as _paths
+        _paths._data_dir_cache.clear()
+
+        patches = [
+            patch("indexer.index_codebase._check_search_deps", return_value=False),
+            patch("indexer.graph_generator.generate_graph_sqlite"),
+        ]
+        if patch_changed is not None:
+            patches.append(patch("indexer.index_codebase._get_changed_files", return_value=patch_changed))
+
+        from contextlib import ExitStack
+        with ExitStack() as stack:
+            for p in patches:
+                stack.enter_context(p)
+            from indexer.index_codebase import cmd_incremental
+            cmd_incremental(quiet=quiet, file_paths=file_paths)
+        return capsys.readouterr()
+
+    def test_hint_fires_on_project_wide_zero_matches(self, tmp_path, monkeypatch, capsys, caplog):
+        import logging as _logging
+        with caplog.at_level(_logging.WARNING, logger="indexer.index_codebase"):
+            captured = self._run(
+                tmp_path, monkeypatch, capsys,
+                files={"README.md": "hi"},  # no .py files in src/
+                config={"watched_dirs": ["src"], "file_extensions": [".py"], "skip_dirs": []},
+                file_paths=None,
+            )
+        log_msgs = [r.getMessage() for r in caplog.records]
+        assert any("No files matched" in m for m in log_msgs), f"expected warning log; got {log_msgs}"
+        # Hint goes to stderr (NOT stdout — stdout is the MCP wire in stdio mode).
+        assert "codevira configure" in captured.err
+        assert "codevira configure" not in captured.out, "hint must not leak to stdout"
+
+    def test_hint_NOT_fired_when_file_paths_given(self, tmp_path, monkeypatch, capsys, caplog):
+        import logging as _logging
+        with caplog.at_level(_logging.WARNING, logger="indexer.index_codebase"):
+            captured = self._run(
+                tmp_path, monkeypatch, capsys,
+                files={"src/a.py": "x=1"},
+                config={"watched_dirs": ["src"], "file_extensions": [".py"], "skip_dirs": []},
+                file_paths=["nonexistent.py"],  # caller-scoped, empty result
+            )
+        log_msgs = [r.getMessage() for r in caplog.records]
+        assert not any("No files matched" in m for m in log_msgs), f"hint should not fire; got {log_msgs}"
+        assert "codevira configure" not in captured.out
+        assert "codevira configure" not in captured.err
+
+    def test_hint_NOT_fired_when_files_exist_but_unchanged(self, tmp_path, monkeypatch, capsys, caplog):
+        import logging as _logging
+        with caplog.at_level(_logging.WARNING, logger="indexer.index_codebase"):
+            captured = self._run(
+                tmp_path, monkeypatch, capsys,
+                files={"src/a.py": "x=1"},
+                config={"watched_dirs": ["src"], "file_extensions": [".py"], "skip_dirs": []},
+                file_paths=None,
+                patch_changed=[],  # force changed=[] — files exist but nothing stale
+            )
+        log_msgs = [r.getMessage() for r in caplog.records]
+        assert not any("No files matched" in m for m in log_msgs), f"hint should not fire; got {log_msgs}"
+        assert "Index is up to date" in captured.out

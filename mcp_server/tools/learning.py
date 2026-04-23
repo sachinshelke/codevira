@@ -98,6 +98,57 @@ def _truncate(text: str | None, max_chars: int = 120) -> str | None:
     return text[: max_chars - 1] + "…"
 
 
+# v1.8: Focus inference stop-list. A `next_action` composed entirely of these
+# tokens is considered a weak signal (e.g. "continue work", "fix the thing")
+# and is discarded in favour of the chronological fallback.
+_WEAK_FOCUS_TOKENS = frozenset({
+    "continue", "work", "fix", "add", "update", "improve",
+    "todo", "the", "a", "implement", "build",
+})
+
+
+def _infer_focus(open_changesets: list[dict], current_phase: dict) -> tuple[str | None, str | None]:
+    """Infer what the agent is currently focused on.
+
+    Returns ``(focus, focus_source)``:
+      - ``focus`` is a query string suitable for ``db.search_decisions()``
+        (file path or extracted keywords), or None if no confident signal.
+      - ``focus_source`` is ``"open_changeset:<id>"``, ``"next_action"``, or
+        None — exposed to the agent so it can see *why* it got these
+        decisions and override if inference went wrong.
+
+    Priority order (first hit wins):
+      1. Open changesets with ``files_pending`` — use the first file of the
+         most recently created changeset. The list is already filtered to
+         in_progress; we sort by ``created`` desc to tie-break.
+      2. Current phase ``next_action`` with a strong signal — see
+         ``_WEAK_FOCUS_TOKENS``.
+      3. Otherwise ``(None, None)``.
+    """
+    if open_changesets:
+        # Sort by `created` (ISO string) desc. No `last_updated` field exists
+        # on the changeset payload, so `created` is the best proxy.
+        ranked = sorted(
+            open_changesets,
+            key=lambda c: c.get("created") or "",
+            reverse=True,
+        )
+        for cs in ranked:
+            pending = cs.get("files_pending") or []
+            if pending:
+                return pending[0], f"open_changeset:{cs.get('id')}"
+
+    next_action = (current_phase or {}).get("next_action") or ""
+    tokens = next_action.lower().split()
+    if len(tokens) >= 4 and not all(t in _WEAK_FOCUS_TOKENS for t in tokens):
+        # Strong signal: extract tokens >= 4 chars as the query
+        keywords = " ".join(t for t in tokens if len(t) >= 4)
+        if keywords:
+            return keywords, "next_action"
+
+    return None, None
+
+
 def get_session_context() -> dict:
     """Single 'catch me up' call — designed to be the FIRST call in a session.
 
@@ -109,7 +160,9 @@ def get_session_context() -> dict:
       current_phase     - {name, next_action, status}
       open_changesets   - up to 3 most recent, minimal fields
       recent_sessions   - up to 2 most recent, summary truncated to 100 chars
-      recent_decisions  - up to 3 most recent, decision text truncated to 120 chars
+      recent_decisions  - up to 3 focus-weighted decisions (v1.8), truncated to 120 chars
+      focus_source      - v1.8: why recent_decisions were chosen
+                          ("open_changeset:<id>" | "next_action" | null)
       confidence        - {positive, negative, neutral, overall_rate}
       top_signals       - combined preferences + rules, top 3 each
       hint              - instructions for follow-up calls
@@ -117,7 +170,6 @@ def get_session_context() -> dict:
     db = _get_db()
     try:
         recent_sessions = db.get_recent_sessions(limit=2)
-        recent_decisions = db.get_recent_decisions(limit=3)
         confidence = db.get_decision_confidence()
         prefs = db.get_preferences(min_frequency=2)[:3]
         rules = db.get_learned_rules(min_confidence=0.6)[:3]
@@ -136,19 +188,46 @@ def get_session_context() -> dict:
         except Exception:
             pass
 
-        # Open changesets: minimal shape, max 3
-        open_changesets = []
+        # Raw changesets (full payload) — kept for focus inference.
+        # Trimmed shape (below) is what goes on the response.
+        raw_changesets: list[dict] = []
         try:
             from mcp_server.tools.changesets import list_open_changesets
-            cs = list_open_changesets().get("changesets", [])
-            for c in cs[:3]:
-                open_changesets.append({
-                    "id": c.get("id"),
-                    "description": _truncate(c.get("description"), 100),
-                    "files_pending_count": len(c.get("files_pending", []) or []),
-                })
+            raw_changesets = list_open_changesets().get("open_changesets", []) or []
         except Exception:
             pass
+
+        open_changesets = [
+            {
+                "id": c.get("id"),
+                "description": _truncate(c.get("description"), 100),
+                "files_pending_count": len(c.get("files_pending", []) or []),
+            }
+            for c in raw_changesets[:3]
+        ]
+
+        # v1.8: Focus-weighted `recent_decisions` ranking
+        focus, focus_source = _infer_focus(raw_changesets, current_phase)
+        recent_decisions: list[dict] = []
+        if focus:
+            try:
+                recent_decisions = db.search_decisions(focus, limit=3)
+            except Exception:
+                recent_decisions = []
+        # Fallback / pad to 3 with chronological recent decisions
+        if len(recent_decisions) < 3:
+            seen_ids: set[tuple] = {
+                (r.get("file_path"), r.get("decision"), r.get("created_at"))
+                for r in recent_decisions
+            }
+            for d in db.get_recent_decisions(limit=3):
+                key = (d.get("file_path"), d.get("decision"), d.get("created_at"))
+                if key in seen_ids:
+                    continue
+                recent_decisions.append(d)
+                seen_ids.add(key)
+                if len(recent_decisions) >= 3:
+                    break
 
         return {
             "current_phase": current_phase,
@@ -166,8 +245,9 @@ def get_session_context() -> dict:
                     "decision": _truncate(d.get("decision"), 120),
                     "file_path": d.get("file_path"),
                 }
-                for d in recent_decisions
+                for d in recent_decisions[:3]
             ],
+            "focus_source": focus_source,
             "confidence": {
                 "overall_rate": confidence.get("overall_rate"),
                 "total_decisions": confidence.get("total", 0),

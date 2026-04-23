@@ -875,3 +875,275 @@ class TestChaos:
         assert len(edges) == 2
         kinds = {e["kind"] for e in edges}
         assert kinds == {"imports", "tests"}
+
+
+# ===========================================================================
+# v1.8 Change 2 — smarter search_decisions ranking
+# ===========================================================================
+
+from indexer.sqlite_graph import _is_duplicate  # noqa: E402  — v1.8 dedup helper
+
+
+class TestSearchDecisionsRanking:
+    """Rank tiers: file_path (0) > decision (1) > context (2) > summary-only (3)."""
+
+    def test_ranking_file_path_match_wins(self, project_env):
+        """A decision whose file_path matches the query ranks above a decision
+        whose only match is in the decision text."""
+        _, _, db = project_env
+
+        # Oldest = file_path match — should still win despite being oldest.
+        db.log_session("s-old", "summary one", "1", [
+            {"file_path": "src/auth.py", "decision": "Refactor login flow",
+             "context": "misc"},
+        ])
+        db.log_session("s-mid", "summary two", "1", [
+            {"file_path": "src/user.py",
+             "decision": "Improve validation in auth module",
+             "context": "misc"},
+        ])
+        db.log_session("s-new", "summary three", "1", [
+            {"file_path": "src/db.py",
+             "decision": "Refactor DB pool", "context": "auth stuff here"},
+        ])
+
+        results = db.search_decisions("auth", limit=10)
+        # First hit must be the file_path match.
+        assert results[0]["file_path"] == "src/auth.py"
+
+    def test_ranking_decision_text_beats_context(self, project_env):
+        """Within non-file tier, a decision-text match outranks a context-only
+        match (even when the context match is newer)."""
+        _, _, db = project_env
+
+        # Older session: decision text matches "cache"
+        db.log_session("s-old", "summary", "1", [
+            {"file_path": "a.py", "decision": "Add cache layer here",
+             "context": "unrelated"},
+        ])
+        # Newer session: only context matches "cache"
+        db.log_session("s-new", "summary", "1", [
+            {"file_path": "b.py", "decision": "Unrelated change",
+             "context": "something about cache"},
+        ])
+
+        results = db.search_decisions("cache", limit=10)
+        assert results[0]["decision"] == "Add cache layer here"
+
+    def test_ranking_recency_within_same_tier(self, project_env):
+        """Two decisions matching at the same tier → newest first."""
+        _, _, db = project_env
+        # Both match by decision text (tier 1). Force distinct created_at
+        # (SQLite CURRENT_TIMESTAMP resolution is 1s — same-second inserts
+        # would tie-break unpredictably).
+        db.log_session("s1", "summary", "1", [
+            {"file_path": "a.py", "decision": "Refactor old flow",
+             "context": "ctx"},
+        ])
+        db.log_session("s2", "summary", "1", [
+            {"file_path": "b.py", "decision": "Refactor new flow",
+             "context": "ctx"},
+        ])
+        db.conn.execute(
+            "UPDATE decisions SET created_at='2026-01-01 10:00:00' "
+            "WHERE decision='Refactor old flow'"
+        )
+        db.conn.execute(
+            "UPDATE decisions SET created_at='2026-04-22 10:00:00' "
+            "WHERE decision='Refactor new flow'"
+        )
+        db.conn.commit()
+
+        results = db.search_decisions("Refactor", limit=10)
+        # Same tier — newest first.
+        assert results[0]["decision"] == "Refactor new flow"
+
+    def test_ranking_null_file_path_still_returned(self, project_env):
+        """A decision with NULL file_path is still findable via decision text."""
+        _, _, db = project_env
+        db.log_session("s1", "summary", "1", [
+            {"file_path": None, "decision": "Free-floating note about caching",
+             "context": None},
+        ])
+        results = db.search_decisions("caching", limit=10)
+        assert len(results) == 1
+        assert results[0]["file_path"] is None
+
+    def test_ranking_file_path_in_where_clause(self, project_env):
+        """File_path matches are findable even when decision text doesn't mention the query."""
+        _, _, db = project_env
+        db.log_session("s1", "summary", "1", [
+            {"file_path": "src/payments/stripe_gateway.py",
+             "decision": "Minor cleanup",
+             "context": "Trivial edit"},
+        ])
+        # Query only matches file_path
+        results = db.search_decisions("stripe_gateway", limit=10)
+        assert len(results) == 1
+        assert results[0]["file_path"] == "src/payments/stripe_gateway.py"
+
+    def test_ranking_session_id_filter_still_applies(self, project_env):
+        """session_id filter must still work with the new ranking SQL."""
+        _, _, db = project_env
+        db.log_session("s-keep", "summary", "1", [
+            {"file_path": "a.py", "decision": "keep me cache", "context": "x"},
+        ])
+        db.log_session("s-other", "summary", "1", [
+            {"file_path": "b.py", "decision": "exclude cache", "context": "y"},
+        ])
+        results = db.search_decisions("cache", limit=10, session_id="s-keep")
+        assert len(results) == 1
+        assert results[0]["decision"] == "keep me cache"
+
+
+# ===========================================================================
+# v1.8 Change 3 — decision dedup in log_session + _is_duplicate helper
+# ===========================================================================
+
+
+class TestIsDuplicateHelper:
+    """Unit tests for the pure _is_duplicate() token-overlap function."""
+
+    def test_exact_duplicate(self):
+        assert _is_duplicate("add validation layer here",
+                             ["add validation layer here"]) is True
+
+    def test_high_overlap_above_threshold(self):
+        # 4 shared / 5 max = 0.8 → triggers at threshold 0.8
+        assert _is_duplicate("add validation layer for inputs",
+                             ["add validation layer for forms"]) is True
+
+    def test_low_overlap_below_threshold(self):
+        # Very little overlap
+        assert _is_duplicate("rewrite the auth middleware pipeline",
+                             ["add tests for the user module"]) is False
+
+    def test_empty_existing_list(self):
+        assert _is_duplicate("any decision text here", []) is False
+
+    def test_short_decision_never_dedups(self):
+        # < 3 tokens → always False
+        assert _is_duplicate("fix bug", ["fix bug"]) is False
+
+    def test_empty_existing_decision_skipped(self):
+        # One empty string in existing list must be skipped, not crash
+        assert _is_duplicate("fix the auth bug properly", ["", "irrelevant here"]) is False
+
+    def test_threshold_boundary(self):
+        # Tunable threshold: lowering should accept more as duplicate
+        assert _is_duplicate("a b c", ["a b d"], threshold=0.6) is True
+        assert _is_duplicate("a b c", ["a b d"], threshold=0.9) is False
+
+
+class TestDedupInLogSession:
+    """Change 3: log_session skips token-overlap duplicates per file."""
+
+    def test_dedup_exact_duplicate_skipped(self, project_env):
+        _, _, db = project_env
+        payload = [{"file_path": "src/auth.py",
+                    "decision": "Switch to PBKDF2 password hashing",
+                    "context": "security"}]
+        db.log_session("s1", "first", "1", payload)
+        db.log_session("s2", "second", "1", payload)
+        rows = db.conn.execute(
+            "SELECT COUNT(*) AS c FROM decisions WHERE file_path='src/auth.py'"
+        ).fetchone()
+        assert rows["c"] == 1
+
+    def test_dedup_high_overlap_skipped(self, project_env):
+        _, _, db = project_env
+        db.log_session("s1", "first", "1", [{
+            "file_path": "src/x.py",
+            "decision": "add validation layer for inputs",
+            "context": "",
+        }])
+        db.log_session("s2", "second", "1", [{
+            "file_path": "src/x.py",
+            "decision": "add validation layer for forms",
+            "context": "",
+        }])
+        rows = db.conn.execute(
+            "SELECT COUNT(*) AS c FROM decisions WHERE file_path='src/x.py'"
+        ).fetchone()
+        assert rows["c"] == 1
+
+    def test_dedup_low_overlap_kept(self, project_env):
+        _, _, db = project_env
+        db.log_session("s1", "first", "1", [{
+            "file_path": "src/x.py",
+            "decision": "rewrite the authentication middleware pipeline",
+            "context": "",
+        }])
+        db.log_session("s2", "second", "1", [{
+            "file_path": "src/x.py",
+            "decision": "drop unused imports and format file",
+            "context": "",
+        }])
+        rows = db.conn.execute(
+            "SELECT COUNT(*) AS c FROM decisions WHERE file_path='src/x.py'"
+        ).fetchone()
+        assert rows["c"] == 2
+
+    def test_dedup_different_file_both_kept(self, project_env):
+        """Same decision text, different file_path → both kept."""
+        _, _, db = project_env
+        text = "Switch to PBKDF2 password hashing"
+        db.log_session("s1", "first", "1", [
+            {"file_path": "src/auth.py", "decision": text, "context": "x"},
+        ])
+        db.log_session("s2", "second", "1", [
+            {"file_path": "src/user.py", "decision": text, "context": "x"},
+        ])
+        rows = db.conn.execute("SELECT COUNT(*) AS c FROM decisions").fetchone()
+        assert rows["c"] == 2
+
+    def test_dedup_no_file_path_never_deduped(self, project_env):
+        """Decisions without file_path are always inserted."""
+        _, _, db = project_env
+        payload = [{"file_path": None,
+                    "decision": "Generic note about refactoring everything",
+                    "context": "none"}]
+        db.log_session("s1", "first", "1", payload)
+        db.log_session("s2", "second", "1", payload)
+        rows = db.conn.execute(
+            "SELECT COUNT(*) AS c FROM decisions WHERE file_path IS NULL"
+        ).fetchone()
+        assert rows["c"] == 2
+
+    def test_dedup_short_decision_never_deduped(self, project_env):
+        """Decisions < 3 tokens always insert (even exact repeats)."""
+        _, _, db = project_env
+        payload = [{"file_path": "src/x.py", "decision": "fix bug",
+                    "context": "short"}]
+        db.log_session("s1", "first", "1", payload)
+        db.log_session("s2", "second", "1", payload)
+        rows = db.conn.execute(
+            "SELECT COUNT(*) AS c FROM decisions WHERE file_path='src/x.py'"
+        ).fetchone()
+        assert rows["c"] == 2
+
+    def test_dedup_first_decision_always_stored(self, project_env):
+        """Nothing to compare against → first decision always persists."""
+        _, _, db = project_env
+        db.log_session("s1", "first", "1", [
+            {"file_path": "src/new.py", "decision": "add initial feature flag",
+             "context": "first ever"},
+        ])
+        rows = db.conn.execute(
+            "SELECT COUNT(*) AS c FROM decisions WHERE file_path='src/new.py'"
+        ).fetchone()
+        assert rows["c"] == 1
+
+    def test_dedup_session_row_always_created(self, project_env):
+        """Session row should exist even when all decisions are skipped."""
+        _, _, db = project_env
+        payload = [{"file_path": "src/x.py",
+                    "decision": "add validation layer for inputs",
+                    "context": ""}]
+        db.log_session("s1", "first", "1", payload)
+        db.log_session("s2", "second", "1", payload)  # all decisions dedup'd
+
+        sessions = db.get_recent_sessions(limit=5)
+        ids = {s["session_id"] for s in sessions}
+        assert "s1" in ids
+        assert "s2" in ids

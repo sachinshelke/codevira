@@ -9,6 +9,38 @@ from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
 
+
+def _is_duplicate(new_decision: str, existing_decisions: list[str], threshold: float = 0.8) -> bool:
+    """True when ``new_decision`` overlaps any entry in ``existing_decisions`` at ``threshold``.
+
+    v1.8 dedup signal for :meth:`SQLiteGraph.log_session` — iterative agent runs
+    routinely log the same intent 5+ times per day, which bloats the decision
+    log and blunts ``search_decisions`` / ``get_session_context``.
+
+    Comparison is token-set overlap on lowercased whitespace splits (no
+    embeddings, no stemming, no stop-word removal):
+
+        overlap = |A ∩ B| / max(|A|, |B|)
+
+    - ``max`` (not ``min``) so adding three words to an old decision doesn't
+      score 1.0 just because the old decision is a subset.
+    - Very short decisions (< 3 tokens) always return False — too noisy to
+      reliably dedup.
+    - An empty ``existing_decisions`` list trivially returns False.
+    """
+    new_tokens = set(new_decision.lower().split())
+    if len(new_tokens) < 3:
+        return False
+    for existing in existing_decisions:
+        existing_tokens = set(existing.lower().split())
+        if not existing_tokens:
+            continue
+        overlap = len(new_tokens & existing_tokens) / max(len(new_tokens), len(existing_tokens))
+        if overlap >= threshold:
+            return True
+    return False
+
+
 class SQLiteGraph:
     def __init__(self, db_path: str | Path):
         self.db_path = Path(db_path)
@@ -497,34 +529,78 @@ class SQLiteGraph:
             ''', (file_path, sha256))
 
     def log_session(self, session_id: str, summary: str, phase: str, decisions: list[dict]):
+        """Insert a session row plus its decisions, skipping duplicates.
+
+        v1.8: A decision is skipped when it has a ``file_path`` and overlaps
+        ≥ 80% (token-set) with any of the 5 most recent decisions for that
+        same file. The session row is always written — only redundant
+        *decisions* are dropped. Decisions without a ``file_path`` are always
+        inserted (no scope to compare against).
+        """
         with self.transaction() as conn:
             conn.execute('''
                 INSERT OR REPLACE INTO sessions (session_id, summary, phase)
                 VALUES (?, ?, ?)
             ''', (session_id, summary, phase))
-            
+
             for d in decisions:
+                fp = d.get("file_path")
+                dtext = d.get("decision")
+                if fp and dtext:
+                    existing = [
+                        row["decision"]
+                        for row in conn.execute(
+                            'SELECT decision FROM decisions WHERE file_path = ? '
+                            'ORDER BY created_at DESC LIMIT 5',
+                            (fp,),
+                        ).fetchall()
+                    ]
+                    if _is_duplicate(dtext, existing):
+                        continue
                 conn.execute('''
                     INSERT INTO decisions (session_id, file_path, decision, context)
                     VALUES (?, ?, ?, ?)
-                ''', (session_id, d.get("file_path"), d.get("decision"), d.get("context")))
+                ''', (session_id, fp, dtext, d.get("context")))
 
     def search_decisions(self, query: str, limit: int = 10, session_id: str | None = None) -> list[dict]:
+        """Search decisions with relevance-tiered ranking.
+
+        v1.8: Results are ordered by match location (file_path > decision text >
+        context > summary-only) then by recency within each tier. This means a
+        decision whose ``file_path`` column matches the query — even when the
+        decision text doesn't mention the path — is findable and ranks above
+        older text-only matches.
+
+        Same ``%query%`` pattern is used for every LIKE check, so the ``pat``
+        variable feeds the WHERE clause (4 places) and the ORDER BY CASE
+        (3 places — summary is the implicit ELSE tier).
+        """
+        pat = f'%{query}%'
         sql = '''
             SELECT d.decision, d.context, d.file_path, s.summary, s.phase, d.created_at
             FROM decisions d
             JOIN sessions s ON d.session_id = s.session_id
-            WHERE (d.decision LIKE ? OR d.context LIKE ? OR s.summary LIKE ?)
+            WHERE (d.file_path LIKE ? OR d.decision LIKE ? OR d.context LIKE ? OR s.summary LIKE ?)
         '''
-        params = [f'%{query}%', f'%{query}%', f'%{query}%']
-        
+        params: list = [pat, pat, pat, pat]
+
         if session_id:
             sql += ' AND d.session_id = ?'
             params.append(session_id)
-            
-        sql += ' ORDER BY d.created_at DESC LIMIT ?'
-        params.append(limit)
-        
+
+        sql += '''
+            ORDER BY
+              CASE
+                WHEN d.file_path LIKE ? THEN 0
+                WHEN d.decision  LIKE ? THEN 1
+                WHEN d.context   LIKE ? THEN 2
+                ELSE 3
+              END,
+              d.created_at DESC
+            LIMIT ?
+        '''
+        params.extend([pat, pat, pat, limit])
+
         cur = self.conn.execute(sql, params)
         return [dict(r) for r in cur.fetchall()]
 

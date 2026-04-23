@@ -871,6 +871,26 @@ class TestCmdRegister:
         captured = capsys.readouterr()
         assert "Claude Code (global)" in captured.out or "Cursor (global)" in captured.out
 
+    def test_global_mode_banner_contains_configure_tip(self, capsys):
+        """v1.8.0: register success banner nudges toward `codevira configure`."""
+        patches = self._base_patches()
+        patches["mcp_server.ide_inject.detect_installed_ides"] = patch(
+            "mcp_server.ide_inject.detect_installed_ides",
+            return_value=["claude"],
+        )
+        started = {k: p.start() for k, p in patches.items()}
+        try:
+            from mcp_server.cli import cmd_register
+            cmd_register()
+        finally:
+            for p in patches.values():
+                p.stop()
+
+        captured = capsys.readouterr()
+        # The new tip line was added immediately after the existing "Every project..." line
+        assert "codevira configure" in captured.out
+        assert "customize which folders" in captured.out
+
     def test_global_mode_no_ides(self, capsys):
         """No flags, detect_installed_ides returns [] → prints 'No AI tools detected'."""
         patches = self._base_patches()

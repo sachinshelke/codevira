@@ -5,7 +5,7 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![MCP](https://img.shields.io/badge/protocol-MCP-purple)](https://modelcontextprotocol.io)
-[![Version](https://img.shields.io/badge/version-1.7.1-orange)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.8.0-orange)](CHANGELOG.md)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](CONTRIBUTING.md)
 
 **Built for solo developers** working on local projects with AI agents. Codevira gives every AI tool you use access to the same persistent project memory — so you stop re-explaining your codebase every session, stop losing carefully-made decisions, and stop burning tokens on re-discovery.
@@ -102,6 +102,24 @@ No explicit `codevira init` needed — everything happens on demand.
 Ask your AI agent to call `get_roadmap()` — it should return your current phase and next action.
 
 > **Note:** Restart your AI tool after running `codevira register` to pick up the new MCP config.
+
+### Customizing what's indexed
+
+Codevira tries to auto-detect your project's source layout, but monorepo or non-standard layouts sometimes slip through — you'll notice when `codevira index --full` reports `0 chunks indexed` and prints a hint pointing you here.
+
+```bash
+cd your-project
+codevira configure
+```
+
+Scans your project (gitignore-aware), shows discovered directories and extensions with file counts, and lets you pick which to watch via a numbered-list prompt. It writes your choices back to `.codevira/config.yaml` and offers to rebuild the index.
+
+**Non-interactive** (useful in scripts or CI):
+```bash
+codevira configure --dirs src,packages,apps --extensions .py,.ts,.tsx --no-reindex
+```
+
+After changing watched directories, **restart your AI tool** — running watchers snapshot the dir set at boot.
 
 ### Manual config (only if auto-inject didn't detect your tool)
 
@@ -530,6 +548,8 @@ Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the full 
 **Reporting a bug?** [Open a bug report](https://github.com/sachinshelke/codevira/issues/new?template=bug_report.md)
 **Requesting a feature?** [Open a feature request](https://github.com/sachinshelke/codevira/issues/new?template=feature_request.md)
 **Found a security issue?** Read [SECURITY.md](SECURITY.md) — please don't use public issues for vulnerabilities.
+
+**Testing a release candidate locally?** See [docs/local-pypi-https.md](docs/local-pypi-https.md) for setting up a Docker-based HTTPS PyPI registry that mirrors the real PyPI install flow without touching public PyPI.
 
 ---
 

@@ -21,11 +21,52 @@ class GlobalDB:
     def __init__(self, db_path: str | Path):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(str(self.db_path), timeout=5)
+        # 30s timeout (up from 5s): handles later-write contention under load.
+        self.conn = sqlite3.connect(str(self.db_path), timeout=30)
         self.conn.row_factory = sqlite3.Row
-        self.conn.execute("PRAGMA journal_mode=WAL")
+        # Enable WAL with retries. `PRAGMA journal_mode=WAL` requires an
+        # exclusive lock and — unlike normal SQL — does NOT honour the
+        # `busy_timeout`. When multiple threads/processes open the same fresh
+        # database file concurrently, they all race to flip the journal mode
+        # and some raise `OperationalError('database is locked')`. Skip the
+        # PRAGMA if WAL is already the effective mode, otherwise retry with
+        # short backoff. After ~1s we give up and fall through — the DB still
+        # works in the default rollback-journal mode.
+        self._enable_wal_with_retry()
         self.conn.execute("PRAGMA foreign_keys=ON")
+        # SQLite-level busy timeout for subsequent writes (complements the
+        # `timeout=30` on the connect — matters for later transactions).
+        self.conn.execute("PRAGMA busy_timeout=30000")
         self._init_schema()
+
+    def _enable_wal_with_retry(self, attempts: int = 10, initial_delay: float = 0.02) -> None:
+        """Best-effort enable of WAL journal mode.
+
+        Survives concurrent-open races by short-backoff retry and by
+        short-circuiting when WAL is already active (in which case every
+        other connection sees it too — no PRAGMA needed).
+        """
+        import time as _time
+        try:
+            mode = self.conn.execute("PRAGMA journal_mode").fetchone()[0]
+            if str(mode).lower() == "wal":
+                return  # already WAL — nothing to do
+        except sqlite3.OperationalError:
+            pass  # fall through to the retry loop
+        delay = initial_delay
+        for _ in range(attempts):
+            try:
+                self.conn.execute("PRAGMA journal_mode=WAL")
+                return
+            except sqlite3.OperationalError as e:
+                if "locked" not in str(e).lower():
+                    raise
+                _time.sleep(delay)
+                delay = min(delay * 1.5, 0.2)
+        # Last-resort: continue in the default journal mode. Non-fatal —
+        # concurrent writers are still serialized, just without WAL's
+        # reader-during-writer benefit.
+        logger.warning("Could not enable WAL on %s after retries; continuing in default mode", self.db_path)
 
     def _init_schema(self) -> None:
         self.conn.executescript("""

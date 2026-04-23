@@ -417,7 +417,7 @@ class TestGetSessionContext:
         mock_roadmap = {
             "current_phase": {"name": "Phase 5", "next_action": "Do stuff", "status": "in_progress"},
         }
-        mock_changesets = {"changesets": []}
+        mock_changesets = {"open_changesets": [], "count": 0, "warning": None}
 
         with patch("mcp_server.tools.learning.get_roadmap", return_value=mock_roadmap, create=True):
             with patch("mcp_server.tools.roadmap.get_roadmap", return_value=mock_roadmap):
@@ -441,7 +441,7 @@ class TestGetSessionContext:
         }
         with patch("mcp_server.tools.roadmap.get_roadmap", return_value=mock_roadmap):
             with patch("mcp_server.tools.changesets.list_open_changesets",
-                       return_value={"changesets": []}):
+                       return_value={"open_changesets": [], "count": 0, "warning": None}):
                 result = learning.get_session_context()
 
         # New shape: current_phase at top level (no more nested `roadmap` key)
@@ -455,7 +455,7 @@ class TestGetSessionContext:
 
         with patch("mcp_server.tools.roadmap.get_roadmap", side_effect=Exception("broken")):
             with patch("mcp_server.tools.changesets.list_open_changesets",
-                       return_value={"changesets": []}):
+                       return_value={"open_changesets": [], "count": 0, "warning": None}):
                 result = learning.get_session_context()
 
         # On failure current_phase stays empty dict
@@ -541,3 +541,194 @@ class TestMaturityHint:
         """Score < 20 returns the 'fresh start' hint."""
         result = learning._maturity_hint(5.0)
         assert "fresh" in result.lower() or "every session" in result.lower()
+
+
+# =====================================================================
+# v1.8: Open-changesets key bug (Change 0) + focus inference (Change 1)
+# =====================================================================
+
+def _changeset(id: str, files: list[str], created: str = "2026-04-22",
+               description: str = "desc") -> dict:
+    """Helper producing the raw list_open_changesets() item shape."""
+    return {
+        "id": id,
+        "description": description,
+        "created": created,
+        "files_pending": files,
+        "blocker": None,
+    }
+
+
+class TestOpenChangesetsKeyFixed:
+    """Change 0: get_session_context() must read the real key."""
+
+    def test_open_changesets_key_fixed(self, tmp_path, monkeypatch):
+        """When the mock returns real shape, open_changesets is non-empty."""
+        _, _, db = _setup_project(tmp_path, monkeypatch)
+        db.close()
+
+        cs_payload = {
+            "open_changesets": [
+                _changeset("auth-refactor", ["src/auth.py", "src/user.py"]),
+            ],
+            "count": 1,
+            "warning": None,
+        }
+
+        with patch("mcp_server.tools.roadmap.get_roadmap",
+                   return_value={"current_phase": {}}), \
+             patch("mcp_server.tools.changesets.list_open_changesets",
+                   return_value=cs_payload):
+            result = learning.get_session_context()
+
+        assert len(result["open_changesets"]) == 1
+        assert result["open_changesets"][0]["id"] == "auth-refactor"
+        assert result["open_changesets"][0]["files_pending_count"] == 2
+
+
+class TestInferFocus:
+    """Change 1: _infer_focus priority rules."""
+
+    def test_focus_from_changeset(self):
+        cs = [_changeset("auth-refactor", ["src/auth.py", "src/user.py"])]
+        focus, source = learning._infer_focus(cs, {})
+        assert focus == "src/auth.py"
+        assert source == "open_changeset:auth-refactor"
+
+    def test_focus_prefers_most_recent_changeset(self):
+        cs = [
+            _changeset("old", ["src/old.py"], created="2026-01-01"),
+            _changeset("new", ["src/new.py"], created="2026-04-22"),
+        ]
+        focus, source = learning._infer_focus(cs, {})
+        assert focus == "src/new.py"
+        assert source == "open_changeset:new"
+
+    def test_focus_skips_changeset_with_no_pending_files(self):
+        cs = [
+            _changeset("empty", [], created="2026-04-22"),
+            _changeset("has-files", ["src/x.py"], created="2026-01-01"),
+        ]
+        focus, source = learning._infer_focus(cs, {})
+        assert focus == "src/x.py"
+        assert source == "open_changeset:has-files"
+
+    def test_focus_from_next_action(self):
+        cp = {"next_action": "Refactor authentication middleware pipeline"}
+        focus, source = learning._infer_focus([], cp)
+        assert source == "next_action"
+        # All tokens >= 4 chars
+        assert "refactor" in focus
+        assert "authentication" in focus
+        assert "middleware" in focus
+        assert "pipeline" in focus
+
+    def test_focus_weak_signal_ignored_short(self):
+        cp = {"next_action": "continue work"}
+        focus, source = learning._infer_focus([], cp)
+        assert focus is None
+        assert source is None
+
+    def test_focus_weak_signal_ignored_stop_list_only(self):
+        cp = {"next_action": "continue work fix todo"}
+        focus, source = learning._infer_focus([], cp)
+        assert focus is None
+        assert source is None
+
+    def test_focus_none_when_no_signals(self):
+        focus, source = learning._infer_focus([], {})
+        assert focus is None
+        assert source is None
+
+
+class TestSessionContextFocus:
+    """Change 1: focus inference wired into get_session_context()."""
+
+    def test_focus_source_field_always_present(self, tmp_path, monkeypatch):
+        _, _, db = _setup_project(tmp_path, monkeypatch)
+        db.close()
+        with patch("mcp_server.tools.roadmap.get_roadmap",
+                   return_value={"current_phase": {}}), \
+             patch("mcp_server.tools.changesets.list_open_changesets",
+                   return_value={"open_changesets": [], "count": 0, "warning": None}):
+            result = learning.get_session_context()
+        assert "focus_source" in result
+        assert result["focus_source"] is None
+
+    def test_focus_source_reflects_changeset(self, tmp_path, monkeypatch):
+        _, _, db = _setup_project(tmp_path, monkeypatch)
+        _seed_full_project(db)
+        db.close()
+
+        cs = {
+            "open_changesets": [_changeset("api-work", ["src/api.py"])],
+            "count": 1, "warning": None,
+        }
+        with patch("mcp_server.tools.roadmap.get_roadmap",
+                   return_value={"current_phase": {}}), \
+             patch("mcp_server.tools.changesets.list_open_changesets",
+                   return_value=cs):
+            result = learning.get_session_context()
+
+        assert result["focus_source"] == "open_changeset:api-work"
+        # Decisions ranked against "src/api.py" should surface api.py matches.
+        # Seed has 2 decisions touching src/api.py — both should appear.
+        api_matches = [d for d in result["recent_decisions"]
+                       if d.get("file_path") == "src/api.py"]
+        assert len(api_matches) >= 1
+
+    def test_focus_pads_with_recent_when_few_matches(self, tmp_path, monkeypatch):
+        """Focus returning 0 matches → fall back to chronological 3."""
+        _, _, db = _setup_project(tmp_path, monkeypatch)
+        _seed_full_project(db)
+        db.close()
+
+        # Focus on a file that has NO decisions — should pad with recent.
+        cs = {
+            "open_changesets": [_changeset("unseen", ["src/unknown.py"])],
+            "count": 1, "warning": None,
+        }
+        with patch("mcp_server.tools.roadmap.get_roadmap",
+                   return_value={"current_phase": {}}), \
+             patch("mcp_server.tools.changesets.list_open_changesets",
+                   return_value=cs):
+            result = learning.get_session_context()
+
+        # Seed has 3 decisions total → pads to 3
+        assert len(result["recent_decisions"]) == 3
+        assert result["focus_source"] == "open_changeset:unseen"
+
+    def test_focus_from_next_action_sets_source(self, tmp_path, monkeypatch):
+        _, _, db = _setup_project(tmp_path, monkeypatch)
+        _seed_full_project(db)
+        db.close()
+
+        roadmap = {
+            "current_phase": {
+                "name": "API Hardening",
+                "status": "in_progress",
+                "next_action": "Add validation layer to api endpoints",
+            }
+        }
+        with patch("mcp_server.tools.roadmap.get_roadmap",
+                   return_value=roadmap), \
+             patch("mcp_server.tools.changesets.list_open_changesets",
+                   return_value={"open_changesets": [], "count": 0, "warning": None}):
+            result = learning.get_session_context()
+
+        assert result["focus_source"] == "next_action"
+
+    def test_no_focus_uses_chronological_fallback(self, tmp_path, monkeypatch):
+        _, _, db = _setup_project(tmp_path, monkeypatch)
+        _seed_full_project(db)
+        db.close()
+
+        with patch("mcp_server.tools.roadmap.get_roadmap",
+                   return_value={"current_phase": {}}), \
+             patch("mcp_server.tools.changesets.list_open_changesets",
+                   return_value={"open_changesets": [], "count": 0, "warning": None}):
+            result = learning.get_session_context()
+
+        assert result["focus_source"] is None
+        # 3 decisions seeded → should get all 3, newest first
+        assert len(result["recent_decisions"]) == 3

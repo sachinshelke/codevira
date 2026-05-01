@@ -647,6 +647,40 @@ class TestCmdIndex:
             cmd_index(full=False, quiet=True)
         mock_incremental.assert_called_once_with(quiet=True)
 
+    # v1.8.1 hardening — cmd_index refuses $HOME / system dirs
+    def test_cmd_index_refuses_home(self, tmp_path, monkeypatch, capsys):
+        """Running `codevira index` from $HOME exits 1 before touching disk.
+        Regression: pre-revalidation, this would silently mkdir
+        ~/.codevira/projects/<HOME_slug>/{graph,codeindex} as dead weight."""
+        fake_home = tmp_path / "fake-home"
+        fake_home.mkdir()
+        monkeypatch.setattr("pathlib.Path.home", lambda: fake_home)
+        monkeypatch.setattr("mcp_server.paths.get_project_root", lambda: fake_home)
+
+        from mcp_server.cli import cmd_index
+        with patch("indexer.index_codebase.cmd_full_rebuild") as mock_rebuild, \
+             patch("indexer.index_codebase.cmd_incremental") as mock_incremental, \
+             pytest.raises(SystemExit) as exc_info:
+            cmd_index(full=True)
+        assert exc_info.value.code == 1
+        # Indexer was never invoked.
+        mock_rebuild.assert_not_called()
+        mock_incremental.assert_not_called()
+        err = capsys.readouterr().err
+        assert "$HOME" in err
+
+    def test_cmd_index_refuses_system_dir(self, tmp_path, monkeypatch, capsys):
+        from pathlib import Path
+        monkeypatch.setattr("mcp_server.paths.get_project_root", lambda: Path("/"))
+
+        from mcp_server.cli import cmd_index
+        with patch("indexer.index_codebase.cmd_full_rebuild") as mock_rebuild, \
+             patch("indexer.index_codebase.cmd_incremental"), \
+             pytest.raises(SystemExit) as exc_info:
+            cmd_index(full=True)
+        assert exc_info.value.code == 1
+        mock_rebuild.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # cmd_status
@@ -926,6 +960,26 @@ class TestCmdRegister:
 
         captured = capsys.readouterr()
         assert "Warning" in captured.out or "could not configure" in captured.out
+
+    # v1.8.1 hardening — cmd_register refuses $HOME / system dirs
+    def test_register_refuses_home(self, tmp_path, monkeypatch, capsys):
+        """`codevira register` from $HOME exits 1 — prevents IDE configs
+        from being pinned to a path that the auto_init guard will later
+        reject on every MCP tool call."""
+        fake_home = tmp_path / "fake-home"
+        fake_home.mkdir()
+        monkeypatch.setattr("pathlib.Path.home", lambda: fake_home)
+        monkeypatch.setattr("mcp_server.paths.get_project_root", lambda: fake_home)
+
+        from mcp_server.cli import cmd_register
+        with patch("mcp_server.ide_inject.inject_global_claude_code") as mock_claude, \
+             pytest.raises(SystemExit) as exc_info:
+            cmd_register()
+        assert exc_info.value.code == 1
+        # No IDE injection happened.
+        mock_claude.assert_not_called()
+        err = capsys.readouterr().err
+        assert "$HOME" in err
 
 
 # ---------------------------------------------------------------------------

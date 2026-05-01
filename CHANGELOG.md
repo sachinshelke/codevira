@@ -43,10 +43,18 @@ neither did `cmd_init`.
   preventing the rogue project from forming). New helper
   `mcp_server.paths.is_invalid_project_root()` rejects `$HOME`, `/`,
   `/Users`, `/home`, `/tmp`, `/private/tmp`, `/var`, `/private/var`,
-  `/etc`, `/opt`. Wired into all three bootstrap entry points:
-  `cmd_configure`, `cmd_init`, and `auto_init._run_background_init`.
-  `auto_init` sets `_progress["status"] = "error"` so the MCP server
-  stops looping on retries.
+  `/etc`, `/opt` (plus the macOS-resolved `/private/etc` and
+  `/System/Volumes/Data/home` forms). Wired into FIVE entry points:
+  `cmd_configure`, `cmd_init`, `cmd_index`, `cmd_register`, and
+  `auto_init._run_background_init`. `cmd_index` and `cmd_register` were
+  added during pre-release revalidation — without them, `codevira index`
+  from `$HOME` would silently mkdir
+  `~/.codevira/projects/<HOME_slug>/{graph,codeindex}/` as dead-weight
+  artefacts (no `metadata.json`, so `clean --orphans` couldn't even
+  reach them), and `codevira register` would pin IDE configs to a path
+  the auto_init guard later rejects on every MCP tool call. `auto_init`
+  sets `_progress["status"] = "error"` so the MCP server stops looping
+  on retries.
 
 - **`SQLiteGraph` WAL with retry — port of the v1.8.0 GlobalDB fix**
   (eliminates the 2 of 43 `database is locked` crashes). v1.8.0 fixed

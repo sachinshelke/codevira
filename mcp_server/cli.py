@@ -356,6 +356,18 @@ def cmd_init() -> None:
 def cmd_index(full: bool = False, quiet: bool = False) -> None:
     """Run the indexer (incremental by default, or --full for complete rebuild)."""
     from indexer.index_codebase import cmd_full_rebuild, cmd_incremental
+    from mcp_server.paths import get_project_root, is_invalid_project_root
+
+    # v1.8.1 hardening: cmd_full_rebuild/cmd_incremental both call
+    # SQLiteGraph(get_data_dir()/"graph"/"graph.db") which mkdir's the
+    # centralized path. Running `codevira index` from $HOME on v1.8.0 would
+    # have created ~/.codevira/projects/<HOME_slug>/{graph,codeindex}/ as
+    # dead-weight artefacts (no metadata.json -> not even cleanable via
+    # --orphans). Guard at the CLI layer so the indexer can stay agnostic.
+    rejection = is_invalid_project_root(get_project_root())
+    if rejection:
+        print(f"Error: {rejection}", file=sys.stderr)
+        sys.exit(1)
 
     if full:
         cmd_full_rebuild()
@@ -466,7 +478,7 @@ def cmd_register(
     own memory. No ports, no background server. This is the recommended
     setup for solo developers working on multiple projects.
     """
-    from mcp_server.paths import get_project_root
+    from mcp_server.paths import get_project_root, is_invalid_project_root
     from mcp_server.ide_inject import (
         _resolve_command, detect_installed_ides,
         inject_global_claude_code, inject_global_cursor, inject_global_windsurf,
@@ -474,6 +486,18 @@ def cmd_register(
     )
 
     project_root = get_project_root()
+
+    # v1.8.1: refuse $HOME / system dirs. cmd_register doesn't create the
+    # data_dir itself, but it pins project_root into IDE configs (e.g.
+    # Claude Desktop). A $HOME-pinned IDE config would later trigger the
+    # auto_init guard on every MCP tool call — better to fail fast here
+    # so the user gets a clear message instead of silently broken IDE
+    # integration.
+    rejection = is_invalid_project_root(project_root)
+    if rejection:
+        print(f"Error: {rejection}", file=sys.stderr)
+        sys.exit(1)
+
     cmd_path, python_exe = _resolve_command()
 
     from mcp_server import __version__

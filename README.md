@@ -2,10 +2,11 @@
 
 > **One memory layer for every AI coding tool you use.** Switch between Claude Code, Cursor, Windsurf, and Antigravity without losing context, decisions, or progress.
 
-[![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
+[![PyPI version](https://img.shields.io/pypi/v/codevira?color=orange)](https://pypi.org/project/codevira/)
+[![Python](https://img.shields.io/pypi/pyversions/codevira?color=blue)](https://pypi.org/project/codevira/)
+[![Downloads](https://static.pepy.tech/badge/codevira)](https://pepy.tech/project/codevira)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![MCP](https://img.shields.io/badge/protocol-MCP-purple)](https://modelcontextprotocol.io)
-[![Version](https://img.shields.io/badge/version-1.8.0-orange)](CHANGELOG.md)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](CONTRIBUTING.md)
 
 **Built for solo developers** working on local projects with AI agents. Codevira gives every AI tool you use access to the same persistent project memory — so you stop re-explaining your codebase every session, stop losing carefully-made decisions, and stop burning tokens on re-discovery.
@@ -560,6 +561,14 @@ Common questions about setup, usage, architecture, and troubleshooting — see [
 ## Roadmap
 
 See what's built, what's next, and the long-term vision — see [ROADMAP.md](ROADMAP.md).
+
+## Star History
+
+If Codevira saves you tokens or sanity, a star helps other developers find it. Tracking growth keeps me focused on what's working.
+
+<a href="https://star-history.com/#sachinshelke/codevira&Date">
+  <img src="https://api.star-history.com/svg?repos=sachinshelke/codevira&type=Date" alt="Star History Chart" width="600"/>
+</a>
 
 ## License
 

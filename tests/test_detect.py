@@ -554,3 +554,50 @@ class TestDirHasSources:
         (tmp_path / "main.ts").write_text("const x = 1")
         result = _dir_has_sources(tmp_path, {".py"}, max_depth=3)
         assert result is False
+
+
+# ===================================================================
+# v1.8.1 — _SKIP_DIRS denylist defense-in-depth
+# ===================================================================
+
+class TestSkipDirsDenylistV181:
+    """Even if is_invalid_project_root() somehow misses (e.g. user passes
+    --project-dir to a $HOME-shaped tree), auto-detect must never include
+    user-data dirs in watched_dirs."""
+
+    def test_skip_dirs_includes_macos_user_data(self):
+        from mcp_server.detect import _SKIP_DIRS
+        for d in ("Library", "Downloads", "Music", "Movies", "Pictures",
+                  "Desktop", "Public", "Applications"):
+            assert d in _SKIP_DIRS, f"{d} should be in _SKIP_DIRS"
+
+    def test_skip_dirs_includes_linux_user_data(self):
+        from mcp_server.detect import _SKIP_DIRS
+        for d in ("Videos", "Templates"):
+            assert d in _SKIP_DIRS, f"{d} should be in _SKIP_DIRS"
+
+    def test_skip_dirs_includes_cloud_sync_dirs(self):
+        from mcp_server.detect import _SKIP_DIRS
+        for d in ("Dropbox", "iCloud Drive", "OneDrive", "Google Drive", "Box"):
+            assert d in _SKIP_DIRS, f"{d} should be in _SKIP_DIRS"
+
+    def test_detect_watched_dirs_excludes_user_data_when_layout_is_home_shaped(
+        self, tmp_path,
+    ):
+        """Synthetic project with user-data subdirs alongside a real `src/`:
+        only `src` should make it into watched_dirs. Models the rogue $HOME
+        bootstrap scenario."""
+        from mcp_server.detect import detect_watched_dirs
+        for d in ("Library", "Downloads", "Documents"):
+            (tmp_path / d).mkdir()
+            (tmp_path / d / "junk.py").write_text("x=1")
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "real.py").write_text("def f(): pass")
+
+        watched = detect_watched_dirs(tmp_path, "python")
+        # `src` is the only legitimate source dir — Library/Downloads must
+        # be filtered out. (Documents isn't in _SKIP_DIRS by design — users
+        # legitimately put projects under ~/Documents/...)
+        assert "Library" not in watched
+        assert "Downloads" not in watched
+        assert "src" in watched

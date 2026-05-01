@@ -728,3 +728,105 @@ class TestPathsChaos:
 
         _set_project_root(monkeypatch, nested)
         assert get_project_root() == project.resolve()
+
+
+# ===================================================================
+# is_invalid_project_root (v1.8.1)
+# ===================================================================
+
+class TestIsInvalidProjectRoot:
+    """Refuses $HOME and known system top-levels as a project root.
+
+    Regression test for the v1.8.0 production crash mode: a $HOME data
+    dir got registered as a project, the watcher walked
+    ~/Library/Group Containers/... and crashed 41 times in 70 minutes
+    on EINTR. v1.8.1 prevents the rogue project from forming in the
+    first place via this helper.
+    """
+
+    def test_rejects_home(self, tmp_path, monkeypatch):
+        """Path.home() exactly is rejected with $HOME message."""
+        from mcp_server.paths import is_invalid_project_root
+        fake_home = tmp_path / "fake-home"
+        fake_home.mkdir()
+        monkeypatch.setattr("pathlib.Path.home", lambda: fake_home)
+        result = is_invalid_project_root(fake_home)
+        assert result is not None
+        assert "$HOME" in result
+
+    def test_rejects_root_slash(self):
+        from mcp_server.paths import is_invalid_project_root
+        result = is_invalid_project_root(Path("/"))
+        assert result is not None
+        assert "system directory" in result
+
+    def test_rejects_users_parent(self):
+        """macOS top-level /Users is rejected."""
+        from mcp_server.paths import is_invalid_project_root
+        result = is_invalid_project_root(Path("/Users"))
+        assert result is not None
+        assert "system directory" in result
+
+    def test_rejects_home_parent_linux(self):
+        """Linux top-level /home is rejected."""
+        from mcp_server.paths import is_invalid_project_root
+        result = is_invalid_project_root(Path("/home"))
+        assert result is not None
+        assert "system directory" in result
+
+    def test_rejects_tmp(self):
+        """Both /tmp and the macOS-resolved /private/tmp are rejected."""
+        from mcp_server.paths import is_invalid_project_root
+        # On macOS, /tmp is a symlink to /private/tmp; Path.resolve() follows
+        # the symlink so the comparison must include the resolved form.
+        # Use /private/tmp directly to verify regardless of platform.
+        if Path("/private/tmp").exists():
+            assert is_invalid_project_root(Path("/private/tmp")) is not None
+        if Path("/tmp").exists():
+            assert is_invalid_project_root(Path("/tmp")) is not None
+
+    def test_rejects_var_etc_opt(self):
+        """/var, /etc, /opt all rejected."""
+        from mcp_server.paths import is_invalid_project_root
+        for p in ("/var", "/etc", "/opt"):
+            if Path(p).exists():
+                assert is_invalid_project_root(Path(p)) is not None, f"{p} should be invalid"
+
+    def test_accepts_real_project_path(self, tmp_path):
+        """A normal project directory passes (returns None)."""
+        from mcp_server.paths import is_invalid_project_root
+        project = tmp_path / "my-project"
+        project.mkdir()
+        assert is_invalid_project_root(project) is None
+
+    def test_accepts_home_subdirectory(self, tmp_path, monkeypatch):
+        """A subdirectory of $HOME passes (returns None)."""
+        from mcp_server.paths import is_invalid_project_root
+        fake_home = tmp_path / "fake-home"
+        fake_home.mkdir()
+        monkeypatch.setattr("pathlib.Path.home", lambda: fake_home)
+        sub = fake_home / "Documents" / "MyProject"
+        sub.mkdir(parents=True)
+        assert is_invalid_project_root(sub) is None
+
+    def test_handles_nonexistent_path(self, tmp_path):
+        """A path that .resolve() can't fail on (no symlink loop) is fine; if
+        .resolve() raises we return None and let caller surface the OSError."""
+        from mcp_server.paths import is_invalid_project_root
+        # A non-existent path doesn't make resolve() raise on most filesystems;
+        # the helper should still return None for "looks like a project, not
+        # a forbidden top-level".
+        nonexistent = tmp_path / "definitely-does-not-exist"
+        assert is_invalid_project_root(nonexistent) is None
+
+    def test_resolves_symlinked_home(self, tmp_path, monkeypatch):
+        """A symlink that points to $HOME is rejected (resolve-aware)."""
+        from mcp_server.paths import is_invalid_project_root
+        fake_home = tmp_path / "fake-home"
+        fake_home.mkdir()
+        link = tmp_path / "home-link"
+        link.symlink_to(fake_home)
+        monkeypatch.setattr("pathlib.Path.home", lambda: fake_home)
+        result = is_invalid_project_root(link)
+        assert result is not None
+        assert "$HOME" in result

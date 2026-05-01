@@ -50,11 +50,23 @@ def _detect_project_root_markers(path: Path) -> bool:
 
 def cmd_init() -> None:
     """Initialize Codevira in the current project."""
-    from mcp_server.paths import get_project_root, get_data_dir, get_package_data_dir
+    from mcp_server.paths import (
+        get_project_root, get_data_dir, get_package_data_dir,
+        is_invalid_project_root,
+    )
     import shutil
     import yaml
 
     cwd = get_project_root()
+
+    # v1.8.1: refuse $HOME and system top-levels. Treating $HOME as a
+    # project caused 41 production crashes via the watcher walking
+    # ~/Library/Group Containers/... — see CHANGELOG v1.8.1.
+    rejection = is_invalid_project_root(cwd)
+    if rejection:
+        print(f"Error: {rejection}", file=sys.stderr)
+        sys.exit(1)
+
     data_dir = get_data_dir()
 
     print()
@@ -682,6 +694,12 @@ def main() -> None:
         "--legacy", action="store_true",
         help="Only remove .codevira.migrated/ backup dirs from project repos (post-v1.6 migration)",
     )
+    clean_parser.add_argument(
+        "--orphans", action="store_true",
+        help="Only remove project data dirs whose original_path is no longer a "
+             "valid project root ($HOME, system dirs, or deleted) — recovery for "
+             "users who bootstrapped at $HOME on v1.8.0 (see CHANGELOG v1.8.1)",
+    )
 
     args = parser.parse_args(raw_args)
 
@@ -750,6 +768,7 @@ def main() -> None:
             dry_run=getattr(args, "dry_run", False),
             yes=getattr(args, "yes", False),
             legacy_only=getattr(args, "legacy", False),
+            orphans_only=getattr(args, "orphans", False),
         )
     else:
         # No subcommand → start MCP server (stdio transport)
@@ -760,13 +779,23 @@ def main() -> None:
 # cmd_clean
 # ---------------------------------------------------------------------------
 
-def cmd_clean(clean_all: bool = False, dry_run: bool = False, yes: bool = False, legacy_only: bool = False) -> None:
+def cmd_clean(clean_all: bool = False, dry_run: bool = False, yes: bool = False,
+              legacy_only: bool = False, orphans_only: bool = False) -> None:
     """Remove all Codevira data, IDE configs, and services.
 
     With --legacy, ONLY removes .codevira.migrated/ backup directories from
     project repos (left over from the v1.5 → v1.6 storage migration).
+
+    With --orphans (v1.8.1), ONLY removes project data dirs whose
+    ``original_path`` is no longer a valid project root ($HOME, system
+    dir, or deleted directory). This is the recovery path for users who
+    accidentally bootstrapped a project at $HOME on v1.8.0.
     """
     import shutil
+
+    if orphans_only:
+        _cmd_clean_orphans(dry_run=dry_run, yes=yes)
+        return
 
     if legacy_only:
         _cmd_clean_legacy_only(dry_run=dry_run, yes=yes)
@@ -941,6 +970,133 @@ def _collect_project_cleanup(project_path: Path, actions: list) -> None:
                     (f"Removed codevira from {name}/{ide_name}",
                      lambda p=config_path: remove_codevira_from_config(p))
                 )
+
+
+def _cmd_clean_orphans(dry_run: bool = False, yes: bool = False) -> None:
+    """Remove project data dirs whose ``original_path`` is no longer a
+    valid project root.
+
+    "Orphan" definition (v1.8.1):
+      1. ``original_path`` is rejected by ``is_invalid_project_root``
+         (it's $HOME, /, /Users, /tmp, /var, /etc, /opt, etc.).
+      2. ``original_path`` no longer exists on disk (project moved or
+         deleted; the data_dir is now dead weight).
+
+    For each orphan: the data dir under ``~/.codevira/projects/<slug>/``
+    is removed, AND the matching row is deleted from
+    ``~/.codevira/global.db`` so cross-project intelligence doesn't keep
+    referencing a defunct path.
+
+    This recovers users who accidentally bootstrapped a project at $HOME
+    on v1.8.0 — the production-crash failure mode this entire release
+    addresses. Without this command they would need to ``rm -rf`` and run
+    raw sqlite by hand.
+    """
+    import json
+    import shutil
+    import sqlite3
+    from mcp_server.paths import (
+        get_global_home, get_global_db_path, is_invalid_project_root,
+    )
+
+    print()
+    print("  Codevira — Clean Orphan Project Data")
+    print("  " + "─" * 38)
+    print()
+
+    global_home = get_global_home()
+    projects_dir = global_home / "projects"
+
+    # (data_dir, original_path, reason)
+    found: list[tuple[Path, str, str]] = []
+    if projects_dir.exists():
+        for meta_file in sorted(projects_dir.glob("*/metadata.json")):
+            try:
+                meta = json.loads(meta_file.read_text())
+                original_path = meta.get("original_path", "")
+                if not original_path:
+                    continue
+                op = Path(original_path)
+                rejection = is_invalid_project_root(op)
+                if rejection:
+                    found.append((meta_file.parent, original_path, rejection))
+                    continue
+                # Resolve safely; if it raises, treat as missing (the
+                # filesystem said something weird and we don't want to mask).
+                try:
+                    exists = op.exists()
+                except (OSError, RuntimeError):
+                    exists = False
+                if not exists:
+                    found.append((
+                        meta_file.parent, original_path,
+                        f"original_path no longer exists: {original_path}",
+                    ))
+            except Exception:
+                # Unreadable metadata.json is its own orphan-shaped problem,
+                # but we don't auto-delete unreadable state — surface it for
+                # manual inspection rather than risk eating real data.
+                continue
+
+    if not found:
+        print("  No orphan project data directories found.")
+        print()
+        return
+
+    print(f"  Found {len(found)} orphan project data dir(s):")
+    for data_dir, op, reason in found:
+        print(f"    • {data_dir}")
+        print(f"        original_path: {op}")
+        print(f"        reason: {reason}")
+    print()
+
+    if dry_run:
+        print("  [dry-run] No changes made.")
+        print()
+        return
+
+    if not yes:
+        answer = input(f"  Remove {len(found)} orphan data dir(s)? [y/N] ").strip().lower()
+        if answer != "y":
+            print("  Aborted.")
+            print()
+            return
+
+    print()
+    db_path = get_global_db_path()
+    removed_dirs = 0
+    removed_rows = 0
+    for data_dir, _op, _reason in found:
+        # 1. Remove the centralized data dir
+        try:
+            shutil.rmtree(data_dir, ignore_errors=False)
+            removed_dirs += 1
+            print(f"    ✓ Removed {data_dir}")
+        except Exception as e:
+            print(f"    ✗ {data_dir}  FAILED ({e})")
+            continue
+
+        # 2. Delete the matching row from global.db (path key = data_dir str)
+        try:
+            if db_path.exists():
+                conn = sqlite3.connect(str(db_path), timeout=30)
+                try:
+                    cur = conn.execute(
+                        "DELETE FROM projects WHERE path = ?",
+                        (str(data_dir),),
+                    )
+                    conn.commit()
+                    if cur.rowcount > 0:
+                        removed_rows += cur.rowcount
+                finally:
+                    conn.close()
+        except Exception as e:
+            print(f"      (warning: could not delete global.db row: {e})")
+
+    print()
+    print(f"  ✓ Removed {removed_dirs} of {len(found)} orphan data dir(s); "
+          f"{removed_rows} global.db row(s) deleted.")
+    print()
 
 
 def _cmd_clean_legacy_only(dry_run: bool = False, yes: bool = False) -> None:

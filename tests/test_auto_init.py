@@ -620,3 +620,45 @@ class TestBackgroundInitExceptionBranches:
 
         # Non-fatal exception -> status is still "ready"
         assert ai._progress["status"] == "ready"
+
+
+# ---------------------------------------------------------------
+# v1.8.1 — _run_background_init refuses $HOME / system dirs
+# ---------------------------------------------------------------
+
+class TestRunBackgroundInitRefusesInvalidRoots:
+    """Regression for the v1.8.0 production crash: an MCP tool call from
+    $HOME would silently auto-init a rogue project. The watcher then walked
+    ~/Library/... and crashed 41 times. v1.8.1 short-circuits in the
+    background thread before anything touches the filesystem."""
+
+    def test_refuses_home_sets_status_error(self, tmp_path, monkeypatch):
+        """When project_root is $HOME, the thread sets status=error and
+        returns early — no graph build, no index, no metadata.json."""
+        fake_home = tmp_path / "fake-home"
+        fake_home.mkdir()
+        monkeypatch.setattr("pathlib.Path.home", lambda: fake_home)
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+
+        # No _bg_init_patches — if the guard is missing this would crash on
+        # missing modules. The whole point is the guard returns early.
+        ai._start_time = time.monotonic()
+        _run_background_init(fake_home, data_dir)
+
+        assert ai._progress["status"] == "error"
+        assert ai._progress["error"] is not None
+        assert "$HOME" in ai._progress["error"]
+        # And nothing got written under data_dir
+        assert not (data_dir / "config.yaml").exists()
+        assert not (data_dir / "metadata.json").exists()
+
+    def test_refuses_root_slash(self, tmp_path):
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        ai._start_time = time.monotonic()
+        _run_background_init(Path("/"), data_dir)
+
+        assert ai._progress["status"] == "error"
+        assert "system directory" in ai._progress["error"]
+        assert not (data_dir / "config.yaml").exists()

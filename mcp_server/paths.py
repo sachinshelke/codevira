@@ -152,6 +152,77 @@ def get_project_root() -> Path:
 
 
 # ---------------------------------------------------------------------------
+# Project-root validation (v1.8.1 — refuse $HOME and system dirs)
+# ---------------------------------------------------------------------------
+
+#: Absolute paths that must never be a project root. These are top-level user
+#: or system directories where treating them as a project causes the watcher
+#: to walk huge unrelated trees (``~/Library/Group Containers/...``,
+#: ``/var/log``, etc.) and crash on EINTR / permission errors. macOS
+#: aggressively symlinks system top-levels (``/etc -> /private/etc``,
+#: ``/var -> /private/var``, ``/tmp -> /private/tmp``,
+#: ``/home -> /System/Volumes/Data/home``) so the resolved forms are
+#: listed too — ``Path("/etc").resolve()`` returns ``/private/etc`` on
+#: macOS, and our equality check has to catch that.
+_FORBIDDEN_PROJECT_ROOTS: frozenset[Path] = frozenset({
+    Path("/"),
+    Path("/Users"),
+    Path("/home"),
+    Path("/System/Volumes/Data/home"),  # macOS resolved /home
+    Path("/tmp"),
+    Path("/private/tmp"),  # macOS resolved /tmp
+    Path("/var"),
+    Path("/private/var"),  # macOS resolved /var
+    Path("/etc"),
+    Path("/private/etc"),  # macOS resolved /etc
+    Path("/opt"),
+})
+
+
+def is_invalid_project_root(p: Path) -> str | None:
+    """Return a human-readable rejection reason if ``p`` shouldn't be a
+    project root, else ``None``.
+
+    Refuses ``$HOME`` and known system top-levels (``/``, ``/Users``,
+    ``/home``, ``/tmp``, ``/var``, ``/etc``, ``/opt``, plus the
+    macOS-resolved ``/private/...`` and ``/System/Volumes/Data/home``
+    forms). Treating any of these as a project causes the background
+    watcher to walk huge unrelated trees — see v1.8.1 crash-log
+    analysis: 41 ``InterruptedError`` crashes traced to a rogue
+    ``$HOME``-rooted project bootstrapped on v1.8.0.
+
+    Symlink-aware via ``Path.resolve()``: a symlinked ``$HOME`` or a path
+    that resolves into ``/private/tmp`` is correctly rejected. We also
+    check the *unresolved* input — on platforms where a forbidden top
+    isn't a symlink, that's the only form we'd see. If ``.resolve()``
+    itself raises (filesystem race, dangling symlink) we still check the
+    raw input and return ``None`` only if neither matches; we never want
+    to mask weirdness as "valid".
+    """
+    candidates: list[Path] = [p]
+    try:
+        resolved = p.resolve()
+        candidates.append(resolved)
+    except (OSError, RuntimeError):
+        resolved = None
+    try:
+        home = Path.home().resolve()
+    except (OSError, RuntimeError):
+        home = None
+    if home is not None:
+        for cand in candidates:
+            if cand == home:
+                return (
+                    f"$HOME ({cand}) is not a project. "
+                    f"cd into a real project subdirectory first."
+                )
+    for cand in candidates:
+        if cand in _FORBIDDEN_PROJECT_ROOTS:
+            return f"{cand} is a system directory, not a project."
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Data directory resolution (v1.6 centralized + legacy fallback)
 # ---------------------------------------------------------------------------
 

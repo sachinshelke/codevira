@@ -131,6 +131,19 @@ def _run_background_init(project_root: Path, data_dir: Path) -> None:
     global _start_time
 
     try:
+        # v1.8.1: refuse $HOME and system top-levels as a project root.
+        # An unguarded auto-init triggered by an MCP tool call from $HOME
+        # is exactly how the rogue project (`original_path: /Users/sachin`)
+        # in the v1.8.0 production crash log got created. Set status=error
+        # and return early — the MCP server's fast path checks the flag and
+        # won't loop on retries.
+        from mcp_server.paths import is_invalid_project_root
+        rejection = is_invalid_project_root(project_root)
+        if rejection:
+            logger.warning("Auto-init refused: %s", rejection)
+            _update_progress(status="error", error=rejection)
+            return
+
         _update_progress(status="initializing")
 
         # Step 1: Auto-detect project settings

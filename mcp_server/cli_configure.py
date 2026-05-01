@@ -404,6 +404,16 @@ def cmd_configure(
     # which handles --project-dir override, cwd discovery, and project markers.
     project_root = get_project_root()
 
+    # v1.8.1: refuse $HOME and system top-levels as a project root. Treating
+    # these as a project causes the watcher to walk huge unrelated trees
+    # (~/Library/..., /var/log) — see crash-log analysis 2026-04-24 for the
+    # production failure that motivated this guard.
+    from mcp_server.paths import is_invalid_project_root
+    rejection = is_invalid_project_root(project_root)
+    if rejection:
+        print(f"Error: {rejection}", file=sys.stderr)
+        return 1
+
     # Note: we deliberately do NOT require data_dir to exist. `codevira
     # register` only writes MCP client configs — it doesn't create
     # ~/.codevira/projects/<slug>/. The data_dir is normally created by

@@ -968,3 +968,161 @@ class TestMainServeWithProjectDir:
         mock_cmd_serve.assert_called_once()
         call_kwargs = mock_cmd_serve.call_args.kwargs
         assert call_kwargs.get("project_dir") == Path(project_path).resolve()
+
+
+# ===================================================================
+# v1.8.1 — `codevira clean --orphans`
+# ===================================================================
+
+class TestCleanOrphans:
+    """Recovery path for v1.8.0 users who accidentally bootstrapped at $HOME.
+
+    Spec:
+      - --orphans removes data dirs whose original_path is rejected by
+        is_invalid_project_root() (i.e. $HOME, /, /Users, /tmp, etc.) OR
+        whose original_path no longer exists on disk.
+      - It removes the data dir AND the global.db row.
+      - It LEAVES alone valid project entries.
+      - --dry-run shows what would happen without changing anything.
+    """
+
+    def _setup_project_entry(self, fake_home: Path, slug: str,
+                              original_path: str) -> Path:
+        """Create a fake centralized project dir with metadata.json."""
+        import json
+        proj = fake_home / "projects" / slug
+        proj.mkdir(parents=True)
+        (proj / "metadata.json").write_text(json.dumps({
+            "path_key": slug,
+            "original_path": original_path,
+            "created_at": "2026-04-24T00:00:00+00:00",
+            "version": "1.8.0",
+            "auto_initialized": True,
+        }))
+        return proj
+
+    def _seed_global_db(self, fake_home: Path, paths: list[str]) -> Path:
+        """Create a minimal global.db with the schema we DELETE FROM."""
+        import sqlite3
+        db_path = fake_home / "global.db"
+        conn = sqlite3.connect(str(db_path))
+        try:
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS projects "
+                "(path TEXT PRIMARY KEY, name TEXT, language TEXT, "
+                " git_remote TEXT, last_synced_at DATETIME)"
+            )
+            for p in paths:
+                conn.execute(
+                    "INSERT OR REPLACE INTO projects(path, name, language) "
+                    "VALUES (?, ?, ?)",
+                    (p, "x", "python"),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+        return db_path
+
+    def test_removes_home_rooted_project(self, tmp_path, monkeypatch):
+        """A project with original_path = $HOME is identified and removed."""
+        from mcp_server.cli import _cmd_clean_orphans
+        fake_home = tmp_path / "fake-home"
+        fake_home.mkdir()
+        monkeypatch.setattr("pathlib.Path.home", lambda: fake_home)
+        # Re-point the autouse fixture's get_global_home back at fake_home
+        # so the .codevira global tree lives under it for this test.
+        global_home = fake_home / ".codevira"
+        global_home.mkdir()
+        from mcp_server import paths as paths_mod
+        monkeypatch.setattr(paths_mod, "get_global_home", lambda: global_home)
+        proj = self._setup_project_entry(global_home, "rogue_abcd1234",
+                                          str(fake_home))
+        self._seed_global_db(global_home, [str(proj)])
+
+        _cmd_clean_orphans(dry_run=False, yes=True)
+
+        assert not proj.exists(), "rogue project dir should be removed"
+        # Row deleted from global.db
+        import sqlite3
+        conn = sqlite3.connect(str(global_home / "global.db"))
+        try:
+            count = conn.execute(
+                "SELECT COUNT(*) FROM projects WHERE path = ?",
+                (str(proj),),
+            ).fetchone()[0]
+        finally:
+            conn.close()
+        assert count == 0
+
+    def test_removes_deleted_project_path(self, tmp_path, monkeypatch):
+        """A project whose original_path no longer exists on disk is
+        identified and removed."""
+        from mcp_server.cli import _cmd_clean_orphans
+        from mcp_server import paths as paths_mod
+        global_home = tmp_path / "global"
+        global_home.mkdir()
+        monkeypatch.setattr(paths_mod, "get_global_home", lambda: global_home)
+        # original_path points at a path that doesn't exist
+        gone = tmp_path / "definitely-gone"
+        proj = self._setup_project_entry(global_home, "gone_efgh5678", str(gone))
+        self._seed_global_db(global_home, [str(proj)])
+
+        _cmd_clean_orphans(dry_run=False, yes=True)
+
+        assert not proj.exists()
+
+    def test_dry_run_makes_no_changes(self, tmp_path, monkeypatch, capsys):
+        from mcp_server.cli import _cmd_clean_orphans
+        from mcp_server import paths as paths_mod
+        fake_home = tmp_path / "fake-home"
+        fake_home.mkdir()
+        monkeypatch.setattr("pathlib.Path.home", lambda: fake_home)
+        global_home = fake_home / ".codevira"
+        global_home.mkdir()
+        monkeypatch.setattr(paths_mod, "get_global_home", lambda: global_home)
+        proj = self._setup_project_entry(global_home, "rogue_abcd1234",
+                                          str(fake_home))
+        self._seed_global_db(global_home, [str(proj)])
+
+        _cmd_clean_orphans(dry_run=True, yes=True)
+
+        # Dry-run: nothing removed
+        assert proj.exists()
+        out = capsys.readouterr().out
+        assert "dry-run" in out
+
+    def test_skips_valid_projects(self, tmp_path, monkeypatch, capsys):
+        """A project whose original_path is a real, normal directory under
+        $HOME is left alone."""
+        from mcp_server.cli import _cmd_clean_orphans
+        from mcp_server import paths as paths_mod
+        fake_home = tmp_path / "fake-home"
+        fake_home.mkdir()
+        monkeypatch.setattr("pathlib.Path.home", lambda: fake_home)
+        global_home = fake_home / ".codevira"
+        global_home.mkdir()
+        monkeypatch.setattr(paths_mod, "get_global_home", lambda: global_home)
+        # A real project path
+        real_proj = fake_home / "Documents" / "MyProject"
+        real_proj.mkdir(parents=True)
+        proj = self._setup_project_entry(global_home, "valid_proj_aaaa1111",
+                                          str(real_proj))
+        self._seed_global_db(global_home, [str(proj)])
+
+        _cmd_clean_orphans(dry_run=False, yes=True)
+
+        # Valid project untouched
+        assert proj.exists()
+
+    def test_no_orphans_no_changes(self, tmp_path, monkeypatch, capsys):
+        """When no orphans exist, prints 'No orphan...' and exits cleanly."""
+        from mcp_server.cli import _cmd_clean_orphans
+        from mcp_server import paths as paths_mod
+        global_home = tmp_path / "global"
+        global_home.mkdir()
+        (global_home / "projects").mkdir()
+        monkeypatch.setattr(paths_mod, "get_global_home", lambda: global_home)
+
+        _cmd_clean_orphans(dry_run=False, yes=True)
+        out = capsys.readouterr().out
+        assert "No orphan" in out

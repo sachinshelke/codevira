@@ -170,30 +170,50 @@ def _get_changed_files(db: SQLiteGraph) -> list[tuple[str, str]]:
         if not watch_path.exists():
             continue
 
-        for p in watch_path.rglob("*"):
-            if not p.is_file():
-                continue
-            if p.suffix not in extensions:
-                continue
-            if any(skip in p.parts for skip in skip_dirs):
-                continue
-
-            try:
-                rel_path = str(p.relative_to(_project_root()))
-                if rel_path in seen_paths:
+        # v1.8.1: per-watch-dir try/except so transient OS errors (EINTR,
+        # PermissionError, "directory changed during iteration") don't
+        # take down the whole reindex. Per-watch-dir scope matches
+        # watchdog.Observer's thread-per-watch model — each parallel
+        # watcher thread recovers independently. See crash-log analysis
+        # 2026-04-24: 41 InterruptedError crashes in this exact loop.
+        try:
+            for p in watch_path.rglob("*"):
+                if not p.is_file():
                     continue
-                seen_paths.add(rel_path)
-                current_hash = _compute_hash(p)
-                stored_hash = db.get_file_hash(rel_path)
-                
-                if current_hash != stored_hash:
-                    changed.append((rel_path, current_hash))
-            except Exception as e:
+                if p.suffix not in extensions:
+                    continue
+                if any(skip in p.parts for skip in skip_dirs):
+                    continue
+
                 try:
-                    from mcp_server.crash_logger import log_crash
-                    log_crash(e, context="get_changed_files: hash check")
-                except Exception: pass
-                
+                    rel_path = str(p.relative_to(_project_root()))
+                    if rel_path in seen_paths:
+                        continue
+                    seen_paths.add(rel_path)
+                    current_hash = _compute_hash(p)
+                    stored_hash = db.get_file_hash(rel_path)
+
+                    if current_hash != stored_hash:
+                        changed.append((rel_path, current_hash))
+                except Exception as e:
+                    try:
+                        from mcp_server.crash_logger import log_crash
+                        log_crash(e, context="get_changed_files: hash check")
+                    except Exception: pass
+        except (OSError, RuntimeError) as e:
+            # OSError covers InterruptedError (EINTR), PermissionError, etc.
+            # RuntimeError covers "directory changed during iteration".
+            logger.warning(
+                "Skipping watch_dir %s due to filesystem error: %s",
+                watch_dir, e,
+            )
+            try:
+                from mcp_server.crash_logger import log_crash
+                log_crash(e, context=f"_get_changed_files: walk of {watch_dir} aborted")
+            except Exception:
+                pass
+            continue
+
     return changed
 
 
@@ -295,10 +315,25 @@ def cmd_full_rebuild():
                         seen_chunk_ids.add(chunk_id)
                         all_chunks.append(c)
                 
-            for p in abs_dir.rglob("*"):
-                if p.is_file() and p.suffix in extensions and not any(s in p.parts for s in skip_dirs):
-                    rel = str(p.relative_to(_project_root()))
-                    file_hashes[rel] = _compute_hash(p)
+            # v1.8.1: tolerate per-watch-dir OS errors so a single bad
+            # subtree (EINTR, PermissionError, etc.) doesn't abort the
+            # full rebuild. Same pattern as _get_changed_files.
+            try:
+                for p in abs_dir.rglob("*"):
+                    if p.is_file() and p.suffix in extensions and not any(s in p.parts for s in skip_dirs):
+                        rel = str(p.relative_to(_project_root()))
+                        file_hashes[rel] = _compute_hash(p)
+            except (OSError, RuntimeError) as e:
+                logger.warning(
+                    "cmd_full_rebuild: skipping watch_dir %s due to filesystem error: %s",
+                    watch_dir, e,
+                )
+                try:
+                    from mcp_server.crash_logger import log_crash
+                    log_crash(e, context=f"cmd_full_rebuild: walk of {watch_dir} aborted")
+                except Exception:
+                    pass
+                continue
                         
         progress.update(task1, completed=100)
         task2 = progress.add_task(f"[cyan]Embedding {len(all_chunks)} chunks into ChromaDB...", total=len(all_chunks))

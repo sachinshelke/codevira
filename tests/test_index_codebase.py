@@ -221,6 +221,83 @@ class TestGetChangedFiles:
         changed = _get_changed_files(db)
         assert changed == []
 
+    # ------------------------------------------------------------------
+    # v1.8.1 — rglob OSError tolerance (fixes 41 production crashes)
+    # ------------------------------------------------------------------
+
+    def test_tolerates_eintr_on_one_watch_dir(self, project_env, monkeypatch):
+        """An InterruptedError (EINTR) raised while iterating one watch_dir
+        must NOT crash the whole reindex.
+
+        Regression for crash-log analysis 2026-04-24: 41 InterruptedError
+        crashes in this exact loop. Each watcher thread (one per
+        watch_dir under watchdog.Observer) must recover independently.
+        """
+        project, _data_dir, db = project_env
+        src_dir = project / "src"
+        src_dir.mkdir(parents=True, exist_ok=True)
+        (src_dir / "good.py").write_text("ok=1\n")
+
+        original_rglob = Path.rglob
+
+        def boom_on_first(self, *args, **kwargs):
+            # Fail only on src/, not on any internal Path.rglob the
+            # codebase uses elsewhere.
+            if str(self).endswith("/src"):
+                raise InterruptedError(4, "Interrupted system call")
+            return original_rglob(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "rglob", boom_on_first)
+        # No exception should propagate — the wrap absorbs it.
+        result = _get_changed_files(db)
+        # We didn't crash; result is a list (possibly empty).
+        assert isinstance(result, list)
+
+    def test_tolerates_runtime_error_dir_changed(self, project_env, monkeypatch):
+        """RuntimeError ('directory changed during iteration') is also
+        absorbed — same defensive scope."""
+        project, _data_dir, db = project_env
+        (project / "src").mkdir(parents=True, exist_ok=True)
+
+        original_rglob = Path.rglob
+
+        def boom(self, *args, **kwargs):
+            if str(self).endswith("/src"):
+                raise RuntimeError("directory changed during iteration")
+            return original_rglob(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "rglob", boom)
+        result = _get_changed_files(db)
+        assert isinstance(result, list)
+
+    def test_isolates_one_bad_watch_dir(self, project_env, monkeypatch):
+        """When two watch_dirs are configured and one fails, the other still
+        produces results. Models the parallel-thread isolation pattern from
+        log analysis (microsecond-spaced parallel-thread crashes)."""
+        import yaml
+        project, data_dir, db = project_env
+        # Reconfigure watched_dirs to include both 'src' and 'lib'
+        cfg = yaml.safe_load((data_dir / "config.yaml").read_text())
+        cfg["project"]["watched_dirs"] = ["src", "lib"]
+        (data_dir / "config.yaml").write_text(yaml.safe_dump(cfg, sort_keys=False))
+
+        (project / "src").mkdir(parents=True, exist_ok=True)
+        (project / "lib").mkdir(parents=True, exist_ok=True)
+        (project / "lib" / "ok.py").write_text("a=1\n")
+
+        original_rglob = Path.rglob
+
+        def boom_on_src(self, *args, **kwargs):
+            if str(self).endswith("/src"):
+                raise OSError("permission denied")
+            return original_rglob(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "rglob", boom_on_src)
+        result = _get_changed_files(db)
+        rel_paths = [rel for rel, _h in result]
+        # The good watch_dir 'lib' produced its file even though 'src' raised.
+        assert "lib/ok.py" in rel_paths
+
 
 # ---------------------------------------------------------------------------
 # _get_requested_files

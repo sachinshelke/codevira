@@ -45,9 +45,51 @@ class SQLiteGraph:
     def __init__(self, db_path: str | Path):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        # 30s timeout (up from sqlite3 default of 5s): the background watcher's
+        # reindex thread and any concurrent MCP server connection both write to
+        # this graph.db. v1.8.0 fixed the same race for GlobalDB; v1.8.1 ports
+        # the fix here after `OperationalError("database is locked")` in
+        # add_symbol/remove_symbols_for_file showed up in production crash logs.
+        self.conn = sqlite3.connect(self.db_path, check_same_thread=False, timeout=30)
         self.conn.row_factory = sqlite3.Row
+        # Enable WAL with retries — see global_db._enable_wal_with_retry for
+        # the SQLite race rationale (PRAGMA journal_mode=WAL doesn't honor
+        # busy_timeout; concurrent opens collide on EXCLUSIVE lock).
+        self._enable_wal_with_retry()
+        # Belt-and-braces: SQLite-level busy_timeout for subsequent writes.
+        self.conn.execute("PRAGMA busy_timeout=30000")
         self._init_db()
+
+    def _enable_wal_with_retry(self, attempts: int = 10, initial_delay: float = 0.02) -> None:
+        """Best-effort enable of WAL journal mode.
+
+        Mirrors :meth:`indexer.global_db.GlobalDB._enable_wal_with_retry` —
+        the duplication is intentional for v1.8.1 (touching tested v1.8.0
+        code is higher risk than copying 25 lines). Survives concurrent-open
+        races by short-backoff retry and short-circuits when WAL is already
+        active. Falls through to default journal mode on persistent failure.
+        """
+        import time as _time
+        try:
+            mode = self.conn.execute("PRAGMA journal_mode").fetchone()[0]
+            if str(mode).lower() == "wal":
+                return  # already WAL — nothing to do
+        except sqlite3.OperationalError:
+            pass  # fall through to the retry loop
+        delay = initial_delay
+        for _ in range(attempts):
+            try:
+                self.conn.execute("PRAGMA journal_mode=WAL")
+                return
+            except sqlite3.OperationalError as e:
+                if "locked" not in str(e).lower():
+                    raise
+                _time.sleep(delay)
+                delay = min(delay * 1.5, 0.2)
+        logger.warning(
+            "Could not enable WAL on %s after retries; continuing in default mode",
+            self.db_path,
+        )
 
     @contextmanager
     def transaction(self):

@@ -13,6 +13,94 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [1.8.1] — 2026-05-02 — Production Hotfix from Real-World Crash Logs
+
+Pure bug-fix release. No new features, no schema changes, no public-API
+changes. Motivated by a real production failure on the maintainer's
+machine: **43 crashes in 70 minutes** logged by `crash_logger` between
+07:37 and 08:47 on 2026-04-24, all under
+`WHERE: background watcher: incremental reindex`.
+
+Breakdown:
+- **41 × `InterruptedError` (EINTR, errno 4)** in
+  `_get_changed_files`'s rglob walk, all walking
+  `~/Library/Group Containers/...` (WhatsApp, Office, etc.) and
+  `~/Library/Containers/...` (TextEdit, mediaanalysisd, …).
+- **2 × `OperationalError("database is locked")`** in
+  `SQLiteGraph.add_symbol` and `remove_symbols_for_file`.
+
+Root cause: a rogue project data dir with
+`metadata.json.original_path = "/Users/sachin"` (the user's `$HOME`).
+`auto_detect_project` saw `Library`, `Downloads`, `Documents`, `go` as
+"subdirs", and the watcher then walked huge unrelated trees. v1.8.0's
+bootstrap (`cmd_configure`, `auto_init`) didn't refuse `$HOME`, and
+neither did `cmd_init`.
+
+### Fixed
+
+- **Refuse `$HOME` and system top-levels as a project root** (the
+  critical fix — eliminates 41 of the 43 production crashes by
+  preventing the rogue project from forming). New helper
+  `mcp_server.paths.is_invalid_project_root()` rejects `$HOME`, `/`,
+  `/Users`, `/home`, `/tmp`, `/private/tmp`, `/var`, `/private/var`,
+  `/etc`, `/opt`. Wired into all three bootstrap entry points:
+  `cmd_configure`, `cmd_init`, and `auto_init._run_background_init`.
+  `auto_init` sets `_progress["status"] = "error"` so the MCP server
+  stops looping on retries.
+
+- **`SQLiteGraph` WAL with retry — port of the v1.8.0 GlobalDB fix**
+  (eliminates the 2 of 43 `database is locked` crashes). v1.8.0 fixed
+  the same race for `GlobalDB` after round 3 of binocular review;
+  `SQLiteGraph` was missed. `__init__` now opens with `timeout=30`,
+  enables WAL via the same retry loop pattern, and sets
+  `PRAGMA busy_timeout=30000` for subsequent writes.
+
+- **`_get_changed_files` and `cmd_full_rebuild` rglob loops tolerate
+  `OSError`** (defense-in-depth — even on legitimate projects,
+  transient `EINTR`, `PermissionError`, or "directory changed during
+  iteration" should not kill the whole reindex). Per-watch-dir scope
+  matches `watchdog.Observer`'s thread-per-watch model: the
+  microsecond-spaced parallel-thread crashes (3 within 6μs at
+  08:15:29 and 08:26:04 in the production log) confirm this is the
+  right granularity. `InterruptedError` is a subclass of `OSError`, so
+  the broader catch covers EINTR plus other transient walk failures.
+
+### Added
+
+- **`codevira clean --orphans`** — recovery path for users already hit
+  by the `$HOME`-bootstrap bug on v1.8.0. Walks
+  `~/.codevira/projects/*/metadata.json`; for each entry whose
+  `original_path` is rejected by `is_invalid_project_root()` OR no
+  longer exists on disk, removes the data dir and deletes the matching
+  row from `~/.codevira/global.db`. Reuses the existing `--dry-run`
+  and `-y/--yes` flags. Without this, affected users would need to
+  `rm -rf` and run raw sqlite by hand.
+
+- **Denylist macOS/Linux/cloud-sync user-data dirs in
+  `auto_detect_project`** (defense-in-depth). `_SKIP_DIRS` extended
+  with `Library`, `Downloads`, `Music`, `Movies`, `Pictures`,
+  `Desktop`, `Public`, `Applications`, `Videos`, `Templates`, plus
+  cloud-sync top-levels (`Dropbox`, `iCloud Drive`, `OneDrive`,
+  `Google Drive`, `Box`). Even if `is_invalid_project_root` somehow
+  misses (e.g. a user passes `--project-dir` to a `$HOME`-shaped
+  layout), these never show up in `watched_dirs`. A user who
+  legitimately has a project named e.g. `Library` can still pass
+  `codevira configure --dirs Library` to opt in.
+
+### Out of scope (deferred to v1.9)
+
+- **Watcher restart circuit breaker.** Crash log shows ~60s gaps
+  between EINTR crashes — no backoff. Adding a circuit breaker is real
+  design work; the rglob `OSError` tolerance closes the immediate
+  hole.
+- **Refactoring `_enable_wal_with_retry` to a shared util.** 25 lines
+  of duplication for one patch cycle is the right call; touching
+  `GlobalDB`'s tested-in-v1.8.0 code is higher risk.
+- **`crash_logger` size cap or rotation.** Log file is ~97KB now; will
+  grow unbounded over time. Out of scope for hotfix; flagged for v1.9.
+
+---
+
 ## [1.8.0] — 2026-04-23 — Memory Sharpening + Config UX
 
 Three internal improvements that make the memory we already capture **sharper**,

@@ -161,6 +161,19 @@ _SKIP_DIRS: set[str] = {
     ".mypy_cache", ".ruff_cache", ".eggs", "*.egg-info", "vendor",
     ".idea", ".vscode", "__snapshots__", ".storybook", "storybook-static",
     "public", "static", "assets", "migrations", "fixtures",
+    # v1.8.1 — refuse macOS/Linux user-data dirs and cloud-sync top-levels.
+    # These show up as "subdirs" if a user accidentally bootstraps a
+    # project at $HOME (see crash-log analysis 2026-04-24). Even with
+    # is_invalid_project_root() refusing $HOME at the bootstrap layer,
+    # this denylist is defense-in-depth: it stops auto-detect from ever
+    # putting user-data trees under watch even on edge-case layouts.
+    # macOS user-data dirs (typical ~ subdirs)
+    "Library", "Downloads", "Music", "Movies", "Pictures",
+    "Desktop", "Public", "Applications",
+    # Linux user-data dirs (typical ~ subdirs)
+    "Videos", "Templates",
+    # Cloud-sync top-levels (often ~ subdirs; spaces preserved as in macOS UI)
+    "Dropbox", "iCloud Drive", "OneDrive", "Google Drive", "Box",
 }
 
 

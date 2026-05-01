@@ -1014,3 +1014,62 @@ class TestCmdConfigure:
         assert rc == 2
         err = capsys.readouterr().err
         assert "no source files" in err.lower()
+
+
+# ===========================================================================
+# v1.8.1 — cmd_configure refuses $HOME and system dirs as project_root
+# ===========================================================================
+
+class TestCmdConfigureRefusesInvalidRoots:
+    """Regression for the v1.8.0 production crash mode.
+
+    A user who runs ``codevira configure`` from $HOME would have bootstrapped
+    a project with original_path=$HOME, after which the watcher walked
+    ~/Library/... and crashed 41 times. v1.8.1 hard-rejects this at the
+    bootstrap layer.
+    """
+
+    def test_refuses_home_dir_as_project(self, tmp_path, monkeypatch, capsys):
+        fake_home = tmp_path / "fake-home"
+        fake_home.mkdir()
+        monkeypatch.setattr("pathlib.Path.home", lambda: fake_home)
+        # data_dir somewhere else (so the test isn't sensitive to is_file etc.)
+        data_dir = tmp_path / "data" / "projects" / "anything"
+        data_dir.mkdir(parents=True)
+        monkeypatch.setattr("mcp_server.cli_configure.get_data_dir", lambda: data_dir)
+        monkeypatch.setattr("mcp_server.cli_configure.get_project_root", lambda: fake_home)
+
+        rc = cmd_configure(interactive=False, dirs_arg=None, exts_arg=None,
+                           reindex=False, dry_run=False)
+        assert rc == 1
+        err = capsys.readouterr().err
+        assert "$HOME" in err
+
+    def test_refuses_root_slash_as_project(self, tmp_path, monkeypatch, capsys):
+        data_dir = tmp_path / "data" / "projects" / "anything"
+        data_dir.mkdir(parents=True)
+        monkeypatch.setattr("mcp_server.cli_configure.get_data_dir", lambda: data_dir)
+        monkeypatch.setattr("mcp_server.cli_configure.get_project_root", lambda: Path("/"))
+
+        rc = cmd_configure(interactive=False, dirs_arg=None, exts_arg=None,
+                           reindex=False, dry_run=False)
+        assert rc == 1
+        err = capsys.readouterr().err
+        assert "system directory" in err
+
+    def test_accepts_home_subdirectory(self, tmp_path, monkeypatch, capsys):
+        """A subdirectory of $HOME (the normal case) still works."""
+        fake_home = tmp_path / "fake-home"
+        fake_home.mkdir()
+        monkeypatch.setattr("pathlib.Path.home", lambda: fake_home)
+        project = _make_project(fake_home, {"src/a.py": "x=1"})
+        data_dir = _init_codevira(project, {
+            "watched_dirs": ["src"], "file_extensions": [".py"],
+        })
+        monkeypatch.setattr("mcp_server.cli_configure.get_data_dir", lambda: data_dir)
+        monkeypatch.setattr("mcp_server.cli_configure.get_project_root", lambda: project)
+
+        # Don't reindex — this isolates the home-guard from indexer side effects.
+        rc = cmd_configure(interactive=False, dirs_arg="src", exts_arg=".py",
+                           reindex=False, dry_run=False)
+        assert rc == 0  # passes through guard, normal flow runs

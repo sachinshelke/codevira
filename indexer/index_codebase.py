@@ -478,9 +478,26 @@ def start_background_watcher(quiet: bool = True):
     event, it waits DEBOUNCE_SECONDS before running cmd_incremental().
 
     Called automatically by the MCP server on startup.
+
+    v1.8.1: refuses to start when project_root is $HOME or a system top-level.
+    Defense-in-depth — server.main() / run_http_server() / cmd_serve all
+    pre-check this, but a programmatic caller (test harness, third-party
+    integration) could bypass them. Without this guard, the watcher would
+    walk ~/Library/Group Containers/... and crash on EINTR — exactly the
+    v1.8.0 production failure mode.
     """
     from watchdog.observers import Observer
     from watchdog.events import FileSystemEventHandler
+    from mcp_server.paths import is_invalid_project_root
+
+    rejection = is_invalid_project_root(_project_root())
+    if rejection:
+        _watcher_logger.warning(
+            "Background watcher refusing to start: %s", rejection,
+        )
+        # Return None — callers that store the observer for later .stop()
+        # must handle None (server.main does: `if watcher is not None`).
+        return None
 
     config = _load_config()
     watched_dirs = config.get("watched_dirs", ["src"])
@@ -565,6 +582,13 @@ def cmd_watch():
     print("Press Ctrl+C to stop.\n")
 
     observer = start_background_watcher(quiet=False)
+    if observer is None:
+        # v1.8.1: start_background_watcher refused (project_root invalid).
+        # The warning has already been logged; print a parallel CLI message
+        # and exit cleanly so the user sees something on the terminal.
+        print("Watcher refused to start: project root is invalid. "
+              "cd into a real project and re-run.", file=sys.stderr)
+        sys.exit(1)
     try:
         while True:
             time.sleep(1)

@@ -851,6 +851,54 @@ class TestCmdServe:
         err = capsys.readouterr().err
         assert "$HOME" in err
 
+    # v1.8.1 round-3 hardening — cmd_serve --install-service refuses
+    # $HOME BEFORE the launchd plist is written. Without this guard,
+    # `codevira serve --install-service` from $HOME would persist a
+    # plist that boots a broken HTTP server on every login.
+    def test_install_service_refuses_home(self, tmp_path, monkeypatch, capsys):
+        fake_home = tmp_path / "fake-home"
+        fake_home.mkdir()
+        monkeypatch.setattr("pathlib.Path.home", lambda: fake_home)
+        monkeypatch.setattr("mcp_server.paths.get_project_root", lambda: fake_home)
+
+        from mcp_server.cli import cmd_serve
+        with patch("mcp_server.launchd.install_launchd") as mock_install, \
+             pytest.raises(SystemExit) as exc:
+            cmd_serve(install_service=True)
+        assert exc.value.code == 1
+        # CRITICAL: install_launchd was NEVER called — no plist persisted.
+        mock_install.assert_not_called()
+        err = capsys.readouterr().err
+        assert "$HOME" in err
+
+    def test_install_service_refuses_home_via_project_dir(self, tmp_path, monkeypatch, capsys):
+        """Even with --project-dir explicitly pointing at $HOME, refuse."""
+        fake_home = tmp_path / "fake-home"
+        fake_home.mkdir()
+        monkeypatch.setattr("pathlib.Path.home", lambda: fake_home)
+
+        from mcp_server.cli import cmd_serve
+        with patch("mcp_server.launchd.install_launchd") as mock_install, \
+             pytest.raises(SystemExit) as exc:
+            cmd_serve(install_service=True, project_dir=fake_home)
+        assert exc.value.code == 1
+        mock_install.assert_not_called()
+
+    def test_uninstall_service_works_from_home(self, tmp_path, monkeypatch, capsys):
+        """--uninstall-service is exempt from the guard — should always
+        succeed regardless of cwd. Removing existing state must not be
+        gated on a valid project root."""
+        fake_home = tmp_path / "fake-home"
+        fake_home.mkdir()
+        monkeypatch.setattr("pathlib.Path.home", lambda: fake_home)
+        monkeypatch.setattr("mcp_server.paths.get_project_root", lambda: fake_home)
+
+        from mcp_server.cli import cmd_serve
+        with patch("mcp_server.launchd.uninstall_launchd", return_value=True) as mock_uninstall:
+            # Should NOT raise SystemExit — uninstall is allowed from $HOME.
+            cmd_serve(uninstall_service=True)
+        mock_uninstall.assert_called_once()
+
 
 # ---------------------------------------------------------------------------
 # cmd_register

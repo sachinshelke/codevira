@@ -436,6 +436,21 @@ def cmd_serve(
     if not uninstall_service:
         _print_http_preview_warning()
 
+    # v1.8.1: refuse $HOME / system root for any cmd_serve invocation that
+    # could persist a broken project_root (--install-service writes a
+    # launchd plist; the regular path runs the HTTP server). --uninstall-
+    # service is exempt — it removes existing state and should always
+    # succeed regardless of where the user runs it from.
+    if not uninstall_service:
+        from mcp_server.paths import get_project_root, is_invalid_project_root
+        # If --project-dir was passed explicitly, that's the candidate root;
+        # otherwise fall back to cwd via get_project_root.
+        candidate_root = Path(project_dir).resolve() if project_dir else get_project_root()
+        rejection = is_invalid_project_root(candidate_root)
+        if rejection:
+            print(f"Error: {rejection}", file=sys.stderr)
+            sys.exit(1)
+
     if install_service:
         from mcp_server.launchd import install_launchd
         try:
@@ -459,16 +474,6 @@ def cmd_serve(
             print(f"  Error: {e}")
             sys.exit(1)
         return
-
-    # v1.8.1: refuse to start the HTTP server with $HOME / system root —
-    # symmetric with mcp_server.server.main()'s stdio guard. The HTTP
-    # transport binds to one project at startup; a $HOME-bound server
-    # would route every request through the same broken project root.
-    from mcp_server.paths import get_project_root, is_invalid_project_root
-    rejection = is_invalid_project_root(get_project_root())
-    if rejection:
-        print(f"Error: {rejection}", file=sys.stderr)
-        sys.exit(1)
 
     from mcp_server.http_server import run_http_server
     run_http_server(host=host, port=port, use_https=use_https, project_dir=project_dir)

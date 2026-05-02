@@ -44,23 +44,45 @@ neither did `cmd_init`.
   `mcp_server.paths.is_invalid_project_root()` rejects `$HOME`, `/`,
   `/Users`, `/home`, `/tmp`, `/private/tmp`, `/var`, `/private/var`,
   `/etc`, `/opt` (plus the macOS-resolved `/private/etc` and
-  `/System/Volumes/Data/home` forms). Wired into SEVEN entry points:
-  `cmd_configure`, `cmd_init`, `cmd_index`, `cmd_register`, `cmd_serve`,
-  `mcp_server.server.main()` (stdio MCP server entry), and
-  `auto_init._run_background_init`. The `server.main()` guard is the
-  most critical — without it, a user upgrading from v1.8.0 *without*
-  first running `clean --orphans` would still hit the original crash
-  mode: their leftover rogue `config.yaml` would drive
-  `start_background_watcher` into walking `~/Library/Group Containers/...`,
-  which is exactly where the 41 production `InterruptedError` crashes
-  came from. `cmd_index`/`cmd_register`/`cmd_serve` close
-  defense-in-depth holes (silent dead-weight `mkdir` of
+  `/System/Volumes/Data/home` forms). Wired into NINE distinct sites
+  covering every state-creating path the codebase exposes:
+  - **CLI entry points (6):** `cmd_configure`, `cmd_init`, `cmd_index`,
+    `cmd_register`, `cmd_serve` (refuses both regular serve AND
+    `--install-service`; `--uninstall-service` is exempt so users can
+    always remove old launchd plists), `auto_init._run_background_init`.
+  - **MCP server entry points (2):** `mcp_server.server.main()` (stdio
+    transport) and `mcp_server.http_server.run_http_server()` (HTTP
+    transport). Both are reachable directly via `python -m`, not just
+    through the CLI.
+  - **Defense-in-depth (1):** `indexer.index_codebase.start_background_watcher`
+    refuses to start the watcher even if a programmatic caller bypasses
+    every entry-point guard above. Returns `None`; both `cmd_watch` and
+    `server.main` handle `None` correctly.
+
+  The `server.main()` and `run_http_server` guards are the most critical
+  — without them, a user upgrading from v1.8.0 *without* first running
+  `clean --orphans` would still hit the original crash mode: their
+  leftover rogue `config.yaml` would drive `start_background_watcher`
+  into walking `~/Library/Group Containers/...`, which is exactly where
+  the 41 production `InterruptedError` crashes came from. The
+  `start_background_watcher` defense-in-depth guard is a belt-and-braces
+  fallback — even if all entry-point guards regressed, the watcher
+  itself cannot start with an invalid project root.
+
+  `cmd_index`, `cmd_register`, `cmd_serve --install-service` close
+  defense-in-depth holes that pre-revalidation could have leaked state
+  on disk: silent dead-weight `mkdir` of
   `~/.codevira/projects/<HOME_slug>/{graph,codeindex}/`, IDE configs
-  pinned to broken paths, HTTP server bound to a $HOME root). Pre-1.8.1
-  revalidation walked all CLI sub-commands plus the stdio/HTTP server
-  entry to confirm none could leak state on disk when invoked from
-  `$HOME`. `auto_init` sets `_progress["status"] = "error"` so the MCP
-  server stops looping on retries.
+  pinned to broken paths, and persistent launchd plists pointing at
+  `$HOME`. Pre-release revalidation across three rounds walked every
+  CLI sub-command, the stdio/HTTP server entry, the launchd
+  `--install-service` path, the `start_background_watcher` direct call
+  path, and the production-replay scenario (synthetic v1.8.0 leftover
+  rogue + `codevira` from `$HOME`). All paths refuse cleanly with zero
+  new crashes; legitimate projects untouched.
+
+  `auto_init` sets `_progress["status"] = "error"` so the MCP server
+  stops looping on retries.
 
 - **`SQLiteGraph` WAL with retry — port of the v1.8.0 GlobalDB fix**
   (eliminates the 2 of 43 `database is locked` crashes). v1.8.0 fixed

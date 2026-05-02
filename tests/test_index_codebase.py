@@ -731,6 +731,39 @@ class TestStartBackgroundWatcher:
             start_background_watcher(quiet=True)
         mock_observer.start.assert_not_called()
 
+    # v1.8.1 round-3 hardening: start_background_watcher refuses $HOME.
+    # This is the defense-in-depth guard. Even if all upstream entry-point
+    # guards (server.main, run_http_server, cmd_serve) somehow miss, the
+    # watcher itself cannot start with an invalid project root.
+    def test_watcher_refuses_home_root(self, tmp_path, monkeypatch):
+        """Watcher returns None and never schedules an Observer when
+        project_root is $HOME."""
+        fake_home = tmp_path / "fake-home"
+        fake_home.mkdir()
+        monkeypatch.setattr("pathlib.Path.home", lambda: fake_home)
+        monkeypatch.setattr("indexer.index_codebase.get_project_root",
+                            lambda: fake_home)
+
+        with patch("watchdog.observers.Observer") as mock_observer_cls:
+            from indexer.index_codebase import start_background_watcher
+            result = start_background_watcher(quiet=True)
+
+        assert result is None
+        # Observer was never even constructed.
+        mock_observer_cls.assert_not_called()
+
+    def test_watcher_refuses_root_slash(self, monkeypatch):
+        from pathlib import Path
+        monkeypatch.setattr("indexer.index_codebase.get_project_root",
+                            lambda: Path("/"))
+
+        with patch("watchdog.observers.Observer") as mock_observer_cls:
+            from indexer.index_codebase import start_background_watcher
+            result = start_background_watcher(quiet=True)
+
+        assert result is None
+        mock_observer_cls.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # _get_embedding_fn exit path

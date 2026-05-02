@@ -277,6 +277,7 @@ def run_http_server(
         use_https:  If True, load (or auto-generate) mkcert certs and serve TLS.
         project_dir: Optional project root override (sets paths context).
     """
+    import sys
     import uvicorn
 
     # If a project directory was passed explicitly, set it so all path
@@ -285,6 +286,31 @@ def run_http_server(
     if project_dir is not None:
         from mcp_server.paths import set_project_dir
         set_project_dir(project_dir)
+
+    # v1.8.1: refuse to start the HTTP server with $HOME / system root.
+    # Symmetric with mcp_server.server.main()'s stdio guard. cmd_serve
+    # already checks this at the CLI layer, but run_http_server is also
+    # callable directly (e.g. by tests, third-party launchers, or future
+    # CLI entry points). Defense-in-depth: a $HOME-bound HTTP server
+    # would fire start_background_watcher below and walk
+    # ~/Library/Group Containers/... — the original v1.8.0 crash mode.
+    try:
+        from mcp_server.paths import get_project_root, is_invalid_project_root
+        _early_root = get_project_root()
+        _rejection = is_invalid_project_root(_early_root)
+        if _rejection:
+            print(f"Error: {_rejection}", file=sys.stderr)
+            print(
+                "  The HTTP MCP server cannot start with this project root.\n"
+                "  Pass --project-dir <real-project-path> or run from inside\n"
+                "  a real project directory.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+    except SystemExit:
+        raise
+    except Exception as e:
+        logger.warning("Project-root validation failed (continuing): %s", e)
 
     # ---- Startup side effects (mirror server.py main()) ----
     try:

@@ -81,7 +81,11 @@ class FixRecord:
 # ----------------------------------------------------------------------
 
 _conn_cache: dict[Path, sqlite3.Connection] = {}
-_conn_cache_lock = threading.Lock()
+# RLock (reentrant) instead of plain Lock — defensive against future code
+# paths that nest _connect calls (e.g., a policy that needs fixes for
+# multiple files could hit a cascade). Plain Lock would deadlock on
+# same-thread reentry; RLock allows it. (Round-2 QA finding P2 #5.)
+_conn_cache_lock = threading.RLock()
 
 
 def _db_path(project_root: Path) -> Path:
@@ -204,6 +208,24 @@ def lookup(project_root: Path, file_path: str | Path) -> list[dict[str, Any]]:
         return []
 
 
+#: Maximum size of a proposed change we'll analyze. Anything bigger is
+#: a sign the AI is working with a generated/data file, not source code;
+#: bail to False rather than burn CPU. (Round-2 QA finding P2 #3.)
+_MAX_CHANGE_BYTES = 100_000
+
+
+#: Regex for the Claude Code Edit-format envelope. Anchors at line start
+#: with re.MULTILINE so embedded ``--- before`` / ``--- after`` lines
+#: inside the user's ``old_string`` / ``new_string`` don't break parsing.
+#: (Round-2 QA finding P1 #2.)
+import re as _re
+
+_EDIT_FORMAT_RE = _re.compile(
+    r"^--- before\n(?P<before>.*?)\n^--- after\n(?P<after>.*)\Z",
+    _re.DOTALL | _re.MULTILINE,
+)
+
+
 def is_revert(proposed_change: str, fix: FixRecord | dict[str, Any]) -> bool:
     """Heuristic: does ``proposed_change`` move ``fix`` toward the pre-fix state?
 
@@ -218,15 +240,20 @@ def is_revert(proposed_change: str, fix: FixRecord | dict[str, Any]) -> bool:
       2. **Claude Code Edit format** — string with ``--- before`` and
          ``--- after`` markers (built by ``claude_code_hooks._build_event``
          for Edit/Write tool calls). Heuristic: the ``--- after`` block
-         contains text from ``fix.description`` keywords OR resembles
-         the original buggy state. This path is the COMMON CASE in
-         production once Hero 2 ships, since most reverts come through
-         AI Edit tools, not git diffs.
+         contains text from ``fix.description`` keywords more than
+         ``--- before`` does. Word-boundary keyword matching avoids the
+         "infinite" matches "reconnection" false-positive.
 
-    For either format, the goal is to be a high-recall / moderate-precision
-    signal — Hero 2's policy presents the warning to the user before
-    blocking, so false positives are tolerable. False negatives (missed
-    reverts) are the failure mode we minimize.
+    For either format, the goal is high-recall / moderate-precision —
+    Hero 2's policy presents the warning to the user before blocking, so
+    false positives are tolerable. False negatives (missed reverts) are
+    the failure mode we minimize.
+
+    Bails to False (not crash) on:
+      - Empty/None input
+      - Input larger than 100 KB (round-2 QA P2 #3)
+      - Malformed format markers
+      - Generic descriptions with no actionable keywords
 
     Week-2 expansion will add: proper diff parsing, content-similarity
     against git pre-fix state, and AST-aware revert detection. This
@@ -234,13 +261,17 @@ def is_revert(proposed_change: str, fix: FixRecord | dict[str, Any]) -> bool:
 
     Args:
         proposed_change: a unified-diff string OR Claude Code Edit-format
-            string (``--- before / --- after``). Empty/None → False.
+            string. Empty/None/oversized → False.
         fix: FixRecord or dict-shaped fix record (from ``lookup()``).
 
     Returns:
         True if the change appears to revert the fix; False otherwise.
     """
     if not proposed_change:
+        return False
+    if len(proposed_change) > _MAX_CHANGE_BYTES:
+        # Don't burn CPU on huge inputs (e.g., AI editing a generated
+        # 1 MB JSON file). Conservative bail; Hero 2 can refine later.
         return False
 
     line_start = (
@@ -250,9 +281,14 @@ def is_revert(proposed_change: str, fix: FixRecord | dict[str, Any]) -> bool:
         fix.description if isinstance(fix, FixRecord) else fix.get("description", "")
     ) or ""
 
-    # Format detection — Claude Code Edit format has the literal markers.
-    if "--- before" in proposed_change and "--- after" in proposed_change:
-        return _is_revert_edit_format(proposed_change, description)
+    # Format detection: try the strict edit-format regex first; if it
+    # matches, dispatch to the edit handler. Otherwise treat as unified
+    # diff.
+    edit_match = _EDIT_FORMAT_RE.match(proposed_change)
+    if edit_match is not None:
+        before_block = edit_match.group("before")
+        after_block = edit_match.group("after")
+        return _is_revert_edit_format(before_block, after_block, description)
 
     return _is_revert_unified_diff(proposed_change, line_start)
 
@@ -264,7 +300,6 @@ def _is_revert_unified_diff(diff: str, line_start: int) -> bool:
     a deletion is present. We use a word-boundary regex so ``@@ -10``
     doesn't match ``@@ -100``.
     """
-    import re as _re
     range_pattern = _re.compile(rf"@@ -{line_start}(?:,| )")
     has_range = bool(range_pattern.search(diff))
     has_deletion = any(
@@ -274,44 +309,40 @@ def _is_revert_unified_diff(diff: str, line_start: int) -> bool:
     return has_range and has_deletion
 
 
-def _is_revert_edit_format(change_text: str, description: str) -> bool:
-    """Heuristic for Claude Code Edit-format input (``--- before`` / ``--- after``).
+def _is_revert_edit_format(
+    before_block: str, after_block: str, description: str
+) -> bool:
+    """Heuristic for Claude Code Edit-format input.
 
-    The format produced by ``mcp_server.engine.wiring.claude_code_hooks._build_event``
-    is::
+    Args:
+        before_block: the ``old_string`` (what's being replaced)
+        after_block: the ``new_string`` (what's replacing it)
+        description: free-text fix description (used to extract keywords)
 
-        --- before
-        <old_string>
-        --- after
-        <new_string>
+    The simple intuition: if ``before`` looks like the FIX code and
+    ``after`` looks like the BROKEN code, this is a revert. We
+    approximate "looks like buggy code" via keyword overlap with the
+    fix description, with word-boundary matching to avoid false
+    positives like ``"infinite"`` matching ``"reconnection"``.
 
-    A revert is one where the ``new_string`` (after) looks more like the
-    pre-fix state than the ``old_string`` (before). Without git history
-    to compare against (Week 2), we use a keyword-overlap heuristic:
+    Special cases:
+      - ``after`` empty and ``before`` non-empty → deletion of fix code
+        → revert.
+      - ``before`` empty and ``after`` non-empty → addition (NOT a revert).
+      - Description has no actionable keywords → can't decide → False.
 
-      - Tokenize the fix description into bug-related keywords (skip
-        common words like "fix", "bug", "error" — those describe the
-        action of fixing, not the buggy state).
-      - If the ``--- after`` block contains those keywords more than
-        the ``--- before`` block does, it's likely a revert toward the
-        buggy state.
-      - Special case: if ``after`` is empty (deletion), and the fix
-        description suggests the fix added code, treat as revert.
-
-    Returns False on ambiguous input — Week 2 replaces this with proper
-    git-aware comparison.
+    Round-2 QA findings P1 #1 and P1 #2 are addressed by the
+    word-boundary matching and the regex-based parser respectively.
     """
-    # Split into before/after blocks
-    parts = change_text.split("--- after", 1)
-    if len(parts) != 2:
-        return False
-    before_block = parts[0].split("--- before", 1)[-1].strip()
-    after_block = parts[1].strip()
+    before_block = before_block.strip()
+    after_block = after_block.strip()
 
-    # If `after` is empty and `before` had content, that's a deletion of
-    # fix code. Likely revert.
-    if not after_block and before_block:
+    # Pure deletion of fix code → revert
+    if before_block and not after_block:
         return True
+    # Pure addition is never a revert
+    if after_block and not before_block:
+        return False
 
     # Keyword-overlap heuristic. Strip the verb-y words that describe
     # "fixing"; keep nouns that describe what was buggy.
@@ -319,25 +350,30 @@ def _is_revert_edit_format(change_text: str, description: str) -> bool:
         "fix", "fixed", "fixes", "fixing", "bug", "bugs", "error",
         "errors", "issue", "issues", "the", "a", "an", "to", "of",
         "in", "on", "for", "by", "with", "and", "or", "but", "is",
-        "was", "were", "be", "been", "being",
+        "was", "were", "be", "been", "being", "now", "have",
     }
     desc_tokens = {
-        t.lower().strip(".,;:")
+        t.lower().strip(".,;:!?")
         for t in description.split()
-        if t.lower().strip(".,;:") not in skip_words and len(t) > 2
+        if t.lower().strip(".,;:!?") not in skip_words and len(t) > 2
     }
     if not desc_tokens:
         return False  # description too generic to make a call
 
-    before_lower = before_block.lower()
-    after_lower = after_block.lower()
-    before_hits = sum(1 for t in desc_tokens if t in before_lower)
-    after_hits = sum(1 for t in desc_tokens if t in after_lower)
+    # Word-boundary regex matching — avoids "infinite" matching inside
+    # "reconnection" (round-2 QA P1 #1). re.escape() handles tokens
+    # that contain regex metacharacters (e.g., "C++").
+    before_hits = 0
+    after_hits = 0
+    for token in desc_tokens:
+        pattern = _re.compile(rf"\b{_re.escape(token)}\b", _re.IGNORECASE)
+        if pattern.search(before_block):
+            before_hits += 1
+        if pattern.search(after_block):
+            after_hits += 1
 
     # If `after` mentions the buggy keywords MORE than `before`, it's
-    # likely reverting toward the bug. (Example: fix description says
-    # "infinite loop" — if after_block mentions "infinite" / "loop" but
-    # before_block doesn't, that's a regression signal.)
+    # likely reverting toward the bug.
     return after_hits > before_hits and after_hits > 0
 
 

@@ -248,6 +248,66 @@ This QA pass is exactly the kind of thing the per-hero workflow
 calls for: implement → test → independent review → fix → re-test →
 ship. Each hero will go through the same loop.
 
+### Round-2 QA: rigorous re-review of the round-1 fixes (same day)
+
+After committing the round-1 P0 fixes, ran a SECOND QA pass
+specifically targeting the fix code itself. Two parallel review angles:
+adversarial (try to break the fixes) + cross-module (did we degrade
+v1.8.1 paths?).
+
+**Cross-module: clean.** No v1.8.1 regression. Engine is dormant
+unless hooks are installed; existing CLI commands, tests, MCP server
+startup all unaffected. Lazy imports + per-event allocations + 5MB
+crash-log rotation all hold up.
+
+**Adversarial: 7 findings, 2 P1 + 3 P2.** The fix code itself had
+issues, all addressed in this same commit window:
+
+| # | Severity | Finding | Fix |
+|---|---|---|---|
+| 1 | P1 | Keyword matching used SUBSTRING, not word boundaries — `"infinite"` matched inside `"reconnection"` | Use `\\b` word-boundary regex via `re.escape` for safety |
+| 2 | P1 | Parser would split incorrectly if `old_string`/`new_string` contained literal `--- before` / `--- after` markers | Replace `.split()` with anchored regex (`^--- before\\n...^--- after\\n` with `re.MULTILINE | re.DOTALL`) |
+| 3 | P2 | No input size cap → 1 MB input would burn CPU on `.lower()` and substring scans | `_MAX_CHANGE_BYTES = 100_000`; bail to False above that |
+| 4 | P2 | `_conn_cache_lock` was a plain `Lock` — same-thread reentry would deadlock | Switch to `threading.RLock()` (defensive against future cascade calls) |
+| 5 | P2 | Test coverage gaps: identifier-name false positives, parser injection, size cap, lock reentry | 9 new test cases added to `test_qa_p0_fixes.py` |
+
+**Adversarial findings deferred (acceptable backlog):**
+- Lock scope too broad (disk I/O held under cache lock) — measured perf
+  is fine; defer until contention shows up.
+- Centralized path on symlinks — production rarely has NAS storage for
+  codevira state; no real exposure.
+
+**An interesting side effect of the round-2 fixes:**
+
+The original `test_keyword_substring_does_not_match` test failed
+after the word-boundary fix landed. Investigation showed the test's
+expectation was wrong — word-boundary regex correctly treats
+`infinite_loop_handler` as NOT containing the standalone word
+`infinite` (because `_` is a word char in regex `\w`, so there's no
+`\b` between `e` and `_`). This is the right behavior: identifier
+renames don't count as "AI reintroduced the bug." Updated the test
+to match the correct semantics:
+- `test_keyword_in_comment_word_matches`: standalone words in comments DO match
+- `test_keyword_only_in_identifier_does_not_count`: identifiers DON'T match (false-positive guard)
+
+This is an important Hero 2 insight: the heuristic catches reverts
+where the buggy concept reappears as PROSE (in comments, error
+messages, doc strings) but tolerates identifier renames. Hero 2
+spec should document this tradeoff explicitly.
+
+**Final Week-1 numbers (post-round-2-QA):**
+
+- Tests: 1,545 → 1,555 passing (+10 round-2 tests)
+- Zero regressions
+- 5 P0/P1 bugs fixed across both rounds
+- Performance: 0.24 ms p95 (200× under spec)
+- End-to-end binary still passes the demo-policy smoke test
+
+**Discipline takeaway:** Two rounds of QA caught 5 real bugs that
+would have shipped if I'd stopped after the first round of unit
+tests. Per-hero workflow's "spec → code → tests → review → fix →
+re-review → ship" loop is producing real value.
+
 ---
 
 ## Week 2 — Engine sprint, part 2

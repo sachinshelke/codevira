@@ -11,6 +11,50 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Planned for v1.9
+
+- **Interactive checkbox UI for `codevira configure`**. The current
+  prompt asks users to type comma-separated indices ("1,3,5") into a
+  numbered list — fine for 3–5 items, awkward for 15+. v1.9 will add
+  arrow-key navigation + space-to-toggle multi-select, matching the
+  UX of `npm create vite`, `gh repo create`, etc.
+
+  **Design (opt-in dependency):**
+  - Default install (`pip install codevira`) keeps the current numbered
+    prompt — zero new dependencies, zero new failure modes.
+  - `pip install codevira[ui]` pulls `questionary` (~3 MB). When
+    importable AND `sys.stdin.isatty()` AND `os.environ.get("TERM")
+    != "dumb"`, `prompt_multi_select` switches to the checkbox UI.
+  - `--dirs` and `--extensions` flags continue to work for both paths
+    (CI / scripts / non-interactive use).
+
+  **Why deferred from v1.8.1:** v1.8.1 is a pure crash hotfix; mixing
+  in a UX feature would slow the release and complicate testing. The
+  numbered prompt has shipped since v1.8.0 and works fine — this is
+  polish, not a fix.
+
+  **Implementation notes for whoever picks this up:**
+  - Site: `mcp_server/cli_configure.py:prompt_multi_select` (line ~176)
+  - Add `[ui]` extra in `pyproject.toml` with `questionary>=2.0`
+  - TTY detection already exists (`NonInteractiveError` raised on
+    `not sys.stdin.isatty()`); extend it to also branch on
+    questionary availability
+  - Test surface: split into two test classes — one mocks `input()`
+    (current behavior), one mocks `questionary.checkbox()`. Skip the
+    questionary tests when not installed.
+  - Accessibility: keep the numbered prompt for screen-reader users;
+    document `CODEVIRA_DISABLE_TUI=1` env var as the override.
+  - No schema changes, no public-API changes.
+
+### Other v1.9 candidates (no design yet)
+
+- Watcher restart circuit breaker (deferred from v1.8.1 — see "Out of
+  scope" below).
+- Refactor `_enable_wal_with_retry` into a shared `indexer/_sqlite_util.py`
+  (deferred from v1.8.1).
+- Watcher hot-reload of `config.yaml` on disk changes.
+- `crash_logger` size cap or rotation (currently grows unbounded).
+
 ---
 
 ## [1.8.1] — 2026-05-02 — Production Hotfix from Real-World Crash Logs

@@ -833,6 +833,24 @@ class TestCmdServe:
             project_dir=None,
         )
 
+    # v1.8.1 hardening — cmd_serve refuses $HOME / system dirs.
+    # Note: we do NOT patch run_http_server because importing
+    # mcp_server.http_server requires the 'mcp' package, which isn't
+    # available on Python 3.9. The guard fires BEFORE the http_server
+    # import, so SystemExit raises before we'd hit ModuleNotFoundError.
+    def test_serve_refuses_home(self, tmp_path, monkeypatch, capsys):
+        fake_home = tmp_path / "fake-home"
+        fake_home.mkdir()
+        monkeypatch.setattr("pathlib.Path.home", lambda: fake_home)
+        monkeypatch.setattr("mcp_server.paths.get_project_root", lambda: fake_home)
+
+        from mcp_server.cli import cmd_serve
+        with pytest.raises(SystemExit) as exc:
+            cmd_serve()
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert "$HOME" in err
+
 
 # ---------------------------------------------------------------------------
 # cmd_register

@@ -879,3 +879,52 @@ class TestServerMain:
             from mcp_server.server import main
             main()
         mock_watcher.stop.assert_called_once()
+
+    # v1.8.1 hardening — server.main() refuses $HOME / system dirs.
+    # This is the LAST-MILE guard for users who upgrade from v1.8.0 with a
+    # leftover rogue project. Without it, even with all upstream guards,
+    # `start_background_watcher` would still fire from the rogue config.yaml
+    # and walk ~/Library/... — which is the actual production crash mode.
+    def test_main_refuses_home_root(self, tmp_path, monkeypatch, capsys):
+        import pytest as _pytest
+        fake_home = tmp_path / "fake-home"
+        fake_home.mkdir()
+        monkeypatch.setattr("pathlib.Path.home", lambda: fake_home)
+        monkeypatch.setattr("mcp_server.paths.get_project_root", lambda: fake_home)
+
+        # The watcher MUST NOT be invoked when the guard fires.
+        mock_watcher = MagicMock()
+        with patch("mcp_server.crash_logger.install_global_handler"), \
+             patch("asyncio.run") as mock_asyncio, \
+             patch("indexer.index_codebase.start_background_watcher",
+                   return_value=mock_watcher) as mock_start_watcher, \
+             patch("mcp_server.migrate.detect_migration_needed", return_value=False), \
+             _pytest.raises(SystemExit) as exc:
+            from mcp_server.server import main
+            main()
+
+        assert exc.value.code == 1
+        # Watcher and asyncio loop never reached.
+        mock_start_watcher.assert_not_called()
+        mock_asyncio.assert_not_called()
+        err = capsys.readouterr().err
+        assert "$HOME" in err
+        assert "clean --orphans" in err
+
+    def test_main_refuses_root_slash(self, monkeypatch, capsys):
+        import pytest as _pytest
+        from pathlib import Path
+        monkeypatch.setattr("mcp_server.paths.get_project_root", lambda: Path("/"))
+
+        mock_watcher = MagicMock()
+        with patch("mcp_server.crash_logger.install_global_handler"), \
+             patch("asyncio.run"), \
+             patch("indexer.index_codebase.start_background_watcher",
+                   return_value=mock_watcher) as mock_start_watcher, \
+             patch("mcp_server.migrate.detect_migration_needed", return_value=False), \
+             _pytest.raises(SystemExit) as exc:
+            from mcp_server.server import main
+            main()
+
+        assert exc.value.code == 1
+        mock_start_watcher.assert_not_called()

@@ -44,17 +44,23 @@ neither did `cmd_init`.
   `mcp_server.paths.is_invalid_project_root()` rejects `$HOME`, `/`,
   `/Users`, `/home`, `/tmp`, `/private/tmp`, `/var`, `/private/var`,
   `/etc`, `/opt` (plus the macOS-resolved `/private/etc` and
-  `/System/Volumes/Data/home` forms). Wired into FIVE entry points:
-  `cmd_configure`, `cmd_init`, `cmd_index`, `cmd_register`, and
-  `auto_init._run_background_init`. `cmd_index` and `cmd_register` were
-  added during pre-release revalidation — without them, `codevira index`
-  from `$HOME` would silently mkdir
-  `~/.codevira/projects/<HOME_slug>/{graph,codeindex}/` as dead-weight
-  artefacts (no `metadata.json`, so `clean --orphans` couldn't even
-  reach them), and `codevira register` would pin IDE configs to a path
-  the auto_init guard later rejects on every MCP tool call. `auto_init`
-  sets `_progress["status"] = "error"` so the MCP server stops looping
-  on retries.
+  `/System/Volumes/Data/home` forms). Wired into SEVEN entry points:
+  `cmd_configure`, `cmd_init`, `cmd_index`, `cmd_register`, `cmd_serve`,
+  `mcp_server.server.main()` (stdio MCP server entry), and
+  `auto_init._run_background_init`. The `server.main()` guard is the
+  most critical — without it, a user upgrading from v1.8.0 *without*
+  first running `clean --orphans` would still hit the original crash
+  mode: their leftover rogue `config.yaml` would drive
+  `start_background_watcher` into walking `~/Library/Group Containers/...`,
+  which is exactly where the 41 production `InterruptedError` crashes
+  came from. `cmd_index`/`cmd_register`/`cmd_serve` close
+  defense-in-depth holes (silent dead-weight `mkdir` of
+  `~/.codevira/projects/<HOME_slug>/{graph,codeindex}/`, IDE configs
+  pinned to broken paths, HTTP server bound to a $HOME root). Pre-1.8.1
+  revalidation walked all CLI sub-commands plus the stdio/HTTP server
+  entry to confirm none could leak state on disk when invoked from
+  `$HOME`. `auto_init` sets `_progress["status"] = "error"` so the MCP
+  server stops looping on retries.
 
 - **`SQLiteGraph` WAL with retry — port of the v1.8.0 GlobalDB fix**
   (eliminates the 2 of 43 `database is locked` crashes). v1.8.0 fixed

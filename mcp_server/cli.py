@@ -460,6 +460,16 @@ def cmd_serve(
             sys.exit(1)
         return
 
+    # v1.8.1: refuse to start the HTTP server with $HOME / system root —
+    # symmetric with mcp_server.server.main()'s stdio guard. The HTTP
+    # transport binds to one project at startup; a $HOME-bound server
+    # would route every request through the same broken project root.
+    from mcp_server.paths import get_project_root, is_invalid_project_root
+    rejection = is_invalid_project_root(get_project_root())
+    if rejection:
+        print(f"Error: {rejection}", file=sys.stderr)
+        sys.exit(1)
+
     from mcp_server.http_server import run_http_server
     run_http_server(host=host, port=port, use_https=use_https, project_dir=project_dir)
 

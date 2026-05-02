@@ -1070,6 +1070,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 def main():
     import asyncio
     import logging
+    import sys
 
     logger = logging.getLogger("codevira.server")
 
@@ -1079,6 +1080,35 @@ def main():
         install_global_handler()
     except Exception as e:
         logger.warning("Could not install crash handler: %s", e)
+
+    # v1.8.1: refuse to start the MCP server when launched from $HOME or a
+    # system top-level. This is the LAST-mile guard — without it, a user
+    # who upgrades from v1.8.0 WITHOUT running `clean --orphans` would still
+    # hit the crash mode: their leftover rogue project's config.yaml drives
+    # `start_background_watcher` (called below) into walking
+    # ~/Library/Group Containers/... — which is where the original 41
+    # InterruptedError crashes were logged. cmd_configure / cmd_init /
+    # auto_init guards prevent NEW rogues; this guard prevents the
+    # existing-rogue path from spinning up the watcher.
+    try:
+        from mcp_server.paths import get_project_root, is_invalid_project_root
+        _early_root = get_project_root()
+        _rejection = is_invalid_project_root(_early_root)
+        if _rejection:
+            print(f"Error: {_rejection}", file=sys.stderr)
+            print(
+                "  The MCP server cannot start with this project root.\n"
+                "  Move into a real project directory and relaunch your IDE,\n"
+                "  or run `codevira clean --orphans` to remove leftover\n"
+                "  rogue project data from a previous version.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+    except SystemExit:
+        raise
+    except Exception as e:
+        # Never let the guard itself crash the server — log and continue.
+        logger.warning("Project-root validation failed (continuing): %s", e)
 
     # v1.6: Auto-migrate legacy .codevira/ → ~/.codevira/projects/<key>/
     try:

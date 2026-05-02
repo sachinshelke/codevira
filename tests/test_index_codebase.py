@@ -14,6 +14,7 @@ Covers:
 from __future__ import annotations
 
 import hashlib
+import os
 import threading
 import time
 from dataclasses import dataclass
@@ -763,6 +764,72 @@ class TestStartBackgroundWatcher:
 
         assert result is None
         mock_observer_cls.assert_not_called()
+
+
+# ===================================================================
+# v1.8.1 round-4 hardening: `python -m indexer.index_codebase` __main__
+# ===================================================================
+
+class TestIndexerMainEntry:
+    """Direct module invocation (`python -m indexer.index_codebase --full`)
+    bypasses the cli.cmd_index guard. v1.8.1 round-4 adds a parallel guard
+    at the __main__ block. We verify by running the module as a subprocess."""
+
+    def _project_root(self) -> Path:
+        """Return the agent-mcp project root (where pyproject.toml lives)."""
+        return Path(__file__).parent.parent
+
+    def test_main_refuses_home_for_full(self, tmp_path):
+        """`python -m indexer.index_codebase --full` from $HOME exits 1.
+        The subprocess inherits PYTHONPATH so it can find the module."""
+        import subprocess
+        import sys
+        fake_home = tmp_path / "fake-home"
+        fake_home.mkdir()
+        env = dict(os.environ)
+        env["HOME"] = str(fake_home)
+        # PYTHONPATH so subprocess can import indexer / mcp_server modules.
+        proj_root = self._project_root()
+        env["PYTHONPATH"] = str(proj_root) + os.pathsep + env.get("PYTHONPATH", "")
+        result = subprocess.run(
+            [sys.executable, "-m", "indexer.index_codebase", "--full"],
+            capture_output=True,
+            text=True,
+            cwd=str(fake_home),
+            env=env,
+            timeout=30,
+        )
+        assert result.returncode == 1, (
+            f"Expected exit 1 from $HOME, got {result.returncode}\n"
+            f"stdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+        assert "$HOME" in result.stderr or "is not a project" in result.stderr
+
+    def test_main_status_works_anywhere(self, tmp_path):
+        """`--status` is exempt from the guard (read-only, bails early on
+        missing graph.db). From $HOME with no initialized project, it
+        prints 'Not initialized' and exits 0."""
+        import subprocess
+        import sys
+        fake_home = tmp_path / "fake-home-status"
+        fake_home.mkdir()
+        env = dict(os.environ)
+        env["HOME"] = str(fake_home)
+        proj_root = self._project_root()
+        env["PYTHONPATH"] = str(proj_root) + os.pathsep + env.get("PYTHONPATH", "")
+        result = subprocess.run(
+            [sys.executable, "-m", "indexer.index_codebase", "--status"],
+            capture_output=True,
+            text=True,
+            cwd=str(fake_home),
+            env=env,
+            timeout=30,
+        )
+        assert result.returncode == 0, (
+            f"--status from $HOME should be 0, got {result.returncode}\n"
+            f"stdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+        assert "Not initialized" in result.stdout
 
 
 # ---------------------------------------------------------------------------

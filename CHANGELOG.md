@@ -44,7 +44,7 @@ neither did `cmd_init`.
   `mcp_server.paths.is_invalid_project_root()` rejects `$HOME`, `/`,
   `/Users`, `/home`, `/tmp`, `/private/tmp`, `/var`, `/private/var`,
   `/etc`, `/opt` (plus the macOS-resolved `/private/etc` and
-  `/System/Volumes/Data/home` forms). Wired into NINE distinct sites
+  `/System/Volumes/Data/home` forms). Wired into TEN distinct sites
   covering every state-creating path the codebase exposes:
   - **CLI entry points (6):** `cmd_configure`, `cmd_init`, `cmd_index`,
     `cmd_register`, `cmd_serve` (refuses both regular serve AND
@@ -54,6 +54,11 @@ neither did `cmd_init`.
     transport) and `mcp_server.http_server.run_http_server()` (HTTP
     transport). Both are reachable directly via `python -m`, not just
     through the CLI.
+  - **Direct module entry (1):** `indexer.index_codebase.__main__`
+    (`python -m indexer.index_codebase --full | --watch | (default)`)
+    — this is a separate CLI surface from the `codevira` binary;
+    pre-revalidation it bypassed `cli.cmd_index`'s guard entirely.
+    `--status` is exempt (read-only, bails on missing graph.db).
   - **Defense-in-depth (1):** `indexer.index_codebase.start_background_watcher`
     refuses to start the watcher even if a programmatic caller bypasses
     every entry-point guard above. Returns `None`; both `cmd_watch` and

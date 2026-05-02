@@ -835,6 +835,18 @@ if __name__ == "__main__":
     parser.add_argument("-q", "--quiet", action="store_true", help="Suppress non-error output.")
     args = parser.parse_args()
 
+    # v1.8.1 round-4 hardening: refuse $HOME / system root for the
+    # `python -m indexer.index_codebase ...` direct entry. This bypasses
+    # the `codevira index` CLI guard, so we add a parallel guard here.
+    # `--status` is exempt — it's read-only and bails early on missing
+    # graph.db without creating any state.
+    if not args.status:
+        from mcp_server.paths import get_project_root, is_invalid_project_root
+        _rejection = is_invalid_project_root(get_project_root())
+        if _rejection:
+            print(f"Error: {_rejection}", file=sys.stderr)
+            sys.exit(1)
+
     if args.status:
         cmd_status()
     elif args.full:

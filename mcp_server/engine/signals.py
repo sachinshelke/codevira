@@ -85,15 +85,42 @@ class SignalContext:
         return self._graph
 
     def _load_graph(self) -> Any:
+        """Locate and open the project's graph.db.
+
+        Resolution priority (matches mcp_server.paths.get_data_dir):
+          1. Centralized: ``~/.codevira/projects/<slug>/graph/graph.db``
+             (v1.6+ default)
+          2. Legacy in-project: ``<project_root>/.codevira/graph/graph.db``
+             (v1.5 and earlier — still in use on un-migrated projects)
+          3. None — uninitialized project; signal returns None to policies.
+
+        We resolve manually (rather than calling ``get_data_dir()``) so
+        that this signal works for ANY ``project_root``, not just the
+        process-global one. Multi-project use cases (running tests,
+        future daemon) need this.
+        """
         try:
             from indexer.sqlite_graph import SQLiteGraph  # local import — slow on cold path
             from mcp_server.paths import _sanitize_path_key, get_global_home
 
+            # 1. Centralized location (v1.6+).
             key = _sanitize_path_key(self.project_root)
-            db_path = get_global_home() / "projects" / key / "graph" / "graph.db"
-            if not db_path.exists():
-                return None  # uninitialized project — skip silently
-            return SQLiteGraph(db_path)
+            centralized = (
+                get_global_home() / "projects" / key / "graph" / "graph.db"
+            )
+            if centralized.exists():
+                return SQLiteGraph(centralized)
+
+            # 2. Legacy in-project location (v1.5 and earlier). Honors
+            #    users who haven't been migrated yet — without this
+            #    fallback, every signal-using policy silently no-ops on
+            #    legacy projects.
+            legacy = self.project_root / ".codevira" / "graph" / "graph.db"
+            if legacy.exists():
+                return SQLiteGraph(legacy)
+
+            # 3. Uninitialized — return None so policies skip silently.
+            return None
         except Exception:  # noqa: BLE001 — signal layer must never crash a policy
             return None
 

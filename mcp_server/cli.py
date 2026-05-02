@@ -740,6 +740,24 @@ def main() -> None:
              "users who bootstrapped at $HOME on v1.8.0 (see CHANGELOG v1.8.1)",
     )
 
+    # engine — internal subcommand invoked by Claude Code lifecycle hook
+    # scripts. Not user-facing; surfaces here so `codevira engine handle
+    # PreToolUse` works from data/hooks/*.sh.
+    engine_parser = subparsers.add_parser(
+        "engine",
+        help="Internal: lifecycle-hook engine entry (called by hook scripts)",
+    )
+    engine_sub = engine_parser.add_subparsers(dest="engine_action")
+    handle_parser = engine_sub.add_parser(
+        "handle",
+        help="Process a Claude Code lifecycle hook event from stdin",
+    )
+    handle_parser.add_argument(
+        "event_type",
+        help="Claude Code event name (PreToolUse, PostToolUse, SessionStart, "
+             "UserPromptSubmit, Stop)",
+    )
+
     args = parser.parse_args(raw_args)
 
     if args.command == "init":
@@ -809,6 +827,22 @@ def main() -> None:
             legacy_only=getattr(args, "legacy", False),
             orphans_only=getattr(args, "orphans", False),
         )
+    elif args.command == "engine":
+        # Internal — Claude Code hook scripts call us with `engine handle <event>`.
+        if getattr(args, "engine_action", None) == "handle":
+            # Auto-register the demo policy when the env var is set. This
+            # is the engine sprint's acceptance test: a hook with
+            # CODEVIRA_DEMO_POLICY=1 must block edits to .py.bak files.
+            try:
+                from mcp_server.engine.demo_policy import maybe_register as _maybe_demo
+                _maybe_demo()
+            except Exception:
+                pass  # never let demo policy registration break the hook
+            from mcp_server.engine.wiring.claude_code_hooks import handle as engine_handle
+            sys.exit(engine_handle(args.event_type))
+        # Unknown engine action — print usage.
+        engine_parser.print_help()
+        sys.exit(2)
     else:
         # No subcommand → start MCP server (stdio transport)
         cmd_server()

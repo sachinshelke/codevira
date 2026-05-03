@@ -1399,6 +1399,77 @@ This isn't as severe as Bugs 1+2 (no production hero relies on the flag — yet)
 
 ---
 
+## Week 8 — Hero 2 (Anti-Regression Memory) (2026-05-04)
+
+### Shipped
+
+**Hero 2: AntiRegression — fifth policy hero.**
+
+When the AI's Edit looks like it reverts a previously-fixed bug, Hero 2 blocks. Reuses Week-2 plumbing (`scan_git_log` populates `fix_history.db`; `is_revert` does the heuristic comparison; `signals.fixes` exposes the data).
+
+- `mcp_server/engine/policies/anti_regression.py` — ~150 LOC. Priority=80 (between Decision Lock 100 and Blast-Radius 50). Env var `CODEVIRA_ANTI_REGRESSION_MODE` (off/warn/block, default block). Per-fix try/except for robustness.
+- `tests/engine/test_anti_regression.py` — 23 tests (8 acceptance + 8 behavioral + 1 dispatch end-to-end + 2 registration + 4 edge cases). Tier-0 pre-flight from start: real `fix_history.db` via `record_fix()` + behavioral spies on `signals.fixes` + `is_revert` + 10 mutations from start.
+
+### R3 mutation testing
+
+10 mutations from start, 9 caught:
+
+| Mutation | Caught? |
+|---|---|
+| M1 is_edit gate | ✅ behavioral spy |
+| M2 target_file None gate | ✅ behavioral spy |
+| M3 mode=off gate | ✅ behavioral spy |
+| M4 signals None gate | ✅ direct test |
+| M5 priority demotion | ✅ priority-value test |
+| M6 mode validation | ✅ config test |
+| M7 empty-fixes gate | ⚠ observably redundant (see below) |
+| M8 None-diff gate | ✅ behavioral spy on `is_revert` |
+| M9 reverting-empty gate | ✅ acceptance test_3 |
+| M10 per-fix try/except | ✅ flaky-fix robustness test |
+
+**M7 honest analysis:** The empty-fixes gate (`if not fixes: return allow`) is a fast-path optimization. Removing it has zero observable effect — empty `fixes` list → empty `candidates` slice → for-loop iterates zero times → `is_revert` is never called → `reverting` stays empty → final `if not reverting` gate returns allow. The only effect of the gate is a ~5-microsecond saving when fixes is empty. Documented in code as "observably redundant — kept for clarity." Not a real test gap; the safety net (M9) catches the actual failure mode.
+
+This is the first time mutation testing surfaced a redundant-but-correct gate. Worth noting: the discipline keeps producing useful signal even on tightly-tested code.
+
+### Tier-0 pre-flight discipline at start
+
+Per Lessons #15-#17 (now muscle memory):
+
+- ✅ **Real-DB integration**: tests use `record_fix()` against a real `fix_history.db` via tmp_path fixture.
+- ✅ **Behavioral spies**: `_FakeSignals.fixes_calls` records every call; `is_revert` is monkey-patched in 3 tests to verify gate behavior.
+- ✅ **End-to-end dispatch**: `TestEngineDispatch::test_hero_2_fires_through_dispatch` registers all 5 heroes, fires a real PreToolUse event with a recorded fix, asserts block.
+- ✅ **Hero 2 + Hero 1 coexistence**: a real-graph test where the file has BOTH a locked decision and a fix history; both fire, Hero 1 wins as primary (priority=100 > 80), Hero 2 is in `other_blocking_policies`.
+- ✅ **No new Bug-3-class issues**: audited the policy — every documented field / configurable knob is actually wired into a code path.
+
+### Bug-shape audit (Lesson #18 application)
+
+Every contract this hero declares is enforced:
+- `name = "anti_regression"` — used in metadata + dedup
+- `handles = (PRE_TOOL_USE,)` — used in dispatch eligibility filter
+- `enabled_by_default = True` — used in `register_default_policies` (post-Bug-3 fix)
+- `priority = 80` — used in dispatch sort + asserted in `test_priority_value_stable`
+- `_DEFAULT_MODE` — used in `_config()` validation
+- `_MAX_FIXES_PER_FILE = 20` — used in `candidates = fixes[:_MAX_FIXES_PER_FILE]`
+
+No dead fields. ✓
+
+### Test status
+
+391/391 across `tests/engine/` + `tests/test_paths.py` + `tests/test_setup_wizard.py` (was 368 → +23 Hero 2 tests).
+
+### What's next
+
+**Founder dogfood gate (`DOGFOOD.md` written):** before v2.0-alpha.3 tag, install on real daily-use machine + 48 hours of real Claude Code work. The QA discipline caught 18+ bugs across 8 weeks; real usage will surface what the discipline missed. The dogfood checklist has 6 trigger scenarios + a logging template.
+
+After dogfood:
+- If clean → recruit ≥3 alpha testers for the broader public test
+- If new bugs → fix on main, tag alpha.3, restart dogfood clock
+
+Heroes shipped: 4, 1, 5, 6, 2 (5 of 10).
+Heroes remaining for v2.0 GA: 7, 10, 9, 3, 8 (Weeks 9-13).
+
+---
+
 ## Template for new entries
 
 ```markdown

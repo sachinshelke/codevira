@@ -39,6 +39,7 @@ def register_default_policies() -> None:
          ``maybe_register()`` with manual env-var gating. Now the
          registration helper itself respects the flag.
     """
+    from mcp_server.engine.policies.anti_regression import AntiRegression
     from mcp_server.engine.policies.blast_radius import BlastRadiusVeto
     from mcp_server.engine.policies.cross_session import CrossSessionConsistency
     from mcp_server.engine.policies.decision_lock import DecisionLock
@@ -49,6 +50,7 @@ def register_default_policies() -> None:
         DecisionLock,                # Hero 1 (Week 5)
         CrossSessionConsistency,     # Hero 5 (Week 6)
         TokenBudgetPersist,          # Hero 6 (Week 7)
+        AntiRegression,              # Hero 2 (Week 8)
     ):
         if not policy_cls.enabled_by_default:
             continue  # opt-in only — caller registers manually

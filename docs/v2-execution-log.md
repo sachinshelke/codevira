@@ -700,7 +700,7 @@ prep work).
 **Pillar 1 spec** (`docs/heroes/pillar-1-setup.md`):
 - 380 lines covering the contract for Week 3 implementation: `codevira setup` command surface, plan-as-data architecture, 10 acceptance scenarios, edge-case matrix, performance budget (< 5s p95 wall-clock), QA gate (Tier 1 full + Tier 2 scripted + 24-hour founder dogfood). Spec verified for doc drift against existing `ide_inject.py`, `paths.py`, `cli.py` — all referenced symbols exist.
 
-### Tier-1 QA: 4 progressive rounds (per Week-1 precedent + cadence matrix)
+### Tier-1 QA: 5 progressive rounds (per Week-1 precedent + cadence matrix)
 
 Same discipline as Week 1's 5-round sprint. Each round used a different
 angle and caught bugs the others missed.
@@ -711,6 +711,7 @@ angle and caught bugs the others missed.
 | R2 | #2 (adversarial against R1 fix, 10 inputs) | Zero — fix holds across boundary, UTF-8 straddle, empty file, no-newline file, dir-as-file, malformed JSON | n/a |
 | R3 | #4 + #9 + #17 (latency + concurrency + crash recovery) | **P1: SQLite Connection NOT thread-safe at transaction boundary**; P2: partial-line at end-of-log eats next record on append | Per-DB `RLock` returned alongside cached connection by `_connect_locked`; sniff last byte and emit separator newline before append |
 | R4 | Independent fresh-eyes design review (different framing than R1) | P2: `fixes.db` had no WAL/`busy_timeout` (multi-process race); `_connect()` shim was a foot-gun reintroducing the R3 bug | WAL + `synchronous=NORMAL` + 5s `busy_timeout`; deleted `_connect()` shim; tightened `_persist_session_summary` docstring with single-writer + record-size invariants |
+| R5 | #3 (cross-module) + #15 (mutation-testing equivalent) | Cross-module: zero regression (verified 137 paths/auto_init/migrate tests + 149 engine tests + 44 fix_history tests all green; 20 pre-existing flakes confirmed pre-Week-2). Mutation-testing: **1 TEST GAP** — the `test_read_session_history_caps_huge_log_no_oom` regression test for the R1 cap fix only checked output correctness, not memory bounds. With cap reverted to `readlines()`, output was still correct because `limit=5` clamping picked the last 5 records regardless. | Strengthened the test to assert **peak heap allocation < 4 × cap** using `tracemalloc`. Discriminator: with cap, peak ≈ 3 × cap = 48 MiB; without cap, peak ≈ 3 × file_size = 90 MiB on the 28.8-MiB plant. Re-ran all 6 mutations; all caught. |
 
 ### Performance numbers (R3 measurements, all on local APFS)
 
@@ -729,6 +730,7 @@ angle and caught bugs the others missed.
 3. **R3 P2: Partial-line crash recovery.** A prior crash leaves a partial JSON line with no trailing newline. Next persist concatenated to it, corrupting both. Fixed by sniffing the last byte and emitting a separator. Regression: `TestTokenLogCrashRecovery` (2 tests).
 4. **R4 P2: No WAL / no busy_timeout on `fixes.db`.** Two `codevira` processes on the same project (e.g. `codevira budget history` while a session runs) raised `database is locked` without retry. Fixed: WAL mode + `synchronous=NORMAL` + 5s `busy_timeout`. Regression: `test_wal_mode_enabled_on_fixes_db`.
 5. **R4 P2: `_connect()` foot-gun.** Shim returned naked connection with no lock — first future caller would reintroduce R3. Fixed by deleting the shim and routing all callers through `_connect_locked` which returns `(conn, lock)`. Updated `tests/engine/test_qa_p0_fixes.py` to match. Regression: `test_connect_naked_accessor_removed`.
+6. **R5 TEST GAP: `test_read_session_history_caps_huge_log_no_oom` only checked output, not memory.** When mutated to revert the cap (`readlines()` on 28.8-MiB plant), the test still passed because `limit=5` clamping picked the right tail records regardless. The bug was real (DoS), the test was a false-positive — passed coverage report, didn't catch the actual class of regression. Fixed by adding a `tracemalloc`-based peak-allocation assertion (peak < 4 × cap; healthy ≈ 3 × cap, broken ≈ 3 × file_size).
 
 ### False positives confirmed (verified against real behavior)
 
@@ -745,8 +747,9 @@ angle and caught bugs the others missed.
 
 ### Surprises
 
-- **R1's "1 hour Tier-1 sweep" was insufficient.** The cadence-matrix minimum (5 angles, ~1 hr) caught one P1 (unbounded readlines). Running the Week-1-style 4-round progression caught **3 more bugs** — including the P1 SQLite shared-Connection transaction race, which silently corrupts data under any real concurrency. **The matrix minimum is the floor, not the ceiling.** Update to playbook: when a sprint adds new persistence + new concurrent code paths (as Week 2 did), default to running R1-R4 not R1.
-- **Independent angles catch independent bug classes** (Week-1 lesson confirmed): R1 (code review) caught DoS, R3 (concurrent stress) caught the race nobody else would have spotted, R4 (fresh-eyes design review) caught the foot-gun. None of these substitute for the others.
+- **R1's "1 hour Tier-1 sweep" was insufficient.** The cadence-matrix minimum (5 angles, ~1 hr) caught one P1 (unbounded readlines). Running the Week-1-style 5-round progression caught **4 more bugs** plus 1 test gap — including the P1 SQLite shared-Connection transaction race, which silently corrupts data under any real concurrency. **The matrix minimum is the floor, not the ceiling.** Update to playbook: when a sprint adds new persistence + new concurrent code paths (as Week 2 did), default to running R1-R5 not R1.
+- **Independent angles catch independent bug classes** (Week-1 lesson confirmed): R1 (code review) caught DoS, R3 (concurrent stress) caught the race nobody else would have spotted, R4 (fresh-eyes design review) caught the foot-gun, R5 (mutation testing) caught a regression test that *passed coverage but didn't actually catch the bug*. None of these substitute for the others.
+- **R5's mutation-testing finding was the most subtle.** Coverage tools say "the test exercises this line" — but they don't say "the test would fail if this line did the wrong thing." The R1 regression test passed coverage *and* the unmutated code, but reverting the fix made it still pass. **Mutation testing is the only way to verify a regression test actually regresses.**
 - **2 of the 4 agent findings in R1 were false positives** (regex DoS verified linear at 2.2 ms / 1000 matches; FD-leak claim was wrong about the context manager). **Verify, don't trust.** The 30-second benchmark saved a wrong fix.
 - The `_MAX_KEY_LEN` bug was a v1.8 latent issue, not a Week-2 regression. Edge-case testing found a real production bug while testing brand-new code.
 

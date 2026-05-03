@@ -25,6 +25,7 @@ from indexer.fix_history import (
     scan_git_log,
 )
 from mcp_server.engine.token_meter import (
+    _HISTORY_TAIL_BYTES_CAP,
     end_session,
     get_or_create_session_meter,
     read_session_history,
@@ -234,9 +235,20 @@ class TestTokenMeterPersistence:
         """Tier-1 QA finding: unbounded readlines() on huge log.
 
         Plant a token_budget.jsonl far larger than the tail cap and
-        confirm we still return the latest N records without loading
-        the whole file. Tail-window cap is 16 MiB; we plant ~32 MiB.
+        confirm:
+          1. Output is correct (5 newest records, newest-first).
+          2. **Peak memory allocation during the call is bounded by
+             the tail cap, not by the file size.** This is the part
+             R5b mutation testing showed was missing — without it, a
+             reverted cap (back to ``readlines()``) still passed
+             output assertions while loading the entire file. Hard
+             cap on peak allocation is what actually proves the fix
+             works.
+
+        Tail-window cap is 16 MiB; we plant ~32 MiB and assert peak
+        traced allocation stays well below 32 MiB.
         """
+        import tracemalloc
         from mcp_server.paths import _sanitize_path_key
 
         proj = tmp_path / "huge"
@@ -282,11 +294,39 @@ class TestTokenMeterPersistence:
         size = log_path.stat().st_size
         assert size > 16 * 1024 * 1024, f"plant too small ({size} bytes)"
 
-        # Should not OOM, should return tail.
-        history = read_session_history(proj, limit=5)
+        # Measure peak allocation during the call. tracemalloc snapshots
+        # only Python heap (not OS file-cache), which is exactly what we
+        # care about — bounded by what the bug would have leaked.
+        tracemalloc.start()
+        try:
+            history = read_session_history(proj, limit=5)
+            _current, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+
         sids = [r["session_id"] for r in history]
         # Newest-first ordering preserved
         assert sids == ["t5", "t4", "t3", "t2", "t1"]
+
+        # Peak heap allocation must be O(cap), not O(file_size).
+        # With cap in effect (16 MiB read): peak ≈ 3 × cap (raw bytes
+        # + decoded str + lines list all alive simultaneously) ≈ 48 MiB.
+        # With the cap REVERTED to readlines() on the full ~32-MiB
+        # file: peak ≈ 3 × file_size ≈ 90 MiB.
+        # Bound: 4 × cap = 64 MiB. Discriminates because:
+        #   • file_size chosen to be ≥ 1.5 × cap, so unbounded peak
+        #     exceeds 4 × cap.
+        #   • bounded peak fits well under 4 × cap with headroom for
+        #     incidental allocation (json parses, list growth, etc).
+        peak_mib = peak / (1024 * 1024)
+        cap_mib = _HISTORY_TAIL_BYTES_CAP / (1024 * 1024)
+        bound_mib = 4 * cap_mib
+        assert peak < int(bound_mib * 1024 * 1024), (
+            f"peak heap allocation {peak_mib:.1f} MiB exceeds "
+            f"{bound_mib:.0f} MiB bound — tail-window cap is not "
+            f"enforced. File size: {size / 1024 / 1024:.1f} MiB; "
+            f"cap: {cap_mib:.0f} MiB."
+        )
 
 
 # =====================================================================

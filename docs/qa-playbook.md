@@ -295,3 +295,14 @@ After Week 2's 4-round QA:
    positives — Week 2 R1 had 2 of 4. A 30-second benchmark or a
    5-line line-citation check is enough to triage; never apply a fix
    on an unverified finding.
+9. **Mutation testing is the only way to verify a regression test
+   actually regresses.** Week 2 R5 caught a regression test that
+   passed coverage AND passed on healthy code — but with the bug
+   re-introduced (cap reverted to `readlines()`), the test STILL
+   passed. Output-correctness assertions are not enough when the
+   fix is about *resource bounds*; assert on the resource (peak
+   memory, byte count read, syscalls issued) directly. Run a
+   simple mutation pass — programmatically revert each fix, run
+   the regression test, confirm it fails — before declaring a fix
+   "covered." A test that doesn't fail when the bug returns is
+   technical debt with a green checkmark on it.

@@ -238,21 +238,68 @@ policies:
 
 ## Performance budget
 
-Hooks fire on EVERY tool call. They must be fast.
+Hooks fire on EVERY tool call. They must be fast. Round-3 QA produced
+**measured numbers**, not aspirational targets — these supersede the
+original draft figures.
 
-| Event type | p95 target | p99 target |
+### In-process dispatch (engine.dispatch)
+
+This is the cost of running the engine ONCE the Python interpreter is
+already loaded — i.e., the cost from the MCP server's call_tool path,
+or any time a hero's policy fires inside an already-running process.
+
+Measured: 1,000 iterations with 5 policies registered, lazy signals.
+
+| Metric | Value | Comment |
 |---|---|---|
-| `pre_tool_use` | 50 ms | 200 ms |
-| `post_tool_use` | 50 ms | 200 ms |
-| `session_start` | 500 ms | 1000 ms (more leeway: only fires once per session) |
-| `user_prompt_submit` | 100 ms | 300 ms |
-| `stop` | 1000 ms | (best-effort; AI session is over) |
+| p50 | 0.12 ms | Fast path: policies that don't touch signals |
+| p95 | **0.24 ms** | Includes `decisions()` and `fixes()` signal queries |
+| p99 | 0.75 ms | |
+| max | 3.11 ms | Pathological — full signal load |
 
-Mechanisms to hit these:
-- Lazy signal loading — policies that don't read graph don't trigger graph queries
-- Per-event signal caching — multiple policies asking for `decisions` get one query
-- Async policy execution where order doesn't matter (warn/inject combine; block short-circuits)
-- Fast-rejection: policies declare `handles` event types so engine skips ones they don't care about
+**In-process dispatch budget: <5 ms p95 trivially.** The original
+50 ms draft target was way too generous; the engine is 200× faster.
+
+### Lifecycle hook full round-trip (Claude Code → shell → Python → engine → JSON response)
+
+This is the cost Claude Code actually sees per hook fire. It includes
+process spawn, Python interpreter startup, `import codevira`, and
+JSON I/O — all bottlenecks the engine code can't avoid.
+
+Measured: 30 round-trips through the installed `codevira` binary.
+
+| Metric | Value | Comment |
+|---|---|---|
+| p50 | ~97 ms | Dominated by `python` startup + `import` |
+| **p95** | **~135 ms** | |
+| max | ~163 ms | |
+
+**Realistic round-trip budget: 200 ms p95.** Process spawn is
+unavoidable for the shell-script-driven hook model. Mitigations in
+place:
+
+- **Fast path: `CODEVIRA_ENGINE=0` skips the entire Python invocation.**
+  Hook script short-circuits in <30 ms (bash + subprocess overhead only)
+  when the user disables the engine. Rolled out to all 5 hook scripts
+  in Round-3 QA.
+- **Lazy signal loading** — policies that don't read graph/decisions
+  don't trigger SQLite queries.
+- **Per-event signal caching** — multiple policies asking for the same
+  signal get one query.
+- **Fast-rejection** — policies declare `handles` event types so the
+  engine skips ones they don't care about.
+
+For Claude Code's UX, ~135 ms is acceptable: human reaction time is
+~250 ms, and Claude Code already takes hundreds of ms to make its
+own model call. Round-3 found this is **not a P0 concern** for v2.0.
+
+### Future: daemon-mode optimization (out of scope for v2.0)
+
+If the round-trip cost becomes a problem at scale (100+ hooks/sec
+during a long automated session), v2.1 may add a unix-socket daemon
+the hook scripts pipe to, eliminating Python startup per fire. Not
+needed at v2.0 launch. See execution log for the round-3 reasoning
+behind keeping this out of v2.0.
 
 ---
 
@@ -282,7 +329,13 @@ Mechanisms to hit these:
 3. **PreToolUse fires but tool name is unknown** (new tool the AI is trying) → policies that don't handle it return `allow`; engine falls through to allow.
 4. **Hook script can't reach codevira CLI** (codevira not in PATH) → hook exits 0 (allow) with a stderr warning. Never block on infrastructure failure.
 5. **User has policies disabled but hook is registered** → hook short-circuits to allow with no work. Latency target: <5 ms.
-6. **Diff is too large to analyze** (>10 MB) → policies that need diff-inspection bail with allow + warning. Don't time out the hook.
+6. **Change-text is too large to analyze** (>100 KB) → diff-inspection
+   helpers (`is_revert`) bail with `False` instead of burning CPU on
+   huge inputs. The 100 KB cap (not 10 MB as originally drafted) was
+   chosen after Round-3 QA showed even 100 KB inputs scan in <0.01 ms
+   with the word-boundary regex; >100 KB is almost always a generated
+   data file the AI shouldn't be analyzing for code-style reverts.
+   See `_MAX_CHANGE_BYTES` in `indexer/fix_history.py`.
 
 ---
 

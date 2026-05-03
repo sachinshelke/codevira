@@ -874,6 +874,29 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     except Exception:
         pass  # auto-init must never block tool dispatch
 
+    # v2.0 (engine sprint, week 1, round-3 QA): run pre_tool_use through
+    # the engine. Most tool calls return action="allow" (no policies
+    # registered yet, or none claim PRE_TOOL_USE). When a hero policy
+    # IS registered (Hero 1 onward), this is the integration point that
+    # lets it block/warn/inject before the tool dispatches.
+    #
+    # Failures here NEVER break tool dispatch — the wiring layer
+    # swallows engine errors and returns allow.
+    try:
+        from mcp_server.engine.wiring.mcp_dispatch import pre_call
+        _engine_verdict = pre_call(name, arguments)
+        if _engine_verdict.is_blocking():
+            # Block: return the verdict's message as the tool result so
+            # the AI sees why it was blocked.
+            msg = _engine_verdict.message or "Codevira policy blocked this action."
+            if _engine_verdict.policy:
+                msg = f"[codevira:{_engine_verdict.policy}] {msg}"
+            return [TextContent(type="text", text=msg)]
+        # warn / inject / allow: log and continue. (Warn/inject surface
+        # via logs for now; Hero 6 will surface them in tool output.)
+    except Exception:
+        pass  # engine wiring must never block tool dispatch
+
     try:
         if name == "get_node":
             result = get_node(
@@ -1063,6 +1086,16 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                       project_path=str(get_project_root()))
         except Exception:
             pass  # crash logger must never break the server
+
+    # v2.0 engine: run post_tool_use hook for telemetry (Hero 6 token
+    # accounting, Hero 7 style checks, Hero 10 outcome scoring will
+    # all hook here). Failures must not change the response we return
+    # to the AI — wiring layer swallows.
+    try:
+        from mcp_server.engine.wiring.mcp_dispatch import post_call
+        post_call(name, arguments, result)
+    except Exception:
+        pass
 
     return [TextContent(type="text", text=json.dumps(result, indent=2))]
 

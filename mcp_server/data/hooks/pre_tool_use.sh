@@ -14,6 +14,16 @@
 # Performance: must complete in <50ms p95. Engine handles fast-rejection
 # of disabled policies and short-circuits when CODEVIRA_ENGINE=0.
 
+# Round-3 QA fast path: if the engine is explicitly disabled, skip the
+# full Python invocation. Saves ~100ms (the cost of process spawn +
+# Python interpreter startup + module imports). Without this, every
+# Claude Code tool call pays Python-startup tax even when the user has
+# turned codevira off via CODEVIRA_ENGINE=0.
+if [[ "${CODEVIRA_ENGINE:-1}" == "0" ]]; then
+  printf '{"continue": true}\n'
+  exit 0
+fi
+
 # Resolve the codevira binary. We prefer the pipx install location, then
 # fall back to whatever is on PATH. If we can't find it, allow silently —
 # the user shouldn't be blocked by a misconfigured hook.

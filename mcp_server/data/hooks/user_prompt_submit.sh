@@ -7,6 +7,12 @@
 #   - Hero 5 (Cross-Session Consistency): active recall of related decisions
 #   - Hero 9 (Proactive Intent Inference): pre-fetches likely context
 
+# Round-3 QA fast path: skip Python startup when engine is disabled.
+if [[ "${CODEVIRA_ENGINE:-1}" == "0" ]]; then
+  printf '{"continue": true}\n'
+  exit 0
+fi
+
 if [[ -x "${HOME}/.local/bin/codevira" ]]; then
   CODEVIRA="${HOME}/.local/bin/codevira"
 elif command -v codevira >/dev/null 2>&1; then

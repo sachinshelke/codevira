@@ -8,6 +8,12 @@
 # Best-effort; the AI session is already over so blocking is meaningless.
 # This hook is for cleanup + persistence.
 
+# Round-3 QA fast path: skip Python startup when engine is disabled.
+if [[ "${CODEVIRA_ENGINE:-1}" == "0" ]]; then
+  printf '{"continue": true}\n'
+  exit 0
+fi
+
 if [[ -x "${HOME}/.local/bin/codevira" ]]; then
   CODEVIRA="${HOME}/.local/bin/codevira"
 elif command -v codevira >/dev/null 2>&1; then

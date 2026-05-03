@@ -29,7 +29,7 @@ Specs cap at ~500 lines each.
 | 4 | **Blast-Radius Veto** | [`04-blast-radius.md`](./04-blast-radius.md) | 4 | ✅ shipped Week 4; 5 QA rounds (1 MEDIUM + 2 P1 + 1 test-gap fixed) |
 | 1 | **Decision Lock** | [`01-decision-lock.md`](./01-decision-lock.md) | 5 | ✅ shipped Week 5; R1-R8 clean (1 docstring nit only) |
 | 5 | **Cross-Session Consistency** | [`05-cross-session.md`](./05-cross-session.md) | 6 | ✅ shipped Week 6; R1-R8 (1 test gap on short-prompt-skip caught + fixed) |
-| 6 | **Token Budget Live View** | `06-token-budget.md` (TBD) | 7 | spec pending |
+| 6 | **Token Budget Live View** | [`06-token-budget.md`](./06-token-budget.md) | 7 | ✅ shipped Week 7; Tier-0 pre-flight from start (10 mutations + behavioral spies + real CLI subprocess); Bug 3 caught (enabled_by_default flag was dead) |
 | 2 | **Anti-Regression Memory** | `02-anti-regression.md` (TBD) | 8 | spec pending |
 | 7 | **Live Style Enforcement** | `07-live-style.md` (TBD) | 9 | spec pending |
 | 10 | **AI Promotion Score** | `10-ai-promotion.md` (TBD) | 10 | spec pending |

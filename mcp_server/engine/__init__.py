@@ -29,25 +29,32 @@ def register_default_policies() -> None:
 
     Called from the engine's lifecycle hook entry (`mcp_server.cli`'s
     `engine handle ...` subcommand) and from the MCP server startup.
-    Idempotent: running it twice does NOT register duplicates.
+
+    Two contracts:
+      1. Idempotent — running twice does NOT register duplicates.
+      2. **``Policy.enabled_by_default = False`` opt-out is honored.**
+         Bug 3 (Week-7 retrospective): the flag was previously declared
+         on the base class but never checked. Setting it to False had
+         zero effect; the demo_policy worked around this via
+         ``maybe_register()`` with manual env-var gating. Now the
+         registration helper itself respects the flag.
     """
-    # Hero 4 — Blast-Radius Veto (Week 4)
     from mcp_server.engine.policies.blast_radius import BlastRadiusVeto
-
-    if not any(p.name == BlastRadiusVeto.name for p in registered_policies()):
-        register_policy(BlastRadiusVeto())
-
-    # Hero 1 — Active Decision Lock (Week 5)
-    from mcp_server.engine.policies.decision_lock import DecisionLock
-
-    if not any(p.name == DecisionLock.name for p in registered_policies()):
-        register_policy(DecisionLock())
-
-    # Hero 5 — Cross-Session Consistency (Week 6)
     from mcp_server.engine.policies.cross_session import CrossSessionConsistency
+    from mcp_server.engine.policies.decision_lock import DecisionLock
+    from mcp_server.engine.policies.token_budget import TokenBudgetPersist
 
-    if not any(p.name == CrossSessionConsistency.name for p in registered_policies()):
-        register_policy(CrossSessionConsistency())
+    for policy_cls in (
+        BlastRadiusVeto,             # Hero 4 (Week 4)
+        DecisionLock,                # Hero 1 (Week 5)
+        CrossSessionConsistency,     # Hero 5 (Week 6)
+        TokenBudgetPersist,          # Hero 6 (Week 7)
+    ):
+        if not policy_cls.enabled_by_default:
+            continue  # opt-in only — caller registers manually
+        if any(p.name == policy_cls.name for p in registered_policies()):
+            continue  # already registered (idempotent)
+        register_policy(policy_cls())
 
 __all__ = [
     # Event types

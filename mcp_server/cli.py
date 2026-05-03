@@ -758,6 +758,35 @@ def main() -> None:
         help="Scan and print the proposed config; do not write",
     )
 
+    # budget (v2.0 hero 6 — Token Budget Live View)
+    budget_parser = subparsers.add_parser(
+        "budget",
+        help="Show token-spend per session (Hero 6)",
+        description=(
+            "Show this project's AI session token totals + per-source "
+            "breakdown. Reads token_budget.jsonl populated by Hero 6's "
+            "Stop hook. Run with no args for the most-recent session; "
+            "use 'history' for a multi-session list."
+        ),
+    )
+    budget_parser.add_argument(
+        "subaction", nargs="?", default=None,
+        choices=[None, "history"],
+        help="Optional: 'history' to list multiple sessions",
+    )
+    budget_parser.add_argument(
+        "--last", type=int, default=10,
+        help="Number of sessions for 'history' (clamped 1-100)",
+    )
+    budget_parser.add_argument(
+        "--full", action="store_true",
+        help="Show full per-source breakdown (default: top-3 wasted only)",
+    )
+    budget_parser.add_argument(
+        "--project", metavar="PATH", default=None,
+        help="Read another project's log instead of cwd",
+    )
+
     # clean
     clean_parser = subparsers.add_parser(
         "clean",
@@ -886,6 +915,18 @@ def main() -> None:
             print()
             print("Aborted.")
             sys.exit(130)
+        sys.exit(rc)
+    elif args.command == "budget":
+        # Hero 6 — Token Budget Live View. Reads token_budget.jsonl
+        # populated by the Stop hook + TokenBudgetPersist policy.
+        from mcp_server.cli_budget import cmd_budget
+        project_arg = getattr(args, "project", None)
+        rc = cmd_budget(
+            show_history=(getattr(args, "subaction", None) == "history"),
+            last=getattr(args, "last", 10),
+            full=getattr(args, "full", False),
+            project=Path(project_arg) if project_arg else None,
+        )
         sys.exit(rc)
     elif args.command == "clean":
         cmd_clean(

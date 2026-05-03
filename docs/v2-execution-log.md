@@ -1329,6 +1329,76 @@ signals.preferences  — doesn't crash ✓
 
 ---
 
+## Week 7 — Hero 6 (Token Budget Live View) (2026-05-04)
+
+### Shipped
+
+**Hero 6: TokenBudgetPersist — pure-telemetry policy + `codevira budget` CLI.**
+
+The smallest hero by code volume — most plumbing was built in Week 2. Hero 6 just wires:
+1. A STOP-event policy that calls `end_session(session_id, project_root)` to persist the meter as a JSONL line.
+2. A `codevira budget [history] [--last N] [--full] [--project PATH]` CLI that reads the JSONL via Week-2's `read_session_history`.
+
+- `mcp_server/engine/policies/token_budget.py` — `TokenBudgetPersist` policy (~110 LOC). Priority=10 (lowest; pure telemetry runs after business-logic STOP heroes). Env var: `CODEVIRA_TOKEN_BUDGET_MODE` (off/persist).
+- `mcp_server/cli_budget.py` — `codevira budget` orchestrator (~210 LOC). Three subcommands: most-recent / history / --last N. Friendly empty-state when no sessions yet.
+- `mcp_server/engine/__init__.py` — registers Hero 6 in default heroes; ALSO **fixed Bug 3** (see below).
+- `mcp_server/cli.py` — wires `codevira budget` subcommand with all 4 flags.
+- `tests/engine/test_token_budget.py` — 18 tests (8 acceptance + 6 behavioral gates + 1 dispatch-end-to-end + 3 edge cases). Uses **real JSONL files via tmp_path** + **subprocess CLI tests** + **monkeypatched `end_session` spies** — Tier-0 pre-flight from the START, not retrofit.
+
+### Tier-0 pre-flight applied at start
+
+Per Lesson #17, every angle exercised (not checked off):
+
+- ✅ **Real-DB integration**: tests use real `token_budget.jsonl` files via `tmp_path`. The fixture writes via the production `_persist_session_summary` path; reads via the production `read_session_history`. Catches Bug 1's class (column mismatches against real schema).
+- ✅ **Behavioral spies**: `end_session` spy catches gate mutations (event_type, session_id None, mode=off). Without this, output equivalence would hide them.
+- ✅ **Subprocess CLI tests**: 3 of 8 acceptance tests run `codevira budget` end-to-end via subprocess. Catches arg-parse / wiring bugs that direct function calls miss.
+- ✅ **End-to-end dispatch test**: `test_hero_6_fires_through_dispatch` registers the policy, fires a real STOP event through `dispatch()`, asserts the JSONL was written. Catches Bug 2's class (engine wiring).
+- ✅ **10+ mutations**: 10 mutations from start, not 3. Caught the 9 logic mutations + uncovered Bug 3 (M9 had no behavioral effect because `enabled_by_default` was a dead field).
+
+### 🚨 Bug 3 caught: `enabled_by_default = False` was a dead field
+
+`Policy.enabled_by_default` was declared on the base class and documented as an opt-out knob — but `register_default_policies()` never checked it. Any policy with `enabled_by_default = False` (other than the demo policy, which used a separate `maybe_register()` helper with manual env-var gating) would still auto-register.
+
+This was caught by M9 mutation: flipping Hero 6's flag to `False` had ZERO behavioral effect — the test passed, the policy still registered, and dispatch still routed STOP events to it.
+
+**Fix:** `register_default_policies` now refactored to a loop with explicit `if not policy_cls.enabled_by_default: continue` guard. M9 mutation is now caught by `test_enabled_by_default_false_skips_registration`.
+
+This isn't as severe as Bugs 1+2 (no production hero relies on the flag — yet) but it's a contract gap that would silently break any future opt-in hero. Now fixed before that ever ships.
+
+### R3 mutation breakdown
+
+| Mutation | Caught? |
+|---|---|
+| M1 event_type gate revert | ✅ behavioral spy |
+| M2 session_id None gate revert | ✅ behavioral spy |
+| M3 mode=off gate revert | ✅ behavioral spy |
+| M4 priority demotion | ✅ priority-value test |
+| M5 mode validation revert | ❌ → ✅ added `test_invalid_mode_does_not_disable_policy` |
+| M6 end_session try/except removed | ✅ persist-failure test |
+| M7 summary None handling | DIDN'T APPLY (whitespace mismatch in find string; equivalent test_2_stop_with_active_meter_persists covers it) |
+| M8 metadata persisted=True flipped | ✅ acceptance test |
+| M9 enabled_by_default honored | ❌ → ✅ Bug 3 fix + regression test |
+| M10 handles tuple changed | ✅ dispatch end-to-end test |
+
+9 caught + 2 closed = 11/11 effective coverage. M7's "didn't apply" doesn't represent a gap — equivalent coverage exists in test_2.
+
+### Surprises
+
+- **Tier-0 pre-flight discipline at start saved time.** Hero 6 had 0 retrospective rounds because every angle was exercised on first pass. The two real findings (M5 + M9 / Bug 3) surfaced immediately during the initial mutation pass, not after a "we're done" declaration.
+- **The 4th application of "behavioral spies + real-data tests + dispatch end-to-end" is now muscle memory.** What took 30+ minutes of retrospective work for Heroes 1+4+5 took ~5 minutes for Hero 6 because the pattern is internalized.
+- **Bug 3 is the third "dead field" / "wiring not connected" bug** — same shape as Bug 2 (signals never passed) and Bug 1 (column never queried). All three are silent fail-open. The pattern: **any field/method declared but never integrated will eventually fail silently.** Add a CI check / linter for "declared-but-unused" in critical paths.
+
+### Test status
+
+368/368 across `tests/engine/` + `tests/test_paths.py` + `tests/test_setup_wizard.py` (was 350 → +18 Hero 6 tests).
+
+### What's next
+
+- v2.0-alpha.2 tag bundles Heroes 1, 5, 6 + Bug 1+2+3 fixes from alpha.1.1.
+- Week 8: Hero 2 (Anti-Regression Memory) — uses Week-2's `scan_git_log` + `is_revert` plumbing. Should be small (~150 LOC).
+
+---
+
 ## Template for new entries
 
 ```markdown

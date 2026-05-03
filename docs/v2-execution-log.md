@@ -700,33 +700,55 @@ prep work).
 **Pillar 1 spec** (`docs/heroes/pillar-1-setup.md`):
 - 380 lines covering the contract for Week 3 implementation: `codevira setup` command surface, plan-as-data architecture, 10 acceptance scenarios, edge-case matrix, performance budget (< 5s p95 wall-clock), QA gate (Tier 1 full + Tier 2 scripted + 24-hour founder dogfood). Spec verified for doc drift against existing `ide_inject.py`, `paths.py`, `cli.py` — all referenced symbols exist.
 
-### Tier-1 QA sweep (per cadence matrix, ~1 hr post-implementation)
+### Tier-1 QA: 4 progressive rounds (per Week-1 precedent + cadence matrix)
 
-5 angles run per the matrix's "engine continuation" line:
+Same discipline as Week 1's 5-round sprint. Each round used a different
+angle and caught bugs the others missed.
 
-| Angle | Method | Findings |
-|---|---|---|
-| #1 Code review | Independent Explore agent on Week-2 diff | 1 P1 (unbounded readlines) — fixed |
-| #2 Adversarial against fix | Inline harness, 7 adversarial inputs against `_MAX_KEY_LEN` | PASS — cap holds, suffix valid, no collisions |
-| #6 Doc drift | Cross-reference `pillar-1-setup.md` against `ide_inject.py` / `paths.py` / `cli.py` | PASS — every cited symbol exists |
-| #7 Security audit | Same Explore agent, threat-model lens | 2 false positives (regex DoS, file mode); 1 P1 same as #1 — fixed |
-| #8 Type safety | Inline import + `inspect.signature` on Week-2 modules | PASS |
+| Round | Angle | Findings | Fix |
+|---|---|---|---|
+| R1 | #1 + #7 (code review + security audit, independent agent) | P1: unbounded `readlines()` in `read_session_history` (DoS via huge log) | Tail-window cap of 16 MiB; seek-and-discard partial first line |
+| R2 | #2 (adversarial against R1 fix, 10 inputs) | Zero — fix holds across boundary, UTF-8 straddle, empty file, no-newline file, dir-as-file, malformed JSON | n/a |
+| R3 | #4 + #9 + #17 (latency + concurrency + crash recovery) | **P1: SQLite Connection NOT thread-safe at transaction boundary**; P2: partial-line at end-of-log eats next record on append | Per-DB `RLock` returned alongside cached connection by `_connect_locked`; sniff last byte and emit separator newline before append |
+| R4 | Independent fresh-eyes design review (different framing than R1) | P2: `fixes.db` had no WAL/`busy_timeout` (multi-process race); `_connect()` shim was a foot-gun reintroducing the R3 bug | WAL + `synchronous=NORMAL` + 5s `busy_timeout`; deleted `_connect()` shim; tightened `_persist_session_summary` docstring with single-writer + record-size invariants |
 
-**Bug caught: unbounded readlines() in `read_session_history`.** Original code did `f.readlines()` on the full log, then sliced the tail. Heavy users (or attacker-influenced sessions) writing MBs of records would OOM. Fixed by seeking to `(filesize - 16 MiB)`, dropping the partial first line, then `splitlines()` on the tail. Regression test plants a 32-MiB log and verifies we still find the 5 newest sessions.
+### Performance numbers (R3 measurements, all on local APFS)
 
-**False positives confirmed:**
-- "ReDoS in `_FIX_SUBJECT_RE`" — benchmarked at 2.2 ms / 1000 matches on 200-char adversarial input (`fix(((((` deep-nest, 10000-char filler, etc.). Linear time, no catastrophic backtracking. The non-greedy `.*?` inside the optional group does not exhibit nested-quantifier behavior.
-- "Token-budget log is world-readable (0o644)" — same threat model as `~/.gitconfig`, `~/.zshrc`. Single-user developer tool. No credentials in log content. Logged as backlog item, not ship-blocker.
+| Operation | n | p50 | p95 | p99 |
+|---|---|---|---|---|
+| `end_session` + persist | 200 | 0.14 ms | 0.60 ms | 0.95 ms |
+| `read_session_history` on 16-MiB log | 50 | 25.6 ms | 35.3 ms | — |
+| `scan_git_log` on 100-commit synthetic repo | 1 | 77 ms | — | — |
+| 50 threads × 5 parallel `end_session` persists | — | all 250 records intact | — | — |
+| 20 threads × 25 parallel `record_fix` | 1 | 1288 ms (post-fix) | — | — |
 
-**Deferred to backlog (P2, none ship-blocking):**
-- `lookup()` and `_connect()` in `fix_history.py` swallow some `sqlite3.Error` / `PermissionError` paths
-- `scan_git_log` truncates `result.stderr` at 200 chars in user-facing message
+### Bugs caught + fixed in Week-2 QA
+
+1. **R1 P1: Unbounded `readlines()` in `read_session_history`.** Loaded entire log to memory before slicing tail. Fixed with 16-MiB tail-window cap. Regression: `test_read_session_history_caps_huge_log_no_oom`.
+2. **R3 P1: SQLite shared-Connection transaction race.** Comment claimed "per-connection lock serializes" — false. Concurrent `record_fix` raised `OperationalError("cannot start a transaction within a transaction")`, `SystemError`, `InterfaceError`. Fixed with per-DB `RLock` held across execute+commit. Regression: `TestFixHistoryConcurrency` (2 tests).
+3. **R3 P2: Partial-line crash recovery.** A prior crash leaves a partial JSON line with no trailing newline. Next persist concatenated to it, corrupting both. Fixed by sniffing the last byte and emitting a separator. Regression: `TestTokenLogCrashRecovery` (2 tests).
+4. **R4 P2: No WAL / no busy_timeout on `fixes.db`.** Two `codevira` processes on the same project (e.g. `codevira budget history` while a session runs) raised `database is locked` without retry. Fixed: WAL mode + `synchronous=NORMAL` + 5s `busy_timeout`. Regression: `test_wal_mode_enabled_on_fixes_db`.
+5. **R4 P2: `_connect()` foot-gun.** Shim returned naked connection with no lock — first future caller would reintroduce R3. Fixed by deleting the shim and routing all callers through `_connect_locked` which returns `(conn, lock)`. Updated `tests/engine/test_qa_p0_fixes.py` to match. Regression: `test_connect_naked_accessor_removed`.
+
+### False positives confirmed (verified against real behavior)
+
+- "ReDoS in `_FIX_SUBJECT_RE`" — benchmark: 2.2 ms / 1000 adversarial matches on 200-char input. Linear, no catastrophic backtracking.
+- "Token log world-readable (0o644)" — same threat model as `~/.gitconfig` etc. on a single-developer machine. Documented as backlog.
+- "FD leak in `read_session_history`" — file IS in a context manager; agent misread.
+- "Test assertion weak on `read_session_history`" — test does check `history[0] == 's3'` AND `history[2] == 's1'`; agent missed line 187.
+
+### Deferred to v2.1+ backlog
+
+- Multi-process append safety on `token_budget.jsonl` (move to atomic rename) — only matters if v2.0 ever supports concurrent codevira processes per project, which Pillar 1's "first writer wins" idempotency contract explicitly opts out of.
+- `_db_locks` slow leak (~100 KB for 1000 projects per process lifetime) — irrelevant for the developer machine workload.
+- NFS/SMB filesystem semantics (single-machine product).
 
 ### Surprises
 
-- The 22-angle QA discipline paid off again — independent agent found a real DoS vector (unbounded read) the implementer's tests didn't exercise. Time spent on the sweep: ~25 minutes. Time it would have taken to find this in production: weeks of accumulated user logs, then a slow IDE.
-- Two of the four agent findings were false positives. **The discipline isn't "trust agent reports"; it's "verify each finding."** The 2.2 ms benchmark took 30 seconds and saved a wrong fix.
-- The `_MAX_KEY_LEN` bug was a v1.8 latent issue, not a Week-2 regression. Edge-case testing found a real production bug while testing brand-new code. This is the exact reason the playbook says "Tier-1 angles for every sprint, not just the implementer's tests."
+- **R1's "1 hour Tier-1 sweep" was insufficient.** The cadence-matrix minimum (5 angles, ~1 hr) caught one P1 (unbounded readlines). Running the Week-1-style 4-round progression caught **3 more bugs** — including the P1 SQLite shared-Connection transaction race, which silently corrupts data under any real concurrency. **The matrix minimum is the floor, not the ceiling.** Update to playbook: when a sprint adds new persistence + new concurrent code paths (as Week 2 did), default to running R1-R4 not R1.
+- **Independent angles catch independent bug classes** (Week-1 lesson confirmed): R1 (code review) caught DoS, R3 (concurrent stress) caught the race nobody else would have spotted, R4 (fresh-eyes design review) caught the foot-gun. None of these substitute for the others.
+- **2 of the 4 agent findings in R1 were false positives** (regex DoS verified linear at 2.2 ms / 1000 matches; FD-leak claim was wrong about the context manager). **Verify, don't trust.** The 30-second benchmark saved a wrong fix.
+- The `_MAX_KEY_LEN` bug was a v1.8 latent issue, not a Week-2 regression. Edge-case testing found a real production bug while testing brand-new code.
 
 ### What changed in the spec
 

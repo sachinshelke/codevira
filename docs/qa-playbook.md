@@ -272,3 +272,26 @@ After Week 1's 5-round QA:
 5. **Performance numbers must be measured, not trusted.** R3 found
    the 50ms p95 spec target was wrong (real number is ~67ms). R4
    found the fast path saves 15.6×. Both required hands-on measurement.
+
+After Week 2's 4-round QA:
+
+6. **The matrix minimum is the floor, not the ceiling.** The "per-hero
+   ~1 hr Tier-1" line in the matrix is a *minimum*. When a sprint adds
+   new persistence + new concurrent paths (as Week 2 did with JSONL
+   persist + shared SQLite connection), default to running the
+   Week-1-style R1-R4 progression. Week 2's R1 minimum found 1 P1; R3
+   added concurrency stress and found another P1 (silent transaction
+   race) plus a P2 (crash recovery). R4 added independent fresh-eyes
+   and found 2 more P2s. Spending ~3 hours instead of ~1 caught 3
+   bugs the minimum would have missed.
+7. **A "fresh-eyes" round (R4 framing) finds different bugs than a
+   "code review" round (R1 framing).** Even on the same code, an
+   architecture-focused review with no bug-list bias surfaces design
+   traps (`_connect()` foot-gun, missing WAL+timeout) that a
+   correctness-focused review skips. Add R4 to per-hero defaults
+   when the sprint touches concurrency primitives or process-level
+   contracts.
+8. **Verify findings before fixing.** Independent agents return false
+   positives — Week 2 R1 had 2 of 4. A 30-second benchmark or a
+   5-line line-citation check is enough to triage; never apply a fix
+   on an unverified finding.

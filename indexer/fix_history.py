@@ -72,15 +72,29 @@ class FixRecord:
 # Storage helpers — open a per-project fixes.db on demand. Connections
 # are cached per project_root for the life of the process.
 #
-# Thread-safety: ``_conn_cache_lock`` serializes both READ and WRITE of
-# ``_conn_cache``. Without it, concurrent ``_connect`` calls race on the
-# get → check → connect → set sequence and create N distinct connection
-# objects (verified in QA test). The cost of locking the read side is
-# trivial — it's a dict lookup behind a Python lock — and prevents
-# leaked connections + duplicated CREATE TABLE statements.
+# Thread-safety has TWO layers:
+#
+#   1. ``_conn_cache_lock`` — serializes READ + WRITE of ``_conn_cache``.
+#      Without it, concurrent ``_connect`` calls race on the
+#      get → check → connect → set sequence and create N distinct
+#      connection objects.
+#
+#   2. ``_db_lock`` (per-cache-entry, returned by ``_connect_locked``) —
+#      serializes execute+commit pairs on the SAME connection. Python's
+#      ``sqlite3`` Connection only serializes result-fetching internally;
+#      it does NOT serialize transaction boundaries. Concurrent
+#      ``execute(INSERT)+commit`` calls on a shared connection raise
+#      ``OperationalError("cannot start a transaction within a
+#      transaction")`` and ``InterfaceError`` (caught by Week-2 R3
+#      concurrent-stress test). All public functions that mutate the DB
+#      MUST acquire ``_db_lock`` for the entire execute+commit block.
 # ----------------------------------------------------------------------
 
 _conn_cache: dict[Path, sqlite3.Connection] = {}
+# Per-DB write locks — one entry per project_root. Lookup is protected
+# by ``_conn_cache_lock``; the lock itself is held by the caller across
+# their execute+commit.
+_db_locks: dict[Path, threading.RLock] = {}
 # RLock (reentrant) instead of plain Lock — defensive against future code
 # paths that nest _connect calls (e.g., a policy that needs fixes for
 # multiple files could hit a cascade). Plain Lock would deadlock on
@@ -96,24 +110,40 @@ def _db_path(project_root: Path) -> Path:
     return get_global_home() / "projects" / key / "graph" / "fixes.db"
 
 
-def _connect(project_root: Path) -> sqlite3.Connection:
-    """Open (or return cached) connection to the fixes DB.
+def _connect_locked(project_root: Path) -> tuple[sqlite3.Connection, threading.RLock]:
+    """Return (connection, db_lock) for the project. Caller MUST acquire
+    db_lock around any execute+commit that mutates the DB.
 
-    Schema is created lazily on first connect. Thread-safe — concurrent
-    callers receive the same cached connection (subsequent SQL on it
-    is serialized by SQLite's own per-connection lock).
+    Internal — public callers use the convenience ``_connect`` and the
+    matching db_lock returned alongside.
     """
     pr = project_root.resolve()
-    # Fast path — already cached. Take the lock anyway because dict
-    # mutation by another thread could race with the read.
     with _conn_cache_lock:
         cached = _conn_cache.get(pr)
         if cached is not None:
-            return cached
+            lock = _db_locks[pr]  # invariant: paired with cache entry
+            return cached, lock
         db_path = _db_path(pr)
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(db_path, check_same_thread=False)
+        # 5-second busy_timeout: another process holding the DB lock
+        # gets a chance to commit before we ETIMEDOUT. Single-developer
+        # workload rarely sees > 5s contention; CI parallel jobs and
+        # `codevira budget history` from one terminal while a session
+        # is active in another both fall well under this.  (Week-2 R4
+        # finding A2 — fixes.db had no WAL/timeout, so two processes
+        # raised "database is locked" without retry.)
+        conn = sqlite3.connect(db_path, check_same_thread=False, timeout=5.0)
         conn.row_factory = sqlite3.Row
+        # WAL mode lets readers proceed while a writer is active and
+        # supports many concurrent readers per file.  PRAGMA returns a
+        # row; we discard it.
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")  # WAL-safe, ~3x faster
+        except sqlite3.Error:
+            # WAL is best-effort — older SQLite or read-only filesystem
+            # falls back to journal mode without breaking anything.
+            pass
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS fixes (
@@ -132,8 +162,16 @@ def _connect(project_root: Path) -> sqlite3.Connection:
             "CREATE INDEX IF NOT EXISTS idx_fixes_file ON fixes(file_path)"
         )
         conn.commit()
+        lock = threading.RLock()
         _conn_cache[pr] = conn
-        return conn
+        _db_locks[pr] = lock
+        return conn, lock
+
+
+# Note: a backwards-compat ``_connect()`` shim was REMOVED in Week-2 R4.
+# Returning the connection without its paired lock made it trivially
+# easy to reintroduce the R3 concurrency bug. All public functions go
+# through ``_connect_locked`` and hold the lock around execute+commit.
 
 
 # ----------------------------------------------------------------------
@@ -163,17 +201,20 @@ def record_fix(
         raise ValueError(f"line_end ({line_end}) < line_start ({line_start})")
 
     import time
-    conn = _connect(project_root)
-    cur = conn.execute(
-        """
-        INSERT INTO fixes
-          (file_path, line_start, line_end, description, source, commit_sha, recorded_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        """,
-        (file_path, line_start, line_end, description, source, commit_sha, time.time()),
-    )
-    conn.commit()
-    return int(cur.lastrowid or 0)
+    conn, db_lock = _connect_locked(project_root)
+    # Hold lock across execute+commit. Without this, concurrent record_fix
+    # calls collide on the implicit BEGIN+COMMIT (Week-2 R3 finding).
+    with db_lock:
+        cur = conn.execute(
+            """
+            INSERT INTO fixes
+              (file_path, line_start, line_end, description, source, commit_sha, recorded_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (file_path, line_start, line_end, description, source, commit_sha, time.time()),
+        )
+        conn.commit()
+        return int(cur.lastrowid or 0)
 
 
 def lookup(project_root: Path, file_path: str | Path) -> list[dict[str, Any]]:
@@ -192,17 +233,21 @@ def lookup(project_root: Path, file_path: str | Path) -> list[dict[str, Any]]:
         rel = str(file_path)
 
     try:
-        conn = _connect(project_root)
-        rows = conn.execute(
-            """
-            SELECT id, file_path, line_start, line_end, description,
-                   source, commit_sha, recorded_at
-            FROM fixes
-            WHERE file_path = ?
-            ORDER BY recorded_at DESC
-            """,
-            (rel,),
-        ).fetchall()
+        conn, db_lock = _connect_locked(project_root)
+        # Even SELECT-only paths must serialize on the shared connection —
+        # a concurrent writer could leave the connection mid-transaction
+        # and the read fails with InterfaceError (Week-2 R3 finding).
+        with db_lock:
+            rows = conn.execute(
+                """
+                SELECT id, file_path, line_start, line_end, description,
+                       source, commit_sha, recorded_at
+                FROM fixes
+                WHERE file_path = ?
+                ORDER BY recorded_at DESC
+                """,
+                (rel,),
+            ).fetchall()
         return [dict(r) for r in rows]
     except sqlite3.Error:
         return []
@@ -382,6 +427,7 @@ def reset(project_root: Path) -> None:
     pr = project_root.resolve()
     with _conn_cache_lock:
         conn = _conn_cache.pop(pr, None)
+        _db_locks.pop(pr, None)
     if conn is not None:
         try:
             conn.close()
@@ -498,10 +544,11 @@ def scan_git_log(
     recorded_shas: set[str] = set()
     if skip_already_recorded:
         try:
-            conn = _connect(pr)
-            rows = conn.execute(
-                "SELECT DISTINCT commit_sha FROM fixes WHERE commit_sha IS NOT NULL"
-            ).fetchall()
+            conn, db_lock = _connect_locked(pr)
+            with db_lock:
+                rows = conn.execute(
+                    "SELECT DISTINCT commit_sha FROM fixes WHERE commit_sha IS NOT NULL"
+                ).fetchall()
             recorded_shas = {r["commit_sha"] for r in rows}
         except sqlite3.Error:
             recorded_shas = set()

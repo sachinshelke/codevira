@@ -25,7 +25,7 @@ from pathlib import Path
 
 import pytest
 
-from indexer.fix_history import FixRecord, is_revert, _conn_cache, _connect, reset
+from indexer.fix_history import FixRecord, is_revert, _conn_cache, _connect_locked, reset
 
 
 # =====================================================================
@@ -250,7 +250,7 @@ class TestConnectionCacheRaceFix:
         def race():
             try:
                 barrier.wait(timeout=5)  # release all threads at once
-                conn = _connect(proj)
+                conn, _lock = _connect_locked(proj)
                 results.append(id(conn))
             except Exception as e:
                 errors.append(repr(e))
@@ -284,8 +284,8 @@ class TestConnectionCacheRaceFix:
         )
         _conn_cache.clear()
 
-        ca = _connect(proj_a)
-        cb = _connect(proj_b)
+        ca, _ = _connect_locked(proj_a)
+        cb, _ = _connect_locked(proj_b)
         assert ca is not cb
 
         reset(proj_a)

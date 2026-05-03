@@ -447,3 +447,252 @@ class TestIsRevertRobustness:
         # behave correctly across scripts.
         result = is_revert(change, fix)
         assert isinstance(result, bool)
+
+
+# =====================================================================
+# Concurrency — fix_history per-DB lock (R3 finding)
+# =====================================================================
+
+class TestFixHistoryConcurrency:
+    """Week-2 R3 concurrent-stress finding.
+
+    Concurrent record_fix calls on a shared sqlite3.Connection raised
+    OperationalError("cannot start a transaction within a transaction"),
+    SystemError, and InterfaceError. Fix: per-cache-entry RLock that all
+    DB operations hold across execute+commit. These tests lock that fix.
+    """
+
+    def test_concurrent_record_fix_no_collisions(
+        self, tmp_path, monkeypatch
+    ):
+        import threading
+        from indexer.fix_history import record_fix, lookup, reset
+
+        proj = tmp_path / "p"
+        proj.mkdir()
+        fake_home = tmp_path / "global"
+        fake_home.mkdir()
+        monkeypatch.setattr(
+            "mcp_server.paths.get_global_home", lambda: fake_home
+        )
+        reset(proj)
+
+        n_threads = 20
+        n_per_thread = 25
+        errors: list[tuple] = []
+
+        def worker(tid: int) -> None:
+            try:
+                for i in range(n_per_thread):
+                    record_fix(
+                        proj,
+                        file_path=f"file_{tid}.py",
+                        line_start=i, line_end=i + 1,
+                        description=f"thread {tid} iter {i}",
+                        source="manual",
+                    )
+            except Exception as e:  # noqa: BLE001
+                errors.append((tid, type(e).__name__, str(e)))
+
+        threads = [
+            threading.Thread(target=worker, args=(i,))
+            for i in range(n_threads)
+        ]
+        for t in threads: t.start()
+        for t in threads: t.join(timeout=20)
+
+        assert not errors, f"thread errors: {errors[:3]}"
+        # Every record_fix must have committed: 20 × 25 = 500 rows
+        for tid in range(n_threads):
+            assert len(lookup(proj, f"file_{tid}.py")) == n_per_thread
+
+    def test_wal_mode_enabled_on_fixes_db(
+        self, tmp_path, monkeypatch
+    ):
+        """R4 finding: fixes.db needs WAL + busy_timeout for multi-process safety.
+
+        Verifies the connection is opened with WAL journal mode and a
+        non-zero busy_timeout. Without these, two codevira processes
+        on the same project see "database is locked" without retry.
+        """
+        from indexer.fix_history import _connect_locked, record_fix, reset
+
+        proj = tmp_path / "p"
+        proj.mkdir()
+        fake_home = tmp_path / "global"
+        fake_home.mkdir()
+        monkeypatch.setattr(
+            "mcp_server.paths.get_global_home", lambda: fake_home
+        )
+        reset(proj)
+        # Trigger DB creation through the public API
+        record_fix(
+            proj, file_path="seed.py",
+            line_start=1, line_end=2,
+            description="seed", source="manual",
+        )
+
+        conn, _ = _connect_locked(proj)
+        # PRAGMA journal_mode returns the active mode as a single-row result.
+        mode = conn.execute("PRAGMA journal_mode").fetchone()[0].lower()
+        assert mode == "wal", f"expected wal, got {mode!r}"
+        # busy_timeout in milliseconds. We set 5.0s = 5000 ms.
+        timeout_ms = conn.execute("PRAGMA busy_timeout").fetchone()[0]
+        assert timeout_ms >= 5000, f"busy_timeout too low: {timeout_ms} ms"
+
+    def test_connect_naked_accessor_removed(self):
+        """R4 finding: ``_connect()`` was a foot-gun (returned no lock).
+        Verify it's gone so future code can't accidentally call it.
+        """
+        from indexer import fix_history
+        assert not hasattr(fix_history, "_connect"), (
+            "_connect was reintroduced — that's the R3 bug shape. "
+            "Use _connect_locked() and hold the lock for execute+commit."
+        )
+
+    def test_concurrent_mixed_reads_and_writes(
+        self, tmp_path, monkeypatch
+    ):
+        """Reads-while-writes must not raise InterfaceError."""
+        import threading
+        from indexer.fix_history import record_fix, lookup, reset
+
+        proj = tmp_path / "p"
+        proj.mkdir()
+        fake_home = tmp_path / "global"
+        fake_home.mkdir()
+        monkeypatch.setattr(
+            "mcp_server.paths.get_global_home", lambda: fake_home
+        )
+        reset(proj)
+
+        # Seed 10 fixes on seed.py
+        for i in range(10):
+            record_fix(
+                proj, file_path="seed.py",
+                line_start=i, line_end=i + 1,
+                description=f"seed {i}", source="manual",
+            )
+
+        errors: list[tuple] = []
+        stop = threading.Event()
+
+        def writer(tid: int) -> None:
+            try:
+                for i in range(30):
+                    if stop.is_set(): return
+                    record_fix(
+                        proj, file_path=f"w{tid}.py",
+                        line_start=i, line_end=i + 1,
+                        description=f"w{tid}-{i}", source="manual",
+                    )
+            except Exception as e:  # noqa: BLE001
+                errors.append(("writer", tid, type(e).__name__, str(e)))
+
+        def reader(tid: int) -> None:
+            try:
+                for _ in range(60):
+                    if stop.is_set(): return
+                    recs = lookup(proj, "seed.py")
+                    if len(recs) != 10:
+                        errors.append(("reader", tid, "wrong count", len(recs)))
+                        return
+            except Exception as e:  # noqa: BLE001
+                errors.append(("reader", tid, type(e).__name__, str(e)))
+
+        threads = (
+            [threading.Thread(target=writer, args=(i,)) for i in range(5)]
+            + [threading.Thread(target=reader, args=(i,)) for i in range(5)]
+        )
+        for t in threads: t.start()
+        for t in threads: t.join(timeout=20)
+        stop.set()
+        for t in threads:
+            assert not t.is_alive(), f"thread hung: {t.name}"
+
+        assert not errors, f"errors: {errors[:3]}"
+
+
+# =====================================================================
+# Crash recovery — partial line at end of token_budget.jsonl (R3 finding)
+# =====================================================================
+
+class TestTokenLogCrashRecovery:
+    """If a previous process died mid-write, the log file may not end
+    with a newline. _persist_session_summary must detect this and emit
+    a separator newline before its own record — otherwise the next
+    write concatenates to the partial line and BOTH records become
+    unreadable. (Week-2 R3 finding.)
+    """
+
+    def test_partial_line_does_not_eat_next_record(
+        self, tmp_path, monkeypatch
+    ):
+        from mcp_server.paths import _sanitize_path_key
+
+        proj = tmp_path / "p"
+        proj.mkdir()
+        fake_home = tmp_path / "global"
+        fake_home.mkdir()
+        monkeypatch.setattr(
+            "mcp_server.paths.get_global_home", lambda: fake_home
+        )
+
+        reset_meters()
+        # 3 normal sessions
+        for sid in ["k1", "k2", "k3"]:
+            m = get_or_create_session_meter(sid)
+            m.record_injected(100)
+            end_session(sid, project_root=proj)
+
+        # Simulate crash: append a partial JSON line, no newline
+        key = _sanitize_path_key(proj.resolve())
+        log_path = (
+            fake_home / "projects" / key / "logs" / "token_budget.jsonl"
+        )
+        with open(log_path, "ab") as f:
+            f.write(b'{"session_id": "partial", "ended_at": 99')
+
+        # Recovery: write a new session
+        m = get_or_create_session_meter("k4")
+        m.record_injected(400)
+        end_session("k4", project_root=proj)
+
+        history = read_session_history(proj, limit=10)
+        sids = [r["session_id"] for r in history]
+        # k4 must be newest and parseable
+        assert sids[0] == "k4", f"k4 lost: {sids}"
+        # All earlier records still present
+        for prior in ("k1", "k2", "k3"):
+            assert prior in sids, f"{prior} lost: {sids}"
+        # The partial line is unparseable; must NOT appear as a real record
+        assert "partial" not in sids
+
+    def test_happy_path_emits_no_extra_newlines(
+        self, tmp_path, monkeypatch
+    ):
+        """The recovery guard must not insert blank lines on healthy writes."""
+        from mcp_server.paths import _sanitize_path_key
+
+        proj = tmp_path / "p"
+        proj.mkdir()
+        fake_home = tmp_path / "global"
+        fake_home.mkdir()
+        monkeypatch.setattr(
+            "mcp_server.paths.get_global_home", lambda: fake_home
+        )
+
+        reset_meters()
+        for sid in ["a", "b", "c", "d", "e"]:
+            m = get_or_create_session_meter(sid)
+            m.record_injected(100)
+            end_session(sid, project_root=proj)
+
+        key = _sanitize_path_key(proj.resolve())
+        log_path = (
+            fake_home / "projects" / key / "logs" / "token_budget.jsonl"
+        )
+        raw = log_path.read_bytes()
+        # 5 records → exactly 5 newlines, no double newlines anywhere
+        assert b"\n\n" not in raw
+        assert raw.count(b"\n") == 5

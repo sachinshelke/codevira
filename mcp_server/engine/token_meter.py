@@ -184,10 +184,29 @@ def _persist_session_summary(project_root: "Path", summary: dict[str, Any]) -> N
         "top_wasted_sources": [{"source": "...", "wasted": N, "injected": N}, ...]
       }
 
-    Hero 6 reads this for `codevira budget history`. Append is atomic
-    enough for our use (single process at a time per project; even
-    concurrent processes get one full record per write since each
-    write is a single line under POSIX append semantics).
+    Hero 6 reads this for `codevira budget history`.
+
+    Concurrency contract (Week-2 R4 design review):
+      • Single writer per project. Codevira spins up one MCP server per
+        AI session; multiple sessions on the same project would race
+        the partial-line guard's read-then-write. v2.0 doesn't support
+        this; if it ever does we move to a tempfile + atomic-rename
+        write strategy instead of append.
+      • Record size < PIPE_BUF (4 KiB). The schema is fixed and
+        ``top_wasted_sources`` is capped to 5 entries by ``summary()``,
+        so a typical record is ~500 bytes — well under the 4-KiB POSIX
+        atomic-write boundary. We rely on this for crash recovery
+        (a partial line on disk is always exactly one truncated record,
+        never two interleaved records).
+
+    Failure modes:
+      • Disk full → write() raises OSError. Caller wraps this in
+        try/except (see ``end_session``); the meter is already removed
+        from in-memory state, so the session is just lost from the log.
+      • Partial line from a prior crash → guarded by sniffing the last
+        byte of the file and emitting a separator newline if needed.
+        See R3 finding M17.1 + the regression test in
+        ``tests/engine/test_week2_edge_cases.py::TestTokenLogCrashRecovery``.
     """
     import json
     import time
@@ -212,8 +231,34 @@ def _persist_session_summary(project_root: "Path", summary: dict[str, Any]) -> N
     }
 
     # Append-only; one JSON object per line, terminated by newline.
-    with open(log_path, "a", encoding="utf-8") as f:
-        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    # R3 crash-recovery finding: if a previous process died mid-write the
+    # file may not end with a newline. Without a guard, the next append
+    # concatenates to the partial record and BOTH lines become unreadable.
+    # We sniff the last byte and emit a separator newline if needed —
+    # cost: one extra read+write per persist on a healthy file (~ns).
+    line = json.dumps(record, ensure_ascii=False) + "\n"
+    payload = line.encode("utf-8")
+    try:
+        size = log_path.stat().st_size if log_path.exists() else 0
+    except OSError:
+        size = 0
+    needs_separator = False
+    if size > 0:
+        try:
+            with open(log_path, "rb") as f:
+                f.seek(max(0, size - 1))
+                last = f.read(1)
+                if last and last != b"\n":
+                    needs_separator = True
+        except OSError:
+            # If we can't read, fall through and write anyway — the worst
+            # case is we lose this one record on next read, not worse than
+            # not writing it.
+            pass
+    with open(log_path, "ab") as f:
+        if needs_separator:
+            f.write(b"\n")
+        f.write(payload)
 
 
 # Hard cap on bytes we'll read out of token_budget.jsonl per call.

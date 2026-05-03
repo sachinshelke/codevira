@@ -93,12 +93,22 @@ class TestClaudeCodeHookWiring:
         rc = claude_code_hooks.handle(event_name)
         return rc, stdout_buf.getvalue()
 
-    def test_pre_tool_use_blocks_py_bak(self, monkeypatch):
+    def test_pre_tool_use_blocks_py_bak(self, tmp_path, monkeypatch):
+        # Use a real project subdirectory rather than `/tmp` itself —
+        # R4 QA added `is_invalid_project_root` to the wiring layer,
+        # which correctly refuses `/tmp` (system dir).
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        target = proj / "foo.py.bak"
+        target.touch()
         raw = {
             "session_id": "s1",
-            "cwd": "/tmp",
+            "cwd": str(proj),
             "tool_name": "Edit",
-            "tool_input": {"file_path": "/tmp/foo.py.bak", "old_string": "x", "new_string": "y"},
+            "tool_input": {
+                "file_path": str(target),
+                "old_string": "x", "new_string": "y",
+            },
         }
         rc, out = self._run_handler("PreToolUse", raw, monkeypatch)
         assert rc == 2  # Claude Code semantics: 2 = blocked
@@ -106,12 +116,19 @@ class TestClaudeCodeHookWiring:
         assert payload["continue"] is False
         assert "py.bak" in payload["stopReason"].lower() or "backup" in payload["stopReason"].lower()
 
-    def test_pre_tool_use_allows_normal_edit(self, monkeypatch):
+    def test_pre_tool_use_allows_normal_edit(self, tmp_path, monkeypatch):
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        target = proj / "foo.py"
+        target.touch()
         raw = {
             "session_id": "s1",
-            "cwd": "/tmp",
+            "cwd": str(proj),
             "tool_name": "Edit",
-            "tool_input": {"file_path": "/tmp/foo.py", "old_string": "x", "new_string": "y"},
+            "tool_input": {
+                "file_path": str(target),
+                "old_string": "x", "new_string": "y",
+            },
         }
         rc, out = self._run_handler("PreToolUse", raw, monkeypatch)
         assert rc == 0

@@ -172,8 +172,15 @@ class SignalContext:
         Shape: list of dicts with keys ``id``, ``file_path``, ``decision``,
         ``context``, ``locked`` (bool, mirrors do_not_revert), ``timestamp``.
 
+        Round-4 QA HIGH #3: ``limit`` is clamped to [1, 1000] to prevent
+        a misbehaving policy from issuing ``limit=-1`` (SQLite returns
+        all rows) or ``limit=10**9`` (memory exhaustion). Honest bound;
+        no real policy needs >1000 decisions in one call.
+
         Cached by argument tuple.
         """
+        # Defensive clamp before SQL — caller may pass negative or huge.
+        limit = max(1, min(int(limit), 1000))
         cache_key = (str(file) if file is not None else None, locked_only, limit)
         if cache_key in self._decisions_cache:
             return self._decisions_cache[cache_key]

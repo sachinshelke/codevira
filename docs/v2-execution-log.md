@@ -432,6 +432,108 @@ Moving to Week 2.
 Each of Heroes 1-10 will go through this 3-round QA loop before
 shipping. Built into the per-hero workflow.
 
+### Round-4 QA: security audit caught 3 HIGH-severity vulnerabilities
+
+After 3 rounds (correctness, fix-bugs, integration), R4 used a fresh
+angle: **security audit** of input handling. Found 3 HIGH issues —
+arguably the most important findings of any round so far because they
+represent real attack surface, not just polish.
+
+#### HIGH #1: Path traversal in `target_file`
+
+**Attack:** A compromised AI sends `tool_input['file_path'] =
+'../../../../etc/passwd'`. The wiring layer used `Path(candidate).resolve()`
+without containment, producing `/etc/passwd` as `event.target_file`.
+Policies could then read or log paths outside the project boundary.
+
+**Verified by hands-on test:** `target_file = /private/etc/passwd`
+when AI cwd was `/private/tmp/testproj`. Confirmed escape.
+
+**Fix:** After `Path(candidate).resolve()`, use `os.path.commonpath`
+to verify the resolved path is under `project_root`. If not, drop
+target_file to None. `commonpath` is robust against the prefix-string
+edge case where `/tmp/proj` would erroneously match `/tmp/proj-evil`.
+Both wiring layers (Claude Code hooks + MCP dispatch) updated.
+
+#### HIGH #2: AI-controlled `project_root` bypassed v1.8.1 hardening
+
+**Attack:** v1.8.1 added `is_invalid_project_root` to refuse $HOME /
+system dirs at the CLI/server layer. But the engine's wiring layer
+took `cwd` straight from Claude Code's hook JSON without re-validating.
+A malicious or misconfigured hook could submit `cwd: '$HOME'` and the
+engine would create signal state at `~/.codevira/projects/<HOME_slug>/`,
+recreating exactly the v1.8.0 production crash mode.
+
+**Verified by hands-on test:** Passed `cwd: $HOME` to `_build_event`;
+returned an event with `project_root = $HOME`. v1.8.1's check would
+have rejected it but engine didn't call it.
+
+**Fix:** Both wiring layers now call `is_invalid_project_root` and
+raise ValueError on rejection. Outer handlers catch the ValueError
+and fail-open (`{"continue": true}` exit 0), so the user's workflow
+isn't broken — but the engine refuses to allocate state for invalid
+project roots. v1.8.1's guard surface now extends to the engine
+layer.
+
+#### HIGH #3: SQL `limit` not clamped → DoS vector
+
+**Attack:** A misbehaving policy calling `signals.decisions(limit=-1)`
+causes SQLite to return all matching rows (effectively unbounded).
+`signals.decisions(limit=10**9)` would attempt a memory-blowing fetch.
+
+**Verified by hands-on test:** All three values (`-1`, `0`, `10**9`)
+now silently clamp to [1, 1000].
+
+**Fix:** `limit = max(1, min(int(limit), 1000))` before the SQL.
+Honest bound — no real policy needs > 1000 decisions in one query.
+
+#### Test fix collateral
+
+The R4 fix #2 broke an existing integration test that used `cwd: '/tmp'`
+literally — `/tmp` IS in the forbidden list. Updated the test to use
+a `tmp_path / "proj"` subdirectory. **This is a feature, not a
+regression**: the integration test now reflects how production paths
+actually work. The fix landed in the same commit.
+
+#### MEDIUM/LOW findings deferred (documented backlog)
+
+R4 also surfaced 5 lower-severity items. None blocking; all deferred
+to v2.0+ polish or already-acceptable:
+- Unbounded `_conn_cache` (50-project cap is overkill for current usage)
+- Crash log credential leak via exception messages (sanitization
+  in `crash_logger._sanitize` already covers common patterns)
+- Shell PATH injection in hook scripts (requires user permissions
+  misconfiguration; document in setup guide)
+- Verdict messages echoing raw input (policy author's responsibility;
+  document)
+- SignalContext per-event cache unbounded (per-event, GC'd)
+
+#### Final post-R4 numbers
+
+- Tests: 1,564 → 1,577 passing (+13 R4 regression tests)
+- Bugs caught + fixed: **11 across 4 rounds**
+  - R1: 3 P0 (correctness)
+  - R2: 2 P1 + 3 P2 (fix bugs)
+  - R3: 2 P1 + 1 P2 (integration + reality)
+  - **R4: 3 HIGH (security)**
+- Performance: unchanged (engine is the same speed; only adds an
+  os.path.commonpath check per event = ~10 µs)
+- Zero regressions
+
+#### Cumulative QA observation
+
+R4's findings are arguably the **most important** of any round. Path
+traversal and AI-controlled project_root are real attack surface;
+they would have been a real CVE on v2.0 launch. The fact that
+"different angle each round" keeps producing real bugs means we are
+NOT in diminishing-returns territory yet — every round paid for itself.
+
+The remaining un-touched angle is **real Claude Code lifecycle hook
+installation** — actually writing scripts to `~/.claude/hooks/` and
+observing Claude Code fire them through real lifecycle. Everything
+we've done is synthetic stdin testing. This is the highest-leverage
+remaining angle if we choose a Round 5.
+
 ---
 
 ## Week 2 — Engine sprint, part 2

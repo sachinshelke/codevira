@@ -87,19 +87,47 @@ def post_call(
 # ----------------------------------------------------------------------
 
 def _build_pre_event(tool_name: str, arguments: dict[str, Any]) -> HookEvent:
-    """Construct a PRE_TOOL_USE HookEvent from MCP-style call_tool args."""
-    from mcp_server.paths import get_project_root
+    """Construct a PRE_TOOL_USE HookEvent from MCP-style call_tool args.
+
+    Security note (Round-4 QA HIGH #1, #2):
+      - project_root validated via ``is_invalid_project_root``; ValueError
+        on rejection. The outer ``pre_call`` wraps this in try/except and
+        falls open, so the MCP server keeps working but the engine no-ops
+        when the process is in a bad project_root.
+      - ``target_file`` is path-traversal-defended: ``../../etc/passwd``
+        in ``file_path`` arg resolves outside project_root and is dropped.
+    """
+    from mcp_server.paths import get_project_root, is_invalid_project_root
 
     project_root = get_project_root()
+
+    # Round-4 HIGH #2: refuse engine evaluation from invalid project roots.
+    # If the MCP server is somehow running with project_root=$HOME, we
+    # don't want to silently create signal state there.
+    rejection = is_invalid_project_root(project_root)
+    if rejection:
+        raise ValueError(
+            f"engine: refusing MCP tool dispatch from invalid project_root: {rejection}"
+        )
 
     target_file: Path | None = None
     # Codevira tools that touch a specific file expose ``file_path`` in
     # their arguments — e.g. get_node, get_impact, update_node, get_code,
-    # get_signature. Use that for target_file inference.
+    # get_signature. Use that for target_file inference, with traversal
+    # containment.
     candidate = arguments.get("file_path") or arguments.get("path")
     if isinstance(candidate, str) and candidate:
         try:
-            target_file = (project_root / candidate).resolve()
+            resolved = (project_root / candidate).resolve()
+            # Round-4 HIGH #1: path-traversal containment.
+            try:
+                import os
+                common = Path(os.path.commonpath([str(project_root), str(resolved)]))
+                if common == project_root:
+                    target_file = resolved
+                # else: target_file stays None (rejected as out-of-project)
+            except ValueError:
+                target_file = None
         except OSError:
             target_file = None
 
@@ -121,10 +149,18 @@ def _build_post_event(
     arguments: dict[str, Any],
     output: Any,
 ) -> HookEvent:
-    """Construct a POST_TOOL_USE HookEvent."""
-    from mcp_server.paths import get_project_root
+    """Construct a POST_TOOL_USE HookEvent.
+
+    Same project_root guard as _build_pre_event (Round-4 HIGH #2).
+    """
+    from mcp_server.paths import get_project_root, is_invalid_project_root
 
     project_root = get_project_root()
+    rejection = is_invalid_project_root(project_root)
+    if rejection:
+        raise ValueError(
+            f"engine: refusing post_tool_use from invalid project_root: {rejection}"
+        )
 
     # Output may be anything — list[TextContent], dict, str. Coerce to a
     # dict shape for policies (we don't want them to deal with N variants).

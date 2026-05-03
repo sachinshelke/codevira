@@ -110,23 +110,40 @@ def handle(event_type_str: str) -> int:
 def _build_event(cc_event: EventType, raw: dict[str, Any]) -> HookEvent:
     """Translate Claude Code's raw hook input into a HookEvent.
 
-    Claude Code's hook input schema (from
-    https://code.claude.com/docs/en/hooks ) typically includes:
+    Security note (Round-4 QA HIGH #1, #2):
+      - ``project_root`` (cwd) is validated via ``is_invalid_project_root``;
+        AI-controlled cwd pointing at $HOME / system dirs is rejected
+        before any signal access happens. ValueError → caller's outer
+        handler returns ``allow`` (fail-open).
+      - ``target_file`` is path-traversal-defended: resolved paths that
+        escape ``project_root`` are dropped (target_file = None) so
+        policies can't end up reading/writing outside the project.
 
+    Claude Code's hook input schema typically includes:
       - cwd: project working directory
-      - tool_name (PreToolUse / PostToolUse)
-      - tool_input (PreToolUse / PostToolUse)
+      - tool_name, tool_input (PreToolUse / PostToolUse)
       - tool_response (PostToolUse)
       - prompt (UserPromptSubmit)
       - session_id
-
-    Field shapes vary slightly by hook event; this helper picks the
-    relevant ones and lets the rest fall into ``raw`` for policies that
-    care.
     """
     # cwd is the project the AI is operating on. Claude Code always sends it.
     cwd_str = raw.get("cwd") or raw.get("workspace_dir") or str(Path.cwd())
     project_root = Path(cwd_str).resolve()
+
+    # Round-4 HIGH #2: refuse $HOME / system dirs as project_root EVEN if
+    # Claude Code sends them. v1.8.1's is_invalid_project_root guard is
+    # the canonical check; the engine reuses it. ValueError propagates
+    # to the caller, which fails open via _write_response({"continue": True}).
+    from mcp_server.paths import is_invalid_project_root
+
+    rejection = is_invalid_project_root(project_root)
+    if rejection:
+        # Don't treat this as "block" — that would be aggressive and the
+        # user can't fix it from inside Claude Code. Raise ValueError so
+        # the outer handler returns allow + logs.
+        raise ValueError(
+            f"engine: refusing event from invalid project_root: {rejection}"
+        )
 
     tool_name = raw.get("tool_name", "") or ""
     tool_input = raw.get("tool_input", {}) or {}
@@ -138,7 +155,21 @@ def _build_event(cc_event: EventType, raw: dict[str, Any]) -> HookEvent:
         candidate = tool_input.get("file_path") or tool_input.get("path") or tool_input.get("notebook_path")
         if candidate:
             try:
-                target_file = Path(candidate).resolve()
+                resolved = Path(candidate).resolve()
+                # Round-4 HIGH #1: path-traversal containment. Reject
+                # candidates that resolve outside project_root. Use
+                # commonpath for robust comparison (str-prefix check
+                # would false-match e.g. /tmp/proj vs /tmp/proj-other).
+                try:
+                    import os
+                    common = Path(os.path.commonpath([str(project_root), str(resolved)]))
+                    if common == project_root:
+                        target_file = resolved
+                    # else: target_file stays None (path traversal rejected)
+                except ValueError:
+                    # commonpath raises if paths are on different drives
+                    # (Windows) or otherwise incomparable. Reject silently.
+                    target_file = None
             except OSError:
                 target_file = None
 

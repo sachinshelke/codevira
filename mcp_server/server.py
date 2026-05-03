@@ -883,6 +883,12 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     # Failures here NEVER break tool dispatch — the wiring layer
     # swallows engine errors and returns allow.
     try:
+        # Lazy: register Hero policies on first call. Idempotent — safe
+        # to call from any tool dispatch (Week-4 R2 #5 — without this
+        # the MCP server would have ZERO policies registered and
+        # silently allow every edit).
+        from mcp_server.engine import register_default_policies
+        register_default_policies()
         from mcp_server.engine.wiring.mcp_dispatch import pre_call
         _engine_verdict = pre_call(name, arguments)
         if _engine_verdict.is_blocking():

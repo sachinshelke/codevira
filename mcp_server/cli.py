@@ -898,9 +898,18 @@ def main() -> None:
     elif args.command == "engine":
         # Internal — Claude Code hook scripts call us with `engine handle <event>`.
         if getattr(args, "engine_action", None) == "handle":
-            # Auto-register the demo policy when the env var is set. This
-            # is the engine sprint's acceptance test: a hook with
-            # CODEVIRA_DEMO_POLICY=1 must block edits to .py.bak files.
+            # Register every Hero policy that ships enabled-by-default.
+            # Without this, the hook runs the engine but ZERO policies
+            # are registered → every edit gets ALLOW silently. (Week-4
+            # R2 #5 caught this — same class of "silent wiring miss"
+            # as Week-1 R3.)
+            try:
+                from mcp_server.engine import register_default_policies
+                register_default_policies()
+            except Exception:
+                pass  # never let policy registration break the hook
+            # Auto-register the engine sprint's demo policy when the
+            # env var is set (acceptance-test harness; not used in prod).
             try:
                 from mcp_server.engine.demo_policy import maybe_register as _maybe_demo
                 _maybe_demo()

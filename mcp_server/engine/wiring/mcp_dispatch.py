@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from mcp_server.engine.events import EventType, HookEvent
-from mcp_server.engine.policies import PolicyVerdict
+from mcp_server.engine.policy import PolicyVerdict
 from mcp_server.engine.runner import dispatch
 
 

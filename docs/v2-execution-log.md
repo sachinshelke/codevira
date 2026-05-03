@@ -862,9 +862,106 @@ Initial 3-round sweep was insufficient — the Pillar-1 spec QA gate calls for "
 
 ---
 
-## Week 4 — Hero 4 (Blast-Radius Veto) → alpha.1
+## Week 4 — Hero 4 (Blast-Radius Veto) → alpha.1 (2026-05-03)
 
-_(to be filled in)_
+### Shipped
+
+**Hero 4: BlastRadiusVeto — first real "policy" hero in v2.0.**
+
+Engine plumbing (Week 1) and Pillar 1 hooks (Week 3) made this trivially small — Hero 4 is just a `Policy` plugin that calls `signals.impact(file)` in `PreToolUse`, plus a pure-function signature-detection helper. Total real logic: ~300 LOC.
+
+**Mechanism:** PreToolUse → `target_file` has ≥ N callers AND the proposed diff modifies a public signature line → block (or warn, configurable). Every short-circuit is documented in the decision tree at `docs/heroes/04-blast-radius.md`.
+
+**Files:**
+- `mcp_server/engine/policy.py` (renamed from `policies.py`) — base classes
+- `mcp_server/engine/policies/__init__.py` — package marker, re-exports built-in heroes
+- `mcp_server/engine/policies/blast_radius.py` — `BlastRadiusVeto` (~200 LOC)
+- `mcp_server/engine/policies/_signature_detect.py` — pure-function helper for parsing diffs and extracting per-language signature lines (Python, JS/TS, Go, Rust, Java, C#) (~250 LOC)
+- `tests/engine/test_blast_radius.py` — 31 tests covering all 10 acceptance scenarios + 4 configuration edge cases + 14 signature-detection unit tests + 3 registration tests
+- `mcp_server/engine/__init__.py` — added `register_default_policies()` (idempotent)
+- `mcp_server/cli.py` — engine handler now calls `register_default_policies()` before dispatch
+- `mcp_server/server.py` — `call_tool` registers default policies on every dispatch
+- `docs/heroes/04-blast-radius.md` — 380-line spec with decision tree, edge cases, performance budget
+
+The hero ships ENABLED by default with `mode=block`, `block_threshold=5`. Override via `CODEVIRA_BLAST_RADIUS_MODE` (off/warn/block) and `CODEVIRA_BLAST_RADIUS_THRESHOLD`. YAML config integration deferred to v2.1.
+
+### Tier-1 + Tier-2 QA: 5 progressive rounds (R1-R3 + batched R4-R8)
+
+Per Week-3 lesson #10: user-facing surfaces get the full sweep. Hero 4 is user-visible (blocks edit attempts with a diagnostic message), so all 8 angles applied.
+
+| Round | Angle | Findings | Fix |
+|---|---|---|---|
+| R1 | #1 + #7 (independent agent) | **MEDIUM**: 100 MB malicious diff would burn unbounded CPU on ~30 regex patterns; **P1**: test_6 was loose (`assert action in ("allow", "block")`) — would have hidden a real implementation regression; affected-files counter math was confusing. | (1) `_MAX_DIFF_BYTES = 1_000_000` cap in `change_touches_signature` + `signature_change_summary`. (2) Tightened test_6 to assert exact behavior. (3) Refactored counter to use `len(affected_full)` for clarity. |
+| R2 | #5 (integration completeness, 8 cases) + #8 (type safety) | **P1 — same class as Week-1 R3**: `register_default_policies()` was implemented but **never called from the actual entry points**. Without it, `cli.py engine handle` and `server.py call_tool` would dispatch with ZERO policies registered, and Hero 4 would silently do nothing in production. | Wired `register_default_policies()` into both call sites (idempotent). Added `test_cli_engine_handler_calls_register_default_policies` and `test_mcp_server_call_tool_calls_register_default_policies` regression tests. |
+| R3 | #15 (mutation testing) | **TEST GAP — same shape as Week-2 R5**: the huge-diff cap test only checked output (False either way for content with no signatures), not actual CPU bound. Mutating away the cap left the test passing. | Strengthened with a time-bound assertion (best-of-3 < 10ms; bounded path is 0ms, unbounded path is ~38ms on 2MB). M1 now caught. |
+| R4 | #2 + #6 (adversarial + doc drift) | All probes pass: Unicode identifiers, comment-only changes, deletion semantics, malformed envelopes, None signals, sig-in-string-literal (documented limitation). One self-inflicted test arithmetic error (mine, fixed inline). |
+| R5-R8 batched | #3 + #4 + #9 + #11 + #13 + #17 + #19 + #20 | Engine + Pillar 1 + Hero 4 coexist cleanly; no circular imports after the policies/ subpackage refactor. p99 = 0.022 ms over 1000 evaluate() calls (well under 5 ms target). 20-thread × 100 evals: zero races (policies are stateless). Unicode Python identifiers detected correctly. Multi-dot extensions (`foo.spec.tsx`) handled. None diff (full Write) blocks correctly. Live observation: hook script + Hero 4 + realistic Claude Code JSON works end-to-end. Sig regex finds 6 signatures in real Hero 4 source. |
+
+Plus one collateral fix to a pre-existing static-check test (`test_qa_round3.py::test_engine_failure_does_not_break_call_tool`) — its 200-byte fixed window was too tight after I added 4 lines of `register_default_policies` import + call between `try:` and `pre_call`. Replaced with a robust indent-walking check.
+
+### Bugs caught + fixed in Week-4 QA
+
+1. **R1 MEDIUM (DoS): unbounded regex on huge diffs.** Without a cap, a 100 MB diff would run ~30 regex patterns × millions of lines = unbounded CPU. Fixed with `_MAX_DIFF_BYTES = 1 MB` early-bail in both `change_touches_signature` and `signature_change_summary`. Time-bounded regression test (best-of-3 < 10 ms).
+2. **R1 P1 (test quality): `test_6` loose assertion.** Asserted `verdict.action in ("allow", "block")` — accepts ANY non-warn outcome. Would have hidden a real implementation regression. Tightened to assert `verdict.is_blocking()` explicitly with documentation of why (symmetric-difference rule treats new signatures as changes).
+3. **R2 P1 (silent integration miss): `register_default_policies` never called.** Same class as Week-1 R3 ("MCP dispatch never wired"). Hero 4 was implemented and tested in isolation, but the production entry points (cli.py engine handler, server.py call_tool) didn't call the registration function. Hero 4 would have silently done nothing under real Claude Code load. Fixed with idempotent calls at both sites + static-check regression tests.
+4. **R3 test gap: huge-diff cap test was output-only.** Reverted code with cap removed → test still passed because the output was False either way for non-signature content. Strengthened with time-bound assertion (best-of-3 < 10 ms discriminates clearly: bounded = 0 ms, unbounded = ~38 ms on 2 MB).
+
+### Performance numbers (R6 measurements)
+
+| Operation | n | p50 | p99 |
+|---|---|---|---|
+| `BlastRadiusVeto.evaluate()` (warm cache, sig change detected) | 1000 | 0.015 ms | 0.022 ms |
+| 20 threads × 100 parallel evaluations | — | zero races, all blocking | — |
+| `change_touches_signature` on 1 MB just-under-cap diff | 3 | 3 ms | — |
+| `change_touches_signature` on >1 MB over-cap diff | 3 | 0 ms (cap fires) | — |
+
+p99 of 0.022 ms is **200× under** the 5 ms target. The hot path is essentially free.
+
+### False positives confirmed (verified before deciding)
+
+- "Sensitive path leakage in metadata" — local-first product; paths are internal. Defer.
+- "Env-var injection" — by design (user controls their env). Out of v2.0-alpha threat model.
+- "Unicode bypass via lookalike characters" — agent's own conclusion confirmed safe (regex is ASCII-bound; non-match → allow → conservative).
+- "_make_verdict empty-input crash" — agent's own conclusion confirmed defensive code is correct.
+
+### Deferred to v2.1+ backlog
+
+- Tree-sitter–based signature parsing (current: regex; sufficient for v2.0-alpha).
+- Per-target evaluation for MultiEdit (v2.0-alpha evaluates only the first target).
+- YAML config integration (env vars only for now).
+- Suggestion mode ("here's the deprecation+migration plan") — Hero 9 will eventually do this.
+
+### Surprises
+
+- **R2 caught the same class of bug as Week-1 R3.** I implemented `register_default_policies()` correctly, tested it correctly in isolation, but forgot to call it from production entry points. Without the integration-completeness round, Hero 4 would have shipped silently broken — passing every test, doing nothing in real use. **The "did the wiring actually get connected" angle keeps paying off.**
+- **R3 caught the same test-gap shape as Week-2 R5.** Output-correctness assertion vs resource-bound assertion. Whenever the fix is about "stop doing this expensive thing," the test must measure the resource (time, memory, syscalls) directly — not the output, which often looks identical between the bounded and unbounded paths.
+- **The QA gauntlet is getting predictable.** Same finding shapes recurring across weeks: silent wiring miss (W1 R3 → W4 R2), output-only tests for resource bounds (W2 R5 → W4 R3), false positives in agent reports (W2 R1 + W3 R1 + W4 R1), test arithmetic errors (W4 R4). The repeating shapes mean the playbook is **catching real bug classes**, not just performing.
+- **Discovery rate decayed cleanly:** R1 found 1 MEDIUM + 1 P1, R2 found 1 P1, R3 found 1 test gap, R4-R8 found ZERO. Three consecutive rounds with no findings = stopping criterion satisfied.
+
+### What changed in the spec
+
+- `docs/heroes/04-blast-radius.md` — unchanged. Implementation matched the spec.
+- `docs/heroes/00-engine.md` — unchanged.
+- `docs/heroes/README.md` — Hero 4 status moves from "spec pending" to "shipped".
+
+### Founder dogfood notes
+
+- Not yet run on the founder's machine. The user explicitly noted in the Week-3 review: founder dogfood is the alpha-1 gate, NOT the merge gate. v2.0-alpha-1 ships with this commit; founder will dogfood next.
+
+### Open questions / decisions deferred
+
+- Whether to extract `_signature_lines` strings/comments before regex matching (the "sig-in-string-literal" false-positive scenario). Defer until a real user reports a false block. Current behavior is documented.
+- Whether MultiEdit should evaluate ALL targets or just the first. Defer to v2.1.
+
+### Next: alpha.1 ships
+
+After this commit, v2.0-alpha.1 has:
+- Engine (Week 1)
+- Hero-2/6 plumbing — git fix-detection + token persistence (Week 2)
+- Pillar 1 — `codevira setup` (Week 3)
+- Hero 4 — Blast-Radius Veto (Week 4)
+
+That's the alpha.1 deliverable per the master plan. Tag, dogfood, recruit testers.
 
 ---
 

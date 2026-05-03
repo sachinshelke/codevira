@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from mcp_server.engine.events import EventType, HookEvent
-from mcp_server.engine.policies import Policy, PolicyVerdict
+from mcp_server.engine.policy import Policy, PolicyVerdict
 from mcp_server.engine.runner import (
     dispatch,
     register_policy,

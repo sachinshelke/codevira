@@ -81,16 +81,41 @@ class TestMCPCallToolWiresEngine:
     def test_engine_failure_does_not_break_call_tool(self):
         """If the engine wiring raises, call_tool continues normally.
         Static check: the engine wiring is wrapped in try/except in
-        server.py so a buggy policy can never break tool dispatch."""
+        server.py so a buggy policy can never break tool dispatch.
+
+        We verify by walking lines: between the pre_call line and the
+        nearest preceding non-blank statement, there must be a `try:`
+        at a smaller indent. (Week-4 R2 added register_default_policies()
+        between the try: and pre_call, so a fixed 200-byte window was
+        too tight.)
+        """
         server_src = (Path(__file__).parent.parent.parent
                       / "mcp_server" / "server.py").read_text()
-        # The pre_call invocation must be inside a try/except.
-        # Find the lines around the pre_call call and verify try/except wraps it.
-        idx = server_src.find("pre_call(name, arguments)")
-        assert idx > 0
-        # 50 chars before should mention "try"
-        prefix = server_src[max(0, idx - 200):idx]
-        assert "try:" in prefix
+        lines = server_src.splitlines()
+        # Find the line with the pre_call invocation
+        pre_idx = next(
+            (i for i, l in enumerate(lines) if "pre_call(name, arguments)" in l),
+            -1,
+        )
+        assert pre_idx > 0, "pre_call site not found"
+        # Walk backwards looking for `try:` at a strictly smaller indent.
+        pre_line = lines[pre_idx]
+        pre_indent = len(pre_line) - len(pre_line.lstrip())
+        found_try = False
+        for j in range(pre_idx - 1, max(0, pre_idx - 50), -1):
+            line = lines[j]
+            stripped = line.strip()
+            if not stripped:
+                continue
+            indent = len(line) - len(line.lstrip())
+            if indent < pre_indent and stripped.startswith("try"):
+                found_try = True
+                break
+            if indent < pre_indent:  # different control structure — stop
+                break
+        assert found_try, (
+            "pre_call(name, arguments) must be inside a try/except"
+        )
 
 
 # =====================================================================

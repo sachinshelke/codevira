@@ -39,7 +39,7 @@ import time
 from typing import Any
 
 from mcp_server.engine.events import EventType, HookEvent
-from mcp_server.engine.policies import Policy, PolicyVerdict
+from mcp_server.engine.policy import Policy, PolicyVerdict
 from mcp_server.engine.signals import SignalContext
 
 logger = logging.getLogger(__name__)

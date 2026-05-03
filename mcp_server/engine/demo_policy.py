@@ -21,7 +21,7 @@ from __future__ import annotations
 import os
 
 from mcp_server.engine.events import EventType, HookEvent
-from mcp_server.engine.policies import Policy, PolicyVerdict
+from mcp_server.engine.policy import Policy, PolicyVerdict
 from mcp_server.engine.runner import register_policy
 
 

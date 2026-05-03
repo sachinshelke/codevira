@@ -20,8 +20,22 @@ See docs/heroes/00-engine.md for the full design.
 from __future__ import annotations
 
 from mcp_server.engine.events import EventType, HookEvent
-from mcp_server.engine.policies import Policy, PolicyVerdict
+from mcp_server.engine.policy import Policy, PolicyVerdict
 from mcp_server.engine.runner import dispatch, register_policy, registered_policies, reset_policies
+
+
+def register_default_policies() -> None:
+    """Register every Hero policy that ships enabled-by-default.
+
+    Called from the engine's lifecycle hook entry (`mcp_server.cli`'s
+    `engine handle ...` subcommand) and from the MCP server startup.
+    Idempotent: running it twice does NOT register duplicates.
+    """
+    # Hero 4 — Blast-Radius Veto. First shipping policy.
+    from mcp_server.engine.policies.blast_radius import BlastRadiusVeto
+
+    if not any(p.name == BlastRadiusVeto.name for p in registered_policies()):
+        register_policy(BlastRadiusVeto())
 
 __all__ = [
     # Event types
@@ -33,6 +47,7 @@ __all__ = [
     # Runtime
     "dispatch",
     "register_policy",
+    "register_default_policies",
     "registered_policies",
     "reset_policies",
 ]

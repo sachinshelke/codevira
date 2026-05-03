@@ -1,6 +1,51 @@
+# v2.0-alpha.1.1 — Critical bug fixes for alpha.1
+
+**Released:** 2026-05-04 (one day after alpha.1)
+
+If you installed `v2.0-alpha.1` between 2026-05-03 and 2026-05-04, **upgrade immediately**: alpha.1 shipped with two silent fail-open bugs that made all three policy heroes (Decision Lock, Blast-Radius Veto, Cross-Session Consistency) silently no-op against real projects. They never blocked, warned, or injected — even when they should have.
+
+## The two bugs
+
+### Bug 1: `signals.decisions()` SQL column-name mismatch
+
+The signals layer's SQL referenced `d.timestamp` but the actual column is `d.created_at`. The exception was silently swallowed by the layer's broad `except Exception`, so `signals.decisions(locked_only=True)` returned `[]` on every call. **Hero 1 (Decision Lock) was fail-open against any real graph since its Week-5 ship.**
+
+### Bug 2: Engine runner never passed `signals` to policies
+
+The runner built `signals` correctly but called `policy.evaluate(event)` without passing it as a kwarg. Heroes 1, 4, and 5 use `evaluate(event, signals=None)` — with `signals=None`, every hero's stage-2 check fired immediately and returned `allow`. **All three heroes silently no-op'd through `dispatch()`** — the only path Claude Code hooks + MCP `pre_call` use.
+
+## Why per-week QA missed them for 5 weeks
+
+- Every per-week test used `_FakeSignals` instead of a real `SQLiteGraph` → Bug 1 never fired
+- Every per-week test passed `signals` manually → Bug 2 never fired
+- Both bugs only manifest in production paths that weren't being exercised
+
+The user's question — "have you done QC seriously?" — is what surfaced this. The retrospective added 17 regression tests so this class of bug can't survive again.
+
+## Other fixes in alpha.1.1
+
+- Hero 4 + Hero 5 retrospective audits closed 12 additional test gaps (mutation testing exposed weak fakes that ignored filter args; behavioral spies added).
+- Cross-hero SQL audit verified no other column-name bugs lurking.
+- Three new playbook lessons (#15-#17) codify the missing discipline.
+
+## Test status
+
+350/350 tests green (was 278 in alpha.1).
+
+## Upgrading from alpha.1
+
+```bash
+pipx upgrade codevira
+codevira setup --yes  # idempotent re-run picks up the fix
+```
+
+No data migration needed; the fixes are pure code changes.
+
+---
+
 # v2.0-alpha.1 — Persistent project memory + first policy hero
 
-**Status:** Alpha. Built for early-adopter feedback, not production. Expect rough edges.
+**Status (superseded by alpha.1.1 — see above):** Alpha. Built for early-adopter feedback, not production. Expect rough edges.
 
 ## What's in alpha.1
 

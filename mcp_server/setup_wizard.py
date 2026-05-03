@@ -461,8 +461,30 @@ def _execute_mcp_config(
         return StepResult(step, True, "skipped",
                           error=f"no MCP-config handler for {step.ide}")
 
+    # Detect ACTUAL content change so idempotent re-runs report
+    # ``no_change`` rather than ``merged`` (which the summary counts
+    # as a change). Caught by Week-4 integration round I1: a clean
+    # re-run was reporting "4 changes" instead of "0 changes".
+    before_bytes: bytes | None = None
+    if step.target_path.exists():
+        try:
+            before_bytes = step.target_path.read_bytes()
+        except OSError:
+            before_bytes = None
+
     handler()
-    return StepResult(step, True, "merged" if step.will_merge else "created")
+
+    after_bytes: bytes | None = None
+    try:
+        after_bytes = step.target_path.read_bytes()
+    except OSError:
+        after_bytes = None
+
+    if before_bytes is not None and before_bytes == after_bytes:
+        return StepResult(step, True, "no_change")
+    if not step.will_merge:
+        return StepResult(step, True, "created")
+    return StepResult(step, True, "merged")
 
 
 def _execute_hook(step: SetupStep, *, dry_run: bool) -> StepResult:
@@ -591,11 +613,15 @@ def _install_hook_registrations(step: SetupStep, *, dry_run: bool) -> StepResult
         return StepResult(step, True, "no_change")
 
     serialized = json.dumps(existing, indent=2) + "\n"
-    settings_path.write_text(serialized, encoding="utf-8")
+    # Atomic write — Ctrl-C mid-write would otherwise corrupt
+    # ~/.claude/settings.json and break Claude Code's startup until
+    # the user manually fixes it. (I7 integration finding C.2.)
+    from mcp_server.agents_md import _atomic_write_text
+    n = _atomic_write_text(settings_path, serialized)
     return StepResult(
         step, True,
         "merged" if step.target_path_existed else "created",
-        bytes_written=len(serialized.encode("utf-8")),
+        bytes_written=n,
     )
 
 
@@ -641,15 +667,25 @@ def _mcp_config_path_for(ide: str) -> Path | None:
     Tier-2 IDEs (codex/copilot/continue/aider) return None — their
     integration is the nudge file.
     """
-    home = Path.home()
+    # IMPORTANT: these paths must match the locations the
+    # ``mcp_server.ide_inject.inject_global_*`` helpers actually write
+    # to. Mismatch would show the user a misleading preview AND make
+    # idempotent-detection fail because we'd check the wrong file.
+    # (Caught by Week-4 integration round I1 — the wizard claimed
+    # ~/.gemini/settings.json but the inject function wrote to
+    # ~/.gemini/antigravity/mcp_config.json.)
+    from mcp_server.ide_inject import (
+        _claude_global_config_path, _cursor_global_config_path,
+        _windsurf_global_config_path, _antigravity_config_path,
+    )
     if ide == "claude":
-        return home / ".claude" / "settings.json"
+        return _claude_global_config_path()
     if ide == "cursor":
-        return home / ".cursor" / "mcp.json"
+        return _cursor_global_config_path()
     if ide == "windsurf":
-        return home / ".codeium" / "windsurf" / "mcp_config.json"
+        return _windsurf_global_config_path()
     if ide == "antigravity":
-        return home / ".gemini" / "settings.json"
+        return _antigravity_config_path()
     # Tier 2 — no MCP config injection
     return None
 

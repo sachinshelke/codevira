@@ -965,6 +965,69 @@ That's the alpha.1 deliverable per the master plan. Tag, dogfood, recruit tester
 
 ---
 
+## Integrated QA — Week 1-4 cross-cutting (2026-05-03)
+
+After per-week QA (5-8 rounds each), ran a 7-step integration round
+specifically targeting cross-week boundaries — what real users hit when
+the four weeks compose.
+
+| Step | Focus | Findings | Fix |
+|---|---|---|---|
+| I1 | end-to-end install simulation (real `codevira setup` against synthetic HOME, verify every artifact) | **HIGH UX**: Antigravity preview path mismatch — wizard claimed `~/.gemini/settings.json` but inject helper writes `~/.gemini/antigravity/mcp_config.json`; **HIGH idempotency**: MCP-config steps reported `merged` purely on file-existence (not actual content change), so re-runs falsely showed "4 changes" instead of "no changes" | (1) `_mcp_config_path_for` now imports the helper functions from `ide_inject` for ALL paths so preview always matches reality. (2) `_execute_mcp_config` reads file bytes before+after the inject call; reports `no_change` when content is unchanged. Two regression tests added. |
+| I2 | full hook round-trip with realistic Claude Code stdin (fast-path + engine-on + graph-stub) | clean — every code path returns parseable JSON, no crashes |
+| I3 | Hero 4 against a real graph DB (12 callers + sig change → block) | clean once test infrastructure was set up correctly. Discovered an architectural note worth documenting: `signals.impact()` loads its own graph correctly but then calls `tools.graph.get_impact()` which uses module-level project state. Production single-project-per-process is fine; multi-project (future) needs refactor. Defer to v2.1. |
+| I4 | cross-module data flow — fix_history (W2) + token_meter persist (W2) + Hero 4 (W4) all sharing the same project state | clean — all three coexist; path-key consistency verified across data layers |
+| I5 | v1.8 → v2.0 upgrade simulation (existing `register`-shaped settings.json) | clean — codevira entry updated, user's other tools preserved, hooks added cleanly. `register --help` still surfaces the deprecation. |
+| I6 | partial-run idempotency: setup interrupted, files half-written, re-run completes | clean — partial-resume completes; stale codevira block (from v1.0) is replaced cleanly while user content above AND below is preserved |
+| I7 | independent fresh-eyes review (Explore agent) on the integrated stack | **HIGH**: 5 nudge-file writes used `Path.write_text` directly, not atomic write — Ctrl-C mid-write would leave a partially-written file that the next run might mis-parse. 9 other findings dismissed as false positives after verification (3 prints in `server.py` are `file=sys.stderr`-only; `_ensure_executable` already chmods hooks; `_conn_cache_lock` is already RLock; post_call dispatches to engine for Hero 6 by design; etc.) | Added `_atomic_write_text(target, content)` in `agents_md.py` (write to temp file in same dir + `os.fsync` + `os.replace`). Switched all 5 nudge-file write sites + the settings.json write in `setup_wizard.py`. Two regression tests verify (1) successful writes leave no leftover temp files, (2) helper writes correct content end-to-end. |
+
+### Bugs caught + fixed across the integration round
+
+1. **I1 HIGH UX: Antigravity path mismatch.** Wizard preview said `~/.gemini/settings.json`; inject helper wrote `~/.gemini/antigravity/mcp_config.json`. User would have seen a misleading preview AND we'd have miscalculated "already exists" idempotency. Fixed by routing `_mcp_config_path_for` through the inject helpers' canonical path functions.
+2. **I1 HIGH idempotency: MCP-config steps never reported `no_change`.** Wizard reported "merged" based on file existence alone, not whether content changed. Re-runs falsely showed "4 changes; 11 already current" instead of "Already up to date (15 steps, no changes needed)." Fixed by reading file bytes before+after the inject call and reporting `no_change` when bytes are unchanged.
+3. **I7 HIGH atomicity: nudge-file writes weren't atomic.** Ctrl-C mid-write would corrupt `CLAUDE.md` / `.cursor/rules/codevira.mdc` / `~/.claude/settings.json`. Next run would either fail-open (lose codevira block) or fail-closed (truncate user content). Fixed with shared `_atomic_write_text` (write-to-temp + fsync + os.replace) used by all 5 nudge-file sites and the settings.json write.
+
+### False positives confirmed (verified before deciding)
+
+The I7 fresh-eyes agent flagged 10 issues; only one was real. Verifications:
+- "signals.impact passes summary_only=False (token waste)" — verified: Hero 4 needs the affected list for the diagnostic message; default would lose that. Intentional.
+- "BlastRadiusVeto type hint allows None for signals" — verified: explicit `if signals is None: return allow` guard exists at line 152.
+- "MCP dispatch never wires token_meter.record_injected" — verified: `post_call` dispatches the event; Hero 6 (Week 7) will register a POST_TOOL_USE policy that consumes it. By design — not a Week-4 gap.
+- "314 prints in server paths corrupt MCP protocol" — verified: 3 prints in `server.py` all go to `file=sys.stderr`. Engine wiring (`mcp_dispatch.py` + `claude_code_hooks.py`) has zero prints. Stdio MCP is safe.
+- "Hook scripts not chmod +x" — verified: `_install_hook_script` calls `_ensure_executable` after every copy.
+- "fix_history `_conn_cache_lock` is plain Lock (deadlock risk)" — verified: it's `threading.RLock()` since Week 1 R2 fix.
+- "Antigravity path detection breaks on Linux" — verified: `_antigravity_config_path` is `~/.gemini/antigravity/...` on every platform (no Mac-specific code).
+- "Test count claims unverified" — verified: 276/276 in tests/engine/ + tests/test_paths.py + tests/test_setup_wizard.py.
+- "No mutation testing on `is_revert`" — verified: Week 1 R2 ran mutation testing on the round-1 fixes; `_is_revert_edit_format` got 9 regression tests with explicit before/after assertions.
+
+**Lesson for the playbook:** the I7 fresh-eyes agent is valuable — it did find a real HIGH (atomic writes). But it produced 9 false positives. **The "verify before fix" discipline is non-negotiable**; ~30 minutes spent verifying saved 9 wrong fixes.
+
+### Surprises
+
+- **Same per-week R5 lesson at the integration scale.** Week-2's R5 finding ("output-only test passes coverage but doesn't catch the regression") played out at the cross-module scale: Week-3's MCP-config steps had 19 unit tests passing AND idempotency claimed in the spec, but the `merged` action was reported on every re-run. The unit tests didn't simulate "second `setup` invocation on a project where setup already ran." I1's end-to-end test is what surfaced it.
+- **Module path mismatches survive per-week QA.** Week-3's wizard returned a path; Week-3's inject helper used a different path. Both modules tested in isolation, both passed. Cross-cutting verification (does the wizard's preview path == the helper's actual write path?) needed I1's integration test to surface.
+- **Atomic writes were missed across all of Weeks 1-4.** Five separate write sites added across three weeks, none of them atomic. This is a class of bug that needs a project-wide convention, not per-write care. Worth adding to the playbook as Lesson #13.
+
+### Production-readiness gate
+
+Per Week-3 spec: alpha.1 ships when:
+- ✅ All planned heroes / pillars in place
+- ✅ All R1-R8 + integration QA clean
+- ✅ Test suite green (276/276)
+- ⏳ Founder dogfood ≥ 24 hours **(NOT YET — alpha.1 ships first)**
+- ⏳ ≥3 alpha testers **(NOT YET — recruit after tag)**
+
+The two ⏳ items are post-tag activities. Code is ready to tag.
+
+### Next
+
+- Tag `v2.0-alpha.1`.
+- Founder dogfoods on real machine for ≥48 hours before Week 5.
+- Recruit alpha testers in parallel.
+- Week 5: Hero 1 (Decision Lock).
+
+---
+
 ## Template for new entries
 
 ```markdown

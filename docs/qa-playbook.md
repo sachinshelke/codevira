@@ -335,3 +335,31 @@ After Week 3's 8-round QA:
     was only verified via subprocess in Week-3 R8. Prefer
     subprocess + realistic JSON over mocks when verifying
     external integration points.
+
+After Weeks 1-4 integrated QA:
+
+13. **Per-week QA can't substitute for end-to-end integration QA.**
+    Each of Weeks 1-4 had 5-8 independent rounds and shipped clean
+    individually. The integrated round (I1-I7) still found 3 real
+    bugs at the cross-week boundaries: (a) two modules' path
+    contracts disagreed (I1: Antigravity `_mcp_config_path_for` ≠
+    `_antigravity_config_path()`); (b) an idempotency claim made by
+    one layer wasn't enforced because a different layer reported
+    success based on the wrong signal (I1: `merged` reported on
+    every re-run); (c) a missing project-wide convention (I7:
+    atomic writes) was missed by every per-week round because no
+    week had a full view. **Schedule a dedicated integration round
+    after multi-week deliverables compose.** Common cross-week
+    bug shapes:
+    - module-A-says-X but module-B-uses-Y for the same thing
+    - layer-A-reports-success based on signals layer-B doesn't share
+    - missing project-wide conventions (atomic writes, error formatting,
+      logging level, env var prefix, etc.)
+14. **Project-wide conventions need a single owner**, not per-write care.
+    Five separate file-write sites were added across Weeks 1-4. Every
+    week's author thought "yeah, I'll just call write_text". None did
+    atomic write. The fix: publish a `_atomic_write_text` helper, route
+    every new write through it. **Future heroes that add new write
+    sites must use the helper.** Add a CI check: any direct call to
+    `Path.write_text` / `open(..., 'w')` outside the helper module is
+    a review flag.

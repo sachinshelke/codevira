@@ -573,6 +573,117 @@ class TestSecurityHardening:
             write_nudge_file("cursor", isolated)
 
 
+class TestIntegrationFindings:
+    """Week-1-through-4 integration round (I1) findings.
+
+    These tests guard against regressions in cross-module data flow
+    that per-module unit tests didn't catch.
+    """
+
+    def test_mcp_config_path_matches_inject_helper(
+        self, isolated: Path
+    ):
+        """The wizard's preview path for each IDE must match the path
+        the underlying ``inject_global_*`` helper actually writes to.
+        Mismatch = misleading preview AND broken idempotency check.
+        (I1: caught Antigravity preview was ~/.gemini/settings.json
+        but inject wrote to ~/.gemini/antigravity/mcp_config.json.)
+        """
+        from mcp_server.setup_wizard import _mcp_config_path_for
+        from mcp_server.ide_inject import (
+            _claude_global_config_path, _cursor_global_config_path,
+            _windsurf_global_config_path, _antigravity_config_path,
+        )
+        assert _mcp_config_path_for("claude") == _claude_global_config_path()
+        assert _mcp_config_path_for("cursor") == _cursor_global_config_path()
+        assert _mcp_config_path_for("windsurf") == _windsurf_global_config_path()
+        assert _mcp_config_path_for("antigravity") == _antigravity_config_path()
+
+    def test_nudge_write_is_atomic_no_temp_files_on_success(
+        self, isolated: Path
+    ):
+        """I7 finding C.2: nudge writes use temp-then-rename so a
+        Ctrl-C mid-write doesn't corrupt the target. Verify the
+        success path leaves NO leftover temp file (the rename
+        transferred ownership) and the target has the right content.
+        """
+        from mcp_server.agents_md import write_nudge_file
+        result = write_nudge_file("claude", isolated)
+        assert result.action == "created"
+
+        # Target exists with codevira content
+        target = isolated / "CLAUDE.md"
+        assert target.exists()
+        assert "Codevira" in target.read_text()
+
+        # No leftover .CLAUDE.md.* temp files (atomic rename succeeded)
+        leftovers = [
+            p for p in isolated.iterdir()
+            if p.name.startswith(".CLAUDE.md.") and p.name.endswith(".tmp")
+        ]
+        assert not leftovers, (
+            f"atomic write left temp files behind: {[p.name for p in leftovers]}"
+        )
+
+    def test_atomic_write_helper_writes_correctly(
+        self, tmp_path: Path
+    ):
+        """Direct test of the _atomic_write_text helper: writes the
+        right bytes, leaves no temp residue, returns correct byte count.
+        """
+        from mcp_server.agents_md import _atomic_write_text
+        target = tmp_path / "subdir" / "out.txt"  # parent doesn't exist yet
+        content = "héllo, wörld\n" * 100
+        n = _atomic_write_text(target, content)
+        assert n == len(content.encode("utf-8"))
+        assert target.read_text(encoding="utf-8") == content
+        # No temp leftovers
+        leftovers = list(target.parent.glob(".out.txt.*.tmp"))
+        assert not leftovers, f"temp files: {leftovers}"
+
+    def test_idempotent_rerun_reports_no_change_on_mcp_config(
+        self, isolated: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Two consecutive `setup --yes` runs must report "no_change"
+        on every MCP-config step the second time. The wizard used to
+        report "merged" purely based on file existence (not actual
+        content change) → idempotent re-runs falsely showed N changes.
+        (I1 finding.)
+        """
+        from mcp_server.setup_wizard import build_setup_plan, execute_plan
+
+        # Stub out detect to claim claude is installed
+        monkeypatch.setattr(
+            "mcp_server.ide_inject.detect_installed_ides",
+            lambda _root: ["claude"],
+        )
+
+        plan1 = build_setup_plan(
+            isolated, detected_ides=("claude",),
+            install_hooks=False, write_nudge_files=False,
+        )
+        result1 = execute_plan(plan1)
+        # First run: at least one step that's not no_change/skipped
+        assert any(
+            r.action not in ("no_change", "skipped")
+            for r in result1.steps
+        ), f"first run did nothing: {[r.action for r in result1.steps]}"
+
+        plan2 = build_setup_plan(
+            isolated, detected_ides=("claude",),
+            install_hooks=False, write_nudge_files=False,
+        )
+        result2 = execute_plan(plan2)
+        # Second run: every MCP config step must be no_change
+        for r in result2.steps:
+            if r.step.kind == "mcp_config":
+                assert r.action == "no_change", (
+                    f"idempotent re-run reported {r.action!r} on "
+                    f"{r.step.preview} — wizard isn't detecting "
+                    f"already-current state"
+                )
+
+
 class TestColdInstall:
     def test_cmd_setup_yes_succeeds_end_to_end(
         self, isolated: Path, monkeypatch: pytest.MonkeyPatch,

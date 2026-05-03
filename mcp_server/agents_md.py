@@ -264,14 +264,16 @@ def write_nudge_file(
     desired_block = _build_block_with_markers()
 
     # Decide which path we're on.
+    # All file writes use _atomic_write_text (write-tmp + os.replace) so
+    # a Ctrl-C / SIGKILL mid-write never leaves the target half-written.
+    # I7 integration finding C.2.
     if not target.exists():
         # Brand-new file: full template (frontmatter + block + markers).
         new_content = render_for_ide(ide).rstrip("\n") + "\n"
         if dry_run:
             return NudgeWriteResult(ide, target, "would_create")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(new_content, encoding="utf-8")
-        return NudgeWriteResult(ide, target, "created", len(new_content.encode("utf-8")))
+        n = _atomic_write_text(target, new_content)
+        return NudgeWriteResult(ide, target, "created", n)
 
     existing = _read_text_safely(target)
     if existing is None:
@@ -281,9 +283,8 @@ def write_nudge_file(
         new_content = render_for_ide(ide).rstrip("\n") + "\n"
         if dry_run:
             return NudgeWriteResult(ide, target, "would_create")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(new_content, encoding="utf-8")
-        return NudgeWriteResult(ide, target, "created", len(new_content.encode("utf-8")))
+        n = _atomic_write_text(target, new_content)
+        return NudgeWriteResult(ide, target, "created", n)
 
     if _BLOCK_RE.search(existing):
         # Replace path: swap in the freshly-rendered block.
@@ -293,16 +294,16 @@ def write_nudge_file(
             return NudgeWriteResult(ide, target, action)
         if dry_run:
             return NudgeWriteResult(ide, target, "would_replace")
-        target.write_text(replaced, encoding="utf-8")
-        return NudgeWriteResult(ide, target, "block_replaced", len(replaced.encode("utf-8")))
+        n = _atomic_write_text(target, replaced)
+        return NudgeWriteResult(ide, target, "block_replaced", n)
 
     # Append path: keep all user content, add the codevira block at end.
     suffix_separator = "" if existing.endswith("\n") else "\n"
     appended = existing + suffix_separator + "\n" + desired_block + "\n"
     if dry_run:
         return NudgeWriteResult(ide, target, "would_append")
-    target.write_text(appended, encoding="utf-8")
-    return NudgeWriteResult(ide, target, "block_appended", len(appended.encode("utf-8")))
+    n = _atomic_write_text(target, appended)
+    return NudgeWriteResult(ide, target, "block_appended", n)
 
 
 # ---------------------------------------------------------------------
@@ -337,6 +338,56 @@ def _read_template_resource(name: str) -> str:
         # this module's directory.
         here = Path(__file__).resolve().parent / "data" / "templates"
         return (here / name).read_text(encoding="utf-8")
+
+
+def _atomic_write_text(target: Path, content: str) -> int:
+    """Write ``content`` to ``target`` atomically.
+
+    Strategy: write to a temp file in the SAME directory (so the rename
+    is on the same filesystem and ``os.replace`` is atomic), then
+    ``os.replace`` the temp into place. ``os.replace`` is atomic on
+    POSIX and approximates atomicity on Windows (replaces the existing
+    file in one call rather than the dangerous unlink-then-rename
+    pattern).
+
+    Why: a Ctrl-C between ``write_text`` chunks leaves the target
+    half-written, and the next ``codevira setup`` run sees a corrupt
+    file. The marker-based regex replace can then either fail-open
+    (lose the codevira block) or fail-closed (truncate user content).
+    Caught by Week-1-through-4 integration round I7.
+
+    Returns the number of bytes written.
+    """
+    import os as _os
+    import tempfile
+
+    encoded = content.encode("utf-8")
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    # Use NamedTemporaryFile in the same dir as target so the rename
+    # stays on one filesystem.
+    fd, tmp_path = tempfile.mkstemp(
+        prefix=f".{target.name}.", suffix=".tmp", dir=str(target.parent),
+    )
+    try:
+        with _os.fdopen(fd, "wb") as f:
+            f.write(encoded)
+            # Flush to disk before rename so a crash doesn't leave the
+            # destination pointing at empty content.
+            f.flush()
+            try:
+                _os.fsync(f.fileno())
+            except OSError:
+                pass  # some filesystems / containers don't support fsync
+        _os.replace(tmp_path, target)
+        tmp_path = None  # ownership transferred — don't try to clean up below
+    finally:
+        if tmp_path is not None:
+            try:
+                _os.unlink(tmp_path)
+            except OSError:
+                pass
+    return len(encoded)
 
 
 def _enforce_target_inside_project(target: Path, project_root: Path) -> None:

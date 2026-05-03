@@ -192,10 +192,19 @@ class SignalContext:
                 return result
             # Direct SQL — the existing search_decisions doesn't expose a
             # locked_only filter cleanly, so we go to the source.
+            # Schema note: the decisions table column is ``created_at``
+            # (not ``timestamp``). The original SELECT ``d.timestamp``
+            # was a Week-1 bug that survived 5 weeks because every test
+            # used a _FakeSignals stub instead of a real graph DB. The
+            # column-not-found error was swallowed by the broad
+            # ``except Exception`` below, returning ``[]`` — which made
+            # Hero 1 (Decision Lock) silently fail-open against any
+            # real project. Caught by Week-5 R8-redo (live integration
+            # against a real SQLiteGraph instance).
             sql = """
                 SELECT d.id, d.file_path, d.decision, d.context,
                        COALESCE(n.do_not_revert, 0) AS locked,
-                       d.timestamp
+                       d.created_at AS timestamp
                 FROM decisions d
                 LEFT JOIN nodes n ON n.file_path = d.file_path
                 WHERE 1=1
@@ -206,7 +215,7 @@ class SignalContext:
                 params.append(str(file) if isinstance(file, Path) else file)
             if locked_only:
                 sql += " AND COALESCE(n.do_not_revert, 0) = 1"
-            sql += " ORDER BY d.timestamp DESC LIMIT ?"
+            sql += " ORDER BY d.created_at DESC LIMIT ?"
             params.append(limit)
             rows = graph.conn.execute(sql, params).fetchall()
             result = [dict(r) for r in rows]

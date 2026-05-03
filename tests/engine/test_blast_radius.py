@@ -594,6 +594,75 @@ class TestRegistration:
             "cli.py must call register_default_policies in `engine handle`"
         )
 
+    def test_hero_4_fires_through_engine_dispatch(self, tmp_path):
+        """Week-5 R5-redo found a runner-vs-policy signature mismatch:
+        ``policy.evaluate(event, signals=None)`` was being called with
+        only ``event`` by the runner, so Hero 4 silently no-op'd
+        through dispatch even though direct ``evaluate(event, signals)``
+        worked. Catches this regression for Hero 4 specifically.
+
+        Builds a real graph with high blast radius + sig-changing diff;
+        dispatches; asserts BLOCK. If the runner stops passing signals,
+        this test fails.
+        """
+        from indexer.sqlite_graph import SQLiteGraph
+        from mcp_server.engine.events import EventType, HookEvent
+        from mcp_server.engine import register_policy, reset_policies, dispatch
+        import mcp_server.paths as paths_mod
+        import os
+
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        project = tmp_path / "p"
+        project.mkdir()
+        (project / "pyproject.toml").write_text("")
+
+        paths_mod.get_global_home = lambda: fake_home
+        paths_mod.set_project_dir(project)
+        paths_mod.invalidate_data_dir_cache()
+
+        from mcp_server.paths import get_data_dir
+        db_path = get_data_dir() / "graph" / "graph.db"
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        g = SQLiteGraph(db_path)
+        g.add_node("auth", "file", "auth.py", "auth.py")
+        for i in range(12):
+            cid = f"c_{i}"
+            g.add_node(cid, "file", f"caller_{i}.py", f"callers/c_{i}.py")
+            g.conn.execute(
+                "INSERT INTO edges (source_id, target_id, kind) VALUES (?, ?, ?)",
+                (cid, "auth", "imports"),
+            )
+        g.conn.commit()
+        g.close()
+
+        reset_policies()
+        register_policy(BlastRadiusVeto())
+
+        os.environ["CODEVIRA_BLAST_RADIUS_THRESHOLD"] = "5"
+        os.environ["CODEVIRA_BLAST_RADIUS_MODE"] = "block"
+        try:
+            diff = (
+                "--- before\ndef auth_token(user_id):\n    return user_id\n"
+                "--- after\ndef auth_token(user):\n    return user\n"
+            )
+            event = HookEvent(
+                event_type=EventType.PRE_TOOL_USE, project_root=project,
+                tool_name="Edit", target_file=project / "auth.py",
+                proposed_diff=diff,
+            )
+            verdict = dispatch(event)
+            assert verdict.is_blocking(), (
+                f"Hero 4 must fire through dispatch, not just direct evaluate; "
+                f"got {verdict.action} — likely the runner isn't passing "
+                f"signals to policy.evaluate()"
+            )
+            assert verdict.policy == "blast_radius_veto"
+        finally:
+            for k in ("CODEVIRA_BLAST_RADIUS_THRESHOLD", "CODEVIRA_BLAST_RADIUS_MODE"):
+                os.environ.pop(k, None)
+            reset_policies()
+
     def test_mcp_server_call_tool_calls_register_default_policies(self):
         """Same wiring check for the MCP server's call_tool dispatch:
         without `register_default_policies` on every tool call, Hero 4's

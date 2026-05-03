@@ -363,3 +363,38 @@ After Weeks 1-4 integrated QA:
     sites must use the helper.** Add a CI check: any direct call to
     `Path.write_text` / `open(..., 'w')` outside the helper module is
     a review flag.
+
+After Week-5 retrospective (the "have you done QC seriously?" round):
+
+15. **Per-week QA can't substitute for real-DB integration testing.**
+    Heroes 1 + 4 + 5 each had 30+ tests passing for weeks. Because the
+    tests used `_FakeSignals`, NEITHER the SQL column bug NOR the
+    engine wiring bug ever fired. v2.0-alpha.1 tagged with two
+    silent-fail-open production bugs. **Every hero MUST have at least
+    one end-to-end test that goes through `dispatch()` against a
+    real `SQLiteGraph`** — not just direct `evaluate(event, signals)`
+    calls with mock signals.
+16. **Integration QA must include a "real graph + real dispatch" pass
+    for every hero**, not just user-facing surfaces. The Week 1-4
+    integration round (I1-I9) caught 3 cross-cutting bugs but missed
+    these two because it went through Pillar 1 setup paths, not
+    through the engine dispatch with real signals. Add an "I-engine"
+    sub-round: for each registered policy, run a synthetic event
+    through `dispatch()` with a real DB and assert the verdict shape.
+17. **Honest QA self-assessment is the most valuable angle of all.**
+    The "have you done this seriously?" question is the first reflective
+    angle. After running all 8 angles for a week, before declaring done,
+    ask: "Did I actually exercise each angle, or did I check it off?"
+    For each round: was the input adversarial enough? Did the assertions
+    cover the contract, or just the happy output? Would a mid-stack bug
+    actually surface? **If you can't answer "yes" with a concrete
+    example for each angle, you didn't do it seriously.** Surface this
+    explicitly as the "Tier 0" pre-flight before declaring a round
+    complete.
+
+The 3 lessons added by Week 5's retrospective are about the same
+underlying failure: **mocks hide schema-drift and wiring bugs that only
+real-system tests catch**. Without running policies end-to-end through
+the actual engine + actual database at least once per hero, the QA
+discipline misses an entire bug class — silent fail-open, the worst
+class for a security-relevant tool.

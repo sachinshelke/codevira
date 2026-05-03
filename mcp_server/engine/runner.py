@@ -163,10 +163,31 @@ def _safe_evaluate(policy: Policy, event: HookEvent) -> PolicyVerdict:
 
     Failures get logged to the crash_logger (for `codevira report`) but
     never propagate. The policy is treated as if it returned `allow`.
+
+    Signal-passing contract (caught + fixed by Week-5 R5 redo):
+      Policies that opt into the SignalContext use the signature
+      ``evaluate(event, signals=None)``. The runner attaches signals
+      onto the event (line 136) so older policies that read
+      ``event.signals`` keep working, AND passes signals as a kwarg
+      so newer policies' parameter receives it explicitly. Without
+      the kwarg pass, Heroes 1 + 4 + 5 silently no-op'd against
+      every dispatch — every per-week test passed signals manually,
+      but the runner code path didn't.
     """
     started = time.perf_counter()
+    signals = getattr(event, "signals", None)
     try:
-        verdict = policy.evaluate(event)
+        # Try with signals kwarg first; fall back for older policies
+        # whose evaluate() takes only ``event`` (the demo_policy,
+        # for example).
+        try:
+            verdict = policy.evaluate(event, signals=signals)
+        except TypeError:
+            # Policy.evaluate doesn't accept signals kwarg — fall back
+            # to the legacy single-arg form. This keeps the demo
+            # policy + any user-defined policies that follow the
+            # original contract from the Week-1 base class working.
+            verdict = policy.evaluate(event)
         if not isinstance(verdict, PolicyVerdict):
             logger.warning(
                 "Policy %s returned non-PolicyVerdict %r; treating as allow",

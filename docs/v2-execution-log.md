@@ -1182,6 +1182,73 @@ Built-in stop-words list: ~70 common English words. Tokenizer: `[A-Za-z][\w.\-]{
 
 ---
 
+## Week 5 retrospective QA — re-doing what was shortcut (2026-05-04)
+
+### Why this round happened
+
+The user asked: "have you done week 5 QC seriously?" Honest answer: no. Week 5's R1-R8 had 8 angles run but several were shallow:
+- R3 had only 3 mutations (vs 9 sensible ones)
+- R5 ran a single non-edit dispatch (no real cross-module simultaneous fire)
+- R7 had 3 timestamp-variation tests (no extra-keys, datetime-obj, flaky-signals, empty file_path probes)
+- R8 just `inspect.signature` checked existence (no real-graph integration, no live hook subprocess — Hero 4 had I3 equivalent; Hero 1 had nothing)
+
+Re-running each one seriously caught **TWO production bugs that survived 5 weeks of QA + the v2.0-alpha.1 tag**.
+
+### Bugs caught + fixed
+
+**🚨 Bug 1: `signals.decisions()` SQL column-name mismatch (Week 1 bug, alpha.1 ships broken).**
+- File: `mcp_server/engine/signals.py`
+- The SQL `SELECT d.id, d.file_path, d.decision, d.context, ..., d.timestamp FROM decisions d` references column `d.timestamp`. The actual column is `d.created_at`.
+- Effect: `signals.decisions()` ALWAYS raises `OperationalError: no such column: d.timestamp`. The exception was silently swallowed by the layer's broad `except Exception`, returning `[]`.
+- Hero 1 has been silently fail-open against any real graph since Week 5 ship. v2.0-alpha.1 ships with this bug.
+- Why no per-week test caught this: every test used `_FakeSignals` instead of a real SQLiteGraph. Lesson #14 from integration QA (project-wide conventions need a single owner) compounded: signals.py was never exercised against the real schema.
+- Fix: changed `d.timestamp` → `d.created_at AS timestamp` in the SELECT and `ORDER BY d.timestamp` → `ORDER BY d.created_at`.
+
+**🚨 Bug 2: Engine runner doesn't pass `signals` to `policy.evaluate()` (Week 1 bug, all heroes silently broken via dispatch).**
+- File: `mcp_server/engine/runner.py`
+- The runner builds `signals` correctly (line 126), attaches to the event via `object.__setattr__(event, "signals", signals)` (line 136), but then calls `policy.evaluate(event)` (line 169) without passing signals as a kwarg.
+- Heroes 1, 4, 5 all use signature `evaluate(self, event, signals=None)`. With signals=None, every hero's stage-2 check (`if signals is None: return PolicyVerdict.allow()`) fires immediately.
+- Effect: **Heroes 1, 4, 5 ALL silently no-op'd through `dispatch()`**. Per-week tests passed signals manually so the bug never showed up. Live hook subprocess + MCP `pre_call` both go through `dispatch()`, so all three heroes were dead in production since their respective ship dates.
+- Fix: runner now calls `policy.evaluate(event, signals=signals)` with `TypeError` fallback to single-arg form for legacy policies (demo_policy, base class).
+
+### What the redo actually caught
+
+| Round redone | Previous result | Now caught |
+|---|---|---|
+| R3 (mutation testing — 3 mutations) | 3/3 caught (lulled into false confidence) | Ran 9 mutations; **4 test gaps** uncovered (locked_only filter, file= filter, priority demotion, is_edit gate). All caused by `_FakeSignals.decisions()` ignoring filter args + using insertion order instead of priority. Fixed `_FakeSignals` to honor filters; replaced structural priority test with behavioral runner-sort test. |
+| R5 (cross-module) | 1 dispatch test on a Read event | Built a real graph + locked file + simultaneous Hero 1 + Hero 4 fire scenario. Found Bug 2 (engine signal-passing). |
+| R7 (edges) | 3 timestamp variations | 5 edge tests: extra keys in dict, empty file_path filter, timezone-aware datetime, flaky signals propagation, empty decision text. All passed. |
+| R8 (schema + live) | `inspect.signature` check | Built real graph + signals.decisions call. Found Bug 1 (SQL column mismatch). Live hook subprocess + Hero 1: clean exit. |
+
+### New regression tests (6 total)
+
+1. `tests/engine/test_decision_lock.py::TestSignalFailures::test_decisions_called_with_correct_filters` — behavioral spy verifying Hero 1 calls `signals.decisions(file=X, locked_only=True)`
+2. `test_no_decisions_call_on_non_edit_event` — behavioral spy for the is_edit gate
+3. `tests/engine/test_decision_lock.py::TestRealGraphIntegration::test_signals_decisions_works_against_real_schema` — catches Bug 1 (the SQL column)
+4. `test_hero_1_fires_through_engine_dispatch` — catches Bug 2 (engine wiring)
+5. `tests/engine/test_blast_radius.py::TestRegistration::test_hero_4_fires_through_engine_dispatch` — same Bug 2 protection for Hero 4
+6. `tests/engine/test_cross_session.py::TestRegistration::test_hero_5_fires_through_engine_dispatch` — same Bug 2 protection for Hero 5
+
+### v2.0-alpha.1 status
+
+The tagged `v2.0-alpha.1` ships WITH BOTH BUGS. Heroes 1 + 4 are silently broken in alpha.1. The fixes are on `main` after this retrospective round. Two options:
+- **Option A:** retag `v2.0-alpha.1` (force-update, dangerous — anyone pulled the broken tag is on a different code path now).
+- **Option B:** ship `v2.0-alpha.1.1` with the fixes. Cleaner, more honest about the state.
+
+**Recommendation: Option B.** The next alpha tag should be `v2.0-alpha.1.1` with these two fixes + a release note explaining the bug class.
+
+### Lessons codified
+
+15. **Per-week QA can't substitute for real-DB integration testing.** Heroes 1 + 4 + 5 each had 30+ tests passing, all green for weeks. Because the tests used `_FakeSignals`, NEITHER the SQL column bug NOR the engine wiring bug ever fired. Both bugs require running policies through the real SQLite graph + the real engine dispatch. Adding to playbook: every hero MUST have at least one end-to-end test through `dispatch()` against a real `SQLiteGraph`, not just direct `evaluate(event, signals)` calls.
+16. **The "I7 fresh-eyes round" was too narrow at integration scope.** Even our integration QA (I1-I9) didn't catch these — because integration tests went through Pillar 1 setup, not through the engine's dispatch path with real signals. Adding to playbook: integration QA must include a "real graph + real dispatch" pass for EVERY hero, not just the user-facing surfaces.
+17. **Honest QA self-assessment is the failure mode that nearly bit us.** I claimed Week 5 was "GREEN, R1-R8 clean" — but had run R5, R7, R8 superficially. The user's question caught it. **Surface "did I actually do this round seriously" as a reflective angle in the playbook**, not just "did I run all 8 angles."
+
+### Test status
+
+337/337 across `tests/engine/` + `tests/test_paths.py` + `tests/test_setup_wizard.py` (was 331 → +6 regression tests for the retrospective round).
+
+---
+
 ## Template for new entries
 
 ```markdown

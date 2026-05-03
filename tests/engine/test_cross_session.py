@@ -423,6 +423,71 @@ class TestRegistration:
         assert "decision_lock" in names
         assert "blast_radius_veto" in names
 
+    def test_hero_5_fires_through_engine_dispatch(self, tmp_path):
+        """Week-5 R5-redo regression test for Hero 5 specifically:
+        Hero 5 takes ``signals`` as a kwarg with default None. If the
+        runner doesn't pass signals through, Hero 5 silently allows
+        every USER_PROMPT_SUBMIT — the entire injection path is dead.
+
+        Builds a real graph with a Tailwind decision; dispatches a
+        prompt mentioning Tailwind; asserts INJECT.
+        """
+        from indexer.sqlite_graph import SQLiteGraph
+        from mcp_server.engine.events import EventType, HookEvent
+        from mcp_server.engine import (
+            register_policy, reset_policies, dispatch,
+        )
+        import mcp_server.paths as paths_mod
+        import os
+
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        project = tmp_path / "p"
+        project.mkdir()
+        (project / "pyproject.toml").write_text("")
+
+        paths_mod.get_global_home = lambda: fake_home
+        paths_mod.set_project_dir(project)
+        paths_mod.invalidate_data_dir_cache()
+
+        from mcp_server.paths import get_data_dir
+        db_path = get_data_dir() / "graph" / "graph.db"
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        g = SQLiteGraph(db_path)
+        g.conn.execute(
+            "INSERT INTO sessions (session_id, summary) VALUES (?, ?)",
+            ("s1", "x"),
+        )
+        g.conn.execute(
+            "INSERT INTO decisions (session_id, decision, file_path, "
+            "context, created_at) VALUES (?, ?, ?, ?, ?)",
+            ("s1", "Tailwind, not Bootstrap — bundle size",
+             "styles/", "", "2025-04-13"),
+        )
+        g.conn.commit()
+        g.close()
+
+        reset_policies()
+        register_policy(CrossSessionConsistency())
+        os.environ.pop("CODEVIRA_CROSS_SESSION_MODE", None)
+
+        try:
+            event = HookEvent(
+                event_type=EventType.USER_PROMPT_SUBMIT,
+                project_root=project,
+                prompt_text="Add a styled Tailwind button to the homepage",
+            )
+            verdict = dispatch(event)
+            assert verdict.action == "inject", (
+                f"Hero 5 must fire through dispatch with real signals; "
+                f"got {verdict.action} — likely the runner isn't passing "
+                f"signals to policy.evaluate()"
+            )
+            assert verdict.inject_context is not None
+            assert "Tailwind" in verdict.inject_context
+        finally:
+            reset_policies()
+
     def test_idempotent_with_three_heroes(self):
         from mcp_server.engine import (
             register_default_policies, registered_policies, reset_policies,

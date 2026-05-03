@@ -28,7 +28,7 @@ Specs cap at ~500 lines each.
 | P1 | **Pillar 1: `codevira setup`** | [`pillar-1-setup.md`](./pillar-1-setup.md) | 3 | ✅ shipped Week 3; 8 QA rounds (1 HIGH + 5 P2 fixed; 1 deferral) |
 | 4 | **Blast-Radius Veto** | [`04-blast-radius.md`](./04-blast-radius.md) | 4 | ✅ shipped Week 4; 5 QA rounds (1 MEDIUM + 2 P1 + 1 test-gap fixed) |
 | 1 | **Decision Lock** | [`01-decision-lock.md`](./01-decision-lock.md) | 5 | ✅ shipped Week 5; R1-R8 clean (1 docstring nit only) |
-| 5 | **Cross-Session Consistency** | `05-cross-session.md` (TBD) | 6 | spec pending |
+| 5 | **Cross-Session Consistency** | [`05-cross-session.md`](./05-cross-session.md) | 6 | ✅ shipped Week 6; R1-R8 (1 test gap on short-prompt-skip caught + fixed) |
 | 6 | **Token Budget Live View** | `06-token-budget.md` (TBD) | 7 | spec pending |
 | 2 | **Anti-Regression Memory** | `02-anti-regression.md` (TBD) | 8 | spec pending |
 | 7 | **Live Style Enforcement** | `07-live-style.md` (TBD) | 9 | spec pending |

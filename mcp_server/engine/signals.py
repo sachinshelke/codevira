@@ -215,6 +215,42 @@ class SignalContext:
         self._decisions_cache[cache_key] = result
         return result
 
+    def search_decisions(
+        self, query: str, *, limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        """Substring-search decisions by query string.
+
+        Used by Hero 5 (Cross-Session Consistency) to surface prior
+        decisions relevant to the current user prompt. Wraps
+        ``indexer.sqlite_graph.SQLiteGraph.search_decisions`` which does
+        relevance-tiered LIKE matching (file_path → decision text →
+        context → summary).
+
+        Cached by ``(query, limit)`` so multiple policies asking the
+        same question pay once. Returns empty list on any error or
+        when graph is unavailable.
+
+        Limit is clamped to [1, 20] — same defensive bound as the
+        existing ``tools.search.search_decisions``.
+        """
+        # Cache + defensive clamp
+        limit = max(1, min(int(limit), 20))
+        cache_key = ("search", query, limit)
+        cached = self._decisions_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        result: list[dict[str, Any]] = []
+        try:
+            graph = self.graph
+            if graph is None:
+                self._decisions_cache[cache_key] = result
+                return result
+            result = graph.search_decisions(query, limit=limit)
+        except Exception:  # noqa: BLE001
+            result = []
+        self._decisions_cache[cache_key] = result
+        return result
+
     # ---------------------------------------------------------------
     # Fix history (NEW — backed by indexer/fix_history.py)
     # ---------------------------------------------------------------

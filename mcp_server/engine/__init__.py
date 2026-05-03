@@ -43,6 +43,12 @@ def register_default_policies() -> None:
     if not any(p.name == DecisionLock.name for p in registered_policies()):
         register_policy(DecisionLock())
 
+    # Hero 5 — Cross-Session Consistency (Week 6)
+    from mcp_server.engine.policies.cross_session import CrossSessionConsistency
+
+    if not any(p.name == CrossSessionConsistency.name for p in registered_policies()):
+        register_policy(CrossSessionConsistency())
+
 __all__ = [
     # Event types
     "EventType",

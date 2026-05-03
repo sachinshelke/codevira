@@ -1127,6 +1127,61 @@ Per Lesson #10 (user-facing surface → full sweep), all 8 angles applied.
 
 ---
 
+## Week 6 — Hero 5 (Cross-Session Consistency) (2026-05-04)
+
+### Shipped
+
+**Hero 5: CrossSessionConsistency — first INJECT-class policy in v2.0.**
+
+Where Heroes 1 and 4 were `PRE_TOOL_USE` blockers, Hero 5 fires on `USER_PROMPT_SUBMIT` and INJECTS context (via the engine's `inject` verdict path proven in Week-1 R5). Extracts up to 5 keyword tokens from the user's prompt, searches codevira's decisions database for matching prior decisions, dedups across keywords, sorts by recency, and prepends them to the AI's context as `additionalContext`.
+
+- `mcp_server/engine/policies/cross_session.py` — CrossSessionConsistency policy (~250 LOC). Priority=30 (advisory; below blocking heroes). Two env-vars: `CODEVIRA_CROSS_SESSION_MODE` (off/inject, default inject) and `CODEVIRA_CROSS_SESSION_MAX_INJECT` (1-20, default 5).
+- `mcp_server/engine/signals.py` — added `search_decisions(query, limit)` method on SignalContext. Wraps the existing SQLite-backed `db.search_decisions`. Cached by (query, limit).
+- `mcp_server/engine/policies/__init__.py` — re-exports CrossSessionConsistency.
+- `mcp_server/engine/__init__.py` — `register_default_policies()` now registers all three heroes (4, 1, 5). Idempotent.
+- `tests/engine/test_cross_session.py` — 36 tests across 8 acceptance + 10 keyword-extraction unit + 5 configuration robustness + 4 match collection / dedup + 2 registration + 2 robustness + 4 injection formatting + 1 behavioral spy (added during R3).
+
+Built-in stop-words list: ~70 common English words. Tokenizer: `[A-Za-z][\w.\-]{1,}` — preserves dot-separated identifiers (`auth.py`, `api.handlers`) as single tokens. Caps at 5 distinct keywords per prompt; each searches up to 3 decisions; total cap of 5 after dedup + recency sort.
+
+### R1-R8 QA gauntlet
+
+| Round | Angle | Findings |
+|---|---|---|
+| R1 | #1 + #7 (independent agent code review + security audit) | **GREEN**. Verified: regex linear (10K-char input handled in 0.1ms); per-keyword exception isolation; truncation prevents context-window blowup; SQL parameterized; cache key bounded; injection text framed as "Prior decisions" preamble defangs prompt-injection attempts; idempotent registration with three heroes. |
+| R2 | #5 + #8 (integration + type safety) | clean — Hero 5 wired through `register_default_policies`, dispatch routes correctly, type contract stable, 2 env-vars exposed via `config_schema`. |
+| R3 | #15 (mutation testing) | **TEST GAP — same recurring class as Week-2 R5 / Week-4 R3 / integration I8.** M1 (revert dedup) → caught. M2 (revert keyword cap) → caught. **M3 (revert short-prompt skip) → NOT CAUGHT.** The skip is a latency optimization; output is `allow` either way for short prompts because they extract zero keywords (or the empty signals return zero matches). Output-only assertions can't detect the regression. **Fix:** added `test_3b_short_prompt_skips_signal_search` — a behavioral spy on `signals.search_decisions` that asserts ZERO calls happen for short-but-keyword-bearing prompts (e.g. "css api", "ssl cert"). M3 re-run: caught. |
+| R4 | #2 (adversarial) | All probes pass: 10K-char prompt extracted in 0.1 ms (1 token); markdown-injection in decision text wrapped safely by preamble; SQL meta in user prompt parameterized through chain; Unicode/RTL prompts (Arabic + ASCII) extract correctly. |
+| R5 | #3 (cross-module impact) | clean — three heroes (4, 1, 5) coexist; USER_PROMPT_SUBMIT routes only to Hero 5; PRE_TOOL_USE routes only to Heroes 4/1; no priority/dispatch conflicts. |
+| R6 | #4 + #9 (latency + concurrent stress) | p99 = 0.388 ms over 1000 calls (12× under 5 ms target). 20 threads × 100 parallel inject evaluations: zero races (stateless). |
+| R7 | #19 + edge cases | Empty decision text handled. 100K-char decision truncated (final context < 5 KB). Numeric `created_at` (epoch seconds) formats correctly. |
+| R8 | #13 + #11 (schema + observability) | `signals.search_decisions` signature stable (query / limit kwargs). The Week-1 R5 fix (additionalContext under hookSpecificOutput) verified still in place — Hero 5 is the FIRST production user of this code path. |
+
+### Bugs caught + fixed
+
+1. **R3 test gap (recurring class): output-only test can't catch the short-prompt-skip optimization.** The skip is a behavioral contract ("don't make SQL queries for short prompts") that doesn't change the output. Mutation removes the skip; output stays "allow" because canned signals return nothing AND extract-zero-keywords skips the search anyway for prompts that aren't carefully chosen. Fixed by:
+   - Choosing test prompts that DO extract keywords ("css api", "ssl cert", "api auth") AND are < 10 chars.
+   - Spying on `signals.search_decisions` and asserting zero calls for those prompts.
+   - Sanity-checking with a long prompt that DOES trigger search.
+   - Re-running M3: now caught.
+
+### Surprises
+
+- **Hero 5 was even smaller than Hero 1.** ~250 LOC, mostly stop-words list and formatting. The engine + signals + Pillar 1 hook plumbing handle everything. The remaining 7 heroes should compose down similarly.
+- **The "behavioral spy" pattern keeps recurring.** Output-only tests have a systematic blind spot for any optimization-class fix (cap, skip, lazy-init). Every hero should have at least ONE behavioral spy if it adds an optimization. Worth promoting to a per-hero default.
+- **The first INJECT verdict path went smoothly.** The Week-1 R5 schema work paid off — `additionalContext` under `hookSpecificOutput` is exactly what Claude Code expects, no post-hoc fixes needed.
+
+### Test status
+
+331/331 across `tests/engine/` + `tests/test_paths.py` + `tests/test_setup_wizard.py` (was 295 → +36 Hero 5 tests).
+
+### What's next
+
+- Week 7: Hero 6 (Token Budget Live View). Reads the `token_budget.jsonl` plumbing built in Week 2; surfaces injected/used numbers + per-source breakdown via a `codevira budget` CLI.
+- v2.0-alpha.2 tag after Week 7 (or Week 6 if you want to ship Heroes 1 + 5 sooner — both are alpha-ready).
+- Founder dogfood gate still pending for alpha.1.
+
+---
+
 ## Template for new entries
 
 ```markdown

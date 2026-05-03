@@ -1,3 +1,114 @@
+# v2.0-alpha.2 — Three more heroes + Bug 3 caught
+
+**Released:** 2026-05-04
+
+Builds on alpha.1.1's bug fixes with three new policy heroes shipping. Plus one more silent fail-open bug (Bug 3) caught and fixed during Week-7 mutation testing.
+
+## What's new in alpha.2
+
+### 🔒 Hero 1 — Active Decision Lock (now actually wired)
+
+When the AI tries to Edit a file marked `do_not_revert` in the graph, codevira refuses the edit and surfaces the locked decisions:
+
+```text
+🔒 Decision-lock veto on auth.py: this file is marked do_not_revert
+with 1 locked decision(s).
+
+Locked decisions:
+  • #142: 'bcrypt over argon2 — see issue #142' (locked 2025-04-13)
+
+To proceed safely:
+  1. Surface the decision to the user. They locked it for a reason.
+  2. Confirm + unlock via codevira's CLI, OR set
+     CODEVIRA_DECISION_LOCK_MODE=warn (warns instead of blocks)
+     or =off (disables this policy).
+```
+
+Configuration: `CODEVIRA_DECISION_LOCK_MODE` = `off` / `warn` / `block` (default `block`).
+
+### 🧠 Hero 5 — Cross-Session Consistency
+
+When you submit a prompt mentioning a topic, codevira proactively surfaces past decisions on related topics — before the AI responds:
+
+```text
+[your prompt]: "Add a styled Get Started button to the homepage hero"
+
+[codevira injects, before the AI's first turn]:
+   ## Prior decisions you may want to consider
+   - 2025-04-13 — [styles/] Tailwind, not Bootstrap — bundle size
+   - 2025-04-08 — [components/] Use class:hover, not @apply hover:...
+   If your current request conflicts with any of these, surface
+   the conflict to the user before proceeding.
+```
+
+Configuration: `CODEVIRA_CROSS_SESSION_MODE` = `off` / `inject` (default `inject`); `CODEVIRA_CROSS_SESSION_MAX_INJECT` = 1-20 (default 5).
+
+### 📊 Hero 6 — Token Budget Live View
+
+Codevira persists every session's token spend at session end (Stop hook). Read it back via the new `codevira budget` CLI:
+
+```text
+$ codevira budget
+  Session abc-123  (2026-05-04 14:30)
+  ────────────────────────────────────────────────────────────
+  Injected:        8,247 tokens
+  Used:            4,102 tokens
+  Efficiency:        49.7%
+
+  Top wasted sources:
+    get_node                       2,400 injected, 1,920 wasted (80%)
+    search_decisions               1,200 injected,   600 wasted (50%)
+
+$ codevira budget history --last 5
+  Last 5 sessions:
+  Date                 Session                   Injected      Used   Eff
+  2026-05-04 14:30     abc-123                      8,247     4,102  50%
+  2026-05-04 11:15     def-456                      3,200     2,800  88%
+  ...
+```
+
+Configuration: `CODEVIRA_TOKEN_BUDGET_MODE` = `off` / `persist` (default `persist`).
+
+### 🚨 Bug 3 caught: dead `enabled_by_default` field
+
+`Policy.enabled_by_default = False` was supposed to opt a hero out of default registration. It was declared on the base class and documented since Week 1, but `register_default_policies` never checked it. **Any hero that needed to ship as opt-in would silently auto-register.**
+
+Caught by Week-7 mutation testing (M9): flipping the flag had ZERO behavioral effect. Fixed in this release. Same shape as Bugs 1 + 2 in alpha.1.1 — "declared but never integrated → silent fail-open."
+
+Pattern now codified as **Lesson #18:** any contract field that doesn't have a code path enforcing it is a future silent-fail-open bug.
+
+## What's NOT in alpha.2
+
+These are still deferred and shipping in subsequent alphas (Weeks 8-13):
+- Hero 2 (Anti-Regression Memory) — Week 8
+- Hero 7 (Live Style Enforcement) — Week 9
+- Hero 10 (AI Promotion Score) — Week 10
+- Hero 9 (Proactive Intent Inference) — Week 11
+- Hero 3 (Scope Contract Lock) — Week 12
+- Hero 8 (Decision Replay) — Week 13
+
+## Quality
+
+- **368/368 tests green** (was 278 at alpha.1; +90 net new regression tests across the three new heroes + retrospective audits)
+- **3 production bugs caught + fixed** since alpha.1 (Bugs 1, 2, 3 — all silent-fail-open)
+- **Three new playbook lessons** (#15 real-DB integration, #16 every-hero dispatch test, #17 honest self-assessment) plus #18 emerging
+- **All four heroes** (1, 4, 5, 6) now have:
+  - End-to-end dispatch+real-graph regression tests
+  - Behavioral spies on signal/persistence calls
+  - 9-10 mutations each, all caught
+  - Real CLI subprocess tests where applicable
+
+## Upgrading from alpha.1.x
+
+```bash
+pipx upgrade codevira
+codevira setup --yes  # idempotent re-run picks up the fixes
+```
+
+No data migration. The fixes are pure code changes; existing `decisions.db`, `fixes.db`, `token_budget.jsonl` work unchanged.
+
+---
+
 # v2.0-alpha.1.1 — Critical bug fixes for alpha.1
 
 **Released:** 2026-05-04 (one day after alpha.1)

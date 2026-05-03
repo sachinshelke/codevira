@@ -534,6 +534,147 @@ observing Claude Code fire them through real lifecycle. Everything
 we've done is synthetic stdin testing. This is the highest-leverage
 remaining angle if we choose a Round 5.
 
+### Round-5 QA: real Claude Code schema audit caught 4 protocol mismatches
+
+Round 5 fetched [Claude Code's actual hook documentation](https://code.claude.com/docs/en/hooks)
+and field-by-field compared it to what the wiring layer emits. Found
+**4 real protocol mismatches** that 4 prior rounds missed because all
+prior testing was synthetic (we tested against our own assumptions
+about the schema, not against the actual schema).
+
+#### MISMATCH #1 (CRITICAL): `additionalContext` was at wrong nesting level
+
+I was emitting:
+```json
+{"continue": true, "additionalContext": "..."}
+```
+
+Claude Code's actual schema requires:
+```json
+{
+  "continue": true,
+  "hookSpecificOutput": {
+    "hookEventName": "<EventName>",
+    "additionalContext": "..."
+  }
+}
+```
+
+**Top-level placement is silently ignored.** This means **Hero 5
+(Cross-Session Consistency) and Hero 9 (Proactive Intent Inference)
+would have shipped silently broken** — no error, no log, no apparent
+problem in synthetic tests, just no AI behavior change in production.
+This is a "discover at HN launch day, ship a same-day patch" class of
+bug.
+
+#### MISMATCH #2: Block path missing modern `permissionDecision`
+
+I was emitting only `{"continue": false, "stopReason": "..."}` (legacy).
+Claude Code's modern schema also accepts:
+```json
+{
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "deny",
+    "permissionDecisionReason": "..."
+  }
+}
+```
+And per the docs, exit-2 reasons should be written to STDERR (not just
+stdout) so users see them in Claude Code's UI. Now emitting both legacy
+and modern fields + writing to stderr — backwards compatible across all
+Claude Code versions.
+
+#### MISMATCH #3: Warn path used non-existent `message` field
+
+```python
+_write_response({"continue": True, "message": msg})  # WRONG: 'message' is not in schema
+```
+
+Claude Code's schema uses `systemMessage` (camelCase) for non-blocking
+notifications. My field name was simply ignored.
+
+#### MISMATCH #4: PostToolUse input field is `tool_result`, not `tool_response`
+
+```python
+tool_output = raw.get("tool_response") or raw.get("tool_output")  # WRONG
+```
+
+Modern Claude Code uses `tool_result`. I now read all three with
+preference order: `tool_result` (current) → `tool_response` (older) →
+`tool_output` (oldest fallback).
+
+#### What R5 verified end-to-end
+
+Built + reinstalled wheel, hands-on tests via the actual binary:
+
+- **Block path emits both legacy + modern fields** — `stopReason` AND
+  `hookSpecificOutput.{hookEventName, permissionDecision, permissionDecisionReason}`
+- **Reason mirrored to stderr** on exit-2 (per protocol)
+- **Inject path correctly nested** under `hookSpecificOutput.additionalContext`
+  with required `hookEventName`
+- **Warn uses `systemMessage`** (verified field absent if no warn)
+- **PostToolUse reads `tool_result`** (current schema) AND tolerates
+  `tool_response` for old Claude Code versions
+- **Hooks installed at `~/.claude/hooks/codevira-*.sh`** work end-to-end
+  via direct shell invocation; same schema-correct output
+
+The user's existing `~/.claude/settings.json` is **untouched** —
+codevira-namespaced scripts are installed but inert until the user
+manually adds a `hooks` block to register them. This is the safe
+v2.0 install pattern: Pillar 1's `codevira hooks install` command will
+do this with explicit user consent.
+
+#### Tests added
+
+`tests/engine/test_qa_round5.py` — 7 schema-conformance tests:
+- `TestInjectSchemaConformance` (×2): inject under hookSpecificOutput,
+  hookEventName matches event for all 5 types
+- `TestBlockSchemaConformance` (×2): permissionDecision="deny" for
+  PreToolUse blocks, reason written to stderr
+- `TestWarnSchemaConformance` (×1): uses systemMessage
+- `TestPostToolUseInputSchema` (×2): reads tool_result (current),
+  tolerates tool_response (legacy)
+
+#### Final post-R5 numbers
+
+- Tests: 1,577 → 1,584 passing (+7 R5 schema-conformance)
+- Bugs caught + fixed: **15 across 5 rounds**
+  - R1: 3 P0 (correctness)
+  - R2: 2 P1 + 3 P2 (fix bugs)
+  - R3: 2 P1 + 1 P2 (integration + reality)
+  - R4: 3 HIGH (security)
+  - **R5: 4 protocol mismatches (silent shipping breakage)**
+- Zero regressions
+- All 5 hook event types now schema-correct end-to-end
+
+#### What R5 proved beyond bug-finding
+
+The "implement → test → review → fix" loop **cannot detect protocol
+mismatches with external systems** without actually consulting that
+system's documentation. The first 4 rounds tested the engine against
+my assumptions about Claude Code; R5 was the first test against
+Claude Code's actual schema. Two heroes (5 and 9) would have shipped
+broken without R5.
+
+This is a critical lesson for the Per-Hero Workflow: **before any
+hero goes alpha, its real-world target system's actual contract
+must be consulted, not just the implementer's mental model**. Adding
+this as Step 0 of the hero workflow.
+
+#### Stopping criterion (revised)
+
+R5 was the right call to do. Discovery rate trend across 5 rounds:
+3 P0 → 5 mixed → 3 mixed → 3 HIGH → **4 protocol** — not strictly
+diminishing because each round used a fresh angle. R6 would need
+another novel angle (e.g., Cursor/Windsurf integration test, real
+multi-IDE round-trip, real Claude Desktop UI test); productive but
+beyond Week-1 scope.
+
+**Confidence: Week 1 engine sprint is genuinely complete.** Moving
+to Week 2 (git fix-detection, token meter persistence, Pillar 1
+prep work).
+
 ---
 
 ## Week 2 — Engine sprint, part 2

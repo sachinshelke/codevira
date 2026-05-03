@@ -86,22 +86,21 @@ One prompt. Three lines of preview. One Y/n. Done.
 ```text
 codevira setup [--yes] [--dry-run] [--ide IDE]
                 [--no-hooks] [--no-nudge-files] [--no-mcp]
-                [--global / --project-only]
 ```
 
 | Flag | Behaviour |
 |---|---|
-| (none) | Auto-detect IDEs, prompt once with `[Y/n]`, write everything. |
+| (none) | Auto-detect IDEs, prompt once with `[Y/n]`, write everything (global-mode MCP entries). |
 | `--yes` | Skip the prompt (CI / scripted installs). |
 | `--dry-run` | Print the plan; touch nothing. |
 | `--ide claude` | Only configure the named IDE (repeatable). |
 | `--no-hooks` | Skip Claude Code lifecycle hook installation. |
 | `--no-nudge-files` | Skip CLAUDE.md / AGENTS.md / .cursor/rules / .windsurfrules / GEMINI.md / copilot-instructions.md generation. |
 | `--no-mcp` | Skip writing MCP server entries (just hooks + nudge files). |
-| `--global` | Force global-mode MCP entries (default if cwd ≠ project). |
-| `--project-only` | Force per-project MCP entries (overrides default). |
 
 Defaults are aggressive — assume the user wants the full experience. Power users can subset.
+
+**Deferred to v2.1: `--global` / `--project-only` flags.** v2.0-alpha hardcodes global-mode MCP entries (every project the user opens picks them up). Per-project-only mode is a niche scenario for users who want codevira on one project but not others; deferred until a real user requests it. (Caught by Week-3 R4 doc-drift check.)
 
 ### What `setup` actually does (in order)
 

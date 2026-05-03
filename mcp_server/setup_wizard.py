@@ -74,13 +74,22 @@ StepKind = Literal["mcp_config", "hook", "nudge_file"]
 
 #: The Claude Code lifecycle events we install hook scripts for. Order
 #: matters for the user-facing summary (we print them top-down in this
-#: order). Each maps to ``mcp_server/data/hooks/<filename>.sh``.
-_HOOK_EVENTS: tuple[tuple[str, str], ...] = (
-    ("SessionStart",       "session_start.sh"),
-    ("UserPromptSubmit",   "user_prompt_submit.sh"),
-    ("PreToolUse",         "pre_tool_use.sh"),
-    ("PostToolUse",        "post_tool_use.sh"),
-    ("Stop",               "stop.sh"),
+#: order). Each row is ``(event_name, script_filename, matcher)`` where
+#: ``matcher`` is the optional Claude Code regex that scopes which tool
+#: invocations fire the hook.
+#:
+#: - **PreToolUse / PostToolUse**: matched to ``Edit|Write|MultiEdit``.
+#:   Hero policies that consume these only care about file modifications;
+#:   firing on Read/Bash/Glob would burn ~50 ms shell startup per call
+#:   for nothing. Caught by Week-3 R8 (multi-IDE schema verification).
+#: - **SessionStart / UserPromptSubmit / Stop**: no matcher — these
+#:   events have no tool name, they fire once per session phase.
+_HOOK_EVENTS: tuple[tuple[str, str, str | None], ...] = (
+    ("SessionStart",       "session_start.sh",       None),
+    ("UserPromptSubmit",   "user_prompt_submit.sh",  None),
+    ("PreToolUse",         "pre_tool_use.sh",        "Edit|Write|MultiEdit"),
+    ("PostToolUse",        "post_tool_use.sh",       "Edit|Write|MultiEdit"),
+    ("Stop",               "stop.sh",                None),
 )
 
 
@@ -296,7 +305,7 @@ def _plan_hook_steps() -> list[SetupStep]:
     hooks_dir = Path.home() / ".claude" / "hooks"
     steps: list[SetupStep] = []
 
-    for event_name, source_filename in _HOOK_EVENTS:
+    for event_name, source_filename, _matcher in _HOOK_EVENTS:
         target = hooks_dir / f"codevira-{source_filename}"
         existed = target.exists()
         steps.append(SetupStep(
@@ -551,7 +560,7 @@ def _install_hook_registrations(step: SetupStep, *, dry_run: bool) -> StepResult
         hooks = existing["hooks"] = {}
 
     changed = False
-    for event_name, source_filename in _HOOK_EVENTS:
+    for event_name, source_filename, matcher in _HOOK_EVENTS:
         target_script = Path.home() / ".claude" / "hooks" / f"codevira-{source_filename}"
         our_command = f"bash {target_script}"
 
@@ -564,10 +573,18 @@ def _install_hook_registrations(step: SetupStep, *, dry_run: bool) -> StepResult
         if _hook_command_already_registered(event_list, our_command):
             continue
 
-        # Prepend a new entry so codevira fires first.
-        event_list.insert(0, {
-            "hooks": [{"type": "command", "command": our_command}]
-        })
+        # Build the entry. ``matcher`` (when present) scopes the hook
+        # to specific tools (e.g. only Edit/Write/MultiEdit) — saves
+        # ~50 ms shell startup on every Read/Bash/Glob invocation.
+        # Caught by Week-3 R8 multi-IDE schema verification.
+        entry: dict = {
+            "hooks": [{"type": "command", "command": our_command}],
+        }
+        if matcher is not None:
+            entry["matcher"] = matcher
+
+        # Prepend so codevira fires first when multiple hooks are registered.
+        event_list.insert(0, entry)
         changed = True
 
     if not changed:

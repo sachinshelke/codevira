@@ -306,3 +306,32 @@ After Week 2's 4-round QA:
    the regression test, confirm it fails — before declaring a fix
    "covered." A test that doesn't fail when the bug returns is
    technical debt with a green checkmark on it.
+
+After Week 3's 8-round QA:
+
+10. **Initial "spec-mandated full sweep" is not optional for
+    user-facing surfaces.** Week 3 first shipped with 3 rounds
+    (R1+R2+R3) — matching the matrix minimum but ignoring the
+    Pillar-1 spec's explicit "Tier 1, full sweep (all 8 angles)"
+    requirement. R4-R8 caught 4 more findings, including a P2
+    Claude Code matcher-missing issue worth seconds-per-session
+    of waste. **Specs override matrix minimums when they conflict.**
+    For any user-facing surface, default to running R1-R8 (or
+    until two consecutive rounds find nothing material).
+11. **External-schema verification belongs in a fresh-agent round
+    of its own (#13), not folded into code review (#1).** Week 3's
+    R1 agent didn't independently verify Claude Code / Cursor /
+    Windsurf / Codex / Antigravity / Copilot schemas against
+    current docs — it just code-reviewed our implementation. R8
+    (separate agent, current-docs-aware) caught two real schema
+    items neither R1-R7 nor the implementer (me) had spotted.
+    Treat external-schema verification as its own round whenever
+    a sprint touches more than one IDE.
+12. **Live observation through the actual binary (#11) catches
+    different bugs than in-process unit tests.** The hook scripts'
+    fast-path behavior was tested by unit tests in Week 1 R3,
+    but the realistic Claude Code stdin schema (with all the
+    documented fields like `session_id`, `transcript_path`, etc.)
+    was only verified via subprocess in Week-3 R8. Prefer
+    subprocess + realistic JSON over mocks when verifying
+    external integration points.

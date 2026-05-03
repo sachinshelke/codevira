@@ -369,6 +369,100 @@ class TestPlanDataStructures:
 # =====================================================================
 
 
+class TestExternalSchema:
+    """Week-3 R8 findings: per-IDE schema verification.
+
+    These tests assert structural details that, if changed, would
+    silently break codevira's integration with the target IDE — the
+    same class of bug the Week-1 R5 round caught (4 schema mismatches
+    with Claude Code).
+    """
+
+    def test_pre_post_tool_use_have_matcher_field(
+        self, isolated: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Hook registration for PreToolUse + PostToolUse must include
+        a ``matcher`` field scoping to Edit/Write/MultiEdit. Without it,
+        codevira's hooks fire on every Read/Bash/Glob call, costing
+        ~50 ms shell startup per invocation. (Week-3 R8 finding.)
+        """
+        from mcp_server.setup_wizard import _install_hook_registrations, SetupStep
+
+        # Build a fake step pointing at a settings.json under the
+        # isolated home, then run the registration installer.
+        settings_path = Path.home() / ".claude" / "settings.json"
+        step = SetupStep(
+            kind="hook", ide="claude", target_path=settings_path,
+            target_path_existed=False, will_merge=False,
+            preview="Register codevira hooks",
+        )
+        result = _install_hook_registrations(step, dry_run=False)
+        assert result.succeeded, result.error
+        assert result.action in ("created", "merged")
+
+        data = json.loads(settings_path.read_text())
+        for event in ("PreToolUse", "PostToolUse"):
+            entries = data["hooks"][event]
+            assert entries, f"no entries for {event}"
+            entry = entries[0]  # codevira always prepends
+            assert "matcher" in entry, (
+                f"{event} entry missing matcher — codevira would fire on "
+                f"every tool call, not just file modifications"
+            )
+            # The matcher is a regex; verify it matches our edit tools
+            import re
+            for tool in ("Edit", "Write", "MultiEdit"):
+                assert re.search(entry["matcher"], tool), (
+                    f"{event} matcher {entry['matcher']!r} doesn't match {tool}"
+                )
+            # Negative: should NOT match Read/Bash
+            for tool in ("Read", "Bash", "Glob"):
+                assert not re.fullmatch(entry["matcher"], tool), (
+                    f"{event} matcher {entry['matcher']!r} unexpectedly matches {tool}"
+                )
+
+    def test_session_lifecycle_events_have_no_matcher(
+        self, isolated: Path
+    ):
+        """SessionStart / UserPromptSubmit / Stop have no tool name —
+        a matcher would never match. They must be registered without one.
+        """
+        from mcp_server.setup_wizard import _install_hook_registrations, SetupStep
+
+        settings_path = Path.home() / ".claude" / "settings.json"
+        step = SetupStep(
+            kind="hook", ide="claude", target_path=settings_path,
+            target_path_existed=False, will_merge=False, preview="...",
+        )
+        _install_hook_registrations(step, dry_run=False)
+
+        data = json.loads(settings_path.read_text())
+        for event in ("SessionStart", "UserPromptSubmit", "Stop"):
+            entries = data["hooks"][event]
+            assert entries, f"no entries for {event}"
+            entry = entries[0]
+            assert "matcher" not in entry, (
+                f"{event} should not have a matcher (no tool name in event)"
+            )
+
+    def test_canonical_block_under_windsurf_12k_cap(self):
+        """Windsurf enforces a 12,000-character workspace-rules limit.
+        The canonical block (which goes into .windsurfrules) must stay
+        under it with headroom for the IDE-specific wrapper. (Week-3 R8
+        external-schema finding.)"""
+        from mcp_server.agents_md import canonical_block_text, render_for_ide
+        block = canonical_block_text()
+        windsurf_text = render_for_ide("windsurf")
+        assert len(block) < 11000, (
+            f"canonical block grew to {len(block)} chars, leaves <1K "
+            f"headroom under Windsurf's 12K cap"
+        )
+        assert len(windsurf_text) < 12000, (
+            f"rendered .windsurfrules content {len(windsurf_text)} chars "
+            f"exceeds Windsurf's 12,000-char limit"
+        )
+
+
 class TestCLIVisibility:
     """Week-3 R2 finding: `register --help` must surface the
     deprecation notice, not just the parent help.

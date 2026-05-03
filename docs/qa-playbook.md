@@ -87,29 +87,127 @@ Cannot be fully automated; requires real environment or human eyes.
 
 ---
 
-## Workflow integration — what runs when
+## Cadence — when to run what (THE schedule)
 
-### Step 0 (before any code): External-system schema check
-**Always.** Run angles 10 + 13 BEFORE writing code that integrates with
-that external system. R5 proved synthetic tests can't catch protocol
-mismatches.
+Two extremes to avoid:
 
-### After implementation, before tests: Code review (Tier 1)
-Angles 1, 2, 6 — quick subagent invocations. ~30 min total.
+- **All 22 every week** = 30-60% of dev time on QA. Solo founder
+  burnout in ~6 weeks. Most angles don't apply to most heroes
+  (i18n testing on Hero 4 catches nothing — it doesn't touch paths).
+  Same code + same angle → same findings = no new signal.
 
-### After tests pass, before alpha ship: Full QA pass
-Run all Tier 1 + Tier 2 angles relevant to the hero. Block ship on any
-HIGH/P0. Document MEDIUM/P1 as backlog.
+- **All 22 at the end** = bugs compound across heroes. Hero 4's bug
+  interacts with Hero 7's bug; debug time multiplies. R5 caught
+  Heroes 5/9 silently broken in Week 1; discovering that in Week 13
+  would mean re-doing alpha demos and writing apologies.
 
-### Before beta / GA: Tier 3 angles
-Live observation (11), CLI UX (18), filesystem variety (20). Time-boxed
-to ~1 day each.
+**The right answer is staged by phase + matrix by angle relevance.**
 
-### Per hero, log results
+### The QA matrix
+
+| Angle | Per hero (3-5d sprint) | Per alpha (every ~3 wk) | Pre-beta (Wk 13) | Pre-GA (Wk 14) |
+|---|:---:|:---:|:---:|:---:|
+| 01 Code review | ✅ | ✅ | ✅ | ✅ |
+| 02 Adversarial fix | ✅ if hero had fixes | ✅ | ✅ | ✅ |
+| 03 Cross-module | only if new module | ✅ | ✅ | ✅ |
+| 04 Latency | — | ✅ | ✅ | ✅ |
+| 05 Integration completeness | only if new wiring | ✅ | ✅ | ✅ |
+| 06 Doc drift | ✅ | ✅ | ✅ | ✅ |
+| 07 Security audit | only if new input handler | — | ✅ | ✅ |
+| 08 Type safety | ✅ | ✅ | ✅ | ✅ |
+| 09 Concurrent stress | — | ✅ | ✅ | ✅ |
+| 10 External schema (live) | only if new IDE | — | — | ✅ |
+| 11 Live Claude Code | — | ✅ on each alpha | ✅ | ✅ |
+| 12 LLM red-team | — | — | ✅ | ✅ |
+| 13 Multi-IDE schema | only if new IDE | — | ✅ | ✅ |
+| 14 Upgrade simulation | — | — | ✅ | ✅ |
+| 15 Mutation testing | — | — | — | ✅ |
+| 16 Soak test | — | — | — | ✅ |
+| 17 Crash recovery | — | — | ✅ | ✅ |
+| 18 CLI UX (new user) | — | — | ✅ | ✅ |
+| 19 i18n / Unicode | — | — | — | ✅ |
+| 20 FS edge cases | — | — | — | ✅ |
+| 21 Resource exhaustion | — | ✅ if scale-touching | ✅ | ✅ |
+| 22 Competitor benchmark | — | — | ✅ | ✅ |
+
+### Time budget per phase
+
+| Phase | Cadence | Per-run time |
+|---|---|---|
+| Per hero (during sprint) | 3-5 relevant Tier 1 angles | **~2 hrs** (≤25% of a 1-day QA buffer in a 3-5 day sprint) |
+| Per alpha (weeks 4, 7, 10) | Tier 1 full + Tier 2 selective | **~4 hrs** |
+| Pre-beta (week 13) | Tier 1 + 2 + selected Tier 3 | **~1 day** |
+| Pre-GA (week 14) | All 22 angles | **~2 days** |
+
+**Total v2.0 QA spend: ~60 hours over 14 weeks** ≈ 1.5 weeks of work
+spread across the release. ~10-15% of dev time — the standard real-
+product ratio.
+
+### v2.0 concrete schedule
+
+```
+Week 1 [Engine sprint]            5-round QA done (15 bugs fixed) — exceptional case
+Week 2 [Engine continuation]      ~1 hr post-implementation Tier 1
+Week 3 [Pillar 1 UX install]      ~2 hr Tier 1 + Tier 2 (#5 integration, #8 type)
+Week 4 [Hero 4 Blast-Radius]      ~2 hr Tier 1; alpha.1 → ~4 hr alpha QA
+Week 5 [Hero 1 Decision Lock]     ~2 hr Tier 1
+Week 6 [Hero 5 Cross-Session]     ~2 hr + #11 live Claude Code observe
+Week 7 [Hero 6 Token Budget]      ~2 hr; alpha.2 → ~4 hr alpha QA
+Week 8 [Hero 2 Anti-Regression]   ~2 hr Tier 1 + #14 upgrade simulation
+Week 9 [Hero 7 Live Style]        ~2 hr
+Week 10 [Hero 10 AI Promotion]    ~2 hr; alpha.3 → ~4 hr alpha QA
+Week 11 [Hero 9 Intent Inference] ~2 hr Tier 1 + #07 security (LLM input)
+Week 12 [Hero 3 Scope Contract]   ~2 hr + #07 security (intent parser)
+Week 13 [Hero 8 Decision Replay]  ~2 hr; pre-beta → ~1 day Tier 1+2+3 selective
+Week 14 [Pillar 4 + GA]           ~2 days pre-GA: all 22 angles
+```
+
+### Why this matrix is right
+
+**Per hero gets the cheapest, most-relevant subset.** Code review (1)
+and doc drift (6) catch the implementer's blind spots; type safety (8)
+catches Python-version regressions; the rest are conditional on what
+the hero actually touches. This is ~25% of a hero's 1-day QA buffer
+— affordable.
+
+**Per alpha catches integration-level issues** that per-hero can't
+see — concurrent stress (9) only matters when N policies are
+registered together; latency (4) only matters under realistic load.
+Alpha checkpoints batch these.
+
+**Pre-beta adds the manual / time-intensive angles** that are too
+costly to run weekly: live IDE observation (11), security re-audit
+(7), upgrade simulation (14), mutation testing-equivalent coverage
+checks. These shouldn't run on every hero but MUST run before users
+see the build.
+
+**Pre-GA is the safety net.** All 22 angles, no exceptions. If
+something slipped through earlier phases, last chance to catch it.
+This is also when you run angle 22 (competitor benchmark) — by GA
+you have a working product to compare honestly.
+
+### Per-hero log
+
 Each hero's section in `docs/v2-execution-log.md` lists:
 - Angles run (with link to subagent transcript or test output)
 - Bugs caught + severity
 - Items deferred to backlog with reasoning
+
+If an angle in the matrix was skipped for that hero's sprint, log
+**why** (e.g., "Hero 5 didn't touch Unicode paths so #19 not run").
+Forces honest tradeoff documentation.
+
+### Stopping within an angle
+
+Even at a phase where the matrix says "run angle X," stop iterating
+when:
+1. 2 consecutive runs find nothing material (angle is mature for this code)
+2. Bug class has shifted from "broken correctness" to "narrow edge case"
+3. Findings would only land in v2.1+ (not blocking the current ship)
+
+**Don't stop because "this is a lot of QA."** Each angle paid for
+itself in Week 1 (15 bugs in 5 rounds). Cost of shipping a P0 to
+production exceeds cost of running another angle.
 
 ---
 

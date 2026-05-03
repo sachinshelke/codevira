@@ -641,6 +641,79 @@ class TestIntegrationFindings:
         leftovers = list(target.parent.glob(".out.txt.*.tmp"))
         assert not leftovers, f"temp files: {leftovers}"
 
+    def test_atomic_write_uses_os_replace(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """I8 mutation finding: output-only tests can't catch the
+        atomicity contract — a plain ``write_text`` produces the same
+        output as a temp-file-then-rename, so neither byte content
+        nor "no temp leftovers" discriminates.
+
+        Behavioral test: spy on ``os.replace`` and assert it's called
+        exactly once during a successful _atomic_write_text. A reverted
+        helper that calls ``write_text`` directly will skip ``os.replace``
+        entirely → test fails.
+        """
+        import os
+        from mcp_server.agents_md import _atomic_write_text
+
+        replace_calls: list[tuple[str, str]] = []
+        original_replace = os.replace
+
+        def spy_replace(src, dst, *args, **kwargs):
+            replace_calls.append((str(src), str(dst)))
+            return original_replace(src, dst, *args, **kwargs)
+
+        monkeypatch.setattr(os, "replace", spy_replace)
+
+        target = tmp_path / "out.txt"
+        _atomic_write_text(target, "content\n")
+        assert target.read_text() == "content\n"
+
+        # The atomic-write contract REQUIRES exactly one os.replace call
+        # per successful write — that's the atomicity guarantee. A plain
+        # ``write_text`` skips this entirely.
+        assert len(replace_calls) == 1, (
+            f"_atomic_write_text must use os.replace for atomicity; got "
+            f"{len(replace_calls)} calls. If 0, the helper degraded to "
+            f"plain write_text and lost atomicity."
+        )
+        # The replace must have moved a temp file (not the target itself)
+        # into the target.
+        src, dst = replace_calls[0]
+        assert dst == str(target)
+        assert src != str(target), (
+            "atomic write must rename a temp file INTO target, not "
+            "replace target with itself"
+        )
+
+    def test_atomic_write_cleans_up_on_replace_failure(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """If os.replace fails (e.g. cross-filesystem, permission), the
+        atomic-write helper must NOT leave temp-file litter behind.
+        Verify the failure path's cleanup runs.
+        """
+        import os
+        from mcp_server.agents_md import _atomic_write_text
+
+        def failing_replace(src, dst, *args, **kwargs):
+            raise OSError("simulated replace failure")
+
+        monkeypatch.setattr(os, "replace", failing_replace)
+
+        target = tmp_path / "out.txt"
+        with pytest.raises(OSError):
+            _atomic_write_text(target, "content\n")
+
+        # Target was never created
+        assert not target.exists()
+        # No temp leftovers
+        leftovers = list(tmp_path.glob(".out.txt.*.tmp"))
+        assert not leftovers, (
+            f"failed atomic write left temp files: {leftovers}"
+        )
+
     def test_idempotent_rerun_reports_no_change_on_mcp_config(
         self, isolated: Path, monkeypatch: pytest.MonkeyPatch
     ):

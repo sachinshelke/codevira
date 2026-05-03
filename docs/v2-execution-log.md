@@ -1012,12 +1012,53 @@ The I7 fresh-eyes agent flagged 10 issues; only one was real. Verifications:
 
 Per Week-3 spec: alpha.1 ships when:
 - ✅ All planned heroes / pillars in place
-- ✅ All R1-R8 + integration QA clean
-- ✅ Test suite green (276/276)
+- ✅ All R1-R8 + integration QA (I1-I9) clean
+- ✅ Test suite green (278/278)
 - ⏳ Founder dogfood ≥ 24 hours **(NOT YET — alpha.1 ships first)**
 - ⏳ ≥3 alpha testers **(NOT YET — recruit after tag)**
 
 The two ⏳ items are post-tag activities. Code is ready to tag.
+
+### I8-I9 — closing the integration QA loop
+
+After I7 (which found the atomic-write gap), playbook lessons #1 + #9
+require: (1) at least one more clean round before stopping, (2)
+mutation testing on every fix. So:
+
+| Step | Focus | Findings | Fix |
+|---|---|---|---|
+| I8 | Mutation testing on the I1 + I7 fixes (3 mutations: revert antigravity path, revert idempotency content-compare, revert atomic write to plain write_text) | M1 (antigravity-path) + M2 (idempotency) caught. **M3 NOT CAUGHT — same recurring class as Week-2 R5 + Week-4 R3**: the atomic-write regression tests asserted only on output (no temp leftovers + correct content), which a plain `write_text` produces identically. Atomicity contract was unverified. | Added `test_atomic_write_uses_os_replace` — spies on `os.replace` and asserts exactly one call per successful write. Plain `write_text` skips `os.replace` entirely → test fails. Plus `test_atomic_write_cleans_up_on_replace_failure` exercises the exception path. M3 now caught. |
+| I9 | Integrated stress: (1) 5 parallel `codevira setup` invocations on the same project; (2) 50 hook fast-path invocations; (3) 11-policy engine dispatch on 100 events | All clean. 5 parallel setups → no corruption, no duplicate hooks, no temp-file leftovers (atomic writes proved their value here). Hook fast-path p99 = 10 ms. 1100 policy evaluations in 2 ms total. |
+
+### I1-I9 summary
+
+| Round | Result |
+|---|---|
+| I1 | 2 HIGH bugs caught + fixed (Antigravity path, idempotency reporting) |
+| I2-I6 | clean |
+| I7 | 1 HIGH bug caught + fixed (atomic writes); 9 false positives dismissed |
+| I8 | 1 test gap caught + fixed (atomic-write tests were output-only) |
+| I9 | clean (no new findings) |
+
+**Two consecutive rounds (I8 fix verified, then I9 clean) → integration
+QA discipline mature for this code per playbook Lesson #1.**
+
+### What this round added to the playbook
+
+The lesson is now codified at three levels:
+
+1. **#9 (Week 2):** mutation testing is the only way to verify a
+   regression test actually regresses. (Output-only assertion can't
+   catch a resource-bound regression.)
+2. **#3 + R3 reinforcement (Week 4):** same lesson at the per-hero
+   level — Hero 4's "diff cap" test was output-only.
+3. **#13 + #14 (this round):** at the integration level, the same
+   shape recurs across module boundaries. Atomic-write tests had
+   the same trap. Behavioral assertions (spy on `os.replace`, count
+   syscalls) catch what content assertions miss.
+
+The repeat pattern means the playbook is **catching real, recurring
+bug classes**, not performing.
 
 ### Next
 

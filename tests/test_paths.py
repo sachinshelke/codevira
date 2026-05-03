@@ -145,6 +145,23 @@ class TestSanitizePathKey:
         # Should not have ___ in the human-readable part
         assert "___" not in key
 
+    def test_very_deep_path_capped_to_filesystem_safe_length(self):
+        """50+-level-deep paths must produce a slug under filesystem
+        ENAMETOOLONG limit (~255 bytes per path component).
+
+        Caught by Week-2 edge-case test — without the cap, mkdir failed
+        with OSError 63 (File name too long) on macOS APFS.
+        """
+        deep = "/" + "/".join(f"d{i:03d}_long_segment" for i in range(50))
+        key = _sanitize_path_key(deep)
+        # Slug used as a directory name; must be well under 255 bytes.
+        assert len(key) < 200, f"Slug too long: {len(key)} bytes"
+        # Hash suffix preserves uniqueness — different deep paths get
+        # different keys even when the human part truncates identically.
+        deep_alt = deep + "/extra"
+        key_alt = _sanitize_path_key(deep_alt)
+        assert key != key_alt, "Truncation lost uniqueness — hash isn't doing its job"
+
 
 # ===================================================================
 # _discover_project_root

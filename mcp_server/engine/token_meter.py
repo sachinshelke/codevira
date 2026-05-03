@@ -132,10 +132,23 @@ def get_session_meter() -> TokenMeter | None:
         return _meters.get(_current_session_id)
 
 
-def end_session(session_id: str) -> dict[str, Any] | None:
+def end_session(session_id: str, *, project_root: "Path | None" = None) -> dict[str, Any] | None:
     """Drop the meter for a session. Returns its final summary.
 
-    Wiring layer calls this on the ``stop`` hook event.
+    Wiring layer calls this on the ``stop`` hook event. The summary is
+    also persisted to ``<data_dir>/logs/token_budget.jsonl`` (one JSON
+    line per session) so Hero 6 (Token Budget Live View) and the
+    `codevira budget history` CLI can read historical accounting.
+
+    Args:
+        session_id: which session to drop
+        project_root: where to persist. If None, the persist step is
+            skipped (in-memory only) — used by tests that don't want
+            disk side effects.
+
+    Returns:
+        Summary dict (same as ``meter.summary()``), or ``None`` if no
+        meter for that session_id existed.
     """
     global _current_session_id
     with _meters_lock:
@@ -144,7 +157,131 @@ def end_session(session_id: str) -> dict[str, Any] | None:
             _current_session_id = None
         if meter is None:
             return None
-        return meter.summary()
+        summary = meter.summary()
+
+    # Persist outside the lock — disk I/O shouldn't hold module-level state.
+    # Failures in persist NEVER affect the in-memory session lifecycle —
+    # the meter is already removed; we just lose the historical record.
+    if project_root is not None:
+        try:
+            _persist_session_summary(project_root, summary)
+        except Exception:  # noqa: BLE001 — best-effort persistence
+            pass
+
+    return summary
+
+
+def _persist_session_summary(project_root: "Path", summary: dict[str, Any]) -> None:
+    """Append one JSONL record to ``<data_dir>/logs/token_budget.jsonl``.
+
+    File format: one JSON object per line, schema:
+      {
+        "session_id": "...",
+        "ended_at": <epoch seconds>,
+        "injected_total": N,
+        "used_total": N,
+        "efficiency": 0.0-1.0,
+        "top_wasted_sources": [{"source": "...", "wasted": N, "injected": N}, ...]
+      }
+
+    Hero 6 reads this for `codevira budget history`. Append is atomic
+    enough for our use (single process at a time per project; even
+    concurrent processes get one full record per write since each
+    write is a single line under POSIX append semantics).
+    """
+    import json
+    import time
+    from pathlib import Path as _Path
+
+    from mcp_server.paths import _sanitize_path_key, get_global_home
+
+    pr = _Path(project_root).resolve()
+    key = _sanitize_path_key(pr)
+    data_dir = get_global_home() / "projects" / key
+    log_dir = data_dir / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / "token_budget.jsonl"
+
+    record = {
+        "session_id": summary.get("session_id"),
+        "ended_at": time.time(),
+        "injected_total": summary.get("injected_total", 0),
+        "used_total": summary.get("used_total", 0),
+        "efficiency": summary.get("efficiency", 0.0),
+        "top_wasted_sources": summary.get("top_wasted_sources", []),
+    }
+
+    # Append-only; one JSON object per line, terminated by newline.
+    with open(log_path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+# Hard cap on bytes we'll read out of token_budget.jsonl per call.
+# 16 MiB is enough for ~80,000 sessions at ~200 bytes/record. Beyond
+# that we serve only the tail and stop — no OOM if the log grows
+# pathologically large (caught in Week-2 Tier-1 QA).
+_HISTORY_TAIL_BYTES_CAP = 16 * 1024 * 1024
+
+
+def read_session_history(
+    project_root: "Path", *, limit: int = 100,
+) -> list[dict[str, Any]]:
+    """Read the most recent N session summaries from token_budget.jsonl.
+
+    Returns newest-first. Used by Hero 6's `codevira budget history` CLI.
+    Returns empty list if the log doesn't exist or is unreadable.
+
+    Memory-bounded: reads at most ``_HISTORY_TAIL_BYTES_CAP`` bytes from
+    the end of the file regardless of total log size. Older records past
+    that boundary are not returned.
+    """
+    import json
+    import os as _os
+    from pathlib import Path as _Path
+
+    from mcp_server.paths import _sanitize_path_key, get_global_home
+
+    pr = _Path(project_root).resolve()
+    key = _sanitize_path_key(pr)
+    log_path = get_global_home() / "projects" / key / "logs" / "token_budget.jsonl"
+
+    if not log_path.exists():
+        return []
+
+    # Clamp limit defensively — same shape as the previous implementation.
+    capped_limit = int(max(1, min(limit, 10_000)))
+
+    try:
+        size = log_path.stat().st_size
+        # Seek to a tail window that's at most the cap. If the file is
+        # smaller than the cap, just read it all.
+        offset = max(0, size - _HISTORY_TAIL_BYTES_CAP)
+        with open(log_path, "rb") as f:
+            if offset:
+                f.seek(offset)
+                # Drop the partial line at the start of our window.
+                f.readline()
+            tail_bytes = f.read()
+    except OSError:
+        return []
+
+    try:
+        text = tail_bytes.decode("utf-8", errors="replace")
+    except Exception:  # noqa: BLE001 — defensive
+        return []
+
+    lines = text.splitlines()
+    tail = lines[-capped_limit:]
+    out: list[dict[str, Any]] = []
+    for line in reversed(tail):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            out.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue  # skip malformed line, keep scanning
+    return out
 
 
 def reset_meters() -> None:

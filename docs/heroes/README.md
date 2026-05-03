@@ -24,7 +24,8 @@ Specs cap at ~500 lines each.
 
 | # | Hero | Spec | Sprint week | Status |
 |---|---|---|---|---|
-| 0 | **Engine** (shared infrastructure) | [`00-engine.md`](./00-engine.md) | 1-2 | ✅ spec ready, implementation next |
+| 0 | **Engine** (shared infrastructure) | [`00-engine.md`](./00-engine.md) | 1-2 | ✅ shipped through Week-2; 5 QA rounds clean |
+| P1 | **Pillar 1: `codevira setup`** | [`pillar-1-setup.md`](./pillar-1-setup.md) | 3 | ✅ spec ready, implementation next |
 | 4 | **Blast-Radius Veto** | `04-blast-radius.md` (TBD) | 4 | spec pending |
 | 1 | **Decision Lock** | `01-decision-lock.md` (TBD) | 5 | spec pending |
 | 5 | **Cross-Session Consistency** | `05-cross-session.md` (TBD) | 6 | spec pending |

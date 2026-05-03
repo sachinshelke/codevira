@@ -677,9 +677,74 @@ prep work).
 
 ---
 
-## Week 2 — Engine sprint, part 2
+## Week 2 — Engine sprint, part 2 (2026-05-03)
 
-_(to be filled in)_
+### Shipped
+
+**Hero-2 plumbing** (`indexer/fix_history.py`):
+- `scan_git_log(project_root, *, max_commits=1000, skip_already_recorded=True)` — walks git log via `subprocess`, regex-matches commit subjects with `_FIX_SUBJECT_RE` (covers `fix:`, `bug:`, `hotfix:`, `fixes #N`, `closes #N`, `resolves #N`, with/without scope groups), records each touched file as a fix region (line_start=0/line_end=0 sentinel for "whole file").
+- Conservative regex, high-recall design — Hero 2 surfaces matches to the user before blocking, so false positives are correctable; false negatives the user flags in via `codevira fix-noted`.
+
+**Hero-6 plumbing** (`mcp_server/engine/token_meter.py`):
+- `_persist_session_summary(project_root, summary)` — appends one JSON line per session to `<data_dir>/logs/token_budget.jsonl`. Single-line append is atomic enough under POSIX semantics for our threat model (single-process-per-project + best-effort historical record).
+- `read_session_history(project_root, *, limit=100)` — reads newest-first. Memory-bounded: tail-window cap of 16 MiB regardless of total log size. Older records past that boundary are not returned (added in Week-2 Tier-1 QA, see below).
+- `end_session(session_id, *, project_root=None)` — extended with optional `project_root` to trigger persistence. `None` keeps the legacy in-memory-only behavior used by tests.
+
+**Filesystem-safety fix** (`mcp_server/paths.py`):
+- `_MAX_KEY_LEN = 180` cap added to `_sanitize_path_key`. Without it, deeply-nested project paths produced 500+ char path-keys → `mkdir` failed with ENAMETOOLONG (errno 63) on macOS. Hash suffix preserves uniqueness even after truncation. Caught by Week-2 edge-case tests, not unit tests of the engine — would have shipped silently broken.
+
+**Tests** (`tests/engine/test_week2_edge_cases.py`):
+- 17 edge-case tests covering Unicode paths (Japanese / RTL / emoji), 50-level deep paths, token-meter persistence + JSONL read, fix_history git scanning (with synthetic git repo built via `subprocess`), `is_revert` robustness on binary / control-char / Unicode inputs, and the new tail-cap regression test.
+- 1 regression test added to `tests/test_paths.py` — `test_very_deep_path_capped_to_filesystem_safe_length`.
+
+**Pillar 1 spec** (`docs/heroes/pillar-1-setup.md`):
+- 380 lines covering the contract for Week 3 implementation: `codevira setup` command surface, plan-as-data architecture, 10 acceptance scenarios, edge-case matrix, performance budget (< 5s p95 wall-clock), QA gate (Tier 1 full + Tier 2 scripted + 24-hour founder dogfood). Spec verified for doc drift against existing `ide_inject.py`, `paths.py`, `cli.py` — all referenced symbols exist.
+
+### Tier-1 QA sweep (per cadence matrix, ~1 hr post-implementation)
+
+5 angles run per the matrix's "engine continuation" line:
+
+| Angle | Method | Findings |
+|---|---|---|
+| #1 Code review | Independent Explore agent on Week-2 diff | 1 P1 (unbounded readlines) — fixed |
+| #2 Adversarial against fix | Inline harness, 7 adversarial inputs against `_MAX_KEY_LEN` | PASS — cap holds, suffix valid, no collisions |
+| #6 Doc drift | Cross-reference `pillar-1-setup.md` against `ide_inject.py` / `paths.py` / `cli.py` | PASS — every cited symbol exists |
+| #7 Security audit | Same Explore agent, threat-model lens | 2 false positives (regex DoS, file mode); 1 P1 same as #1 — fixed |
+| #8 Type safety | Inline import + `inspect.signature` on Week-2 modules | PASS |
+
+**Bug caught: unbounded readlines() in `read_session_history`.** Original code did `f.readlines()` on the full log, then sliced the tail. Heavy users (or attacker-influenced sessions) writing MBs of records would OOM. Fixed by seeking to `(filesize - 16 MiB)`, dropping the partial first line, then `splitlines()` on the tail. Regression test plants a 32-MiB log and verifies we still find the 5 newest sessions.
+
+**False positives confirmed:**
+- "ReDoS in `_FIX_SUBJECT_RE`" — benchmarked at 2.2 ms / 1000 matches on 200-char adversarial input (`fix(((((` deep-nest, 10000-char filler, etc.). Linear time, no catastrophic backtracking. The non-greedy `.*?` inside the optional group does not exhibit nested-quantifier behavior.
+- "Token-budget log is world-readable (0o644)" — same threat model as `~/.gitconfig`, `~/.zshrc`. Single-user developer tool. No credentials in log content. Logged as backlog item, not ship-blocker.
+
+**Deferred to backlog (P2, none ship-blocking):**
+- `lookup()` and `_connect()` in `fix_history.py` swallow some `sqlite3.Error` / `PermissionError` paths
+- `scan_git_log` truncates `result.stderr` at 200 chars in user-facing message
+
+### Surprises
+
+- The 22-angle QA discipline paid off again — independent agent found a real DoS vector (unbounded read) the implementer's tests didn't exercise. Time spent on the sweep: ~25 minutes. Time it would have taken to find this in production: weeks of accumulated user logs, then a slow IDE.
+- Two of the four agent findings were false positives. **The discipline isn't "trust agent reports"; it's "verify each finding."** The 2.2 ms benchmark took 30 seconds and saved a wrong fix.
+- The `_MAX_KEY_LEN` bug was a v1.8 latent issue, not a Week-2 regression. Edge-case testing found a real production bug while testing brand-new code. This is the exact reason the playbook says "Tier-1 angles for every sprint, not just the implementer's tests."
+
+### What changed in the spec
+
+- `docs/heroes/00-engine.md` already accurate for Week 2 — no revisions needed.
+- `docs/heroes/pillar-1-setup.md` written (new file). Tracked in `docs/heroes/README.md` index.
+
+### Founder dogfood notes
+
+- Not yet used live; engine + Hero-2/6 plumbing has no user-visible surface until Week 3 setup wizard ships. Tier-3 dogfood angle deliberately deferred to Pillar 1 sprint per cadence matrix.
+
+### Open questions / decisions deferred
+
+- Whether to harden `token_budget.jsonl` to `0o600` permissions in v2.0 or v2.1. Defer until/unless a user reports the leak as a real concern. Not in critical path for any hero.
+- Whether `scan_git_log` should automatically run on `codevira init` or only on-demand via a new `codevira fix-noted --scan-git` flag. Decision deferred to Hero 2 spec (Week 8).
+
+### Next week
+
+- **Week 3: Pillar 1 implementation.** Spec is locked. Build `codevira setup`, `agents_md.py` canonical-block renderer, the 10 acceptance tests. End-of-week target: alpha.1-installable on a fresh Docker image in <2 minutes.
 
 ---
 

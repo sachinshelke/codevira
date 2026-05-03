@@ -57,16 +57,33 @@ _PROJECT_MARKERS = frozenset({
 })
 
 
+#: Maximum length of the human-readable portion of a project key.
+#: Filesystem `ENAMETOOLONG` limit is typically 255 bytes total for any
+#: single path component on macOS APFS / Linux ext4. The slug is used as
+#: a directory name under ``~/.codevira/projects/<slug>/`` and we also
+#: append ``/graph/graph.db`` etc., so the slug itself must be well below
+#: 255. Cap at 180 chars; the 8-char hash suffix preserves uniqueness
+#: for collisions between paths that differ only after the truncation
+#: point. Caught by Week-2 edge-case test (50-level-deep paths).
+_MAX_KEY_LEN = 180
+
+
 def _sanitize_path_key(abs_path: str | Path) -> str:
     """Convert an absolute path to a filesystem-safe key string.
 
     Uses a short hash suffix to prevent collisions between paths that
-    differ only in separator characters (e.g. /foo-bar vs /foo/bar) or
-    drive letters (D:\\Projects\\Foo vs C:\\Projects\\Foo).
+    differ only in separator characters (e.g. /foo-bar vs /foo/bar),
+    drive letters (D:\\Projects\\Foo vs C:\\Projects\\Foo), or — since
+    Week 2 — paths that differ only after the truncation point.
 
     Examples:
-        /Users/alice/Projects/Foo   → Users_alice_Projects_Foo_a1b2c3d4
-        C:\\Users\\alice\\Projects  → Users_alice_Projects_a1b2c3d4
+        /Users/alice/Projects/Foo            → Users_alice_Projects_Foo_a1b2c3d4
+        /very/deeply/nested/.../50-levels    → very_deeply_nested..._a1b2c3d4
+                                                (truncated at 180 chars; hash
+                                                preserves uniqueness)
+
+    Filesystem safety: the full slug (key + hash) is capped to ~189 chars,
+    well under 255-byte ENAMETOOLONG limit on common filesystems.
     """
     import hashlib
     resolved = str(Path(abs_path).resolve())
@@ -83,6 +100,12 @@ def _sanitize_path_key(abs_path: str | Path) -> str:
     # Collapse consecutive underscores/hyphens
     key = re.sub(r"[_-]{2,}", "_", key)
     key = key.strip("_-")
+    # Cap human-readable portion to keep total slug under 255 bytes
+    # (key + "_" + 8-char hash → max ~189). Caught by Week-2 deep-path
+    # edge-case test — without this, deeply nested project paths
+    # produced ENAMETOOLONG when codevira tried to mkdir the project dir.
+    if len(key) > _MAX_KEY_LEN:
+        key = key[:_MAX_KEY_LEN].rstrip("_-")
     return f"{key}_{path_hash}"
 
 

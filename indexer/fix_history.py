@@ -390,3 +390,190 @@ def reset(project_root: Path) -> None:
     db_path = _db_path(pr)
     if db_path.exists():
         db_path.unlink()
+
+
+# ----------------------------------------------------------------------
+# Git fix-detection (Week 2)
+# ----------------------------------------------------------------------
+
+#: Subjects that look like fix commits. Conservative regex — false positives
+#: get user-flagged-out via `codevira fix-noted --remove`; false negatives
+#: are user-flagged-in via the same command. Hero 2 (Anti-Regression) is
+#: the consumer; it presents to the user before blocking, so high recall +
+#: moderate precision is the right tradeoff.
+_FIX_SUBJECT_RE = _re.compile(
+    r"^\s*(?:"
+    r"fix(?:\(.*?\))?:"           # `fix:` / `fix(scope):`
+    r"|bug(?:\(.*?\))?:"          # `bug:` / `bug(scope):`
+    r"|hotfix(?:\(.*?\))?:"       # `hotfix:`
+    r"|fixes?\s+#\d+"             # `fixes #123`, `fix #123`
+    r"|closes?\s+#\d+"            # `closes #123`
+    r"|resolves?\s+#\d+"          # `resolves #123`
+    r")",
+    _re.IGNORECASE,
+)
+
+
+def scan_git_log(
+    project_root: Path,
+    *,
+    max_commits: int = 1000,
+    skip_already_recorded: bool = True,
+) -> dict[str, Any]:
+    """Scan the project's git log for fix commits and record them.
+
+    Walks recent commits (newest first, up to ``max_commits``) and matches
+    each subject against patterns that indicate a fix (``fix:``, ``bug:``,
+    ``fixes #N``, etc.). For each match, records all files touched by the
+    commit as fixes. Idempotent: skips commit SHAs already recorded
+    (by default) so re-running is cheap.
+
+    Notes on the line-range heuristic:
+      - We don't have per-line precision yet — we record line_start=0,
+        line_end=0 as a sentinel meaning "whole file". Hero 2 (Anti-
+        Regression) treats whole-file fixes as a coarse signal and
+        prefers manually-recorded fixes (which DO carry line ranges).
+      - Week 8's Hero 2 sprint will add diff-level precision (parsing
+        ``git show <sha> --unified=0`` to extract per-hunk ranges).
+
+    Args:
+        project_root: project root (must be a git repo)
+        max_commits: cap how many commits to walk (default 1000 ~ 6mo
+            of activity for most projects)
+        skip_already_recorded: if True, skip commits whose SHA is already
+            in the fix history (default True; pass False to force re-scan)
+
+    Returns:
+        Dict with summary counts:
+            {"commits_scanned": N, "commits_matched": M,
+             "fixes_recorded": K, "skipped_already_recorded": S}
+
+        Returns ``{"error": "..."}`` if the project is not a git repo or
+        ``git`` binary is missing — never raises (this is the shape Hero 2
+        and ``codevira fix-noted`` consume).
+    """
+    import subprocess
+    import time
+
+    pr = project_root.resolve()
+    summary = {
+        "commits_scanned": 0,
+        "commits_matched": 0,
+        "fixes_recorded": 0,
+        "skipped_already_recorded": 0,
+    }
+
+    # Verify project is a git repo
+    if not (pr / ".git").exists():
+        return {**summary, "error": "not a git repo (no .git directory)"}
+
+    # Run git log; format = SHA \t subject \t files-changed (one per line
+    # with --name-only). We use a NUL separator to be safe with unusual
+    # subjects (Unicode, embedded tabs).
+    try:
+        result = subprocess.run(
+            [
+                "git", "-C", str(pr), "log",
+                f"-{max_commits}",
+                "--pretty=format:%H%x00%s",
+                "--name-only",
+                "--no-merges",  # merge commits rarely contain real fixes
+                "-z",  # NUL separator between commits
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as e:
+        return {**summary, "error": f"git invocation failed: {e}"}
+
+    if result.returncode != 0:
+        return {
+            **summary,
+            "error": f"git log returned {result.returncode}: {result.stderr.strip()[:200]}",
+        }
+
+    # Pre-fetch already-recorded SHAs to skip
+    recorded_shas: set[str] = set()
+    if skip_already_recorded:
+        try:
+            conn = _connect(pr)
+            rows = conn.execute(
+                "SELECT DISTINCT commit_sha FROM fixes WHERE commit_sha IS NOT NULL"
+            ).fetchall()
+            recorded_shas = {r["commit_sha"] for r in rows}
+        except sqlite3.Error:
+            recorded_shas = set()
+
+    # Parse the git output. With -z, commit-blocks are separated by NUL.
+    # Inside a commit block: SHA\x00subject\nfile1\nfile2\n...\x00 (NUL terminates the block).
+    raw = result.stdout
+    if not raw:
+        return summary
+
+    blocks = raw.split("\x00\x00")  # double-NUL separates commits in some git versions
+    if len(blocks) == 1:
+        # Single NUL separator (older git versions)
+        # Each commit looks like: SHA\x00subject\nfile1\nfile2\n
+        # Then \x00 separates from next commit
+        parts = raw.split("\x00")
+        # Reassemble into blocks of 2: [SHA, subject+files]
+        blocks = []
+        i = 0
+        while i + 1 < len(parts):
+            blocks.append(parts[i] + "\x00" + parts[i + 1])
+            i += 2
+
+    for block in blocks:
+        block = block.strip("\x00\n")
+        if not block:
+            continue
+        parts = block.split("\x00", 1)
+        if len(parts) != 2:
+            continue
+        sha = parts[0].strip()
+        rest = parts[1]
+        # rest = "subject\nfile1\nfile2\n..."
+        subject_and_files = rest.split("\n")
+        subject = subject_and_files[0].strip()
+        files = [f.strip() for f in subject_and_files[1:] if f.strip()]
+
+        if not sha or not subject:
+            continue
+
+        summary["commits_scanned"] += 1
+
+        # Skip if already recorded
+        if sha in recorded_shas:
+            summary["skipped_already_recorded"] += 1
+            continue
+
+        # Match the subject against fix patterns
+        if not _FIX_SUBJECT_RE.search(subject):
+            continue
+
+        summary["commits_matched"] += 1
+
+        # Record one fix per file touched by the commit. line_start=0,
+        # line_end=0 is the "whole file" sentinel — Hero 2 will treat
+        # this as a soft signal vs. line-precise manual fixes.
+        # Description = the commit subject (with shas appended for
+        # traceability).
+        for f in files:
+            try:
+                record_fix(
+                    pr,
+                    file_path=f,
+                    line_start=0,
+                    line_end=0,
+                    description=f"{subject}",
+                    source="git",
+                    commit_sha=sha,
+                )
+                summary["fixes_recorded"] += 1
+            except (ValueError, sqlite3.Error):
+                # Bad row (e.g., empty file_path) — skip but keep scanning
+                continue
+
+    return summary

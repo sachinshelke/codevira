@@ -773,9 +773,82 @@ angle and caught bugs the others missed.
 
 ---
 
-## Week 3 — Pillar 1 (UX install)
+## Week 3 — Pillar 1 (UX install) (2026-05-03)
 
-_(to be filled in)_
+### Shipped
+
+**`codevira setup` end-to-end:**
+
+- `mcp_server/setup_wizard.py` (~600 LOC) — orchestrator. 4-stage flow: `resolve_setup_target()` (validates project root via v1.8.1 guard) → `detect_targets()` (filters by `--ide`) → `build_setup_plan()` (pure data, no I/O) → `execute_plan()` (per-step try/except). `cmd_setup()` glues it together with the user prompt + summary. `SetupPlan`/`SetupStep`/`StepResult`/`ExecuteResult` are frozen dataclasses.
+- `mcp_server/agents_md.py` (~290 LOC) — canonical-block renderer + per-IDE nudge file writer. Loads bundled templates, substitutes `{{CODEVIRA_BLOCK}}`, supports idempotent updates via line-anchored `<!-- codevira:start -->` / `<!-- codevira:end -->` markers. Idempotency contract: missing → create; markers present → replace block content; markers absent → append; identical → no-op.
+- 7 bundled templates in `mcp_server/data/templates/`: `canonical_block.md` (the single source-of-truth content) + 6 per-IDE wrappers (CLAUDE.md, AGENTS.md, GEMINI.md, copilot_instructions.md, windsurfrules, cursor_rules.mdc with YAML frontmatter for Cursor's MDC format).
+- `mcp_server/ide_inject.py:detect_installed_ides` extended for tier-2 tools: OpenAI Codex CLI (`~/.codex/`), GitHub Copilot (via `gh extension list`), Continue.dev (`~/.continue/`), Aider (PATH).
+- `mcp_server/cli.py` — added `setup` subcommand wiring with all 6 flags from the spec (`--yes`, `--dry-run`, `--ide`, `--no-hooks`, `--no-nudge-files`, `--no-mcp`). `register` now prints `[deprecated]` to stderr and forwards to the v1.8.1 implementation; the subparser's `description` field surfaces the deprecation to anyone running `register --help`.
+- `tests/test_setup_wizard.py` (20 tests) — covers all 10 acceptance scenarios from `docs/heroes/pillar-1-setup.md` plus 3 security regressions + 1 CLI-visibility regression.
+
+End-to-end smoke from a fresh project: 13 steps planned (3 MCP configs + 6 hook entries + 4 nudge files), `--dry-run` writes nothing, full execute under 5s budget. The wizard correctly skips Claude Desktop (no global-mode support) and Codex (no MCP config integration; nudge file only).
+
+### Tier-1 + Tier-2 QA: 3 progressive rounds
+
+Per cadence-matrix line for Week-3 [Pillar 1] (~2 hr Tier-1 + Tier-2 #5 + #8). Following the codified discipline of "different angles, different findings."
+
+| Round | Angle | Findings | Fix |
+|---|---|---|---|
+| R1 | #1 + #7 (code review + security audit, independent agent) | **HIGH security: symlink at nudge target could redirect write to /etc/passwd**; **P2: regex match across user prose containing `<!-- codevira:start -->` substring inside a sentence**. Plus 4 false positives + 4 deferred-to-backlog items. | (1) `_enforce_target_inside_project` rejects symlinked targets and parent-dir symlinks that escape the project root. (2) Marker regex now requires `^[ \t]*MARKER[ \t]*$` with `re.MULTILINE` — markers must be on their own line. |
+| R2 | #5 (integration completeness, 8 cases) + #8 (type safety) | **P2: `register --help` doesn't surface deprecation** — the `help=` field shows in the parent help only; subparser `--help` showed no notice that the command is deprecated. | Added `description=` to the register subparser. Now `codevira register --help` prominently displays the deprecation notice. |
+| R3 | #15 (mutation-testing equivalent, 3 mutations) | **TEST GAP: M3 found no regression test asserting that `register --help` shows the deprecation.** Without it the R2 fix could silently regress on a future cli.py refactor. | Added `TestCLIVisibility::test_register_help_shows_deprecation` — a subprocess-based test that asserts "DEPRECATED" appears in `register --help` stdout. Re-ran M3 with the new test: caught. |
+
+### Bugs caught + fixed in Week-3 QA
+
+1. **R1 HIGH (security): nudge file symlink traversal.** `write_nudge_file` followed any symlink at the target path. A malicious or accidental symlink at `<project>/CLAUDE.md` → `/etc/passwd` would let codevira overwrite arbitrary system files. Fixed with `_enforce_target_inside_project` which refuses to write through a symlink at the target OR through any ancestor directory that's a symlink resolving outside the project root. Regression: `test_symlink_at_target_refused` + `test_symlink_in_parent_dir_refused`.
+2. **R1 P2 (security/correctness): inline marker substring in user prose triggers regex replace.** A user with `"<!-- codevira:start -->"` inside a sentence (e.g. as a literal example in their own AGENTS.md) would have that prose interpreted as the codevira block boundary on regenerate, replacing user content. Fixed by line-anchoring markers in `_BLOCK_RE` with `re.MULTILINE`. Regression: `test_inline_marker_in_user_prose_does_not_match`.
+3. **R2 P2 (UX): `register --help` doesn't show deprecation.** The deprecation notice was set via the `help=` field on `add_parser`, which only displays in the parent command's `--help`. Subparser-level `--help` showed only flag docs. Fixed by adding a `description=` field to the register subparser. Regression: `test_register_help_shows_deprecation` (added in R3 to close the mutation-testing gap that exposed it).
+4. **R3 mutation-testing gap: no test for the R2 fix.** Mutating away the `description=` text passed all tests. Plugged the gap by adding the regression test above.
+
+### False positives confirmed (verified before deciding)
+
+- "_execute_nudge drops errors silently" — verified the outer `_execute_step` try/except correctly catches and reports `failed`. Agent didn't read the call site.
+- "dry-run action names inconsistent" — they describe genuinely different actions across modules (would_create / would_merge / would_overwrite / would_replace / would_append / would_be_no_change). Defensible.
+- "settings.json schema validation gap" — already fail-soft via outer try/except + the merge step is its own `StepResult` so partial failure doesn't crash the wizard.
+- "_gh_copilot_extension_present subprocess hardening" — would require user PATH hijack; bigger problem than codevira if true.
+
+### Performance numbers
+
+| Operation | n | p95 |
+|---|---|---|
+| `build_setup_plan` (5 IDEs detected) | 20 | < 50 ms (test asserts this) |
+| `execute_plan` (4 IDEs, hooks + nudge files only) | 1 | < 5 s (test asserts this) |
+| `codevira setup --dry-run` end-to-end (subprocess) | 1 | ~ 1 s on dev laptop |
+
+### Deferred to v2.1+ backlog
+
+- `_hook_command_already_registered` doesn't normalize symlinks/relative paths (only fires if user hand-edits `~/.claude/settings.json`).
+- More aggressive validation of malformed `~/.claude/settings.json` schema (current code is fail-soft via outer try/except).
+- Tier-2 IDE MCP config support (Codex / Copilot / Continue.dev / Aider currently get nudge files only — Hero 4+ priority).
+
+### Surprises
+
+- **R2 (integration completeness) caught what R1 (code review) missed.** Spec called for "doc / help-text drift" angle but the agent in R1 didn't run `--help` against the actual binary. Tier-2 #5 with real subprocess invocations caught the deprecation visibility issue instantly.
+- **R3 mutation testing exposed an R2 fix that had no regression test.** The fix was correct, but the only thing protecting it from a future regression was the integration test in R2 itself — which was a one-time check, not part of the test suite. The mutation pass forced us to upgrade that ad-hoc check into a real automated test.
+- **Pillar 1 was the smallest sprint of the three (Week 1-3) by code volume but the highest by user impact.** Engine + Hero-2/6 plumbing was invisible. `codevira setup` is the first thing a new user touches. Worth the disciplined QA pass.
+
+### What changed in the spec
+
+- `docs/heroes/pillar-1-setup.md` — unchanged. Implementation matched the spec.
+- `docs/heroes/README.md` — Pillar 1 status moves from "spec ready" to "shipped".
+
+### Founder dogfood notes
+
+- Not yet run on the founder's daily-use machine (the alpha gate per cadence). The Tier-1 + Tier-2 sweep is the merge gate; the Tier-3 dogfood is the alpha-release gate (alpha.1 is targeted at end of Week 4 per master plan, after Hero 4 ships).
+
+### Open questions / decisions deferred
+
+- Whether to also write `.gitignore` entries for the generated nudge files (some teams ban committing AI-tool config). Defer until a user requests it.
+- Whether `codevira setup --uninstall` should be in v2.0 or v2.1. Currently no uninstall path; user has to manually remove markers + delete hooks. Defer to v2.1.
+
+### Next week
+
+- **Week 4: Hero 4 (Blast-Radius Veto).** First real "policy" hero. Engine is wired, hooks ship via Pillar 1, Hero 4 just registers a `Policy` plugin that calls `signals.graph().get_impact(file)` in `PreToolUse` and blocks edits to highly-connected nodes. Should be ~150 LOC of policy + tests. End-of-Week-4 target: alpha.1 shipped (Engine + Pillar 1 + Hero 4 + 2 alpha testers signed up).
 
 ---
 

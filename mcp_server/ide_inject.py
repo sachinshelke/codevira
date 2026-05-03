@@ -29,8 +29,23 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 def detect_installed_ides(project_root: Path) -> list[str]:
-    """Detect which AI coding tools are installed."""
+    """Detect which AI coding tools are installed.
+
+    Returns a list of stable string keys identifying each detected
+    tool. Keys are consumed by ``mcp_server.agents_md.SUPPORTED_IDES``
+    and by the setup wizard. Keep additions backward-compatible —
+    existing keys must keep their meaning.
+
+    Tier 1 (have specific MCP-config path support): claude,
+    claude_desktop, cursor, windsurf, antigravity.
+
+    Tier 2 (added in Week 3 — AGENTS.md-style nudge file only,
+    no MCP-config injection support yet): codex, copilot,
+    continue, aider.
+    """
     found: list[str] = []
+
+    # ---- Tier 1 (existing + MCP config support) ----
 
     # Claude Code: per-project .claude/ or claude binary in PATH
     if (project_root / ".claude").is_dir() or shutil.which("claude"):
@@ -53,7 +68,51 @@ def detect_installed_ides(project_root: Path) -> list[str]:
     if (Path.home() / ".gemini").is_dir():
         found.append("antigravity")
 
+    # ---- Tier 2 (Week 3 — nudge-file support only) ----
+
+    # OpenAI Codex CLI: ~/.codex/ or `codex` on PATH. Codex was the
+    # original AGENTS.md project; AGENTS.md is its native format.
+    if (Path.home() / ".codex").is_dir() or shutil.which("codex"):
+        found.append("codex")
+
+    # GitHub Copilot: detected via existing project file (some teams
+    # commit copilot-instructions.md to .github/), or via the `gh`
+    # extension list, or via the `copilot` binary on PATH.
+    if (project_root / ".github" / "copilot-instructions.md").exists():
+        found.append("copilot")
+    elif _gh_copilot_extension_present():
+        found.append("copilot")
+    elif shutil.which("copilot"):
+        found.append("copilot")
+
+    # Continue.dev: ~/.continue/ directory present
+    if (Path.home() / ".continue").is_dir():
+        found.append("continue")
+
+    # Aider: aider binary on PATH (no global config dir to check)
+    if shutil.which("aider"):
+        found.append("aider")
+
     return found
+
+
+def _gh_copilot_extension_present() -> bool:
+    """Return True if `gh extension list` indicates the Copilot
+    extension is installed. Fast best-effort check — any error is
+    treated as 'not installed'.
+    """
+    gh = shutil.which("gh")
+    if gh is None:
+        return False
+    try:
+        import subprocess
+        result = subprocess.run(
+            [gh, "extension", "list"],
+            capture_output=True, text=True, timeout=2.0,
+        )
+        return "copilot" in result.stdout.lower()
+    except (subprocess.TimeoutExpired, OSError, ValueError):
+        return False
 
 
 # ---------------------------------------------------------------------------

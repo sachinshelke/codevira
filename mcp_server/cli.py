@@ -666,9 +666,55 @@ def main() -> None:
     )
 
     # register (v1.6: one-time global IDE registration)
+    # setup (v2.0 — replaces register + folds in hooks + nudge files)
+    setup_parser = subparsers.add_parser(
+        "setup",
+        help="One-prompt setup: configure every detected AI tool with Codevira",
+        description=(
+            "Detect every AI coding tool installed on this machine, then "
+            "configure them all to use Codevira: MCP server entries, Claude "
+            "Code lifecycle hooks, and per-IDE nudge files (CLAUDE.md, "
+            "AGENTS.md, .cursor/rules/codevira.mdc, .windsurfrules, "
+            "GEMINI.md, .github/copilot-instructions.md). Idempotent — "
+            "re-run any time to re-sync."
+        ),
+    )
+    setup_parser.add_argument(
+        "-y", "--yes", action="store_true",
+        help="Skip the confirmation prompt (CI / scripted installs)",
+    )
+    setup_parser.add_argument(
+        "--dry-run", action="store_true",
+        help="Print the plan; don't write anything",
+    )
+    setup_parser.add_argument(
+        "--ide", action="append", metavar="IDE",
+        help="Only configure this IDE (repeatable). One of: claude, cursor, "
+             "windsurf, antigravity, codex, copilot, continue, aider",
+    )
+    setup_parser.add_argument(
+        "--no-hooks", action="store_true",
+        help="Skip Claude Code lifecycle hook installation",
+    )
+    setup_parser.add_argument(
+        "--no-nudge-files", action="store_true",
+        help="Skip CLAUDE.md / AGENTS.md / etc. generation",
+    )
+    setup_parser.add_argument(
+        "--no-mcp", action="store_true",
+        help="Skip MCP server config injection (just hooks + nudge files)",
+    )
+
     register_parser = subparsers.add_parser(
         "register",
-        help="One-time global IDE registration — inject Codevira into all detected AI tools",
+        help="[DEPRECATED — use `codevira setup`] One-time global IDE registration",
+        description=(
+            "DEPRECATED in v2.0. Use `codevira setup` instead — it does "
+            "what `register` does plus installs Claude Code lifecycle "
+            "hooks and writes per-IDE nudge files (CLAUDE.md, AGENTS.md, "
+            ".cursor/rules/codevira.mdc, etc.) in one prompt. `register` "
+            "still works for now and will be removed in a future release."
+        ),
     )
     register_parser.add_argument(
         "--claude-desktop", action="store_true",
@@ -794,7 +840,29 @@ def main() -> None:
             install_service=getattr(args, "install_service", False),
             uninstall_service=getattr(args, "uninstall_service", False),
         )
+    elif args.command == "setup":
+        from mcp_server.setup_wizard import cmd_setup
+        only_ides_arg = getattr(args, "ide", None)
+        only_ides_tuple = tuple(only_ides_arg) if only_ides_arg else None
+        rc = cmd_setup(
+            yes=getattr(args, "yes", False),
+            dry_run=getattr(args, "dry_run", False),
+            only_ides=only_ides_tuple,
+            install_mcp=not getattr(args, "no_mcp", False),
+            install_hooks=not getattr(args, "no_hooks", False),
+            write_nudge_files=not getattr(args, "no_nudge_files", False),
+        )
+        sys.exit(rc)
     elif args.command == "register":
+        # v2.0 deprecation: redirect users to `codevira setup` while
+        # preserving the old behaviour for any scripts that pin it.
+        print(
+            "[deprecated] `codevira register` is deprecated in v2.0. "
+            "Use `codevira setup` instead — it does this plus hooks + "
+            "nudge files in one prompt.",
+            file=sys.stderr,
+        )
+        print(file=sys.stderr)
         cmd_register(
             claude_desktop=getattr(args, "claude_desktop", False),
             http_url=getattr(args, "http_url", None),

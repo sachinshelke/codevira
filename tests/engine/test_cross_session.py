@@ -410,6 +410,159 @@ class TestMatchCollection:
 # =====================================================================
 
 
+class TestBehavioralGates:
+    """Week-5 retrospective extension to Hero 5: gates that don't
+    affect output for the empty-signals path can't be caught by
+    output-only tests. Behavioral spies + targeted scenarios close
+    the same shape of test gap as Hero 4 + Hero 1.
+    """
+
+    def test_non_user_prompt_submit_does_not_call_signals(self):
+        """event_type gate: PreToolUse / SessionStart / Stop must NOT
+        trigger signals.search_decisions. Mutation removing the gate
+        would reach extract_keywords on prompt_text=None and crash —
+        OR pass with empty signals. Spy catches it directly.
+        """
+        class _SpySignals:
+            def __init__(self):
+                self.calls: list[tuple] = []
+            def search_decisions(self, query, *, limit=5):
+                self.calls.append((query, limit))
+                return []
+
+        policy = CrossSessionConsistency()
+        spy = _SpySignals()
+        for et in (
+            EventType.PRE_TOOL_USE, EventType.POST_TOOL_USE,
+            EventType.SESSION_START, EventType.STOP,
+        ):
+            event = HookEvent(
+                event_type=et,
+                project_root=Path("/p"),
+                prompt_text="add a styled tailwind button to homepage",
+            )
+            policy.evaluate(event, spy)
+        assert spy.calls == [], (
+            f"event_type gate degraded: search_decisions called on "
+            f"non-USER_PROMPT_SUBMIT events: {spy.calls}"
+        )
+
+    def test_empty_prompt_does_not_call_signals(self):
+        """Empty prompt → no work. Behavioral spy."""
+        class _SpySignals:
+            def __init__(self):
+                self.calls: list[tuple] = []
+            def search_decisions(self, query, *, limit=5):
+                self.calls.append((query, limit))
+                return []
+
+        policy = CrossSessionConsistency()
+        spy = _SpySignals()
+        for empty in ("", None):
+            event = HookEvent(
+                event_type=EventType.USER_PROMPT_SUBMIT,
+                project_root=Path("/p"),
+                prompt_text=empty,
+            )
+            policy.evaluate(event, spy)
+        assert spy.calls == [], f"empty-prompt gate degraded: {spy.calls}"
+
+    def test_no_keywords_skips_collect_matches(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Empty-keywords gate: when ``_extract_keywords`` returns
+        nothing, the policy must NOT call ``_collect_matches``.
+        Output-only assertions can't catch the gate (empty keywords
+        produce empty matches anyway). Monkeypatch ``_collect_matches``
+        to a spy that records every invocation.
+        """
+        from mcp_server.engine.policies import cross_session as cs_mod
+
+        invocations: list[tuple] = []
+        original = cs_mod._collect_matches
+        def spy(*args, **kw):
+            invocations.append((args, kw))
+            return original(*args, **kw)
+        monkeypatch.setattr(cs_mod, "_collect_matches", spy)
+
+        policy = CrossSessionConsistency()
+        # All stop-words: extract_keywords returns []
+        event = _make_event("the and the of we have for it as if")
+        verdict = policy.evaluate(event, _FakeSignals())
+        assert verdict.is_allowing()
+        assert invocations == [], (
+            f"empty-keywords gate degraded: _collect_matches called: {invocations}"
+        )
+
+    def test_signals_none_skips_collect_matches(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """signals=None gate: must NOT reach ``_collect_matches`` with
+        a None signals (which would AttributeError, caught by the
+        per-keyword try/except, but still wastes work and depends on
+        the safety net). Spy on _collect_matches.
+        """
+        from mcp_server.engine.policies import cross_session as cs_mod
+
+        invocations: list[tuple] = []
+        original = cs_mod._collect_matches
+        def spy(*args, **kw):
+            invocations.append((args, kw))
+            return original(*args, **kw)
+        monkeypatch.setattr(cs_mod, "_collect_matches", spy)
+
+        policy = CrossSessionConsistency()
+        event = _make_event("refactor auth.py to use bcrypt")
+        verdict = policy.evaluate(event, None)
+        assert verdict.is_allowing()
+        assert invocations == [], (
+            f"signals=None gate degraded: _collect_matches called: {invocations}"
+        )
+
+    def test_priority_value_stable(self):
+        """Hero 5 priority MUST stay below block-class heroes (1, 4).
+        If a future refactor inverts this, advisory inject verdicts
+        would override hard blocks in priority sort — incorrect.
+        """
+        from mcp_server.engine.policies.decision_lock import DecisionLock
+        from mcp_server.engine.policies.blast_radius import BlastRadiusVeto
+        assert CrossSessionConsistency.priority < DecisionLock.priority, (
+            f"Hero 5 priority must be below Hero 1 (block-class)"
+        )
+        assert CrossSessionConsistency.priority < BlastRadiusVeto.priority, (
+            f"Hero 5 priority must be below Hero 4 (block-class)"
+        )
+
+    def test_dedup_collapses_same_decision_under_strict_key(self):
+        """Dedup key is (decision_text, file_path). Two matches with
+        the same text+path but different IDs collapse to one. A
+        mutation switching the key to id-only would dedupe LESS
+        aggressively. Test: provide same-text+path with different IDs.
+        """
+        policy = CrossSessionConsistency()
+        # Two decisions that should collapse:
+        #   - same decision text, same file_path, different id
+        #   - if dedup-by-id, both appear; if dedup-by-(text, path), one
+        same_text = "Tailwind, not Bootstrap — bundle size"
+        same_path = "styles/"
+        signals = _FakeSignals(by_keyword={
+            "tailwind": [
+                {"id": 1, "decision": same_text, "file_path": same_path,
+                 "context": "", "created_at": "2025-04-13"},
+                {"id": 2, "decision": same_text, "file_path": same_path,
+                 "context": "", "created_at": "2025-04-13"},
+            ],
+        })
+        event = _make_event("Add a Tailwind button")
+        verdict = policy.evaluate(event, signals)
+        assert verdict.action == "inject"
+        # Strict dedup-by-(text, path) collapses to 1
+        assert verdict.metadata["matched_count"] == 1, (
+            f"strict dedup collapsed wrong number; got "
+            f"{verdict.metadata['matched_count']} (expected 1)"
+        )
+
+
 class TestRegistration:
 
     def test_register_default_policies_includes_hero_5(self):

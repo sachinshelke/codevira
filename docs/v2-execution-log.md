@@ -1249,6 +1249,86 @@ The tagged `v2.0-alpha.1` ships WITH BOTH BUGS. Heroes 1 + 4 are silently broken
 
 ---
 
+## Hero 4 + Hero 5 retrospective audits (2026-05-04)
+
+Per Lesson #17, applied the same retrospective rigor to Heroes 4 + 5 that caught the two production bugs in Hero 1.
+
+### Hero 4 — broader mutation testing
+
+Original Week-4 R3 had 4 mutations (3 about test infrastructure, 1 about sig detection). Re-ran with **10 logic-targeting mutations** against real Hero 4 internals:
+
+| Mutation | Caught? | Why |
+|---|---|---|
+| M1 is_edit gate | ❌ TEST GAP | Same shape as Hero 1: empty `_signals_with_impact()` returned empty dict regardless. |
+| M2 target_file None gate | ❌ TEST GAP | Same shape — fallthrough → empty impact → allow. |
+| M3 threshold compare flip | ✅ caught | |
+| M4 sig-detection always False | ✅ caught | |
+| M5 priority demotion | ❌ TEST GAP | No test asserted on the value. |
+| M6 mode=off bypass | ✅ caught | |
+| M7 signals None gate | ❌ TEST GAP | No test exercised None signals path. |
+| M8 impact found check inverted | ❌ TEST GAP | Empty impact short-circuits before reaching the check. |
+| M9 blast_radius default | ❌ TEST GAP | No test had `found=True` with missing `blast_radius` key. |
+| M10 full Write block→allow | ❌ TEST GAP | No test exercised None-diff (full Write) path. |
+
+**6 test gaps in Hero 4.** Closed by adding `TestBehavioralGates` class with 7 new tests:
+1. `test_non_edit_does_not_call_signals_impact` — spy on signals.impact for is_edit gate
+2. `test_target_none_does_not_call_signals_impact` — same for target=None
+3. `test_signals_none_does_not_crash` — direct None-signals scenario
+4. `test_priority_value_stable` — assertion that Hero 4 priority < Hero 1 priority
+5. `test_impact_found_false_skips_evaluation` — explicit `found=False` scenario
+6. `test_impact_missing_blast_radius_defaults_safe` — `found=True` but missing `blast_radius` key
+7. `test_full_write_with_high_radius_blocks` — None-diff (Write tool) on high-impact file
+
+Re-ran all 7 mutations: **all caught**.
+
+### Hero 5 — broader mutation testing
+
+Same pattern: original Week-6 R3 had 3 mutations. Re-ran with **10 mutations**:
+
+| Mutation | Caught? |
+|---|---|
+| M4 event_type gate | ❌ → ✅ behavioral spy |
+| M5 empty prompt gate | ❌ → ✅ behavioral spy |
+| M6 signals None gate | ❌ → ✅ monkeypatched `_collect_matches` spy |
+| M7 priority demotion | ❌ → ✅ priority-value test |
+| M8 empty matches gate | ✅ original test caught |
+| M9 empty keywords gate | ❌ → ✅ monkeypatched `_collect_matches` spy |
+| M10 total_cap removed | ✅ original test caught |
+| M11 recency sort flipped | ✅ original test caught |
+| M12 dedup key mutation | ❌ → ✅ same-text+path scenario |
+
+**6 test gaps in Hero 5.** Closed via `TestBehavioralGates` class with 7 new tests including monkeypatched `_collect_matches` spies that verify gates SKIP the function entirely (not just produce same output).
+
+The monkeypatch-`_collect_matches` pattern is new — needed because the per-keyword try/except inside `_collect_matches` is itself a safety net that would absorb None-signal calls. Spying ON the function itself (not on `signals.search_decisions`) catches the gate's intended behavior.
+
+### Cross-hero SQL audit
+
+Hero 1's retrospective caught Bug 1 (SQL column-name mismatch in `signals.decisions`). Audited the rest of the signals layer to find similar bugs:
+
+```
+signals.graph        — loads OK (not None) ✓
+signals.decisions    — locked + unfiltered both work ✓
+signals.search_decisions — finds matches, returns [] for no match ✓
+signals.impact       — found=True + has blast_radius ✓
+signals.fixes        — doesn't crash on real DB ✓
+signals.preferences  — doesn't crash ✓
+```
+
+**Cross-hero SQL audit: clean.** No more SELECT-on-wrong-column bugs lurking. All signals methods exercise correctly against the real SQLiteGraph schema.
+
+### Bug class final tally (Week 5 retrospective + Hero 4/5 audit)
+
+- **2 production bugs fixed** (signals.decisions SQL + engine signal-passing)
+- **12 test gaps closed** (4 Hero 1 + 6 Hero 4 + 6 Hero 5 — overlap because Hero 1 caught 4 and the rest were uncovered by extending the audit to Heroes 4 + 5)
+- **17 new regression tests** (4 Hero 1 + 6 dispatch + 7 Hero 4 + 7 Hero 5 — minus 4 deduped)
+- **3 playbook lessons added** (#15 real-DB integration, #16 every-hero dispatch test, #17 honest self-assessment)
+
+### Test status
+
+350/350 across the full suite (was 337 → +13 from Hero 4 + Hero 5 audits).
+
+---
+
 ## Template for new entries
 
 ```markdown

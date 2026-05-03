@@ -63,6 +63,29 @@ def _signals_with_impact(
     return _FakeSignals()
 
 
+def _spy_signals(
+    impact_for: dict[Path, dict] | None = None,
+) -> Any:
+    """Build a fake SignalContext that records every impact() call.
+
+    Used by Week-5-retrospective behavioral assertions: tests assert
+    on whether `signals.impact()` IS or IS NOT called for a given
+    event shape. Output-only tests can't catch gates / short-circuit
+    optimizations because empty impact data flows through the policy
+    to the same allow verdict regardless.
+    """
+    impact_for = impact_for or {}
+
+    class _SpySignals:
+        def __init__(self):
+            self.impact_calls: list[Path] = []
+        def impact(self, path: Path) -> dict:
+            self.impact_calls.append(path)
+            return impact_for.get(path, {})
+
+    return _SpySignals()
+
+
 @pytest.fixture(autouse=True)
 def _clear_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Make sure env-var config doesn't leak across tests."""
@@ -557,6 +580,142 @@ class TestSignatureDetection:
 # =====================================================================
 # Default-policy registration is idempotent
 # =====================================================================
+
+
+class TestBehavioralGates:
+    """Week-5 retrospective: gates that don't change OUTPUT for the
+    happy/empty-signals path can't be caught by output-only tests.
+    These behavioral spies catch mutations that remove the gates,
+    causing unnecessary signals.impact() calls or crashes.
+    """
+
+    def test_non_edit_does_not_call_signals_impact(self):
+        """is_edit gate: Read/Bash/Glob events must NOT trigger
+        signals.impact(). Mutation that removes the gate would still
+        return allow on empty signals — this spy is the only catch.
+        """
+        policy = BlastRadiusVeto()
+        spy = _spy_signals()
+        for tool in ("Read", "Bash", "Glob", "Grep"):
+            policy.evaluate(_make_event(tool_name=tool, target=Path("/p/x.py")), spy)
+        assert spy.impact_calls == [], (
+            f"is_edit gate degraded: signals.impact called on non-edit "
+            f"events: {spy.impact_calls}"
+        )
+
+    def test_target_none_does_not_call_signals_impact(self):
+        """target_file=None gate: when the AI's tool input has no
+        file_path (e.g. Bash command without explicit target), the
+        wiring layer leaves event.target_file as None. Hero 4 must
+        skip impact lookup. Behavioral spy catches the gate.
+        """
+        policy = BlastRadiusVeto()
+        spy = _spy_signals()
+        event = HookEvent(
+            event_type=EventType.PRE_TOOL_USE,
+            project_root=Path("/p"),
+            tool_name="Edit",  # IS an edit, so first gate passes
+            target_file=None,  # but no target
+            proposed_diff="--- before\ndef f(): pass\n--- after\ndef g(): pass\n",
+        )
+        verdict = policy.evaluate(event, spy)
+        assert verdict.is_allowing()
+        assert spy.impact_calls == [], (
+            f"target_file None gate degraded: {spy.impact_calls}"
+        )
+
+    def test_signals_none_does_not_crash(self):
+        """signals=None gate: if the runner ever fails to build
+        signals (e.g. graph corrupt), Hero 4 must allow gracefully,
+        not crash with AttributeError on signals.impact().
+        """
+        policy = BlastRadiusVeto()
+        event = _make_event(
+            target=Path("/p/x.py"),
+            proposed_diff="--- before\ndef f(): pass\n--- after\ndef g(): pass\n",
+        )
+        # signals=None — must not crash
+        verdict = policy.evaluate(event, None)
+        assert verdict.is_allowing()
+
+    def test_priority_value_stable(self):
+        """Hero 4's priority MUST remain mid-range (specifically
+        below Hero 1's 100). If a future refactor flips it to >100,
+        block-class verdict ordering changes silently. Document the
+        invariant. (Original M5 mutation passed because no test
+        asserted on the value.)"""
+        from mcp_server.engine.policies.decision_lock import DecisionLock
+        assert BlastRadiusVeto.priority < DecisionLock.priority, (
+            f"BlastRadiusVeto.priority ({BlastRadiusVeto.priority}) "
+            f"must remain below DecisionLock.priority ({DecisionLock.priority}); "
+            f"block ordering depends on this."
+        )
+
+    def test_impact_found_false_skips_evaluation(self):
+        """When impact.get('found') is False, Hero 4 must allow
+        without checking signature. A mutation that flips the check
+        (so found=False causes evaluation to continue) would silently
+        block on every uninitialized graph. Spy catches it.
+        """
+        policy = BlastRadiusVeto()
+        target = Path("/p/x.py")
+        # impact dict has explicit found=False
+        signals = _signals_with_impact({
+            target: {"found": False, "blast_radius": 999, "affected": []}
+        })
+        diff = (
+            "--- before\ndef f(x): pass\n--- after\ndef f(x, y): pass\n"
+        )
+        event = _make_event(target=target, proposed_diff=diff)
+        verdict = policy.evaluate(event, signals)
+        assert verdict.is_allowing(), (
+            f"impact.found=False must short-circuit to allow; got {verdict.action}"
+        )
+
+    def test_impact_missing_blast_radius_defaults_safe(self):
+        """If impact dict is found=True but missing 'blast_radius'
+        key (defensive against partial data), Hero 4 must use a SAFE
+        default (treat as 0 → allow). A mutation flipping the default
+        to 9999 would silently block every edit on an incomplete graph.
+        """
+        policy = BlastRadiusVeto()
+        target = Path("/p/x.py")
+        # found=True but no blast_radius key
+        signals = _signals_with_impact({
+            target: {"found": True, "affected": []}  # no blast_radius
+        })
+        diff = (
+            "--- before\ndef f(x): pass\n--- after\ndef f(x, y): pass\n"
+        )
+        event = _make_event(target=target, proposed_diff=diff)
+        verdict = policy.evaluate(event, signals)
+        # blast_radius defaults to 0 → 0 < threshold → allow
+        assert verdict.is_allowing(), (
+            f"missing blast_radius must default to 0 (allow); got {verdict.action}"
+        )
+
+    def test_full_write_with_high_radius_blocks(self):
+        """Edit-class tools always have proposed_diff. But Write tool
+        replaces a file wholesale — proposed_diff may be None. On a
+        high-impact file, this is risky enough to block by default.
+        (M10 mutation flipped this to allow; this test catches it.)
+        """
+        policy = BlastRadiusVeto()
+        target = Path("/p/x.py")
+        signals = _signals_with_impact({
+            target: {"found": True, "blast_radius": 12,
+                     "affected": [{"file": "a.py"}, {"file": "b.py"}]}
+        })
+        # proposed_diff=None simulates a Write tool replacement
+        event = _make_event(target=target, tool_name="Write", proposed_diff=None)
+        verdict = policy.evaluate(event, signals)
+        assert verdict.is_blocking(), (
+            f"None diff (full Write) on high-impact file should block; "
+            f"got {verdict.action}"
+        )
+        # Metadata indicates the special case
+        sig_changes = verdict.metadata.get("signature_changes", {})
+        assert sig_changes.get("modified") == ["(full Write)"], sig_changes
 
 
 class TestRegistration:

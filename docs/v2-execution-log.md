@@ -1062,10 +1062,68 @@ bug classes**, not performing.
 
 ### Next
 
-- Tag `v2.0-alpha.1`.
+- Tag `v2.0-alpha.1`. ✅ tagged 2026-05-04
 - Founder dogfoods on real machine for ≥48 hours before Week 5.
 - Recruit alpha testers in parallel.
-- Week 5: Hero 1 (Decision Lock).
+- Week 5: Hero 1 (Decision Lock). ✅ shipped 2026-05-04 (see below)
+
+---
+
+## Week 5 — Hero 1 (Active Decision Lock) (2026-05-04)
+
+### Shipped
+
+**Hero 1: DecisionLock — second policy hero in v2.0-alpha.2 line.**
+
+When the AI tries to Edit / Write / MultiEdit a file marked `do_not_revert` in the graph, codevira refuses the edit and surfaces the locked decisions so the user can re-engage. Different signal source than Hero 4 (`signals.decisions(locked_only=True)` instead of `signals.impact()`); same engine plumbing.
+
+- `mcp_server/engine/policies/decision_lock.py` — DecisionLock policy (~250 LOC). Priority=100 (higher than Hero 4's 50). Env-var configurable via `CODEVIRA_DECISION_LOCK_MODE` (off/warn/block, default block).
+- `mcp_server/engine/policies/__init__.py` — re-exports DecisionLock.
+- `mcp_server/engine/__init__.py` — `register_default_policies()` now registers Hero 1 alongside Hero 4. Idempotent.
+- `tests/engine/test_decision_lock.py` — 17 tests across 8 acceptance scenarios + configuration robustness + Hero-1/Hero-4 coexistence + registration idempotency + signal-failure modes.
+- `docs/heroes/01-decision-lock.md` — 280-line spec.
+
+Edge case worth highlighting: a file that's marked `do_not_revert=1` but has NO recorded decisions DOWNGRADES from block to warn (even in block mode). Blocking with no rationale to surface would be confusing for the user. The warn message explicitly recommends recording at least one decision so future AI sessions understand why the lock exists.
+
+### R1-R8 QA gauntlet
+
+Per Lesson #10 (user-facing surface → full sweep), all 8 angles applied.
+
+| Round | Angle | Findings |
+|---|---|---|
+| R1 | #1 + #7 (independent agent code review + security audit) | **GREEN** — verified safe across NULL handling, timestamp parsing, symlink path resolution, decision-text truncation, repr-based injection safety, parameterized SQL, env-var clamping, metadata leakage. One minor: a test docstring claimed "the runner catches" but documents the policy's "let it propagate" stance. Fixed by clarifying the docstring + renaming the test for accuracy. |
+| R2 | #5 + #8 (integration completeness + type safety) | clean — Hero 1 registered into `register_default_policies` correctly; idempotent across 5 calls; type contract stable; config schema surfaces the env var. |
+| R3 | #15 (mutation testing on each fix-equivalent code path) | M1 (revert block-on-locked) → **CAUGHT**; M2 (revert no-rationale-warn downgrade) → **CAUGHT**; M3 (revert env-var validation) → **CAUGHT**. All 3 mutations caught. |
+| R4 | #2 (adversarial against the policy) | All probes pass: SQL/shell/path injection in decision text rendered safely via `repr()`; 1000-char decision text truncated cleanly; 100-decision file shows top-3 + "and N more"; Unicode filename + decision text (Japanese + emoji + arrow) handled correctly. |
+| R5 | #3 (cross-module impact: Hero 1 + Hero 4 coexist) | clean — both registered, both fire, runner combines verdicts (any block wins); priority ordering correct (Decision Lock 100 > Blast-Radius 50). |
+| R6 | #4 + #9 (latency + concurrent stress) | p99 = 0.078 ms over 1000 evaluate() calls (60× under 5 ms target). 20 threads × 100 parallel evaluations: zero races (policies are stateless). |
+| R7 | #19 + #20 (Unicode + edge cases) | ISO timestamp formats correctly. Garbage timestamp handled gracefully (no date in message, doesn't crash). Missing `timestamp` key handled. Path outside project_root falls back to absolute path. |
+| R8 | #13 + #11 (signals.decisions schema match + observability metadata) | `SignalContext.decisions` signature matches Hero 1's expectations (file / locked_only / limit kwargs). Verdict metadata exposes 6 stable keys (policy / target_file / target_rel / mode / locked_decision_count / locked_decision_ids) for future hero observability. |
+
+### Surprises
+
+- **Hero 1 is by far the smallest hero so far.** ~250 LOC of code + ~250 LOC of tests. The engine + Pillar 1 + signals layer (built in Weeks 1-3) make new heroes much cheaper than Hero 4 was — Hero 1 reused `signals.decisions()` (built Week 1), `register_default_policies()` (built Week 4), the canonical hook installation (Week 3), and the policy plugin pattern (Week 1). The next 8 heroes should similarly compose down to ~200-400 LOC each.
+- **Discovery rate decayed cleanly.** R1: 1 docstring nit. R2-R8: zero. The repeated discipline is paying compounding dividends — Hero 1 is the third policy through the gauntlet (after the engine and Hero 4), and the false-positive rate is dropping as the agent's framing matures.
+
+### Test status
+
+295/295 across `tests/engine/` + `tests/test_paths.py` + `tests/test_setup_wizard.py` (was 278 → +17 Hero 1 tests).
+
+### Founder dogfood notes
+
+- Pre-tag dogfood not yet run on real machine. v2.0-alpha.2 will batch Hero 1 with Hero 5 (Cross-Session Consistency, Week 6) for a single tag + dogfood cycle, since alpha.1 is the active gate.
+
+### Open questions / decisions deferred
+
+- Per-decision (vs per-file) locking — schema change required, defer to v2.1.
+- Region-based locking (specific lines, not whole file) — deeper graph work, defer.
+- Lock annotations in source code (`# codevira:lock` markers) — duplicates the graph signal; rejected for now.
+- Rename-aware decision matching — graph layer concern, not Hero 1's job.
+
+### What's next
+
+- Week 6: Hero 5 (Cross-Session Consistency) — UserPromptSubmit hook injects relevant prior decisions when the user mentions a topic.
+- v2.0-alpha.2 ships Hero 1 + Hero 5 together (after Week 6).
 
 ---
 

@@ -6,10 +6,10 @@ auto-discovers them via ``register_default_policies()`` (see
 ``mcp_server/engine/__init__.py``).
 
 Heroes that have shipped:
-  - Hero 4: blast_radius.BlastRadiusVeto
+  - Hero 4: blast_radius.BlastRadiusVeto (Week 4)
+  - Hero 1: decision_lock.DecisionLock (Week 5)
 
 Heroes still scaffolded but not implemented:
-  - Hero 1: decision_lock.* (Week 5)
   - Hero 5: cross_session.* (Week 6)
   - Hero 6: token_budget.* (Week 7)
   - Hero 2: anti_regression.* (Week 8)
@@ -22,5 +22,6 @@ Heroes still scaffolded but not implemented:
 from __future__ import annotations
 
 from mcp_server.engine.policies.blast_radius import BlastRadiusVeto
+from mcp_server.engine.policies.decision_lock import DecisionLock
 
-__all__ = ["BlastRadiusVeto"]
+__all__ = ["BlastRadiusVeto", "DecisionLock"]

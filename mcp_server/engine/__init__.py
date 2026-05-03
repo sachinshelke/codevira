@@ -31,11 +31,17 @@ def register_default_policies() -> None:
     `engine handle ...` subcommand) and from the MCP server startup.
     Idempotent: running it twice does NOT register duplicates.
     """
-    # Hero 4 — Blast-Radius Veto. First shipping policy.
+    # Hero 4 — Blast-Radius Veto (Week 4)
     from mcp_server.engine.policies.blast_radius import BlastRadiusVeto
 
     if not any(p.name == BlastRadiusVeto.name for p in registered_policies()):
         register_policy(BlastRadiusVeto())
+
+    # Hero 1 — Active Decision Lock (Week 5)
+    from mcp_server.engine.policies.decision_lock import DecisionLock
+
+    if not any(p.name == DecisionLock.name for p in registered_policies()):
+        register_policy(DecisionLock())
 
 __all__ = [
     # Event types

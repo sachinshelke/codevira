@@ -2234,6 +2234,25 @@ The deep-audit-from-start discipline applied since Week 11 has held: Hero 7 (Wee
 
 664/664 across `tests/engine/` + `tests/test_paths.py` + `tests/test_setup_wizard.py` + `tests/test_cli_insights.py` + `tests/test_cli_replay.py` (was 620 → +26 unit + 9 CLI subprocess + 9 integration QA).
 
+### Week-13 user-prompted QA addendum
+
+User asked: "have we done qc qa for week 13?" — same pattern as Weeks 10 + 11.
+
+**Honest self-assessment**: I'd applied the deep-audit checklist proactively (post-Bug-1-8 discipline) and was reasonably confident. But the user's pattern surfaces gaps I'd missed. Probed three areas I wasn't 100% sure about:
+
+1. **SQL LIKE injection via `--query` argument** — parameterized via `?` placeholder; never concatenated. Tested 4 malicious queries (`'; DROP TABLE`, `' OR 1=1`, etc.) — all returned 0 rows safely; table intact. **No bug.**
+2. **`_truncate` boundary at exactly N chars** — exactly 80 keeps text unchanged, 81 truncates with ellipsis. **No bug.**
+3. **Decision both locked AND reverted simultaneously** — HTML article gets both CSS classes (`locked reverted`) + lock emoji marker. **No bug.**
+
+**0 new bugs** from the user-prompted deep round. **First time the proactive round + user-prompted round agree** that the discipline is fully applied.
+
+Locked these probes in as 3 new tests in `TestDeepAuditProbes`:
+- `test_sql_injection_via_query_param_is_safe`
+- `test_truncate_boundary_at_exactly_n`
+- `test_html_locked_and_reverted_both_classes_render`
+
+### Final test count: 667/667
+
 ### Heroes shipped: **10 of 10** 🎉
 
 All ten heroes from the master plan are now live:

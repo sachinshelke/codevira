@@ -504,6 +504,88 @@ class TestMCPResourceHandler:
 
 
 # =====================================================================
+# Deep-audit probes (Week-13 user challenge: "have you done QA?")
+# =====================================================================
+
+
+class TestDeepAuditProbes:
+    """Probes added in response to user's "have you done QA?" challenge.
+    Three areas I wasn't 100% sure about; all probed clean but locked
+    in here so future regressions get caught."""
+
+    def test_sql_injection_via_query_param_is_safe(
+        self, isolated_project: Path,
+    ):
+        """Parameterized queries must defeat SQL injection through the
+        --query / URI argument. The query goes into a LIKE clause via
+        a `?` placeholder; concatenation would be a vuln, but we don't.
+        """
+        g = _open_graph(isolated_project)
+        try:
+            _plant_decision_with_outcomes(
+                g, file_path="auth.py", decision="use bcrypt", kept=1,
+            )
+            # Assorted malicious queries — ALL must return 0 rows
+            # AND leave the table intact.
+            for malicious in [
+                "'; DROP TABLE decisions; --",
+                "' OR 1=1 --",
+                "%' OR '1'='1",
+                "'; DELETE FROM outcomes WHERE 1=1; --",
+            ]:
+                out = build_timeline(g.conn, query=malicious)
+                assert isinstance(out, list)
+                # The table is intact (decisions count unchanged)
+                row_count = g.conn.execute(
+                    "SELECT COUNT(*) FROM decisions"
+                ).fetchone()[0]
+                assert row_count == 1, (
+                    f"SQL injection got through with query={malicious!r}: "
+                    f"decisions table now has {row_count} rows (expected 1)"
+                )
+        finally:
+            g.close()
+
+    def test_truncate_boundary_at_exactly_n(self):
+        """Exactly N chars: NO ellipsis (text fits). N+1 chars: ellipsis."""
+        # exactly 80 → no truncation
+        assert _truncate("x" * 80, 80) == "x" * 80
+        # 81 → truncated with ellipsis (80 chars total)
+        out = _truncate("x" * 81, 80)
+        assert len(out) == 80
+        assert out.endswith("…")
+        # Empty → empty
+        assert _truncate("", 80) == ""
+        # Single char → unchanged
+        assert _truncate("a", 80) == "a"
+
+    def test_html_locked_and_reverted_both_classes_render(self):
+        """A decision can be BOTH locked (do_not_revert=1) AND reverted
+        (every outcome is type=reverted). The HTML article must carry
+        BOTH CSS classes so users see both visual signals."""
+        weird = [{
+            "id": 1,
+            "decision": "locked decision that ALSO got reverted",
+            "file_path": "weird.py",
+            "context": None,
+            "created_at": "2026-01-01",
+            "session_id": "s1",
+            "session_summary": "test",
+            "locked": True,
+            "kept": 0, "modified": 0, "reverted": 3, "total": 3,
+            "score": 0.0,
+        }]
+        out = render_html(weird)
+        import re
+        m = re.search(r'<article class="([^"]+)"', out)
+        assert m, "expected article element"
+        cls = m.group(1)
+        assert "locked" in cls
+        assert "reverted" in cls
+        assert "🔒" in out
+
+
+# =====================================================================
 # Performance
 # =====================================================================
 

@@ -1,232 +1,176 @@
-# Founder dogfood checklist — v2.0-alpha.2
+# Founder dogfood checklist — v2.0-rc.1
 
-Goal: install codevira on your real daily-use machine and use it for **48 hours of actual Claude Code work** to validate the alpha is genuinely production-grade. This is the gate before we go to alpha testers.
+**Goal**: install codevira on your real daily-use machine and use it for **1 week of actual coding** across **at least 2 different AI tools** (e.g. Claude Code + Cursor) on the same project. This validates the universality wedge end-to-end and surfaces real-world residue our 2170-test suite couldn't find.
 
-The QA discipline caught 18+ bugs across 8 weeks of development. Real usage will catch what the discipline missed — your job is to surface that residue.
+**Time commitment**: 30 min setup + your normal dev work for 7 days + 30 min wrap-up. No extra time required during the week — codevira runs in the background.
+
+The QA discipline caught 8 production bugs across the build phase. Real usage will catch what the discipline missed — your job is to surface that residue.
 
 ---
 
 ## Pre-flight (5 min)
 
 ```bash
-# Verify the tag you'll be running
 cd ~/Documents/Projects/LogisticsOS/agent-mcp
-git fetch --tags
-git checkout v2.0-alpha.2
-git log --oneline -1   # confirm: should be v2.0-alpha.2 commit
+git log --oneline -1   # should be the v2.0-rc.1 head commit
 
-# Run the test suite once to confirm a clean baseline on YOUR machine
-.venv/bin/pytest tests/engine/ tests/test_paths.py tests/test_setup_wizard.py -q
-# Expected: 391/391 passed
+# Confirm clean test baseline on YOUR machine (full suite)
+.venv/bin/pytest tests/ -q
+# Expected: 2170 passed, 1 skipped, 0 failed
 ```
 
-If anything fails on your machine but passes mine: stop and report. That's a real-world bug we missed.
+If anything fails on your machine but passes mine — stop and report. That's a real-world bug we missed (env / OS / Python version delta).
 
 ---
 
-## Install on the real machine (10 min)
+## Install on a real test project (10 min)
 
 ```bash
-# Use a separate test project — DON'T dogfood on this codevira repo itself
-mkdir ~/dogfood-test
-cd ~/dogfood-test
-git init
-echo "[project]\nname = 'dogfood'" > pyproject.toml
+# Don't dogfood on this codevira repo. Use a real project of yours.
+cd ~/path/to/some-real-project   # any project with .git + pyproject.toml / package.json / etc.
 
-# Install codevira from the alpha.2 tag
+# Install codevira from the rc.1 head
 pipx install --force --editable ~/Documents/Projects/LogisticsOS/agent-mcp
 
-# Run setup
+# One-prompt setup (Pillar 1.1)
 codevira setup
-# Expected output:
-# - 🔍 Detected: Claude Code, Cursor, Windsurf, Antigravity (whatever you have)
-# - 📋 Plan: 13-15 steps depending on detected IDEs
-# - Proceed? [Y/n] y
-# - ✓ Done in <5s
-# - "Restart Claude Code to pick up hooks"
+# Should detect every AI tool you have installed and write nudge files
+# + lifecycle hooks for each. Look at the output: 5+ tools detected
+# means you're real-world, not synthetic.
 
-# Verify the artifacts landed
-ls -la ~/.claude/hooks/codevira-*.sh    # should be 5 hooks, executable
-cat ~/dogfood-test/CLAUDE.md             # should have <!-- codevira:start --> markers
-cat ~/.claude/settings.json | jq .hooks  # should have hook entries
+# Verify (Pillar 1.3)
+codevira doctor
+# Expect 8-9 ✓ checks, possibly 1-2 ⚠ for things that genuinely don't apply.
+# Any ✗ → stop and investigate before continuing.
 ```
 
-If any artifact is missing or malformed: that's a Pillar 1 bug. Report.
-
 ---
 
-## 48-hour dogfood scenarios
+## During the week (no extra time — your normal coding)
 
-### Scenario 1: First Claude Code session (10 min)
-
-1. Open Claude Code in `~/dogfood-test`.
-2. Ask: "What tools do I have available?"
-3. Verify Claude lists `get_session_context`, `get_impact`, `search_decisions`, etc.
-4. Ask: "Call `get_session_context` and show me what came back."
-5. Read the response. Does it look like a useful session brief?
-
-**Pass criteria:** Claude can call codevira tools and the responses are coherent. **Fail signal:** tool errors, "no graph found" errors, or empty responses where you'd expect data.
-
----
-
-### Scenario 2: Trigger Hero 4 (Blast-Radius Veto) (15 min)
-
-1. In `~/dogfood-test`, build a small graph manually OR run `codevira init` to bootstrap one (depending on what's wired).
-2. Create a file `auth.py`:
-   ```python
-   def auth_token(user_id):
-       return user_id
-   ```
-3. Create 3 caller files that import `auth_token`.
-4. Re-index: `codevira index`
-5. In Claude Code, ask: "Rename `auth_token(user_id)` to `auth_token(user)` in auth.py."
-6. **Expect:** Hero 4 blocks with a message like:
-   ```
-   🛑 Blast-radius veto on auth.py: 3 downstream file(s) depend on this code...
-   ```
-
-**Pass criteria:** Block fires with the diagnostic. **Fail signal:** edit goes through silently OR codevira doesn't get invoked at all.
-
----
-
-### Scenario 3: Trigger Hero 1 (Decision Lock) (10 min)
-
-1. In Claude Code: "Record a decision that auth.py uses bcrypt and lock it: `do_not_revert=true`."
-2. Confirm via `codevira` SQL or whatever surface lets you set `do_not_revert=1` on the auth.py node.
-3. Then ask Claude: "Refactor auth.py to use argon2 instead of bcrypt."
-4. **Expect:** Hero 1 blocks with the locked decision text:
-   ```
-   🔒 Decision-lock veto on auth.py: this file is marked do_not_revert
-   with 1 locked decision(s)...
-   ```
-
-**Pass criteria:** Block surfaces the actual decision text. **Fail signal:** Hero 1 silently allows (this would mean Bug 1 or Bug 2 came back somehow).
-
----
-
-### Scenario 4: Trigger Hero 5 (Cross-Session Consistency) (10 min)
-
-1. In `~/dogfood-test`, run codevira's CLI to record a decision: "Tailwind, not Bootstrap — bundle size matters" on `styles/`.
-2. Open Claude Code. New session.
-3. Ask: "Add a styled Get Started button to the homepage hero."
-4. **Expect:** Claude's first response should reference the Tailwind decision (codevira injected it via UserPromptSubmit hook). Look for phrases like:
-   - "I notice you've decided on Tailwind..."
-   - "Per the existing decision about bundle size..."
-   - Or at minimum: the AI uses Tailwind classes, not Bootstrap.
-
-**Pass criteria:** AI reflects the prior decision in its response. **Fail signal:** AI proposes Bootstrap unaware.
-
----
-
-### Scenario 5: Hero 6 (Token Budget) (5 min)
-
-1. After several sessions, run:
-   ```bash
-   codevira budget
-   ```
-2. **Expect:** Output showing the most recent session's injected/used totals + top wasted sources.
-3. Run:
-   ```bash
-   codevira budget history --last 5
-   ```
-4. **Expect:** A table with the last 5 sessions.
-
-**Pass criteria:** Output is parseable, numbers are non-zero (you've been using codevira), top wasted sources make sense. **Fail signal:** "no sessions recorded" (Stop hook isn't firing) or zero tokens (TokenMeter not instrumenting).
-
----
-
-### Scenario 6: Hero 2 (Anti-Regression) (15 min)
-
-1. In `~/dogfood-test`, do a small bug-fix exercise:
-   ```bash
-   git commit -am "fix: race condition in token cache — added lock"
-   ```
-2. Make a synthetic file that the fix touched.
-3. Run `codevira fix-noted --scan-git` (the manual scan helper from Week 2).
-4. Verify `codevira` records the fix:
-   ```bash
-   sqlite3 ~/.codevira/projects/<key>/graph/fixes.db "SELECT * FROM fixes;"
-   ```
-5. In Claude Code, ask: "Simplify the token cache — remove the locking, it's hot-path overhead."
-6. **Expect:** Hero 2 blocks with:
-   ```
-   🛑 Anti-regression veto on token_cache.py: this edit appears to revert
-   a previously-fixed bug...
-   ```
-
-**Pass criteria:** Block fires referencing the original fix commit. **Fail signal:** edit proceeds silently (the heuristic missed the keyword overlap).
-
----
-
-## What to log during dogfood
-
-For 48 hours, every time codevira fires (block, warn, inject, or noticeable absence), jot a one-line note:
-
-```text
-2026-05-04 14:30  Hero 4 blocked Edit on api.py     → correctly identified blast radius (8 callers)
-2026-05-04 14:45  Hero 5 injected — surfaced FastAPI decision   → AI changed course
-2026-05-04 15:10  No hero fired on a Read     → expected
-2026-05-04 16:00  Hero 1 blocked Edit on db_schema.py    → false positive — file was unlocked
-2026-05-04 17:30  codevira budget after session   → 12,400 injected, 6,200 used (50%)
-                                                     get_node = top wasted source
-```
-
-After 48 hours, count:
-- **Total fires:** how many policy actions across the period
-- **Confirmed-correct fires:** policy did the right thing
-- **False positives:** policy fired when it shouldn't have
-- **False negatives:** policy SHOULD have fired but didn't
-- **Bugs:** anything else that was wrong (UI, performance, crashes)
-
----
-
-## Failure modes to watch for
-
-These are the bug-shapes our QA caught — if you see new instances, they're real:
-
-1. **Silent fail-open:** policy is registered + meant to fire but doesn't. Easy to miss if you don't try to trigger it.
-2. **Schema drift:** SQL column names diverge from what the policy queries.
-3. **Wiring miss:** policy registered but engine doesn't pass the right kwargs.
-4. **Dead field:** flag declared but not enforced.
-5. **Unicode / locale issues:** Japanese filenames, RTL text, emoji prompts.
-6. **Path edge cases:** symlinks, case-insensitive FS (APFS default), deep nesting.
-7. **Performance regressions:** any policy taking >50ms p95 in real use.
-
----
-
-## After 48 hours
+Just code. The 10 heroes run automatically. **Don't disable anything.** If something blocks you legitimately:
 
 ```bash
-# Run the test suite again to confirm no degradation
-.venv/bin/pytest tests/engine/ tests/test_paths.py tests/test_setup_wizard.py -q
+# Switch any single hero to advisory:
+export CODEVIRA_DECISION_LOCK_MODE=warn        # Hero 1
+export CODEVIRA_ANTI_REGRESSION_MODE=warn      # Hero 2
+export CODEVIRA_BLAST_RADIUS_MODE=warn         # Hero 4
+export CODEVIRA_LIVE_STYLE_MODE=off            # Hero 7
 
-# Run codevira doctor (if/when implemented) for a status report
-codevira doctor 2>/dev/null || codevira status
-
-# Capture token spend over the dogfood window
-codevira budget history --last 50
+# Or the nuclear kill switch (disables ALL heroes globally):
+export CODEVIRA_ENGINE=0
 ```
 
-Submit findings as:
-
-1. A markdown summary of fires + outcomes
-2. Specific bug reports for each false positive / false negative / crash
-3. Performance numbers if anything felt slow
-4. Anything UI / message-text / general-feel feedback
-
-**If 48 hours pass with zero new bugs surfaced, the alpha is ready for ≥3 alpha testers.**
-
-If even one major bug surfaces during dogfood: fix on `main`, tag `v2.0-alpha.3`, restart the dogfood clock.
+**Note when you reach for these.** Each one is a UX failure we should fix in v2.0.x.
 
 ---
 
-## Honest expectation
+## Daily checkpoints (1 min/day)
 
-Across 8 weeks of QA + 5 retrospective rounds + 2 cross-cutting integration audits, we caught 18+ bugs. The discipline is mature. But:
+End of each day, jot 1-line notes:
 
-- **Real usage finds bugs the discipline missed.** That's why this gate exists.
-- **The first 4 hours are the most likely to surface install/setup issues.** Watch carefully.
-- **The first session through Claude Code is the most likely to surface wiring/schema issues.** Same.
-- **48 hours of actual coding work is the only way to surface UX/false-positive-rate issues.** No QA round simulates this.
+```
+Day 1: [what hero behavior surprised you, helpfully or otherwise]
+Day 2: [...]
+```
 
-If the dogfood goes clean: alpha.2 was worth shipping, and we move to alpha testers. If it doesn't: we learn what the playbook still misses, codify the lesson (likely #19+), fix the bug, and ship alpha.3.
+---
+
+## Trigger scenarios to actually try (do at least 4 of 6)
+
+These are the real-world tests our automated suite can't simulate:
+
+### 1. Cross-tool universality (the WHOLE WEDGE)
+
+Open the project in **Claude Code**, ask the AI:
+> "What did I decide about [some-architecture-thing] last week?"
+
+If you have prior decisions logged (record one with `record_decision` MCP tool), the AI should cite them. Then close Claude Code, open the same project in **Cursor** (or Windsurf, or Antigravity). Ask the same question.
+
+**Expected**: same answer surfaces. **If different / missing**: the wedge is broken on your real install — file a critical bug.
+
+### 2. Decision lock (Hero 1)
+
+```bash
+# Lock a real decision via the MCP tool, e.g.:
+# (in any AI tool) "Use the codevira tool to lock a decision saying:
+#   'we use bcrypt — see ticket #142' in auth.py with do_not_revert=true"
+```
+
+Then ask the AI to "switch to argon2" in `auth.py`. Expected: blocked with the locked reason cited.
+
+### 3. Anti-regression (Hero 2)
+
+Find a recent fix commit in your project. Ask the AI to "improve" the file the fix touched. Hero 2 should warn or block if the AI's diff reverts the fix region.
+
+### 4. Scope contract (Hero 3, opt-in)
+
+```bash
+export CODEVIRA_SCOPE_LOCK_MODE=block
+```
+
+Tell the AI: "fix the null check in `auth.py`". Then watch — if the AI tries to edit anything besides `auth.py`, it should get blocked with a clear reason.
+
+### 5. Insights (Hero 10)
+
+After ≥ 2 days of real use:
+
+```bash
+codevira insights
+```
+
+You should see the project's stable decisions ranked by score, plus any that got reverted often. **If the output is empty**, the outcome tracker isn't running on your git history — file a bug.
+
+### 6. Replay (Hero 8)
+
+```bash
+codevira replay --query auth --format html --out /tmp/timeline.html
+open /tmp/timeline.html
+```
+
+Should render a clean HTML timeline of decisions about auth-ish things. Plus check the MCP resource in Claude Desktop: type `@codevira show decisions` (Claude Desktop UI).
+
+---
+
+## End of week wrap-up (30 min)
+
+```bash
+# Snapshot the budget data
+codevira budget --full > /tmp/budget-week.txt
+
+# Snapshot insights
+codevira insights --since 7d > /tmp/insights-week.txt
+
+# Check for any crash logs accumulated
+codevira report
+
+# Re-run doctor
+codevira doctor
+```
+
+Open `/tmp/budget-week.txt` and `/tmp/insights-week.txt`. Assess:
+
+- [ ] Did codevira save tokens? (Look at the budget breakdown.)
+- [ ] Did codevira surface decisions you'd forgotten?
+- [ ] Did any hero block you incorrectly? (How many times did you reach for `mode=warn` or `mode=off`?)
+- [ ] Did the wedge work — did Cursor / Windsurf / Antigravity see the same memory as Claude Code?
+- [ ] Any UI / message / wording you'd change?
+- [ ] Any feature you missed?
+
+Write up the answers as a 1-page note. **That note is the gate** to recruiting alpha testers.
+
+---
+
+## Decision rule for shipping rc.1 → alpha-tester batch
+
+**Ship**:
+- 0 critical bugs (data loss, crash that requires reinstall, wedge broken)
+- ≤ 2 friction issues that can ship as known issues in alpha-tester onboarding
+- You'd recommend codevira to someone you respect
+
+**Don't ship yet**:
+- Critical bug found
+- > 5 friction issues stacked up
+- You wouldn't recommend it
+
+If you don't ship: triage → fix → re-dogfood for 2 days → re-evaluate.

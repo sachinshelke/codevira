@@ -457,9 +457,33 @@ class TestDetectors:
         # Diff exceeds _MAX_DIFF_BYTES → returns empty
         assert _extract_after_block(diff) == ""
 
-    def test_extract_after_block_malformed_returns_empty(self):
-        for bad in (None, "", "no markers here", "--- before\nold\n"):
-            assert _extract_after_block(bad) == ""
+    def test_extract_after_block_empty_or_none_returns_empty(self):
+        """Truly empty inputs return empty. Bug-4 fix: raw content
+        without markers is now treated as Write-tool content (the
+        whole input IS the after-block)."""
+        for empty in (None, ""):
+            assert _extract_after_block(empty) == ""
+
+    def test_extract_after_block_write_format_returns_full_content(self):
+        """Bug 4 (Week-9 integration QA): Claude Code's Write hook
+        passes raw file content as proposed_diff with NO markers.
+        The original parser returned '' for this shape, silently
+        no-op'ing Hero 7 on every Write event. Now: shape #2 returns
+        the whole input as the after-block."""
+        # Write tool: full content, no Edit-style markers
+        write_content = "def fetchUserMetadata(userId):\n    return userId\n"
+        out = _extract_after_block(write_content)
+        assert out == write_content, (
+            "Write-tool content (no markers) must be treated as raw "
+            "after-block (Bug-4 regression test)"
+        )
+
+        # Half-Edit format (only --- before, no --- after) is treated as
+        # raw content. This is permissive but safe — at worst Hero 7
+        # scans the marker text itself, which contains no identifiers
+        # or string literals our detectors care about.
+        half = "--- before\nold\n"
+        assert _extract_after_block(half) == half
 
 
 # =====================================================================

@@ -1568,6 +1568,86 @@ Heroes remaining for v2.0 GA: 10, 9, 3, 8 (Weeks 10-13).
 
 ---
 
+## Week 9 (continued) — Integration QA round Weeks 1-9 (2026-05-04)
+
+### What this round was
+
+Per the user's standing request (after the Week-5 round caught Bugs 1+2 and Week 7 caught Bug 3), an integrated QA pass over all completed weeks before moving on. The pattern: focus on the SEAMS between heroes, not per-hero correctness — which is what surfaced Bugs 1, 2, 3.
+
+### What this round caught: **Bug 4**
+
+Same shape as Bugs 1, 2, 3 — *declared but not integrated → silent fail-open*.
+
+**The bug:**
+- Hero 7's `_EDIT_TOOLS` includes `Write`
+- Hero 7's docstring claims it fires on "Edit/Write/MultiEdit"
+- But `claude_code_hooks._build_event` produces `proposed_diff = content` for the Write tool — raw file content with NO `--- after\n` marker
+- Hero 7's `_extract_after_block` required the marker → returned `""` → policy returned allow
+- **Result: Hero 7 silently no-op'd on every Write event from real Claude Code usage.**
+
+**How it survived:** 38 per-hero tests + 10/10 mutations all used the Edit `--- before/--- after` diff format. Mutation testing doesn't catch what isn't tested at all — same lesson as Bug 1.
+
+**The fix:** `_extract_after_block` now treats no-marker input as raw Write-format content (the whole input IS the after-block). 8 LOC in `mcp_server/engine/policies/live_style.py`.
+
+**The lock-in:** 3 regression tests in `tests/engine/test_qa_round_week9.py::TestI7_Bug4Regression`:
+1. Direct unit test of `_extract_after_block` with raw Write content
+2. End-to-end through `dispatch()` with a real preferences DB and a Write event
+3. **End-to-end through `claude_code_hooks.handle("PostToolUse")`** with a realistic Write JSON payload — the EXACT path that was silently broken
+
+### Integration QA structure (19 new tests)
+
+| Section | Tests | What it verifies |
+|---|---|---|
+| I1 — Default registration | 3 | All 6 heroes register; PRE/POST eligibility partition |
+| I2 — Verdict combination | 2 | Higher-priority block wins; lower in `other_blocking_policies`; pre-block doesn't poison post-event |
+| I3 — Event-type partition | 2 | Hero 1/2/4 silent on POST; Hero 7 silent on PRE — even with violating data planted |
+| I4 — Bug 1 regression | 1 | `signals.decisions` returns rows from real graph (column name `created_at AS timestamp`) |
+| I5 — Bug 2 regression | 2 | Signals reach `evaluate()` via kwarg; legacy `evaluate(event)` works via TypeError fallback |
+| I6 — Bug 3 regression | 2 | `enabled_by_default = False` actually opts out; default True still registers |
+| **I7 — Bug 4 regression** | **3** | **Write-tool content (no markers) handled; full Claude Code wiring path** |
+| I8 — Engine kill switch | 1 | `CODEVIRA_ENGINE=0` short-circuits before any policy; surfaces metadata |
+| I9 — Idempotency (six heroes) | 1 | Replaces stale Hero-2 test that only checked 5 heroes |
+| I10 — Crash isolation | 1 | A crashing policy doesn't break later policies in same dispatch |
+| I11 — Shared SignalContext | 1 | Two policies asking the same question hit the cache |
+
+### Mutation tests on the seams
+
+5 manual mutations, all caught:
+
+| # | Mutation | Caught by |
+|---|---|---|
+| M1 | Drop Hero 7 from `register_default_policies` tuple | 6 tests fail (I1, I6, I7, I9) |
+| M2 | Revert Bug 4 fix (drop the no-marker fallback) | 4 tests fail (I7 + Hero 7 unit) |
+| M3 | Drop TypeError fallback in `_safe_evaluate` | I5 legacy-policy test catches |
+| M4 | Drop `engine_disabled` metadata in dispatch | I8 catches |
+| M5 | Narrow `except Exception` to `except RuntimeError` | I10 catches |
+
+### Stale tests cleaned up
+
+- `tests/engine/test_anti_regression.py::test_idempotent_with_five_heroes` was named for Week 8's snapshot (5 heroes). The new `test_register_twice_no_duplicates_all_six` in `test_qa_round_week9.py` supersedes it for default-set drift detection.
+- `tests/engine/test_live_style.py::test_extract_after_block_malformed_returns_empty` enforced the OLD strict-marker contract (which was the bug). Replaced with two tests: one for genuinely-empty input (`None`/`""`), one for the new Write-format contract.
+
+### Test status
+
+449/449 across `tests/engine/` + `tests/test_paths.py` + `tests/test_setup_wizard.py` (was 429 → +19 integration QA tests, +1 net Hero 7 unit test from the Bug 4 retest split).
+
+### Bug ledger after Week 9
+
+| Bug | Caught at | Survived | Shape |
+|---|---|---|---|
+| Bug 1 | Week-5 R8 redo | 5 weeks (Heroes 0-1) | `signals.decisions` SQL column drift |
+| Bug 2 | Week-5 R8 redo | 5 weeks | runner didn't pass `signals` kwarg → silent no-op |
+| Bug 3 | Week-7 mutation M9 | 7 weeks | `enabled_by_default = False` had no effect |
+| **Bug 4** | **Week-9 integration QA** | **0 weeks (caught same week as Hero 7 ship)** | **Hero 7 silent no-op on Write tool from wiring** |
+
+The integration QA cadence is paying off: Bug 4 was caught the same week Hero 7 shipped — vs Bugs 1+2 surviving 5 weeks. The pattern is now *predictable*: "declared but not integrated" surfaces only when you actually exercise the wiring end-to-end.
+
+### What's next
+
+Week 10 — Hero 10 (AI Promotion Score). Per the dependency-aware sequencing in master plan.
+
+---
+
 ## Template for new entries
 
 ```markdown

@@ -48,15 +48,44 @@ _AFTER_BLOCK_RE = re.compile(
 
 def _extract_after_block(diff: str | None) -> str:
     """Pull the AFTER block from a codevira-format diff. Returns '' if
-    the diff is missing or malformed."""
+    the diff is missing or empty.
+
+    Two input shapes are supported (Bug-4 fix, Week-9 integration QA):
+      1. **Edit format** (Claude Code Edit/MultiEdit hook): the wiring
+         layer wraps old_string/new_string in markers::
+
+             --- before
+             {old}
+             --- after
+             {new}
+
+         We extract everything after ``^--- after\\n``.
+
+      2. **Write format** (Claude Code Write hook): the wiring layer
+         passes the file's full new contents directly, with no markers.
+         The whole diff IS the after-text.
+
+      The original implementation only handled shape #1. As a result,
+      Hero 7 silently no-op'd on every Write event in production while
+      the entire test suite passed (every test used shape #1). This is
+      the same Bug-3-shape failure as Bugs 1, 2, 3 — declared support
+      that isn't integrated.
+
+    Detection rule: if a `^--- after\\n` line is present in the diff,
+    use shape #1; otherwise treat as shape #2. The check is line-anchored
+    (MULTILINE), so a Write whose content happens to embed the literal
+    string ``--- after`` mid-content would NOT trigger shape #1 unless
+    that string starts a line.
+    """
     if not diff:
         return ""
     if len(diff) > _MAX_DIFF_BYTES:
         return ""  # too large; skip enforcement
     match = _AFTER_BLOCK_RE.search(diff)
-    if not match:
-        return ""
-    return match.group("after")
+    if match:
+        return match.group("after")
+    # Shape #2: no marker → diff is raw post-write content (Write tool).
+    return diff
 
 
 # ---------------------------------------------------------------------

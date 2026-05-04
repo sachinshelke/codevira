@@ -196,10 +196,8 @@ def cmd_init() -> None:
             cmd_full_rebuild()
     except Exception as e:
         print(f"  skipped ({e})")
-        try:
-            from mcp_server.crash_logger import log_crash
-            log_crash(e, context="codevira init: index build", project_path=str(cwd))
-        except Exception: pass
+        from mcp_server._safe_crash import safe_log_crash
+        safe_log_crash(e, context="codevira init: index build", project_path=str(cwd))
 
     # Step 6: Generate graph stubs
     print("  Generating graph stubs ...            ", end="", flush=True)
@@ -217,10 +215,8 @@ def cmd_init() -> None:
         print(f"done ({nodes} nodes)")
     except Exception as e:
         print(f"skipped ({e})")
-        try:
-            from mcp_server.crash_logger import log_crash
-            log_crash(e, context="codevira init: graph stubs", project_path=str(cwd))
-        except Exception: pass
+        from mcp_server._safe_crash import safe_log_crash
+        safe_log_crash(e, context="codevira init: graph stubs", project_path=str(cwd))
 
     # Step 7: Bootstrap roadmap
     print("  Bootstrapping roadmap ...             ", end="", flush=True)
@@ -235,10 +231,8 @@ def cmd_init() -> None:
         print("done")
     except Exception as e:
         print(f"skipped ({e})")
-        try:
-            from mcp_server.crash_logger import log_crash
-            log_crash(e, context="codevira init: roadmap bootstrap", project_path=str(cwd))
-        except Exception: pass
+        from mcp_server._safe_crash import safe_log_crash
+        safe_log_crash(e, context="codevira init: roadmap bootstrap", project_path=str(cwd))
 
     # Step 8: Install git hook
     if git_dir.exists():
@@ -272,10 +266,8 @@ def cmd_init() -> None:
             print("done")
         except Exception as e:
             print(f"skipped ({e})")
-            try:
-                from mcp_server.crash_logger import log_crash
-                log_crash(e, context="codevira init: git hook", project_path=str(cwd))
-            except Exception: pass
+            from mcp_server._safe_crash import safe_log_crash
+            safe_log_crash(e, context="codevira init: git hook", project_path=str(cwd))
 
     # Step 9: Auto-inject IDE configurations
     print()
@@ -297,10 +289,8 @@ def cmd_init() -> None:
                 print("no AI tools detected")
         except Exception as e:
             print(f"skipped ({e})")
-            try:
-                from mcp_server.crash_logger import log_crash
-                log_crash(e, context="codevira init: IDE inject", project_path=str(cwd))
-            except Exception: pass
+            from mcp_server._safe_crash import safe_log_crash
+            safe_log_crash(e, context="codevira init: IDE inject", project_path=str(cwd))
 
     # Step 10: Register in global memory (with git_remote for rename-resilient lookup)
     try:
@@ -321,10 +311,8 @@ def cmd_init() -> None:
         _write_metadata(data_dir, cwd)
     except Exception as e:
         print(f"  Global memory registration skipped ({e})")
-        try:
-            from mcp_server.crash_logger import log_crash
-            log_crash(e, context="codevira init: global memory register", project_path=str(cwd))
-        except Exception: pass
+        from mcp_server._safe_crash import safe_log_crash
+        safe_log_crash(e, context="codevira init: global memory register", project_path=str(cwd))
 
     # Print config for undetected tools — use the resolved binary path,
     # not the Python interpreter, so users get a clean command.

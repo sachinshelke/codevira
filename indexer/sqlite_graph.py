@@ -63,32 +63,16 @@ class SQLiteGraph:
     def _enable_wal_with_retry(self, attempts: int = 10, initial_delay: float = 0.02) -> None:
         """Best-effort enable of WAL journal mode.
 
-        Mirrors :meth:`indexer.global_db.GlobalDB._enable_wal_with_retry` —
-        the duplication is intentional for v1.8.1 (touching tested v1.8.0
-        code is higher risk than copying 25 lines). Survives concurrent-open
-        races by short-backoff retry and short-circuits when WAL is already
-        active. Falls through to default journal mode on persistent failure.
+        Pillar 3.3 (v2.0-rc.1): the implementation moved to the shared
+        helper ``indexer._sqlite_util.enable_wal_with_retry`` to dedup
+        the same logic in :class:`indexer.global_db.GlobalDB`. This
+        method is kept as a thin shim for backward compatibility; new
+        code should call the shared helper directly.
         """
-        import time as _time
-        try:
-            mode = self.conn.execute("PRAGMA journal_mode").fetchone()[0]
-            if str(mode).lower() == "wal":
-                return  # already WAL — nothing to do
-        except sqlite3.OperationalError:
-            pass  # fall through to the retry loop
-        delay = initial_delay
-        for _ in range(attempts):
-            try:
-                self.conn.execute("PRAGMA journal_mode=WAL")
-                return
-            except sqlite3.OperationalError as e:
-                if "locked" not in str(e).lower():
-                    raise
-                _time.sleep(delay)
-                delay = min(delay * 1.5, 0.2)
-        logger.warning(
-            "Could not enable WAL on %s after retries; continuing in default mode",
-            self.db_path,
+        from indexer._sqlite_util import enable_wal_with_retry
+        enable_wal_with_retry(
+            self.conn, self.db_path,
+            attempts=attempts, initial_delay=initial_delay,
         )
 
     @contextmanager

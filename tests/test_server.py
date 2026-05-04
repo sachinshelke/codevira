@@ -57,24 +57,51 @@ _mock_server_cls = MagicMock()
 # The Server("codevira") call returns an object with decorators
 _mock_server_instance = MagicMock()
 _mock_server_cls.return_value = _mock_server_instance
-# Make the decorators pass through (register nothing, return the original function)
+# Make the decorators pass through (register nothing, return the original function).
+# When new @server.<decorator>() handlers are added in mcp_server/server.py
+# (e.g., Hero 8 added list_resources + read_resource), they MUST be added
+# here too — otherwise the decorator returns a MagicMock that shadows the
+# real async function, which breaks any later test that imports the
+# module-level handler reference. (Symptom: "ValueError: a coroutine was
+# expected, got <MagicMock ...>".)
 _mock_server_instance.call_tool.return_value = lambda fn: fn
 _mock_server_instance.list_tools.return_value = lambda fn: fn
 _mock_server_instance.list_prompts.return_value = lambda fn: fn
 _mock_server_instance.get_prompt.return_value = lambda fn: fn
+_mock_server_instance.list_resources.return_value = lambda fn: fn
+_mock_server_instance.read_resource.return_value = lambda fn: fn
 
 sys.modules["mcp.server"].Server = _mock_server_cls
 sys.modules["mcp.types"].Tool = _mock_tool
 sys.modules["mcp.types"].TextContent = _mock_text_content
+# Hero 8 added @server.list_resources() / @server.read_resource() handlers
+# whose bodies do `from mcp.types import Resource` and `from pydantic
+# import AnyUrl`. Stub Resource here for parity with Tool / TextContent.
+# (When this list grows, the symptom is "ImportError: cannot import name
+# X from mcp.types" during test_decision_replay collection.)
+_mock_resource = type("Resource", (), {
+    "__init__": lambda self, **kw: self.__dict__.update(kw),
+})
+sys.modules["mcp.types"].Resource = _mock_resource
 
-# tree_sitter_language_pack stub: needs get_language, get_parser
+# tree_sitter_language_pack stub: needs get_language, get_parser.
+#
+# Only stub when the real module ISN'T already loaded. test_server's tests
+# don't actually call into tree-sitter (mcp_server/tools/code_reader uses
+# it but test_server tests cover server.py main loop, not code_reader).
+# Stubbing the real module's functions globally would corrupt
+# test_treesitter_parser.py's tests that run later. Skip the stub when
+# the real attributes already exist.
 _ts_mod = sys.modules["tree_sitter_language_pack"]
-_ts_mod.get_language = MagicMock(return_value=None)
-_ts_mod.get_parser = MagicMock(return_value=None)
+if not hasattr(_ts_mod, "get_language"):
+    _ts_mod.get_language = MagicMock(return_value=None)
+if not hasattr(_ts_mod, "get_parser"):
+    _ts_mod.get_parser = MagicMock(return_value=None)
 
 # tree_sitter stub: needs Node class
 _tree_sitter_mod = sys.modules["tree_sitter"]
-_tree_sitter_mod.Node = type("Node", (), {})
+if not hasattr(_tree_sitter_mod, "Node"):
+    _tree_sitter_mod.Node = type("Node", (), {})
 
 # Now we can safely import
 from mcp_server.server import call_tool  # noqa: E402

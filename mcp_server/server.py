@@ -1255,8 +1255,8 @@ def main():
     except Exception as e:
         # Watcher is best-effort; don't block server startup
         logger.warning("Could not start background watcher: %s", e)
-        try: log_crash(e, context="background watcher startup")
-        except Exception: pass
+        from mcp_server._safe_crash import safe_log_crash
+        safe_log_crash(e, context="background watcher startup")
 
     # v1.4: Run outcome analysis and rule inference on startup
     # This processes any sessions that haven't been analyzed yet.
@@ -1268,8 +1268,8 @@ def main():
         logger.info("Outcome analysis and rule inference complete")
     except Exception as e:
         logger.warning("Could not run startup learning: %s", e)
-        try: log_crash(e, context="startup learning pipeline")
-        except Exception: pass
+        from mcp_server._safe_crash import safe_log_crash
+        safe_log_crash(e, context="startup learning pipeline")
 
     # v1.5: Import global intelligence from cross-project memory
     try:
@@ -1280,8 +1280,8 @@ def main():
                         stats["preferences_imported"], stats["rules_imported"])
     except Exception as e:
         logger.warning("Could not sync global memory: %s", e)
-        try: log_crash(e, context="global memory import")
-        except Exception: pass
+        from mcp_server._safe_crash import safe_log_crash
+        safe_log_crash(e, context="global memory import")
 
     # v1.7: Enforce logs.retention_days from config (opt-in, default 0 = keep forever)
     try:
@@ -1289,8 +1289,8 @@ def main():
         enforce_retention()
     except Exception as e:
         logger.warning("Log retention cleanup failed: %s", e)
-        try: log_crash(e, context="log retention cleanup")
-        except Exception: pass
+        from mcp_server._safe_crash import safe_log_crash
+        safe_log_crash(e, context="log retention cleanup")
 
     # v1.7: Pre-warm the embedding model in a background thread so the first
     # search_codebase() call doesn't hit the MCP client's ~30s timeout

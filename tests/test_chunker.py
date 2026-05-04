@@ -16,13 +16,24 @@ from unittest.mock import patch
 import pytest
 
 # ---------------------------------------------------------------------------
-# Install a fake treesitter_parser module before importing chunker
+# Install a fake treesitter_parser module before importing chunker.
+#
+# Use the real module if available — pollution-free for downstream tests
+# that need attrs (get_symbol_source, etc.) the fake doesn't provide.
+# Only install the fake stub when the real module truly cannot be loaded
+# (no tree-sitter dependency in this test environment).
 # ---------------------------------------------------------------------------
-_fake_ts = types.ModuleType("indexer.treesitter_parser")
-_fake_ts.parse_file = lambda *a, **kw: None  # type: ignore[attr-defined]
-_fake_ts.get_language = lambda ext: None  # type: ignore[attr-defined]
-_fake_ts.EXTENSION_MAP = {}  # type: ignore[attr-defined]
-sys.modules.setdefault("indexer.treesitter_parser", _fake_ts)
+try:
+    import indexer.treesitter_parser  # noqa: F401 — populates sys.modules
+except Exception:
+    _fake_ts = types.ModuleType("indexer.treesitter_parser")
+    _fake_ts.parse_file = lambda *a, **kw: None  # type: ignore[attr-defined]
+    _fake_ts.get_language = lambda ext: None  # type: ignore[attr-defined]
+    _fake_ts.EXTENSION_MAP = {}  # type: ignore[attr-defined]
+    # Also stub the v2.0 export so downstream test files that import the
+    # real symbol don't crash if test_chunker happened to load first.
+    _fake_ts.get_symbol_source = lambda *a, **kw: {}  # type: ignore[attr-defined]
+    sys.modules["indexer.treesitter_parser"] = _fake_ts
 
 from indexer.chunker import (  # noqa: E402
     CodeChunk,

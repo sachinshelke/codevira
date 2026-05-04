@@ -325,6 +325,44 @@ def check_nudge_files() -> CheckResult:
     )
 
 
+def check_watcher_circuit() -> CheckResult:
+    """C10 — file watcher circuit breaker state (Pillar 3.2).
+
+    The background watcher runs incremental reindex on file changes.
+    If it fails repeatedly, a circuit breaker opens and skips reindexes
+    for an exponentially-backing-off window (1m → 30m cap). We surface
+    the state here so users see "watcher is in circuit-open backoff"
+    instead of silent staleness.
+    """
+    try:
+        from indexer.index_codebase import watcher_circuit_status
+        status = watcher_circuit_status()
+    except Exception as e:  # noqa: BLE001
+        return CheckResult(
+            "watcher_circuit", _WARN,
+            f"could not read watcher state: {e}",
+        )
+    if status["open"]:
+        return CheckResult(
+            "watcher_circuit", _FAIL,
+            f"watcher circuit OPEN ({status['consecutive_failures']} "
+            f"failures; {status['seconds_until_retry']:.0f}s until retry)",
+            fix_command="codevira report  # check crash log for the underlying error",
+            details=f"last error: {status['last_error']}",
+        )
+    if status["consecutive_failures"] > 0:
+        return CheckResult(
+            "watcher_circuit", _WARN,
+            f"watcher had {status['consecutive_failures']} recent failure(s) "
+            f"but circuit still closed",
+            details=f"last error: {status['last_error']}",
+        )
+    return CheckResult(
+        "watcher_circuit", _PASS,
+        "watcher circuit clean (no recent failures)",
+    )
+
+
 def check_engine_kill_switch() -> CheckResult:
     """C11 — CODEVIRA_ENGINE env var, if set, must be 0 or 1."""
     val = os.environ.get("CODEVIRA_ENGINE")
@@ -391,6 +429,7 @@ _CHECKS: tuple[Callable[[], CheckResult], ...] = (
     check_global_db,
     check_detected_ides,
     check_nudge_files,
+    check_watcher_circuit,
     check_engine_kill_switch,
     check_crash_log_size,
 )

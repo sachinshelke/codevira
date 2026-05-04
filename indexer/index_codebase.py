@@ -28,6 +28,87 @@ _bg_status: str = "idle"   # idle | running | done | error
 _bg_lock = threading.Lock()
 
 
+# ---------------------------------------------------------------------
+# Watcher circuit breaker (Pillar 3.2 of v2.0 master plan)
+# ---------------------------------------------------------------------
+#
+# Until v2.0-rc.1 the background watcher's debounce-triggered reindex
+# would log + continue on failure — but with no rate-limiting, a
+# persistently-failing reindex (e.g., disk full, permission lost mid-run)
+# would burn CPU and crash log space on every file change.
+#
+# Now: track consecutive failures; open the circuit after a threshold;
+# back off exponentially before letting another reindex through. Closed
+# circuit + successful reindex resets the counter.
+
+_CIRCUIT_OPEN_THRESHOLD = 3      # consecutive failures before opening
+_CIRCUIT_BACKOFF_INITIAL = 60.0  # 1 minute
+_CIRCUIT_BACKOFF_CAP = 1800.0    # 30 minutes
+
+# Module-level state — bounded; never grows.
+_watcher_circuit_lock = threading.Lock()
+_watcher_circuit_failures: int = 0
+_watcher_circuit_next_retry_at: float = 0.0
+_watcher_circuit_last_error: str = ""
+
+
+def watcher_circuit_status() -> dict:
+    """Snapshot of the circuit breaker state for ``codevira doctor`` /
+    diagnostics. Always returns a dict; never raises."""
+    with _watcher_circuit_lock:
+        now = time.time()
+        is_open = (
+            _watcher_circuit_failures >= _CIRCUIT_OPEN_THRESHOLD
+            and now < _watcher_circuit_next_retry_at
+        )
+        return {
+            "open": is_open,
+            "consecutive_failures": _watcher_circuit_failures,
+            "seconds_until_retry": max(
+                0.0, _watcher_circuit_next_retry_at - now,
+            ) if is_open else 0.0,
+            "last_error": _watcher_circuit_last_error,
+        }
+
+
+def _watcher_circuit_should_run() -> bool:
+    """Return True if the circuit is closed (or half-open)."""
+    with _watcher_circuit_lock:
+        if _watcher_circuit_failures < _CIRCUIT_OPEN_THRESHOLD:
+            return True
+        return time.time() >= _watcher_circuit_next_retry_at
+
+
+def _watcher_circuit_record_success() -> None:
+    """A successful reindex resets the circuit."""
+    global _watcher_circuit_failures, _watcher_circuit_next_retry_at, _watcher_circuit_last_error
+    with _watcher_circuit_lock:
+        _watcher_circuit_failures = 0
+        _watcher_circuit_next_retry_at = 0.0
+        _watcher_circuit_last_error = ""
+
+
+def _watcher_circuit_record_failure(err: BaseException) -> None:
+    """Increment failure count + compute backoff."""
+    global _watcher_circuit_failures, _watcher_circuit_next_retry_at, _watcher_circuit_last_error
+    with _watcher_circuit_lock:
+        _watcher_circuit_failures += 1
+        _watcher_circuit_last_error = f"{type(err).__name__}: {err}"
+        if _watcher_circuit_failures >= _CIRCUIT_OPEN_THRESHOLD:
+            # Geometric backoff: 60s, 120s, 240s, … capped at 30 min.
+            extra = _watcher_circuit_failures - _CIRCUIT_OPEN_THRESHOLD
+            backoff = min(
+                _CIRCUIT_BACKOFF_INITIAL * (2 ** extra),
+                _CIRCUIT_BACKOFF_CAP,
+            )
+            _watcher_circuit_next_retry_at = time.time() + backoff
+
+
+def reset_watcher_circuit() -> None:
+    """Tests only; production never calls this."""
+    _watcher_circuit_record_success()
+
+
 def _project_root() -> Path:
     return get_project_root()
 
@@ -196,10 +277,8 @@ def _get_changed_files(db: SQLiteGraph) -> list[tuple[str, str]]:
                     if current_hash != stored_hash:
                         changed.append((rel_path, current_hash))
                 except Exception as e:
-                    try:
-                        from mcp_server.crash_logger import log_crash
-                        log_crash(e, context="get_changed_files: hash check")
-                    except Exception: pass
+                    from mcp_server._safe_crash import safe_log_crash
+                    safe_log_crash(e, context="get_changed_files: hash check")
         except (OSError, RuntimeError) as e:
             # OSError covers InterruptedError (EINTR), PermissionError, etc.
             # RuntimeError covers "directory changed during iteration".
@@ -207,11 +286,8 @@ def _get_changed_files(db: SQLiteGraph) -> list[tuple[str, str]]:
                 "Skipping watch_dir %s due to filesystem error: %s",
                 watch_dir, e,
             )
-            try:
-                from mcp_server.crash_logger import log_crash
-                log_crash(e, context=f"_get_changed_files: walk of {watch_dir} aborted")
-            except Exception:
-                pass
+            from mcp_server._safe_crash import safe_log_crash
+            safe_log_crash(e, context=f"_get_changed_files: walk of {watch_dir} aborted")
             continue
 
     return changed
@@ -328,11 +404,8 @@ def cmd_full_rebuild():
                     "cmd_full_rebuild: skipping watch_dir %s due to filesystem error: %s",
                     watch_dir, e,
                 )
-                try:
-                    from mcp_server.crash_logger import log_crash
-                    log_crash(e, context=f"cmd_full_rebuild: walk of {watch_dir} aborted")
-                except Exception:
-                    pass
+                from mcp_server._safe_crash import safe_log_crash
+                safe_log_crash(e, context=f"cmd_full_rebuild: walk of {watch_dir} aborted")
                 continue
                         
         progress.update(task1, completed=100)
@@ -422,10 +495,8 @@ def cmd_incremental(quiet: bool = False, file_paths: list[str] | None = None):
                 try:
                     collection.delete(where={"file_path": fpath})
                 except Exception as e:
-                    try:
-                        from mcp_server.crash_logger import log_crash
-                        log_crash(e, context=f"incremental index: delete old chunks for {fpath}")
-                    except Exception: pass
+                    from mcp_server._safe_crash import safe_log_crash
+                    safe_log_crash(e, context=f"incremental index: delete old chunks for {fpath}")
 
                 try:
                     chunks = chunk_file(str(_project_root() / fpath), str(_project_root()))
@@ -444,10 +515,8 @@ def cmd_incremental(quiet: bool = False, file_paths: list[str] | None = None):
 
                 except Exception as e:
                     console.print(f"[red]Error indexing {fpath}: {e}[/red]")
-                    try:
-                        from mcp_server.crash_logger import log_crash
-                        log_crash(e, context=f"incremental index: indexing {fpath}")
-                    except Exception: pass
+                    from mcp_server._safe_crash import safe_log_crash
+                    safe_log_crash(e, context=f"incremental index: indexing {fpath}")
                     continue
     else:
         # Graph-only mode: update file hashes without semantic indexing
@@ -526,18 +595,41 @@ def start_background_watcher(quiet: bool = True):
                 self._timer.start()
 
         def _do_reindex(self):
+            # Circuit-breaker gate (Pillar 3.2): if too many consecutive
+            # failures, skip until the backoff window elapses.
+            if not _watcher_circuit_should_run():
+                status = watcher_circuit_status()
+                _watcher_logger.warning(
+                    "Background watcher circuit OPEN (%d failures, "
+                    "%.0fs until retry); skipping reindex.",
+                    status["consecutive_failures"],
+                    status["seconds_until_retry"],
+                )
+                return
             try:
                 _watcher_logger.debug("File change detected — running incremental reindex")
                 # Note: cmd_incremental acquires _chroma_write_lock internally,
                 # so we don't need to acquire it here.
                 cmd_incremental(quiet=quiet)
                 _watcher_logger.debug("Incremental reindex complete")
+                _watcher_circuit_record_success()
             except Exception as e:
-                _watcher_logger.warning("Background reindex failed: %s", e)
-                try:
-                    from mcp_server.crash_logger import log_crash
-                    log_crash(e, context="background watcher: incremental reindex")
-                except Exception: pass
+                _watcher_circuit_record_failure(e)
+                status = watcher_circuit_status()
+                if status["open"]:
+                    _watcher_logger.warning(
+                        "Background reindex failed (failure #%d): %s — "
+                        "circuit OPEN; backing off %.0fs",
+                        status["consecutive_failures"], e,
+                        status["seconds_until_retry"],
+                    )
+                else:
+                    _watcher_logger.warning(
+                        "Background reindex failed (failure #%d): %s",
+                        status["consecutive_failures"], e,
+                    )
+                from mcp_server._safe_crash import safe_log_crash
+                safe_log_crash(e, context="background watcher: incremental reindex")
 
         def on_modified(self, event):
             if not event.is_directory:
@@ -638,11 +730,8 @@ def start_background_full_index(callback=None) -> "threading.Thread":
             with _bg_lock:
                 _bg_status = "error"
             _watcher_logger.error("Background full-index failed: %s", e)
-            try:
-                from mcp_server.crash_logger import log_crash
-                log_crash(e, context="background full-index")
-            except Exception:
-                pass
+            from mcp_server._safe_crash import safe_log_crash
+            safe_log_crash(e, context="background full-index")
         finally:
             if callback is not None:
                 try:

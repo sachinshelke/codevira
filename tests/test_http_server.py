@@ -60,10 +60,17 @@ sys.modules["mcp.types"].Tool = _mock_tool
 sys.modules["mcp.types"].TextContent = _mock_text_content
 sys.modules["mcp.server.streamable_http_manager"].StreamableHTTPSessionManager = MagicMock()
 
-# tree-sitter stubs
-sys.modules["tree_sitter_language_pack"].get_language = MagicMock(return_value=None)
-sys.modules["tree_sitter_language_pack"].get_parser = MagicMock(return_value=None)
-sys.modules["tree_sitter"].Node = type("Node", (), {})
+# tree-sitter stubs — only when the real module isn't already loaded.
+# Overwriting real attributes here would corrupt test_treesitter_parser.py
+# tests that run later in the same session (they use the real library).
+_ts_lp = sys.modules["tree_sitter_language_pack"]
+if not hasattr(_ts_lp, "get_language"):
+    _ts_lp.get_language = MagicMock(return_value=None)
+if not hasattr(_ts_lp, "get_parser"):
+    _ts_lp.get_parser = MagicMock(return_value=None)
+_ts = sys.modules["tree_sitter"]
+if not hasattr(_ts, "Node"):
+    _ts.Node = type("Node", (), {})
 
 # Now safe to import
 from mcp_server.http_server import (  # noqa: E402

@@ -15,6 +15,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from mcp_server.cli import _set_project_dir_early, _detect_project_root_markers
+# Import these submodules at test-collection time so unittest.mock.patch's
+# string-based lookup ("mcp_server.http_server.run_http_server", etc.) works
+# regardless of which other test files were loaded first. Without these
+# imports, running test_cli.py AFTER tests that touch mcp_server but never
+# pull in http_server / launchd causes AttributeError on the patch.
+import mcp_server.http_server  # noqa: F401
+import mcp_server.launchd  # noqa: F401
 
 
 # ---------------------------------------------------------------------------

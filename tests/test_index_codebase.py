@@ -461,6 +461,24 @@ class TestGetIndexingStatus:
 class TestStartBackgroundFullIndex:
     """Start a full index rebuild in a background daemon thread."""
 
+    @pytest.fixture(autouse=True)
+    def _reset_chroma_write_lock(self):
+        """``start_background_full_index`` acquires the module-level
+        ``_chroma_write_lock`` before calling ``cmd_full_rebuild``. If a
+        prior test in this session leaked the lock (held it without
+        releasing), the background thread blocks indefinitely and the
+        mock never gets called → ``assert_called_once`` fails after 5s
+        join timeout. Force-release here so this test is robust to
+        upstream pollution."""
+        import threading
+        if idx_mod._chroma_write_lock.locked():
+            try:
+                idx_mod._chroma_write_lock.release()
+            except RuntimeError:
+                # Lock held by another thread — replace it
+                idx_mod._chroma_write_lock = threading.Lock()
+        yield
+
     def test_starts_daemon_thread(self):
         """The thread is started and is a daemon."""
         with patch.object(idx_mod, "cmd_full_rebuild") as mock_rebuild:

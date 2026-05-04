@@ -2287,6 +2287,94 @@ Without Week 14 clean: no v2.0 GA tag.
 
 ---
 
+## Week 14 — Comprehensive E2E Integration Testing (RC gate) (2026-05-04)
+
+### What this week is
+
+The release-candidate gate. **No new heroes.** All 10 heroes shipped in Weeks 4-13. This week verifies the v2.0 codebase as a whole meets the criteria for tagging v2.0.0.
+
+Per the user's earlier request ("we need to do complete round of testing once all week plans will be done"), Week 14 was added to the master plan as the RC gate.
+
+### Shipped: `tests/e2e/test_v2_release_candidate.py` — 28 tests across 8 sections
+
+| Section | Tests | Verifies |
+|---|---|---|
+| **A** All-heroes coexistence | 5 | Every event type fires through dispatch with all 9 default policies + Hero 8's resources; clean events allow; full-data events inject correctly; kill-switch disables uniformly |
+| **B** Stress test | 2 | 100 decisions / 500 outcomes / 50 fixes — dispatch p95 < 200ms; `build_timeline` p95 < 200ms |
+| **C** Failure-mode | 3 | Corrupt graph.db → dispatch returns allow (no crash); missing graph.db → graceful empty; buggy policy crashes are isolated |
+| **D** Concurrent sessions | 2 | Hero 3 contracts isolated by session_id (no cross-session bleed); SignalContext fresh per event (no state leak across dispatches) |
+| **E** Public API contract | 7 | Engine package exports; all 9 hero classes; Hero 8's decision_replay; MCP `list_resources` registered; CLI subcommands present; engine version exposed; **Pillar 1 `doctor` gap documented** |
+| **F** Schema migration | 2 | Old-style decisions (null context, null session_summary) read cleanly; decisions without outcomes still render |
+| **G** Final deep-re-audit | 5 | Every policy accepts `signals=None`; every policy has priority + name; universal `mode=off` silences everything; **Bug-3 final audit**: setting every `enabled_by_default=False` registers zero heroes |
+| **H** Cross-tool universality | 2 | Canonical nudge content (if shipped) consistent across IDE files; setup_wizard importable |
+
+### Honest finding: Pillar 1 `doctor` subcommand NOT shipped
+
+The master plan section 1.3 called for a `codevira doctor` health check (server responsive? watcher alive? IDE configs valid?). It was deprioritized to focus on hero work and **never shipped**.
+
+The RC gate test `test_pillar_1_doctor_subcommand_status` documents the gap explicitly. When `doctor` lands, the test self-flips to a positive assertion via `pytest.skip` — so we can't silently lose the gap-tracking.
+
+This is a **scope acknowledgment**, not a bug:
+- v2.0 is a hero release. 10 of 10 heroes shipped.
+- Pillar 1 (UX install) shipped partially (`setup` ✅, `config` ✅, `doctor` ❌, `clean` ✅).
+- Pillars 2-4 partial — Pillar 1.3 + 1.4 deferred to v2.0.x.
+
+### Bug ledger after Week 14
+
+**Zero new bugs.** The deep-audit-from-start discipline (post-Bug-1-8) held across all 10 heroes' final audit pass. The RC gate's 28 tests all pass on first run.
+
+| Bug | Caught at | Survived |
+|---|---|---|
+| 1 | Week-5 R8 | 5 weeks |
+| 2 | Week-5 R8 | 5 weeks |
+| 3 | Week-7 M9 | 7 weeks |
+| 4 | Week-9 QA | 0 weeks |
+| 5 | Week-11 QA | 0 weeks |
+| 6 | Week-11 QA | 0 weeks |
+| 7 | Week-11 deep re-audit | 2 weeks |
+| 8 | Week-11 deep re-audit | 1 week |
+| — | Week 12 | 0 |
+| — | Week 13 (initial + user-prompted) | 0 |
+| **— Week 14 RC gate** | n/a | **0 new bugs** |
+
+### Test status: **695 / 695 passing**
+
+```
+tests/engine/ + tests/e2e/ + tests/test_paths.py + tests/test_setup_wizard.py
++ tests/test_cli_insights.py + tests/test_cli_replay.py
+```
+
+(was 667 → +28 RC gate tests)
+
+### v2.0 RC gate criteria — STATUS
+
+- [x] All 10 heroes shipped (Weeks 4-13)
+- [x] Tier-0 pre-flight + deep-audit applied to every hero
+- [x] Per-week integration QA rounds (Weeks 9, 10, 11, 12, 13)
+- [x] All 8 known bugs fixed + locked in via regression tests
+- [x] RC gate (Week 14) clean
+- [x] Engine kill-switch works across all event types
+- [x] Per-session isolation works
+- [x] Stress + failure-mode + schema-migration verified
+- [ ] **Founder dogfood** — manual; pending real-world use
+- [ ] **Pillar 1.3 `doctor` subcommand** — deferred to v2.0.x post-GA
+
+### What's next
+
+**v2.0 GA tag.** The code is ready. Outstanding manual work:
+
+1. Founder dogfood (1 week of real codebase use)
+2. Recruit 3 alpha testers (per Pillar 4.5 in master plan)
+3. README rewrite (Pillar 4.1 — universality wedge headline)
+4. 30-second demo video (Pillar 4.2)
+5. Differentiation page (Pillar 4.3)
+6. v2.0-alpha.4 (or v2.0-rc.1) tag → ship to alpha testers
+7. After dogfood + tester feedback clean: v2.0.0 GA tag
+
+The build phase is complete. The launch phase begins.
+
+---
+
 ## Template for new entries
 
 ```markdown

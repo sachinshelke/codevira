@@ -35,6 +35,43 @@ Your AI agent reads the same 12 files every session before doing any actual work
 
 ---
 
+## What's new in v2.0
+
+> 30-second demo: **[docs/demo/codevira-demo.mp4](docs/demo/codevira-demo.mp4)**
+
+v2.0 ships **10 AI-guardian capabilities** that work together as a single engine intercepting every AI tool call (Edit, Write, prompt submit, session start). They turn the persistent memory layer from passive (the AI looks things up) into active (codevira protects you when the AI is about to do something inconsistent with your project's history).
+
+| # | Hero | What it does | Trigger |
+|---|---|---|---|
+| 4 | **Blast-Radius Veto** | Block edits to files with N+ callers without explicit acknowledgment | before Edit/Write |
+| 1 | **Decision Lock** | Refuse edits to files marked `do_not_revert` | before Edit/Write |
+| 2 | **Anti-Regression Memory** | Block edits that re-introduce previously-fixed bugs | before Edit/Write |
+| 3 | **Scope Contract Lock** *(off-by-default)* | Refuse edits to files outside what your prompt asked for | prompt → enforce on Edit |
+| 5 | **Cross-Session Consistency** | Inject related past decisions when you submit a prompt | prompt submit |
+| 9 | **Proactive Intent Inference** | Pre-fetch fixes/decisions/blast-radius for the AI's first turn | prompt submit |
+| 6 | **Token Budget Live View** | Track AI token spend per session; `codevira budget` shows breakdown | every tool call |
+| 7 | **Live Style Enforcement** | Warn on snake_case/camelCase/quote-style violations vs your project's preferences | after Edit/Write |
+| 10 | **AI Promotion Score** | Auto-score decisions by outcome history; `codevira insights` weekly digest | session start |
+| 8 | **Decision Replay** | Browse decision timeline as terminal / markdown / HTML; MCP resource for Claude Desktop; `codevira replay` CLI | on demand |
+
+All 10 work behind the scenes by default. No new vocabulary to learn.
+
+### v2.0 CLI surface
+
+```text
+codevira setup        # one-prompt setup; replaces `register`
+codevira doctor       # health check with ✓/⚠/✗ + exact fix commands
+codevira agents       # regen per-IDE nudge files (CLAUDE.md, AGENTS.md, etc.)
+codevira hooks install  # install Claude Code lifecycle hooks
+codevira budget       # token-spend per session  (Hero 6)
+codevira insights     # stable / reverted decisions  (Hero 10)
+codevira replay       # browse decision timeline  (Hero 8)
+```
+
+For the honest "vs Mem0 / claude-mem / MemPalace" comparison see **[docs/vs-other-memory-tools.md](docs/vs-other-memory-tools.md)**.
+
+---
+
 ## How It Works
 
 Codevira is a [Model Context Protocol](https://modelcontextprotocol.io) server that runs locally and gives any AI tool a structured, queryable memory of your codebase:
@@ -79,13 +116,29 @@ pip install codevira
 
 Installs the full toolkit (23 AI-facing MCP tools + 12 admin/CLI tools) out of the box. Semantic search downloads a ~90MB embedding model on first use.
 
-### 2. Register with your AI tools
+### 2. Set up every AI tool you have
 
 ```bash
-codevira register
+codevira setup
 ```
 
-This one-time global command injects Codevira's MCP config into all detected AI tools — Claude Code, Cursor, Windsurf, Claude Desktop, and Google Antigravity. Run it from anywhere; no project directory needed.
+This one-prompt v2.0 command:
+- Detects every AI tool installed on your machine (Claude Code, Cursor, Windsurf, Antigravity, Codex CLI, GitHub Copilot, Claude Desktop, Continue, Aider, Roo Code, Cline)
+- Writes per-IDE nudge files so each tool knows codevira exists (`CLAUDE.md`, `AGENTS.md`, `.cursor/rules/codevira.mdc`, `.windsurfrules`, `GEMINI.md`, `.github/copilot-instructions.md`)
+- Installs Claude Code lifecycle hooks (SessionStart, PreToolUse, PostToolUse, UserPromptSubmit, Stop) — turns codevira from passive memory into the **AI guardian** described above
+- Injects MCP server config into each detected tool
+
+Idempotent — re-run any time to re-sync. Use `--dry-run` to preview, `--ide=claude` to limit to one tool.
+
+> **Migrating from v1.x?** If you've been using `codevira register`, switch to `codevira setup` — register only injects MCP server config; setup ALSO writes the nudge files + lifecycle hooks that power the v2.0 hero capabilities.
+
+### 2.5 Verify the install (optional but recommended)
+
+```bash
+codevira doctor
+```
+
+Runs 9 health checks, prints `✓` / `⚠` / `✗` per check, and shows the **exact command** to fix anything that's not green. Read-only — never modifies anything.
 
 ### 3. Start using
 

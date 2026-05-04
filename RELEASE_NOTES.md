@@ -1,3 +1,111 @@
+# v2.0-rc.1 — Release candidate: 10/10 heroes + universality wedge locked
+
+**Released:** 2026-05-05
+**Test status:** 735 / 735 passing across all suites
+
+The build phase of v2.0 is complete. All 10 heroes from the master plan
+shipped. The cross-tool wedge promise has automated guards. Pillar 1
+(`doctor`) and Pillar 2 (`agents`, `hooks install`) commands are wired.
+
+## All 10 heroes shipped
+
+| # | Hero | Type | Week shipped |
+|---|---|---|---|
+| 4 | Blast-Radius Veto | PreToolUse blocker | 4 |
+| 1 | Decision Lock | PreToolUse blocker | 5 |
+| 5 | Cross-Session Consistency | UserPromptSubmit injector | 6 |
+| 6 | Token Budget Live View | Stop / PostToolUse | 7 |
+| 2 | Anti-Regression Memory | PreToolUse blocker | 8 |
+| 7 | Live Style Enforcement | PostToolUse warner | 9 |
+| 10 | AI Promotion Score | SessionStart injector + `codevira insights` CLI | 10 |
+| 9 | Proactive Intent Inference | UserPromptSubmit injector | 11 |
+| 3 | Scope Contract Lock | UserPromptSubmit + PreToolUse (off-by-default) | 12 |
+| 8 | Decision Replay | MCP resource + `codevira replay` CLI | 13 |
+
+## New CLI commands in v2.0
+
+- `codevira setup` — detect every AI tool, configure all (replaces `register`; `register` deprecated but still works)
+- `codevira doctor` — health check with ✓/⚠/✗ + exact fix commands (Pillar 1.3)
+- `codevira agents [--ide IDE] [--dry-run]` — regenerate per-IDE nudge files (Pillar 2.2)
+- `codevira hooks install` — install Claude Code lifecycle hooks (Pillar 2.3)
+- `codevira budget` — token-spend per session (Hero 6)
+- `codevira insights [--since 7d]` — stable / reverted decisions + emerging patterns (Hero 10)
+- `codevira replay [--query Q] [--format html|md|terminal]` — browse decision timeline (Hero 8)
+
+## New MCP resources
+
+- `codevira://decisions` — full decision timeline as HTML
+- `codevira://decisions/<query>` — URL-decoded substring filter
+
+## Test coverage
+
+| Suite | Tests | What it covers |
+|---|---|---|
+| `tests/engine/` | ~580 | Per-hero unit + integration QA rounds (Weeks 9-13) |
+| `tests/e2e/test_v2_release_candidate.py` | 28 | RC gate (Week 14) — 8 sections incl. coexistence, stress, failure-mode |
+| `tests/e2e/test_cross_tool_universality.py` | 4 | **The North Star promise** — same memory in every tool |
+| `tests/test_doctor.py` | 21 | Pillar 1.3 health-check coverage |
+| `tests/test_cli_agents.py` | 16 | Pillar 2.2 + 2.3 + **wedge consistency** (template drift catches) |
+| `tests/test_cli_replay.py` | 9 | Hero 8 CLI subprocess |
+| `tests/test_cli_insights.py` | 2 | Hero 10 CLI subprocess |
+
+## 8 bugs caught + locked in via regression tests
+
+Honest bug ledger across the build phase:
+
+| Bug | Caught at | Survived | Shape |
+|---|---|---|---|
+| 1 | Week-5 R8 redo | 5 weeks | `signals.decisions` SQL column drift |
+| 2 | Week-5 R8 redo | 5 weeks | runner missed signals kwarg |
+| 3 | Week-7 mutation M9 | 7 weeks | `enabled_by_default` flag was dead |
+| 4 | Week-9 integration QA | 0 weeks | Hero 7 silent on Write tool |
+| 5 | Week-11 user-prompted QA | 0 weeks | Hero 9 path-traversal escape |
+| 6 | Week-11 user-prompted QA | 0 weeks | Hero 9 empty Blast radius section |
+| 7 | Week-11 deep re-audit | 2 weeks | Hero 5 SQL parameterization |
+| 8 | Week-11 deep re-audit | 1 week | CLI `--project` Bug-8 parity |
+
+After Week 11, the deep-audit-from-start discipline kicked in and zero
+new bugs surfaced through Weeks 12-14.
+
+## Performance budget (verified in stress test)
+
+- Dispatch p95 with all 9 PreToolUse-eligible policies + 100 decisions
+  / 500 outcomes / 50 fixes: < 200ms
+- `build_timeline` with 100 decisions: < 200ms
+- `codevira doctor` total runtime: < 2s
+
+## Known gaps (deferred to v2.0.x)
+
+These were on the master plan but explicitly deprioritized to focus on heroes:
+
+- `codevira test-ide <name>` smoke test
+- Pillar 3 backlog: crash_logger rotation, watcher circuit breaker, shared `_sqlite_util`, 14 silent-exception sites, config.yaml hot-reload
+- `[ui]` extra with `questionary` (interactive prompts work via plain `input()`)
+- Pillar 1.4 error-message audit ("→ to fix:" suffix everywhere)
+
+See `docs/v2-completion-plan.md` for the full pending list.
+
+## Upgrading from alpha.x
+
+```bash
+pipx upgrade codevira
+codevira setup    # IF you used `codevira register` before, switch to setup
+                  # — register only injects MCP config; setup ALSO writes
+                  # nudge files + lifecycle hooks (the wedge promise)
+codevira doctor   # verify everything's healthy
+```
+
+## What's next before v2.0 GA
+
+- Founder dogfood (1 week real codebase use)
+- Recruit 3 alpha testers
+- README v2.0 rewrite (heroes section + sharpened wedge headline) — in progress
+- Differentiation page vs Mem0/claude-mem/MemPalace — in progress
+- Pillar 3 backlog cleanup (defer to v2.0.x if not blocking)
+- Tag v2.0.0 GA + HN submission
+
+---
+
 # v2.0-alpha.2 — Three more heroes + Bug 3 caught
 
 **Released:** 2026-05-04

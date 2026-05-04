@@ -1823,6 +1823,99 @@ This is the rhythm that's catching bugs in 0 weeks instead of 5.
 
 ---
 
+## Week 11 — Hero 9 (Proactive Intent Inference) (2026-05-04)
+
+### Shipped
+
+**Hero 9: ProactiveIntentInference — eighth policy hero, second UserPromptSubmit policy.**
+
+Pre-fetches intent-specific context UPFRONT so the AI's first turn already has what it would otherwise burn 3-5 round-trips fetching. Differs from Hero 5 (Cross-Session Consistency) which surfaces past *decisions* by keyword search; Hero 9 surfaces *intent-tailored* context — fixes for fix-bug, blast radius for refactor, top-stable outcomes for add-feature.
+
+Three pieces:
+
+1. **Pure intent classifier** (`mcp_server/engine/intent_classifier.py`, 165 LOC):
+   - Regex-based, ordered specificity (`fix-bug` checked before `test`/`docs` so "fix the broken test" classifies as fix-bug).
+   - 6 concrete intents + `other` fallback.
+   - File-mention extractor with extension allowlist (defends against `email@example.com`, `v5.0.1`, etc.).
+
+2. **Policy** (`mcp_server/engine/policies/intent_inference.py`, 270 LOC):
+   - Fires on USER_PROMPT_SUBMIT, priority=20 (below Hero 5's 30 — Hero 5's section comes first in combined inject).
+   - Per-intent signal fetcher: fix-bug → fixes + decisions + impact; add-feature → outcomes; refactor → impact + decisions; explain → decisions + outcomes; test/docs → no inject; other → minimal.
+   - Each signal call wrapped try/except — Hero 9 NEVER lets a signal failure propagate (same robustness as Heroes 5, 7, 10).
+   - 6 env-var knobs (mode, max_files, min_prompt_chars, max_fixes_per_file, max_decisions_per_file, include_impact).
+
+3. **Spec** (`docs/heroes/09-intent-inference.md`).
+
+### Tests + mutation testing
+
+- **45 unit tests** in `tests/engine/test_intent_inference.py` (9 classifier + 6 file-extractor + 10 acceptance + 9 behavioral + 5 edge cases + 2 real-DB + 2 registration + 1 perf + 1 wiring path)
+- **12 integration tests** in `tests/engine/test_qa_round_week11.py` (default registration, dual-inject ordering, kill switch on UserPromptSubmit, crash isolation Hero 9 ↔ Hero 5, Bug 3 regression for H9, cache sharing, wiring with refactor intent, wiring with empty prompt, multi-policy crash isolation)
+- **10 mutations from start, 9 caught + 1 documented redundant**:
+  - M1 event_type gate flip → 7 fail
+  - M2 mode=off gate flip → 8 fail
+  - **M3 NO_INJECT_INTENTS bypass → not caught** (observably redundant; same pattern as Hero 2's M7. The fetcher's intent-set acts as a second-layer gate, so removing the explicit gate has no observable effect)
+  - M4 classifier specificity broken (test wins over fix-bug) → 2 fail
+  - M5 priority drift → exact catch
+  - M6 handles drift → 3 fail
+  - M7 enabled_by_default=False → registration tests catch
+  - M8 drop extension allowlist → caught after **strengthening test** (initial test inputs were rejected by the regex's own length cap, not the allowlist; fixed)
+  - M9 classifier OTHER fallback → exact catch
+  - M10 drop fixes try/except → exact catch
+
+**M8 finding**: my initial allowlist test inputs (`foo.unknown_ext`, `v5.0.1`, `email@example.com`) were already rejected by the regex itself (length cap, digit-only "extension", boundary requirements). The allowlist was untested. Strengthened with `data.csv` / `archive.zip` / `a.exe` (regex-valid but not in the code-file allowlist). M8 now caught.
+
+### Tier-0 pre-flight discipline (Bug-4 reinforcement)
+
+- ✅ **Real DB integration**: `record_fix()` + `INSERT INTO decisions` against real `SQLiteGraph`.
+- ✅ **Behavioral spies**: `_FakeSignals` records every fixes/decisions/impact/outcomes call to verify gate ordering.
+- ✅ **End-to-end dispatch**: registers all 8 heroes, fires UserPromptSubmit with realistic JSON, asserts combined inject contains BOTH Hero 5 + Hero 9 sections.
+- ✅ **End-to-end through `claude_code_hooks.handle("UserPromptSubmit")`** — Bug-4 lesson; UserPromptSubmit was already a proven path (Hero 5 ships through it) but verifies Hero 9 surfaces correctly through `additionalContext`.
+- ✅ **Bug-shape audit**: every contract field exercised; no dead fields. The `_NO_INJECT_INTENTS` set is documented as observably redundant (M3) per Lesson #18.
+
+### Surprises
+
+- **Combined inject ordering matters for UX.** Hero 5 (priority 30) > Hero 9 (priority 20), so user sees "Prior decisions" SECTION first, then "Codevira pre-fetch" section. K4 locks this ordering — if a refactor swaps priorities, the test must update explicitly.
+- **The `_NO_INJECT_INTENTS` gate is observably redundant** given the per-intent fetcher's intent-set check. Same pattern as Hero 2's M7. Kept for clarity; documented in code.
+- **File-extension allowlist test gap**. My initial allowlist test fed inputs the regex itself rejected — so the allowlist was actually untested. Caught by M8 only after strengthening the test. Lesson learned: when verifying a defensive filter, exercise it with INPUTS THAT THE EARLIER LAYERS WOULD ACCEPT.
+
+### What changed in the spec
+
+- Added explicit specificity-ordering rule: `fix-bug` checked before `test`/`docs` so compound prompts like "fix the broken test" classify correctly.
+- Added file-extension allowlist (originally specified but not enumerated).
+- Added per-signal try/except wrapping in `_fetch_signals_for_intent` (originally implicit in "advisory robustness" risk row).
+
+### Founder dogfood notes
+
+Pending — Hero 9 ships into v2.0-alpha.3 (next bundle, after Heroes 7, 10, 9). Founder dogfood requires:
+1. ≥ 1 week of regular use so fix_history + decisions tables populate.
+2. Type a prompt like "fix the auth.py login bug" in Claude Code.
+3. Verify the SessionStart inject (Hero 10) AND UserPromptSubmit inject (Hero 5 + Hero 9) both surface correctly.
+
+### Test status
+
+562/562 across `tests/engine/` + `tests/test_paths.py` + `tests/test_setup_wizard.py` + `tests/test_cli_insights.py` (was 505 → +45 unit + 12 integration QA).
+
+### Stale Week-9 + Week-10 tests refreshed
+
+- `test_qa_round_week9.py::test_all_default_heroes_registered` — bumped expected set 7 → 8 (added `intent_inference`).
+- `test_qa_round_week10.py::test_seven_heroes_registered_after_week_10` → renamed to `test_default_heroes_registered_after_week_11`, set bumped 7 → 8.
+
+### Open questions / decisions deferred
+
+- **LLM-based intent classifier** — v2.1 with optional `CODEVIRA_INTENT_INFERENCE_LLM` env var pointing at local Ollama or similar (still local-first).
+- **Multi-language regex patterns** — v2.1 (i18n).
+- **Hero 5 / Hero 9 dedup of overlapping decisions** — both inject decisions on auth.py if user types "fix auth.py" with a recorded auth decision. Documented as expected; v2.1 may dedup.
+- **Intent classifier edge cases**: very long prompts (we don't truncate before classifying), multi-intent prompts ("fix and refactor"), code blocks in the prompt — all classify as best-effort. v2.1 may add a second-pass disambiguator.
+
+### What's next
+
+**Week 12 — Hero 3 (Scope Contract Lock)**: highest-risk hero. Parses user intent into a scope contract (allowed files, change types, max LOC delta), enforced on PreToolUse. Off by default; opt-in per project. ~400 LOC. Targets v2.0-alpha.3 bundle.
+
+Heroes shipped: 4, 1, 5, 6, 2, 7, 10, 9 (**8 of 10**).
+Heroes remaining for v2.0 GA: 3 (Week 12), 8 (Week 13).
+
+---
+
 ## Template for new entries
 
 ```markdown

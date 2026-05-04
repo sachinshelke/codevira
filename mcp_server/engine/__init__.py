@@ -44,6 +44,7 @@ def register_default_policies() -> None:
     from mcp_server.engine.policies.blast_radius import BlastRadiusVeto
     from mcp_server.engine.policies.cross_session import CrossSessionConsistency
     from mcp_server.engine.policies.decision_lock import DecisionLock
+    from mcp_server.engine.policies.intent_inference import ProactiveIntentInference
     from mcp_server.engine.policies.live_style import LiveStyleEnforcement
     from mcp_server.engine.policies.token_budget import TokenBudgetPersist
 
@@ -55,6 +56,7 @@ def register_default_policies() -> None:
         AntiRegression,              # Hero 2 (Week 8)
         LiveStyleEnforcement,        # Hero 7 (Week 9)
         AIPromotionScore,            # Hero 10 (Week 10)
+        ProactiveIntentInference,    # Hero 9 (Week 11)
     ):
         if not policy_cls.enabled_by_default:
             continue  # opt-in only — caller registers manually

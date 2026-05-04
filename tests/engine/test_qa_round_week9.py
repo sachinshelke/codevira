@@ -152,6 +152,7 @@ class TestI1_DefaultRegistration:
             "anti_regression",          # Hero 2 (Week 8)
             "live_style_enforcement",   # Hero 7 (Week 9)
             "ai_promotion_score",       # Hero 10 (Week 10)
+            "intent_inference",         # Hero 9 (Week 11)
         }, f"default-hero set mismatch — got {sorted(names)}"
 
     def test_pre_tool_use_eligible_policies(self):

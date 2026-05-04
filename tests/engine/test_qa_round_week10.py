@@ -148,15 +148,16 @@ def _plant_stable_decision(g, file_path: str, decision_text: str,
 
 class TestJ1_DefaultRegistration:
 
-    def test_seven_heroes_registered_after_week_10(self):
+    def test_default_heroes_registered_after_week_11(self):
+        """As of Week 11, the default set is 8 heroes. Future heroes
+        must update this assertion explicitly — drift in either direction
+        (missing or unexpected) is a bug.
+        """
         from mcp_server.engine import (
             register_default_policies, registered_policies,
         )
         register_default_policies()
         names = {p.name for p in registered_policies()}
-        # Updated baseline post-Hero 10. The Week-9 round's similar test
-        # was bumped from 6 to 7 in Hero 10's commit; this is the
-        # explicit lock-in.
         expected = {
             "blast_radius_veto",         # Hero 4 (Week 4)
             "decision_lock",             # Hero 1 (Week 5)
@@ -165,9 +166,10 @@ class TestJ1_DefaultRegistration:
             "anti_regression",           # Hero 2 (Week 8)
             "live_style_enforcement",    # Hero 7 (Week 9)
             "ai_promotion_score",        # Hero 10 (Week 10)
+            "intent_inference",          # Hero 9 (Week 11)
         }
         assert names == expected, (
-            f"7-hero set drift — got {sorted(names)}, "
+            f"8-hero set drift — got {sorted(names)}, "
             f"expected {sorted(expected)}"
         )
 

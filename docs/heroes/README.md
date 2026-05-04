@@ -33,7 +33,7 @@ Specs cap at ~500 lines each.
 | 2 | **Anti-Regression Memory** | [`02-anti-regression.md`](./02-anti-regression.md) | 8 | ✅ shipped Week 8; Tier-0 pre-flight from start; 9/10 mutations caught (M7 documented as observably-redundant) |
 | 7 | **Live Style Enforcement** | [`07-live-style.md`](./07-live-style.md) | 9 | ✅ shipped Week 9; Tier-0 pre-flight (38 tests, 10/10 mutations); Bug 4 caught in Week-9 integration QA round (silent no-op on Write tool — fixed) |
 | 10 | **AI Promotion Score** | [`10-ai-promotion.md`](./10-ai-promotion.md) | 10 | ✅ shipped Week 10; Tier-0 pre-flight from start (35 + 2 subprocess tests, real outcomes DB, 10/10 mutations); first SESSION_START policy + `codevira insights` CLI |
-| 9 | **Proactive Intent Inference** | `09-intent-inference.md` (TBD) | 11 | spec pending |
+| 9 | **Proactive Intent Inference** | [`09-intent-inference.md`](./09-intent-inference.md) | 11 | ✅ shipped Week 11; Tier-0 pre-flight (45 unit + 12 integration QA, real DB, 9/10 mutations + 1 documented redundant); regex classifier + per-intent fetcher; second UserPromptSubmit policy alongside Hero 5 |
 | 3 | **Scope Contract Lock** | `03-scope-contract.md` (TBD) | 12 | spec pending |
 | 8 | **Decision Replay** | `08-decision-replay.md` (TBD) | 13 | spec pending |
 

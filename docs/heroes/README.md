@@ -31,7 +31,7 @@ Specs cap at ~500 lines each.
 | 5 | **Cross-Session Consistency** | [`05-cross-session.md`](./05-cross-session.md) | 6 | ✅ shipped Week 6; R1-R8 (1 test gap on short-prompt-skip caught + fixed) |
 | 6 | **Token Budget Live View** | [`06-token-budget.md`](./06-token-budget.md) | 7 | ✅ shipped Week 7; Tier-0 pre-flight from start (10 mutations + behavioral spies + real CLI subprocess); Bug 3 caught (enabled_by_default flag was dead) |
 | 2 | **Anti-Regression Memory** | [`02-anti-regression.md`](./02-anti-regression.md) | 8 | ✅ shipped Week 8; Tier-0 pre-flight from start; 9/10 mutations caught (M7 documented as observably-redundant) |
-| 7 | **Live Style Enforcement** | `07-live-style.md` (TBD) | 9 | spec pending |
+| 7 | **Live Style Enforcement** | [`07-live-style.md`](./07-live-style.md) | 9 | ✅ shipped Week 9; Tier-0 pre-flight from start (38 tests, real preferences DB, 10/10 mutations caught); 0 retrospective rounds |
 | 10 | **AI Promotion Score** | `10-ai-promotion.md` (TBD) | 10 | spec pending |
 | 9 | **Proactive Intent Inference** | `09-intent-inference.md` (TBD) | 11 | spec pending |
 | 3 | **Scope Contract Lock** | `03-scope-contract.md` (TBD) | 12 | spec pending |

@@ -11,9 +11,9 @@ Heroes that have shipped:
   - Hero 5: cross_session.CrossSessionConsistency (Week 6)
   - Hero 6: token_budget.TokenBudgetPersist (Week 7)
   - Hero 2: anti_regression.AntiRegression (Week 8)
+  - Hero 7: live_style.LiveStyleEnforcement (Week 9)
 
 Heroes still scaffolded but not implemented:
-  - Hero 7: live_style.* (Week 9)
   - Hero 10: ai_promotion.* (Week 10)
   - Hero 9: intent_inference.* (Week 11)
   - Hero 3: scope_contract.* (Week 12)
@@ -25,6 +25,7 @@ from mcp_server.engine.policies.anti_regression import AntiRegression
 from mcp_server.engine.policies.blast_radius import BlastRadiusVeto
 from mcp_server.engine.policies.cross_session import CrossSessionConsistency
 from mcp_server.engine.policies.decision_lock import DecisionLock
+from mcp_server.engine.policies.live_style import LiveStyleEnforcement
 from mcp_server.engine.policies.token_budget import TokenBudgetPersist
 
 __all__ = [
@@ -32,5 +33,6 @@ __all__ = [
     "BlastRadiusVeto",
     "CrossSessionConsistency",
     "DecisionLock",
+    "LiveStyleEnforcement",
     "TokenBudgetPersist",
 ]

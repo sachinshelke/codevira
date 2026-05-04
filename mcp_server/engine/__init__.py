@@ -43,6 +43,7 @@ def register_default_policies() -> None:
     from mcp_server.engine.policies.blast_radius import BlastRadiusVeto
     from mcp_server.engine.policies.cross_session import CrossSessionConsistency
     from mcp_server.engine.policies.decision_lock import DecisionLock
+    from mcp_server.engine.policies.live_style import LiveStyleEnforcement
     from mcp_server.engine.policies.token_budget import TokenBudgetPersist
 
     for policy_cls in (
@@ -51,6 +52,7 @@ def register_default_policies() -> None:
         CrossSessionConsistency,     # Hero 5 (Week 6)
         TokenBudgetPersist,          # Hero 6 (Week 7)
         AntiRegression,              # Hero 2 (Week 8)
+        LiveStyleEnforcement,        # Hero 7 (Week 9)
     ):
         if not policy_cls.enabled_by_default:
             continue  # opt-in only — caller registers manually

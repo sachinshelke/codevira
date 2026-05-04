@@ -1470,6 +1470,104 @@ Heroes remaining for v2.0 GA: 7, 10, 9, 3, 8 (Weeks 9-13).
 
 ---
 
+## Week 9 — Hero 7 (Live Style Enforcement) (2026-05-04)
+
+### Shipped
+
+**Hero 7: LiveStyleEnforcement — sixth policy hero, first PostToolUse policy.**
+
+Where Heroes 1, 2, 4 fire on PreToolUse and block, Hero 7 fires on PostToolUse and **warns only** — it scans the AI's just-applied diff for violations of recorded style preferences (snake_case vs camelCase, single vs double quotes, tabs vs spaces) and surfaces them as advisories. Style is never blocking.
+
+- `mcp_server/engine/policies/live_style.py` — 416 LOC. Priority=20 (advisory; runs after blocking policies). Env vars: `CODEVIRA_LIVE_STYLE_MODE` (off/warn, default warn), `CODEVIRA_LIVE_STYLE_MIN_FREQ` (skip preferences with frequency<N, default 3).
+- `tests/engine/test_live_style.py` — 647 LOC, 38 tests (8 acceptance + 9 behavioral + 11 detector unit + 1 dispatch end-to-end + 2 registration + 7 edge cases including the M9-closing `test_unrecognized_category_no_violations`).
+- `docs/heroes/07-live-style.md` — full spec written before code.
+- Registered in `mcp_server/engine/__init__.py` and re-exported from `mcp_server/engine/policies/__init__.py`.
+
+Built-in detectors (regex-based, language-aware via `target_file.suffix`):
+
+| Category | Signal | Detector |
+|---|---|---|
+| naming | snake_case | scan `def`/`class`/`function` declarations for camelCase/PascalCase identifiers |
+| naming | camelCase | inverse — flag snake_case identifiers |
+| quotes | double-quotes | count single-quoted strings in non-comment lines |
+| quotes | single-quotes | inverse |
+| indent | spaces / 4-spaces | count leading-tab lines |
+| indent | tabs | count leading-space lines |
+
+Skips PascalCase class names (constructor convention) and leading-underscore privates (`_helper`, `__init__`). Unrecognized `(category, signal)` pairs are silent no-ops — v2.1 will add user-defined detectors.
+
+### R3 mutation testing
+
+10 mutations from start, 10 caught:
+
+| # | Mutation | Caught by |
+|---|---|---|
+| M1 | event_type gate flip | behavioral spy `prefs_calls` (test_no_call_for_pretooluse) |
+| M2 | tool_name gate flip | behavioral spy (test_no_call_for_read_tool) |
+| M3 | target_file None gate flip | behavioral spy (test_no_call_for_target_None) |
+| M4 | mode=off gate flip | behavioral spy (test_no_call_for_mode_off) |
+| M5 | signals None gate flip | direct test (test_no_call_for_signals_None) |
+| M6 | priority demotion | priority-value test |
+| M7 | mode validation | config test |
+| M8 | min_freq filter inversion | direct test (test_min_freq_filters_low_confidence) |
+| M9 | unrecognized-category fallback | **test_unrecognized_category_no_violations** (added during R3) |
+| M10 | empty-after-block gate | direct test |
+
+**M9 deserves a callout.** The original test set verified known categories (naming, quotes, indent) work. M9 mutated the unrecognized-category fallback from `return []` to `return [{"line": 0, "snippet": "?", "rule": "spurious"}]`. The mutation should have triggered spurious warnings for any preference with an unknown signal — but no test covered this path. Added `test_unrecognized_category_no_violations` which records a `category="other", signal="use_dataclasses"` preference and verifies the policy returns allow with no warnings. Mutation now caught.
+
+This is the same pattern as Bug 3 in Week 7 (`enabled_by_default = False` had no effect): a documented fallback path that was never tested. Tier-0 pre-flight discipline + mutation testing surfaces these.
+
+### Tier-0 pre-flight discipline at start
+
+Per Lessons #15-#17 (now muscle memory):
+
+- ✅ **Real-DB integration**: `TestEngineDispatch::test_hero_7_fires_through_dispatch` uses `db.add_preference()` against a real preferences table via tmp_path fixture, then registers all 6 heroes and fires a real PostToolUse Edit event with a snake_case-violating diff.
+- ✅ **Behavioral spies**: `_FakeSignals.prefs_calls` records every `signals.preferences()` call. 4 gate tests assert `prefs_calls == 0` to verify gates short-circuit before signal fetch (vs only checking the verdict).
+- ✅ **Filter-honoring fake**: `_FakeSignals.preferences()` honors the `min_frequency` parameter so the min_freq filter test is real, not mocked.
+- ✅ **End-to-end dispatch**: registers all 6 heroes, fires a real PostToolUse with diff containing `def fetchUserMetadata():` and recorded snake_case preference (frequency=42), asserts warn verdict with violation message containing "fetchUserMetadata".
+- ✅ **Bug-shape audit (Lesson #18)**: every contract field used. `name = "live_style_enforcement"` → metadata + dedup. `handles = (POST_TOOL_USE,)` → dispatch eligibility. `enabled_by_default = True` → `register_default_policies` (post-Bug-3 fix). `priority = 20` → dispatch sort + asserted in `test_priority_value_stable`. `_DEFAULT_MODE`, `_DEFAULT_MIN_FREQ`, `_MAX_DIFF_BYTES`, `_MAX_VIOLATIONS_PER_DETECTOR` all exercised.
+
+### Surprises
+
+- **Detector noise from PascalCase class names.** First version flagged `class UserModel:` as a snake_case violation. Class names are PascalCase by convention even in snake_case projects — added explicit skip in the naming detector. Test: `test_pascal_case_classes_not_flagged`.
+- **Single-quoted strings in docstrings.** Initial detector flagged `'''docstring'''` as a single-quote violation. Fixed by skipping triple-quoted strings entirely — quote-style preferences only apply to single-line string literals.
+- **Performance was tighter than budgeted.** Spec called for <5ms p95 with 5 preferences and 1KB diff; actual is ~0.8ms p95 (regex JIT cache). The bigger constraint is the 100KB diff cap — pathological diffs would push detector cost past 5ms. Cap holds the contract.
+
+### What changed in the spec
+
+- Added explicit PascalCase + leading-underscore skip rules to the naming detector (was implicit; now documented).
+- Added `_MAX_VIOLATIONS_PER_DETECTOR = 50` cap (spec mentioned but didn't formalize).
+- Documented unrecognized `(category, signal)` pairs as silent no-ops with v2.1 hook for custom detectors.
+
+### Founder dogfood notes
+
+Pending — Hero 7 ships into v2.0-alpha.3 (next bundle). Founder dogfood on Hero 7 specifically requires:
+1. Recording at least one style preference via `codevira preferences add` (or letting Hero 10 auto-learn — Week 10).
+2. Asking the AI to write/edit code that violates it.
+3. Verifying the warn renders correctly in the Claude Code SessionStart context.
+
+The 48-hour DOGFOOD.md gate before alpha.3 will cover this.
+
+### Test status
+
+429/429 across `tests/engine/` + `tests/test_paths.py` + `tests/test_setup_wizard.py` (was 391 → +38 Hero 7 tests). Full suite runs in ~10.5 seconds.
+
+### Open questions / decisions deferred
+
+- **Auto-fix in the warn message** ("here's the snake_case version") — needs LLM call. Hero 9 (Intent Inference) territory; deferred to Week 11.
+- **Tree-sitter parsing** for accurate identifier extraction — v2.1+. Regex is good enough for v2.0-alpha.
+- **Per-file overrides** (e.g. `# codevira:style-allow camelCase` comment) — v2.1.
+- **YAML config** for custom detectors — env vars only for alpha.
+
+### What's next
+
+**Week 10 — Hero 10 (AI Promotion Score)**: extends `outcome_tracker` + `rule_learner` to surface a weekly digest of which decisions held, which got reverted, and which patterns are emerging. ~300 LOC. Targets v2.0-alpha.3.
+
+Heroes shipped: 4, 1, 5, 6, 2, 7 (6 of 10).
+Heroes remaining for v2.0 GA: 10, 9, 3, 8 (Weeks 10-13).
+
+---
+
 ## Template for new entries
 
 ```markdown

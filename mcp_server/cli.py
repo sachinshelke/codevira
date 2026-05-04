@@ -787,6 +787,62 @@ def main() -> None:
         help="Read another project's log instead of cwd",
     )
 
+    # agents (v2.0 Pillar 2.2 — universal nudge generator)
+    agents_parser = subparsers.add_parser(
+        "agents",
+        help="Regenerate per-IDE nudge files (CLAUDE.md, AGENTS.md, etc.)",
+        description=(
+            "Regenerate the codevira nudge block in every detected IDE's "
+            "config file (CLAUDE.md, AGENTS.md, .cursor/rules/codevira.mdc, "
+            ".windsurfrules, GEMINI.md, .github/copilot-instructions.md). "
+            "Idempotent: existing user content is preserved; only the "
+            "<!-- codevira:start -->...<!-- codevira:end --> block is "
+            "replaced. Subset of `codevira setup` — useful when you want "
+            "to refresh nudge files without re-running full setup."
+        ),
+    )
+    agents_parser.add_argument(
+        "--ide", default=None,
+        choices=[None, *list({"claude", "cursor", "windsurf",
+                              "antigravity", "codex", "copilot",
+                              "agents_md"})],
+        help="Only regenerate this one IDE's nudge file",
+    )
+    agents_parser.add_argument(
+        "--dry-run", action="store_true",
+        help="Show what would be written without modifying any files",
+    )
+    agents_parser.add_argument(
+        "--project", metavar="PATH", default=None,
+        help="Generate nudge files for another project (validated)",
+    )
+
+    # hooks (v2.0 Pillar 2.3 — Claude Code lifecycle hook installer)
+    hooks_parser = subparsers.add_parser(
+        "hooks",
+        help="Install Claude Code lifecycle hooks (Pillar 2.3)",
+        description=(
+            "Install / refresh codevira's Claude Code lifecycle hooks "
+            "(SessionStart, PreToolUse, PostToolUse, UserPromptSubmit, "
+            "Stop). Subset of `codevira setup` — useful when Claude Code "
+            "got re-installed and its global hook config was reset."
+        ),
+    )
+    hooks_subparsers = hooks_parser.add_subparsers(
+        dest="hooks_subcommand", required=True,
+    )
+    hooks_install = hooks_subparsers.add_parser(
+        "install", help="Install / refresh Claude Code lifecycle hooks",
+    )
+    hooks_install.add_argument(
+        "--dry-run", action="store_true",
+        help="Show what would be installed without modifying any files",
+    )
+    hooks_install.add_argument(
+        "--project", metavar="PATH", default=None,
+        help="Operate on another project (validated)",
+    )
+
     # replay (v2.0 hero 8 — Decision Replay)
     replay_parser = subparsers.add_parser(
         "replay",
@@ -1000,6 +1056,29 @@ def main() -> None:
             project=Path(project_arg) if project_arg else None,
         )
         sys.exit(rc)
+    elif args.command == "agents":
+        # Pillar 2.2 — regenerate per-IDE nudge files
+        from mcp_server.cli_agents import cmd_agents
+        project_arg = getattr(args, "project", None)
+        rc = cmd_agents(
+            ide=getattr(args, "ide", None),
+            dry_run=getattr(args, "dry_run", False),
+            project=Path(project_arg) if project_arg else None,
+        )
+        sys.exit(rc)
+    elif args.command == "hooks":
+        # Pillar 2.3 — install Claude Code lifecycle hooks
+        from mcp_server.cli_agents import cmd_hooks_install
+        if getattr(args, "hooks_subcommand", None) == "install":
+            project_arg = getattr(args, "project", None)
+            rc = cmd_hooks_install(
+                project=Path(project_arg) if project_arg else None,
+                dry_run=getattr(args, "dry_run", False),
+            )
+            sys.exit(rc)
+        else:
+            print("Error: unknown hooks subcommand", file=sys.stderr)
+            sys.exit(2)
     elif args.command == "replay":
         # Hero 8 — Decision Replay. Browses decisions timeline.
         from mcp_server.cli_replay import cmd_replay

@@ -787,6 +787,24 @@ def main() -> None:
         help="Read another project's log instead of cwd",
     )
 
+    # doctor (v2.0 Pillar 1.3 — health-check)
+    doctor_parser = subparsers.add_parser(
+        "doctor",
+        help="Run health checks; show ✓/⚠/✗ + exact fix commands",
+        description=(
+            "Diagnose codevira's state in this project: data dir, "
+            "graph.db, global.db, detected IDEs, nudge files, "
+            "engine kill-switch, crash log size. Read-only — never "
+            "modifies anything; just tells you the exact command to "
+            "run for each warning / failure. Exit code 0 if clean "
+            "(or warnings only), 1 if any check failed."
+        ),
+    )
+    doctor_parser.add_argument(
+        "-v", "--verbose", action="store_true",
+        help="Show extra details under each warning / failure",
+    )
+
     # agents (v2.0 Pillar 2.2 — universal nudge generator)
     agents_parser = subparsers.add_parser(
         "agents",
@@ -1055,6 +1073,11 @@ def main() -> None:
             full=getattr(args, "full", False),
             project=Path(project_arg) if project_arg else None,
         )
+        sys.exit(rc)
+    elif args.command == "doctor":
+        # Pillar 1.3 — health check
+        from mcp_server.doctor import cmd_doctor
+        rc = cmd_doctor(verbose=getattr(args, "verbose", False))
         sys.exit(rc)
     elif args.command == "agents":
         # Pillar 2.2 — regenerate per-IDE nudge files

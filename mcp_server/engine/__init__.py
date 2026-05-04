@@ -46,6 +46,7 @@ def register_default_policies() -> None:
     from mcp_server.engine.policies.decision_lock import DecisionLock
     from mcp_server.engine.policies.intent_inference import ProactiveIntentInference
     from mcp_server.engine.policies.live_style import LiveStyleEnforcement
+    from mcp_server.engine.policies.scope_contract import ProactiveScopeContractLock
     from mcp_server.engine.policies.token_budget import TokenBudgetPersist
 
     for policy_cls in (
@@ -57,6 +58,7 @@ def register_default_policies() -> None:
         LiveStyleEnforcement,        # Hero 7 (Week 9)
         AIPromotionScore,            # Hero 10 (Week 10)
         ProactiveIntentInference,    # Hero 9 (Week 11)
+        ProactiveScopeContractLock,  # Hero 3 (Week 12) — off-by-default
     ):
         if not policy_cls.enabled_by_default:
             continue  # opt-in only — caller registers manually

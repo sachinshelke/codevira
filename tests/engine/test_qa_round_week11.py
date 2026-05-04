@@ -112,7 +112,8 @@ def _ensure_session(g, session_id: str = "s1") -> None:
 
 class TestK1_DefaultRegistration:
 
-    def test_eight_heroes_after_week_11(self):
+    def test_default_heroes_after_week_12(self):
+        """Updated for Week 12: Hero 3 added to the default set (off-by-default)."""
         from mcp_server.engine import (
             register_default_policies, registered_policies,
         )
@@ -127,15 +128,16 @@ class TestK1_DefaultRegistration:
             "live_style_enforcement",
             "ai_promotion_score",
             "intent_inference",
+            "scope_contract_lock",
         }
         assert names == expected, (
-            f"8-hero set drift: got {sorted(names)}, expected {sorted(expected)}"
+            f"9-hero set drift: got {sorted(names)}, expected {sorted(expected)}"
         )
 
-    def test_user_prompt_submit_has_two_policies(self):
-        """Hero 5 + Hero 9 both fire on UserPromptSubmit. Lock this in
-        — if a future hero adds itself or one of these is moved off
-        UserPromptSubmit, the test must update explicitly."""
+    def test_user_prompt_submit_eligibility(self):
+        """Hero 5 + Hero 9 + Hero 3 all fire on UserPromptSubmit
+        post-Week-12 (Hero 3 builds the scope contract). Lock this in
+        — drift in either direction must update the test explicitly."""
         from mcp_server.engine import register_default_policies, registered_policies
         from mcp_server.engine.events import EventType
         register_default_policies()
@@ -143,9 +145,11 @@ class TestK1_DefaultRegistration:
             p.name for p in registered_policies()
             if EventType.USER_PROMPT_SUBMIT in set(p.handles)
         }
-        assert ups == {"cross_session_consistency", "intent_inference"}, (
-            f"UserPromptSubmit eligibility drift: {ups}"
-        )
+        assert ups == {
+            "cross_session_consistency",
+            "intent_inference",
+            "scope_contract_lock",
+        }, f"UserPromptSubmit eligibility drift: {ups}"
 
     def test_priority_ordering_hero_5_above_hero_9(self):
         """Combined inject must put Hero 5's section first (priority 30 >
@@ -354,8 +358,9 @@ class TestK7_Bug3RegressionForHero9:
         assert "intent_inference" not in names, (
             "Bug 3 regression for Hero 9: enabled_by_default=False ignored"
         )
-        # Other 7 heroes still register
-        assert len(names) == 7
+        # Other 8 heroes still register (post-Week-12 = 9 default; minus
+        # Hero 9 = 8)
+        assert len(names) == 8
 
 
 # =====================================================================

@@ -167,9 +167,10 @@ class TestJ1_DefaultRegistration:
             "live_style_enforcement",    # Hero 7 (Week 9)
             "ai_promotion_score",        # Hero 10 (Week 10)
             "intent_inference",          # Hero 9 (Week 11)
+            "scope_contract_lock",       # Hero 3 (Week 12)
         }
         assert names == expected, (
-            f"8-hero set drift — got {sorted(names)}, "
+            f"9-hero set drift — got {sorted(names)}, "
             f"expected {sorted(expected)}"
         )
 

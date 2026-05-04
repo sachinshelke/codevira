@@ -14,9 +14,9 @@ Heroes that have shipped:
   - Hero 7: live_style.LiveStyleEnforcement (Week 9)
   - Hero 10: ai_promotion.AIPromotionScore (Week 10)
   - Hero 9: intent_inference.ProactiveIntentInference (Week 11)
+  - Hero 3: scope_contract.ProactiveScopeContractLock (Week 12)
 
 Heroes still scaffolded but not implemented:
-  - Hero 3: scope_contract.* (Week 12)
   - Hero 8: decision_replay.* (Week 13)
 """
 from __future__ import annotations
@@ -28,6 +28,7 @@ from mcp_server.engine.policies.cross_session import CrossSessionConsistency
 from mcp_server.engine.policies.decision_lock import DecisionLock
 from mcp_server.engine.policies.intent_inference import ProactiveIntentInference
 from mcp_server.engine.policies.live_style import LiveStyleEnforcement
+from mcp_server.engine.policies.scope_contract import ProactiveScopeContractLock
 from mcp_server.engine.policies.token_budget import TokenBudgetPersist
 
 __all__ = [
@@ -38,5 +39,6 @@ __all__ = [
     "DecisionLock",
     "LiveStyleEnforcement",
     "ProactiveIntentInference",
+    "ProactiveScopeContractLock",
     "TokenBudgetPersist",
 ]

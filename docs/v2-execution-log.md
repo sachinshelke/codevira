@@ -2064,6 +2064,98 @@ This is the **release-candidate gate** before tagging v2.0.0. ~3-5 days of focus
 
 ---
 
+## Week 12 — Hero 3 (Scope Contract Lock) (2026-05-04)
+
+### Shipped
+
+**Hero 3: ProactiveScopeContractLock — ninth policy hero, FIRST multi-event policy. Highest-risk hero in the master plan.**
+
+Two-phase: builds a per-session scope contract on UserPromptSubmit, enforces it on PreToolUse. Refuses Edits to files outside the scope inferred from the prompt.
+
+- `mcp_server/engine/scope_contract.py` — extended from a stub. Now ships per-session storage with TTL eviction (default 1h, clamped 60s-86400s).
+- `mcp_server/engine/policies/scope_contract.py` — 280 LOC. Reuses Hero 9's `classify_intent` and `extract_file_mentions` (already shipped + tested). Bug-5 + Bug-7 + Lesson #19 defenses applied from start.
+- `tests/engine/test_scope_contract.py` — 36 unit tests.
+- `tests/engine/test_qa_round_week12.py` — 11 integration QA tests (proactive, didn't wait for user push).
+
+**Off by default**: `CODEVIRA_SCOPE_LOCK_MODE=off` is the default. Modes: `off` / `warn` / `block`. Users opt in per project (this is the highest-risk hero — false positives can frustrate, so we ship silent until users explicitly enable).
+
+### Tier-0 + deep-audit from start
+
+Per Lessons #15-#21:
+
+- ✅ Real DB integration via real wiring layer + real graph.db.
+- ✅ **Path-traversal probe** (Bug-5 lesson): a prompt mentioning `"../../etc/passwd.py"` must NOT end up in `allowed_files`. `_resolve_in_project_files` enforces containment via `relative_to(resolved_root)` (handles macOS `/tmp → /private/tmp` symlink).
+- ✅ **All 4 _EDIT_TOOLS through wiring** (Bug-7 lesson): Edit, Write, MultiEdit, NotebookEdit all enforce equally. Tested both directly and through `claude_code_hooks.handle()`.
+- ✅ **Content-verifying assertions** (Lesson #19): block message MUST contain the offending file, the original prompt, the inferred intent, the allowed files list, AND the override instructions. `TestL8_BlockMessageSemantics` locks all 7 required fields.
+- ✅ **End-to-end through `claude_code_hooks.handle()` for BOTH events** (Bug-4 lesson): UserPromptSubmit → build, PreToolUse → enforce/block.
+- ✅ **Read-tool regression test** (M3 finding): non-Edit PreToolUse events (Read, Glob, Grep, Bash) MUST NOT be blocked — added during mutation testing when M3 surfaced as a real test gap.
+- ✅ Bug-shape audit: every contract field exercised; TTL works; off-by-default truly silent.
+
+### Mutation results: 8/10 caught + 2 documented redundant
+
+| # | Mutation | Result |
+|---|---|---|
+| M1 | drop event-type filter | observably redundant (helper methods gate on what they need; same as Hero 2 M7) |
+| M2 | drop mode=off gate | ✅ caught |
+| M3 | drop `is_edit()` gate | ✅ caught **after** adding Read-tool regression test (real test gap surfaced by mutation) |
+| M4 | drop path-traversal containment | ✅ caught (8 tests fail) |
+| M5 | priority drift | ✅ caught |
+| M6 | drop session_id check on enforce | observably redundant (storage layer's `get_session_contract(None)` returns None → caller short-circuits) |
+| M7 | drop NO_BUILD_INTENTS gate | ✅ caught |
+| M8 | TTL evicts everything | ✅ caught (11 tests fail) |
+| M9 | enabled_by_default = False | ✅ caught |
+| M10 | `_target_in_scope` always returns False | ✅ caught |
+
+M3 is the noteworthy one: surfaced a real test gap during mutation testing. Without the `is_edit()` gate, Hero 3 would block READ events on out-of-scope files — wrong behavior (scope-lock enforces edits, not reads). My initial tests didn't cover non-Edit tools. Added `test_read_tool_never_blocked_even_out_of_scope` to lock the contract: Read/Glob/Grep/Bash never blocked.
+
+### Surprises
+
+- **First multi-event policy** worked cleanly — engine's dispatch loop already supports `handles` as a tuple. No engine changes needed.
+- **TTL eviction on every read** is bounded by call rate, not iteration count. Long-running processes can't accumulate stale contracts.
+- **Mode=off truly silences**: behavioral spy on `classify_intent` proves the policy short-circuits BEFORE the classifier runs (perf + privacy).
+- **Cross-session isolation works** by virtue of session_id keying. Tested explicitly with two parallel sessions.
+
+### Test status
+
+620/620 across `tests/engine/` + `tests/test_paths.py` + `tests/test_setup_wizard.py` + `tests/test_cli_insights.py` (was 573 → +36 unit + 11 integration QA tests).
+
+### Stale tests refreshed (Lesson #19 — drift in either direction must update explicitly)
+
+- `test_qa_round_week9.py::test_all_default_heroes_registered`: bumped to 9-hero set.
+- `test_qa_round_week10.py::test_default_heroes_registered_after_week_11`: bumped to 9-hero set.
+- `test_qa_round_week11.py::test_eight_heroes_after_week_11` → renamed `test_default_heroes_after_week_12`, bumped to 9-hero set.
+- `test_qa_round_week11.py::test_user_prompt_submit_has_two_policies` → renamed `test_user_prompt_submit_eligibility`, expected set bumped to {Hero 5, Hero 9, Hero 3}.
+- `test_qa_round_week11.py::test_h9_enabled_by_default_false_excludes_it`: count bumped from 7 → 8 (other heroes still register when H9 is off).
+
+### Bug ledger after Week 12
+
+| Bug | Caught at | Survived |
+|---|---|---|
+| 1 | Week-5 R8 redo | 5 weeks |
+| 2 | Week-5 R8 redo | 5 weeks |
+| 3 | Week-7 M9 | 7 weeks |
+| 4 | Week-9 QA | 0 weeks |
+| 5 | Week-11 QA | 0 weeks |
+| 6 | Week-11 QA | 0 weeks |
+| 7 | Week-11 deep re-audit | 2 weeks |
+| 8 | Week-11 deep re-audit | 1 week |
+| **— this week** | n/a | **0 new bugs** |
+
+The deep-audit-from-start discipline (post-Bug-1-8) caught nothing in Week 12. M3 surfaced a real test gap during mutation testing, but the underlying code already had the gate; the missing test was the bug. Closed the gap before any production behavior was at risk.
+
+### Heroes shipped: **9 of 10**
+
+Heroes shipped: 4, 1, 5, 6, 2, 7, 10, 9, 3.
+Heroes remaining for v2.0 GA: 8 (Week 13 — Decision Replay) + Week 14 comprehensive E2E.
+
+### What's next
+
+**Week 13 — Hero 8 (Decision Replay)**: MCP Apps integration. Per the master plan, this is the most UI-heavy hero — needs `ui://` resource registration + small React/HTML browser surfaced in MCP-Apps-capable clients (Claude Desktop, future Cursor). ~400 LOC.
+
+After Week 13: **Week 14 — Comprehensive E2E Integration Testing** (the release-candidate gate added per user request). Without Week 14 clean, no v2.0 GA tag.
+
+---
+
 ## Template for new entries
 
 ```markdown

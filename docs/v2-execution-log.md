@@ -1648,6 +1648,99 @@ Week 10 — Hero 10 (AI Promotion Score). Per the dependency-aware sequencing in
 
 ---
 
+## Week 10 — Hero 10 (AI Promotion Score) (2026-05-04)
+
+### Shipped
+
+**Hero 10: AIPromotionScore — seventh policy hero, FIRST SESSION_START policy.**
+
+Closes the visibility loop: codevira has been silently learning since Week 1 (`outcome_tracker`, `rule_learner`, `outcomes` and `learned_rules` tables already populate). Hero 10 is the **read** side — it surfaces which past decisions held up under git scrutiny and which keep getting reverted.
+
+Two surfaces:
+
+1. **Policy** (`mcp_server/engine/policies/ai_promotion.py`, ~250 LOC): On SESSION_START, INJECTS a digest of top-N stable decisions + top-N high-confidence learned rules into the AI's first turn. Priority=10 (advisory, runs after blocking + warning policies). Mode `inject` (default) / `off`. Never blocks.
+
+2. **CLI** (`mcp_server/cli_insights.py`, ~190 LOC): `codevira insights [--since=7d] [--top=5] [--ascii]` — pretty-printed terminal digest with three sections (stable / reverted / emerging patterns) plus a "consider locking this" suggestion on reverted-but-unlocked decisions.
+
+3. **Score engine** (`mcp_server/engine/promotion_score.py`, ~170 LOC): Pure scoring functions over the existing `outcomes` table.
+   - `score = (kept + 0.5 × modified) / max(total, 1)` — bounded [0, 1].
+   - Three aggregators: `top_stable_decisions`, `top_reverted_decisions`, `top_rules`.
+   - All wrapped in `try/except` returning `[]` on SQL error — Hero 10 is advisory; data flakiness must not break SessionStart.
+
+4. **Signal accessor** (`signals.outcomes()`, `signals.learned_rules()`): Lazy + cached on the per-event SignalContext. Reuses the `_decisions_cache` slot.
+
+### Tests + mutation testing
+
+- **35 unit tests** in `tests/engine/test_ai_promotion.py` (8 acceptance + 8 behavioral + 6 score-function + 2 real-DB + 2 dispatch + 2 registration + 6 edge cases + 1 perf)
+- **2 CLI subprocess tests** in `tests/test_cli_insights.py` — exercises `python -m mcp_server.cli insights` against an isolated project's real graph DB (Bug-4 lesson: don't trust unit tests of cmd_insights; subprocess the actual CLI)
+- **10 mutations from start, 10 caught**:
+  - M1 event_type gate flip → 9 fail (multiple defenses)
+  - M2 mode=off gate flip → 8 fail
+  - M3 signals=None gate flip → 7 fail
+  - M4 min_score filter inversion → 5 fail
+  - M5 max_inject cap removal → `test_5_only_top_n_injected` exact catch
+  - M6 priority drift → `test_priority_value_stable` exact catch
+  - M7 handles tuple drift → 3 fail
+  - M8 enabled_by_default = False → registration tests catch (Bug 3 defense works)
+  - M9 modified weight changed (0.5 → 0.0) → score function tests catch
+  - M10 SQL `HAVING` filter inversion → dispatch tests catch
+
+### Tier-0 pre-flight discipline (Bug-4 reinforcement)
+
+Per the Bug-4 lesson from Week-9 integration QA — **every wiring path that hasn't been exercised end-to-end is a candidate for silent fail-open**:
+
+- ✅ **Real-DB integration**: outcomes inserted via the actual `db.record_outcome()` method (same path `outcome_tracker.py` uses); aggregated via `aggregate_decision_outcomes` against real schema.
+- ✅ **Behavioral spies**: `_FakeSignals.outcomes_calls` records every call to prove gates short-circuit BEFORE signal fetch (4 gate tests).
+- ✅ **Filter-honoring fake**: `_FakeSignals.outcomes()` honors `min_outcomes` so the policy's filter behavior is testable end-to-end.
+- ✅ **End-to-end dispatch**: `test_hero_10_fires_through_dispatch` registers ALL 7 heroes, fires a real SESSION_START event with planted outcomes, asserts inject.
+- ✅ **End-to-end through `claude_code_hooks.handle("SessionStart")`** — the Bug-4 lesson test. SessionStart was a brand-new event type for the engine; real Claude Code JSON payload, parsed stdout, verifies `hookSpecificOutput.additionalContext` contains the injected decision text. **This is what would have caught Bug 4 if Hero 7 had it; now mandatory for every new event-type policy.**
+- ✅ **End-to-end through CLI subprocess**: `python -m mcp_server.cli insights --project <isolated>`. Exercises argparse, dispatch, score query, formatting, terminal output — paths that bypass unit tests entirely.
+- ✅ **Bug-shape audit**: every contract field exercised. `name`, `handles`, `enabled_by_default`, `priority`, `_DEFAULT_*`, `_MIN/MAX_*` all asserted.
+
+### Surprises
+
+- **Score formula's behavior on modified-only outcomes**. A decision with 5 modified + 0 kept + 0 reverted scores 0.5 — same as 0 / 1 / 1. The CLI doesn't distinguish these visually; v2.1 may want a separate "needs review" tier between stable and reverted. Documented as deferred.
+- **`signals.outcomes()` cache shares `_decisions_cache`**. Reuses an existing dict slot to avoid adding a new cache field. Risk: a future signal that uses keys like `("outcomes", ...)` could collide. Documented in code comments; `cache_key` tuples are explicit + namespaced.
+- **CLI subprocess tests need `HOME` override**. The subprocess can't see monkeypatched `get_global_home`, so the test sets `HOME` to a fake dir before subprocessing — matching how a fresh user would actually invoke the CLI. This taught us the subprocess test surface ISN'T equivalent to the in-process unit test surface.
+
+### What changed in the spec
+
+- Added explicit min_outcomes default justification (= 2 — single-outcome decisions have insufficient signal for ordering).
+- Added `min_outcomes` clamp to [1, 100] in policy `_config()` (spec only mentioned defaults).
+- Added explicit reuse of `_decisions_cache` slot for the new accessors (was implicit).
+
+### Founder dogfood notes
+
+Pending — Hero 10 ships into v2.0-alpha.3 (next bundle, after Heroes 7 + 10). Founder dogfood requires:
+1. ≥ 1 week of regular codevira use so `outcome_tracker` populates the `outcomes` table from git history.
+2. Run `codevira insights` and verify the digest matches mental model of "which decisions stuck".
+3. Start a new Claude Code session in a project with outcomes — verify the SessionStart inject appears.
+
+### Test status
+
+486/486 across `tests/engine/` + `tests/test_paths.py` + `tests/test_setup_wizard.py` + `tests/test_cli_insights.py` (was 449 → +35 Hero 10 unit tests + 2 CLI subprocess + 0 net change after stale Week-9 QA tests bumped 6→7).
+
+### Stale Week-9 QA tests updated
+
+- `test_all_six_heroes_registered_by_default` → `test_all_default_heroes_registered` (now 7-hero set; future heroes update the set explicitly).
+- `test_enabled_by_default_true_default_still_registers` was hard-asserting `len == 6`; relaxed to `>= 6` (the Week-9 baseline) so it doesn't go stale every new hero. The Bug-3 regression intent is preserved.
+
+### Open questions / decisions deferred
+
+- **"Needs review" tier** (modified-only decisions) between stable and reverted in CLI output — v2.1.
+- **Bayesian smoothing of scores** — current arithmetic mean ranks decisions with 1 kept above decisions with 10 kept + 1 modified. v2.1.
+- **Auto-suggest "lock this decision" → click-to-lock** — needs MCP Apps integration. Hero 8 (Decision Replay) territory.
+- **Cross-project insights** — global.db trends across all projects. v2.1.
+
+### What's next
+
+**Week 11 — Hero 9 (Proactive Intent Inference)**: extends UserPromptSubmit to pre-fetch likely context (related decisions, impacted files, tests) so the AI starts its turn with the right data. Needs a small intent classifier — research-heavy. ~350 LOC. Targets v2.0-alpha.3 bundle.
+
+Heroes shipped: 4, 1, 5, 6, 2, 7, 10 (**7 of 10**).
+Heroes remaining for v2.0 GA: 9, 3, 8 (Weeks 11-13).
+
+---
+
 ## Template for new entries
 
 ```markdown

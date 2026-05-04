@@ -306,6 +306,80 @@ class SignalContext:
         return result
 
     # ---------------------------------------------------------------
+    # Outcomes + learned rules (Hero 10 — AI Promotion Score)
+    # ---------------------------------------------------------------
+
+    def outcomes(
+        self,
+        *,
+        since_days: int = 30,
+        min_outcomes: int = 2,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Aggregate outcome records into per-decision rows + scores.
+
+        Used by Hero 10's SessionStart inject. Reads via
+        ``mcp_server.engine.promotion_score.aggregate_decision_outcomes``
+        which queries ``decisions LEFT JOIN outcomes`` (already indexed).
+
+        Cached by argument tuple so the policy + the CLI subprocess in
+        the same process don't hit the DB twice. Returns empty list
+        when graph is unavailable or table is empty.
+        """
+        cache_key = ("outcomes", int(since_days), int(min_outcomes), int(limit))
+        if cache_key in self._decisions_cache:  # reuse decisions cache slot
+            return self._decisions_cache[cache_key]
+        result: list[dict[str, Any]] = []
+        try:
+            graph = self.graph
+            if graph is None:
+                self._decisions_cache[cache_key] = result
+                return result
+            from mcp_server.engine.promotion_score import (
+                aggregate_decision_outcomes,
+            )
+            result = aggregate_decision_outcomes(
+                graph.conn,
+                since_days=since_days,
+                min_outcomes=min_outcomes,
+                limit=limit,
+            )
+        except Exception:  # noqa: BLE001
+            result = []
+        self._decisions_cache[cache_key] = result
+        return result
+
+    def learned_rules(
+        self,
+        *,
+        min_confidence: float = 0.7,
+        max_items: int = 3,
+    ) -> list[dict[str, Any]]:
+        """Top-N learned rules above a confidence threshold.
+
+        Companion to ``outcomes()`` for Hero 10's inject.
+        """
+        cache_key = ("rules", float(min_confidence), int(max_items))
+        if cache_key in self._decisions_cache:
+            return self._decisions_cache[cache_key]
+        result: list[dict[str, Any]] = []
+        try:
+            graph = self.graph
+            if graph is None:
+                self._decisions_cache[cache_key] = result
+                return result
+            from mcp_server.engine.promotion_score import top_rules
+            result = top_rules(
+                graph.conn,
+                min_confidence=min_confidence,
+                max_items=max_items,
+            )
+        except Exception:  # noqa: BLE001
+            result = []
+        self._decisions_cache[cache_key] = result
+        return result
+
+    # ---------------------------------------------------------------
     # Token budget meter
     # ---------------------------------------------------------------
 

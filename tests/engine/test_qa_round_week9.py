@@ -131,13 +131,19 @@ def _ensure_session(g, session_id: str = "s1") -> None:
 
 class TestI1_DefaultRegistration:
 
-    def test_all_six_heroes_registered_by_default(self):
+    def test_all_default_heroes_registered(self):
+        """Locks in the full set of policies registered by default. As
+        new heroes ship (Week 10+), update the expected set explicitly —
+        drift in either direction (missing or unexpected hero) is a bug.
+
+        End of Week 10: the set expanded to include AIPromotionScore.
+        """
         from mcp_server.engine import (
             register_default_policies, registered_policies,
         )
         register_default_policies()
         names = {p.name for p in registered_policies()}
-        # The full v2.0-alpha line-up at end of Week 9.
+        # The full v2.0-alpha line-up at end of Week 10.
         assert names == {
             "blast_radius_veto",        # Hero 4 (Week 4)
             "decision_lock",            # Hero 1 (Week 5)
@@ -145,7 +151,8 @@ class TestI1_DefaultRegistration:
             "token_budget_persist",     # Hero 6 (Week 7)
             "anti_regression",          # Hero 2 (Week 8)
             "live_style_enforcement",   # Hero 7 (Week 9)
-        }, f"6-hero set mismatch — got {sorted(names)}"
+            "ai_promotion_score",       # Hero 10 (Week 10)
+        }, f"default-hero set mismatch — got {sorted(names)}"
 
     def test_pre_tool_use_eligible_policies(self):
         """5 of 6 heroes fire on PreToolUse; Hero 7 must NOT be among them."""
@@ -566,13 +573,18 @@ class TestI6_Bug3Regression:
 
     def test_enabled_by_default_true_default_still_registers(self):
         """The opt-out flag must default to True so existing policies
-        keep working."""
+        keep working. Asserts ≥ 6 (the Week-9 baseline) so this test
+        doesn't go stale every time a new hero ships — it's a Bug-3
+        regression test, not a hero-count audit."""
         from mcp_server.engine import (
             register_default_policies, registered_policies,
         )
         register_default_policies()
         names = {p.name for p in registered_policies()}
-        assert len(names) == 6, f"Default set should be 6 heroes; got {len(names)}: {names}"
+        assert len(names) >= 6, (
+            f"Default set should have ≥6 heroes (Week-9 baseline); "
+            f"got {len(names)}: {names}"
+        )
 
 
 # =====================================================================

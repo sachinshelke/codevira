@@ -1916,6 +1916,80 @@ Heroes remaining for v2.0 GA: 3 (Week 12), 8 (Week 13).
 
 ---
 
+## Week 11 (continued) — Unbiased QA round + Bug 5 + Bug 6 (2026-05-04)
+
+### Why this round happened
+
+User challenge: "have you done qa qc for week 11". Honest re-assessment: the proactive QA round at the end of Week-11 commit (12 integration tests) covered the OBVIOUS seams (multi-policy registration, kill switch, crash isolation) but didn't probe these three areas with rigor:
+
+1. **Path-traversal defense** in Hero 9's file-mention resolution.
+2. **Empty-section emission** in `_format_inject` — the formatter's defenses against partial fetcher data.
+3. **Whether K9's wiring test actually verified content**, or just verified a header.
+
+This round did. Found two real bugs.
+
+### Bug 5: Path-traversal escape in Hero 9's file_mentions
+
+**Shape**: declared support for "file mentions" without validating they stay inside the project. Same Bug-X-shape as Bugs 1-4.
+
+**Detail**: Hero 9 resolves file mentions via:
+```python
+abs_path = (project_root / file_str).resolve()
+```
+A prompt like `"fix '../../etc/passwd.py'"` produces a path OUTSIDE `project_root`. Hero 9 then issues `signals.fixes(abs_path)` and `signals.impact(abs_path)` against that path.
+
+**Exploitability today**: Safe by accident. The signals layer reads from `fix_history.db` and `graph.db`, both of which only contain in-project records — out-of-project lookups return empty. So no leak today. **But it's a defense-in-depth gap with the same shape as Round-4 HIGH #1** (the wiring layer's `target_file` containment fix). The pattern should be uniform across the codebase.
+
+**Fix**: 8 LOC in `_fetch_signals_for_intent` — resolve `project_root` once before the loop (defends against macOS `/tmp` → `/private/tmp` symlink mismatch), then `abs_path.relative_to(resolved_root)` and skip on `ValueError`.
+
+**Lock-in**: 2 regression tests in `TestK13_Bug5PathTraversalDefense` plus mutation M-Bug-5 (drop the containment check) → both regression tests fail.
+
+### Bug 6: Empty "### Blast radius:" section header emitted with no body
+
+**Shape**: `_format_inject` emits the section header if `fetched["impact"]` is non-empty, but each entry's bullet is gated on `count > 0`. Result: an entry like `{"auth.py": {"affected_count": 0, "affected_files": []}}` produces:
+```
+### Blast radius:
+
+(blank — no bullets)
+```
+
+**Why this matters**: noise in the AI's context window. The whole point of Hero 9 is *fewer round-trips, more signal*. Empty section headers are anti-signal.
+
+**How it slipped past the original 12-test integration QA**: K9 verified `"Codevira pre-fetch" in ctx` — true even with the empty header (because the `## Codevira pre-fetch` outer header always appears). It never verified the Blast radius section had ACTUAL CONTENT. The test was passing vacuously because of Bug 6.
+
+**Fix**: at the FETCHER level (`_fetch_signals_for_intent`), only retain `out["impact"][file_str] = imp` if the impact dict has `count > 0`. Same `count` calc the formatter uses. Catches the gap before the formatter sees it.
+
+**Lock-in**: 2 regression tests in `TestK14_Bug6EmptySectionSuppression` (filter at fetcher + formatter belt-and-suspenders) plus K9 strengthened to assert "Blast radius" + "caller" appear (no longer passes vacuously) plus mutation M-Bug-6 (drop the count filter) → 1 fail.
+
+### Bug ledger after Week 11 QA
+
+| Bug | Caught at | Survived | Shape |
+|---|---|---|---|
+| 1 | Week-5 R8 redo | 5 weeks | `signals.decisions` SQL column drift |
+| 2 | Week-5 R8 redo | 5 weeks | runner missed signals kwarg |
+| 3 | Week-7 mutation M9 | 7 weeks | `enabled_by_default` flag was dead |
+| 4 | Week-9 integration QA | 0 weeks | Hero 7 silent on Write tool |
+| **5** | **Week-11 unbiased QA** | **0 weeks** | **Hero 9 path-traversal escape in file_mentions** |
+| **6** | **Week-11 unbiased QA** | **0 weeks** | **Hero 9 empty Blast radius section emission** |
+
+The post-Bug-4 cadence catches bugs in 0 weeks. But it requires the proper, unbiased QA round — not just the per-hero Tier-0 + a thin integration round. **The user's challenge ("have you done qa for week N") is now part of the cadence.** Without it, Bug 5 + Bug 6 would have shipped to v2.0-alpha.3.
+
+### Findings about my own QA process
+
+The original Week-11 round had two blind spots:
+
+1. **Static probes were missing**: no path-traversal probe even though the policy resolves user-controlled file mentions. Easy probe: feed `"../../etc/passwd.py"` through the fetcher; verify it's blocked. Took 30 lines. Now part of the round.
+
+2. **Vacuous test assertions**: K9 asserted the OUTER `Codevira pre-fetch` header existed but never the INNER section content. Tests that pass when a feature is half-broken are worse than no tests because they signal coverage that isn't there.
+
+**Lesson #19 (post-Bug-6)**: When a test asserts a header exists, also assert at least one body line under that header. Otherwise the test is verifying scaffolding, not behavior.
+
+### Test status
+
+566/566 across `tests/engine/` + `tests/test_paths.py` + `tests/test_setup_wizard.py` + `tests/test_cli_insights.py` (was 562 → +4 regression tests for Bugs 5+6). K9 strengthened (still 1 test, but with content-verifying assertion).
+
+---
+
 ## Template for new entries
 
 ```markdown

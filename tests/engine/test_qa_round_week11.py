@@ -461,7 +461,18 @@ class TestK9_WiringRefactorIntent:
         self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
     ):
         """The wiring path was tested for fix-bug in test_intent_inference.
-        Cover refactor too — different signal set (impact instead of fixes)."""
+        Cover refactor too — different signal set (impact instead of fixes).
+
+        Pre-fix this test was passing because of the Bug-6 empty-section
+        bug: ``get_impact`` returned ``found=False`` for our function-only
+        graph, but the formatter still emitted the empty "### Blast radius:"
+        header — which was enough to make the "Codevira pre-fetch in ctx"
+        check pass. The test was verifying the bug, not the feature.
+
+        Bug-6 fix exposed this: now we need a graph that actually produces
+        non-zero impact data (file-level node + dependent file-level node
+        + edge between them).
+        """
         from indexer.sqlite_graph import SQLiteGraph
         from mcp_server.engine import (
             register_default_policies, reset_policies,
@@ -469,21 +480,22 @@ class TestK9_WiringRefactorIntent:
         from mcp_server.engine.wiring import claude_code_hooks
 
         _set_project(monkeypatch, isolated_project)
-        # Plant nodes + edges so signals.impact has something
+        # Plant file-level nodes + an edge so get_impact can find a target.
+        # ``get_impact`` requires kind="file" nodes (Week-11 QA finding).
         g = _open_graph(isolated_project)
         g.conn.execute(
             "INSERT INTO nodes (id, kind, name, file_path) "
             "VALUES (?, ?, ?, ?)",
-            ("auth.py:login", "function", "login", "auth.py"),
+            ("auth.py", "file", "auth.py", "auth.py"),
         )
         g.conn.execute(
             "INSERT INTO nodes (id, kind, name, file_path) "
             "VALUES (?, ?, ?, ?)",
-            ("api.py:endpoint", "function", "endpoint", "api.py"),
+            ("api.py", "file", "api.py", "api.py"),
         )
         g.conn.execute(
             "INSERT INTO edges (source_id, target_id, kind) VALUES (?, ?, ?)",
-            ("api.py:endpoint", "auth.py:login", "calls"),
+            ("api.py", "auth.py", "imports"),
         )
         g.conn.commit()
         g.close()
@@ -506,15 +518,23 @@ class TestK9_WiringRefactorIntent:
         assert rc == 0
         emitted = json.loads(stdout_buf.getvalue())
         ctx = emitted.get("hookSpecificOutput", {}).get("additionalContext", "")
-        # Hero 9's refactor branch emits Blast radius
-        # (only if signals.impact returns non-empty — depends on get_impact
-        # finding edges. If empty, the section is skipped silently — that's
-        # acceptable behavior.)
+        # Hero 9's pre-fetch must be present
         assert "Codevira pre-fetch" in ctx, (
             f"Hero 9's pre-fetch missing on refactor intent: {emitted}"
         )
         assert "refactor" in ctx, (
             f"Intent label missing in Hero 9 inject: {ctx}"
+        )
+        # Bug-6 lock-in: the Blast radius section must have ACTUAL CONTENT
+        # (a file count), not just an empty header. Pre-fix this passed
+        # vacuously because the empty header was emitted.
+        assert "Blast radius" in ctx, (
+            f"Refactor intent must emit Blast radius section when graph has "
+            f"impact data. ctx:\n{ctx}"
+        )
+        assert "caller" in ctx or "dependent" in ctx, (
+            f"Blast radius section emitted but with no caller/dependent count "
+            f"— Bug-6-shape regression. ctx:\n{ctx}"
         )
 
 
@@ -588,6 +608,194 @@ class TestK11_NonePromptText:
 # =====================================================================
 # K12 — Multi-policy crash isolation across all 8 heroes
 # =====================================================================
+
+
+class TestK13_Bug5PathTraversalDefense:
+    """Bug 5 (Week-11 QA round): Hero 9 resolved file_mentions via
+    ``(project_root / file_str).resolve()`` with no containment check.
+    A prompt like ``"fix '../../etc/passwd.py'"`` would issue signal
+    lookups against paths OUTSIDE project_root.
+
+    Today the signals layer returns empty for out-of-project paths
+    (data tables only contain in-project records), so this is a
+    "safe by accident" defense gap — but the wiring layer's
+    Round-4 HIGH #1 already enforces this for ``target_file``,
+    and the same discipline applies here.
+    """
+
+    def test_path_traversal_mention_skipped_in_signals_calls(
+        self, isolated_project: Path,
+    ):
+        from mcp_server.engine.policies.intent_inference import (
+            _fetch_signals_for_intent, INTENT_FIX_BUG,
+        )
+
+        class _Spy:
+            def __init__(self):
+                self.fixes_calls = []
+                self.impact_calls = []
+            def fixes(self, p):
+                self.fixes_calls.append(p)
+                return []
+            def decisions(self, **k):
+                return []
+            def impact(self, p):
+                self.impact_calls.append(p)
+                return {}
+            def outcomes(self, **k):
+                return []
+            def learned_rules(self, **k):
+                return []
+
+        spy = _Spy()
+        _fetch_signals_for_intent(
+            intent=INTENT_FIX_BUG,
+            file_mentions=["../../etc/passwd.py", "auth.py"],
+            project_root=isolated_project,
+            signals=spy,
+            config={
+                "max_files": 3, "max_fixes_per_file": 3,
+                "max_decisions_per_file": 3, "max_outcomes": 3,
+                "include_impact": True,
+            },
+        )
+        # The traversal mention must NOT have triggered a signals call.
+        # Only the in-project mention does.
+        assert all("auth.py" in str(p) for p in spy.fixes_calls), (
+            f"Bug 5 regression: out-of-project mention reached signals.fixes "
+            f"({spy.fixes_calls})"
+        )
+        assert not any("passwd" in str(p) for p in spy.fixes_calls), (
+            f"Bug 5 regression: passwd path leaked into signals.fixes calls"
+        )
+        assert not any("passwd" in str(p) for p in spy.impact_calls), (
+            f"Bug 5 regression: passwd path leaked into signals.impact calls"
+        )
+
+    def test_absolute_path_outside_project_skipped(
+        self, isolated_project: Path,
+    ):
+        """Defense-in-depth case: an absolute file mention OUTSIDE
+        project_root must also be skipped. The regex extractor doesn't
+        currently extract absolute paths (lookbehind blocks `/foo.py`),
+        but if a future change loosens the regex, this test catches it.
+        """
+        from mcp_server.engine.policies.intent_inference import (
+            _fetch_signals_for_intent, INTENT_FIX_BUG,
+        )
+
+        class _Spy:
+            def __init__(self):
+                self.fixes_calls = []
+            def fixes(self, p):
+                self.fixes_calls.append(p)
+                return []
+            def decisions(self, **k):
+                return []
+            def impact(self, p):
+                return {}
+            def outcomes(self, **k):
+                return []
+            def learned_rules(self, **k):
+                return []
+
+        spy = _Spy()
+        _fetch_signals_for_intent(
+            intent=INTENT_FIX_BUG,
+            # Pretend the regex extracted an absolute path into the list
+            file_mentions=["/etc/passwd.py"],
+            project_root=isolated_project,
+            signals=spy,
+            config={
+                "max_files": 3, "max_fixes_per_file": 3,
+                "max_decisions_per_file": 3, "max_outcomes": 3,
+                "include_impact": True,
+            },
+        )
+        # /etc/passwd.py resolves outside project_root → no signal call
+        assert spy.fixes_calls == [], (
+            f"Bug 5 regression: absolute out-of-project path reached signals: "
+            f"{spy.fixes_calls}"
+        )
+
+
+class TestK14_Bug6EmptySectionSuppression:
+    """Bug 6 (Week-11 QA round): _format_inject emitted "### Blast radius:"
+    section header even when every impact entry had count==0. Produces
+    noise in the AI's context window.
+
+    Fix at the FETCHER level: filter zero-count impact entries before
+    they enter the formatter.
+    """
+
+    def test_zero_count_impact_filtered_at_fetcher(
+        self, isolated_project: Path,
+    ):
+        from mcp_server.engine.policies.intent_inference import (
+            _fetch_signals_for_intent, INTENT_REFACTOR,
+        )
+
+        class _Spy:
+            def __init__(self, impact_for):
+                self._impact_for = impact_for
+            def fixes(self, p):
+                return []
+            def decisions(self, **k):
+                return []
+            def impact(self, p):
+                return dict(self._impact_for.get(p, {}))
+            def outcomes(self, **k):
+                return []
+            def learned_rules(self, **k):
+                return []
+
+        # Impact returns a non-empty dict but zero count
+        auth_resolved = (isolated_project / "auth.py").resolve()
+        spy = _Spy({auth_resolved: {"affected_count": 0, "affected_files": []}})
+
+        fetched = _fetch_signals_for_intent(
+            intent=INTENT_REFACTOR,
+            file_mentions=["auth.py"],
+            project_root=isolated_project,
+            signals=spy,
+            config={
+                "max_files": 3, "max_fixes_per_file": 3,
+                "max_decisions_per_file": 3, "max_outcomes": 3,
+                "include_impact": True,
+            },
+        )
+        assert fetched.get("impact") == {}, (
+            f"Bug 6 regression: zero-count impact retained: {fetched['impact']}"
+        )
+
+    def test_format_inject_no_empty_blast_radius_header(self):
+        """Even if a stale code path planted a zero-count entry into
+        ``fetched["impact"]``, the formatter must not emit the bare
+        header. (Belt-and-suspenders test.)"""
+        from mcp_server.engine.policies.intent_inference import _format_inject
+
+        ctx = _format_inject(
+            intent="refactor",
+            file_mentions=["auth.py"],
+            fetched={
+                "fixes": {},
+                "decisions": {"auth.py": [{"decision": "x", "timestamp": "2025-01-01"}]},
+                # Pretend a stale path planted zero-count entry
+                "impact": {"auth.py": {"affected_count": 0, "affected_files": []}},
+                "outcomes": [],
+            },
+        )
+        # The header MAY be emitted (formatter doesn't deeply inspect),
+        # but the body line "X caller(s)" should NOT appear since count=0.
+        # We ASSERT THE BODY: no bullet line under Blast radius.
+        if "Blast radius" in ctx:
+            # Find the section
+            i = ctx.index("Blast radius")
+            section = ctx[i : i + 200]
+            assert "caller" not in section, (
+                f"Bug 6 regression: empty Blast radius section emitted "
+                f"a count-zero bullet. Section: {section!r}"
+            )
 
 
 class TestK12_AllHeroCrashIsolation:

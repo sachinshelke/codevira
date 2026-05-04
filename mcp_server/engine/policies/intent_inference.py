@@ -120,12 +120,38 @@ def _fetch_signals_for_intent(
 
     # --- Per-file signals ---
     if intent in (INTENT_FIX_BUG, INTENT_REFACTOR, INTENT_EXPLAIN, INTENT_OTHER):
+        # Resolve project_root ONCE so we don't do filesystem lookups in
+        # the loop. On macOS /tmp -> /private/tmp; comparing un-resolved
+        # paths to resolved abs_paths would falsely reject valid mentions.
+        try:
+            resolved_root = project_root.resolve()
+        except (OSError, ValueError):
+            resolved_root = project_root
+
         for file_str in file_mentions:
             try:
                 # Resolve to absolute path (project_root + file_str).
-                # The signals impl handles both absolute and project-relative.
                 abs_path = (project_root / file_str).resolve()
             except (OSError, ValueError):
+                continue
+
+            # Bug-5 (Week-11 QA round) defense-in-depth: enforce
+            # path-traversal containment. A prompt like
+            # "fix '../../etc/passwd.py'" would otherwise resolve to a
+            # path outside project_root, and we'd issue signal lookups
+            # against it. Today the signals layer returns empty for
+            # out-of-project paths (data tables only contain in-project
+            # records), so this is a "safe by accident" defense gap —
+            # but the wiring layer ALREADY fixed this for ``target_file``
+            # in Round-4 HIGH #1 and the same discipline applies here.
+            try:
+                abs_path.relative_to(resolved_root)
+            except ValueError:
+                logger.debug(
+                    "intent_inference: skipping out-of-project mention %r "
+                    "(resolved to %s, outside %s)",
+                    file_str, abs_path, resolved_root,
+                )
                 continue
 
             # decisions(file=...)
@@ -153,8 +179,19 @@ def _fetch_signals_for_intent(
             if intent in (INTENT_FIX_BUG, INTENT_REFACTOR) and config["include_impact"]:
                 try:
                     imp = signals.impact(abs_path)
+                    # Bug-6 (Week-11 QA round): only retain impact entries
+                    # that actually have callers/dependents. An entry with
+                    # ``affected_count = 0`` produces an empty "### Blast
+                    # radius:" header in the inject — noise the AI doesn't
+                    # need. Filter at the data layer so the formatter never
+                    # sees the empty case.
                     if imp:
-                        out["impact"][file_str] = imp
+                        count = (
+                            imp.get("affected_count", 0)
+                            or len(imp.get("affected_files", []) or [])
+                        )
+                        if count:
+                            out["impact"][file_str] = imp
                 except Exception as e:  # noqa: BLE001
                     logger.debug("intent_inference: impact(%s) failed: %s", file_str, e)
 

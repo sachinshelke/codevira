@@ -1741,6 +1741,88 @@ Heroes remaining for v2.0 GA: 9, 3, 8 (Weeks 11-13).
 
 ---
 
+## Week 10 (continued) — Integration QA round Weeks 1-10 (2026-05-04)
+
+### Why this round happened
+
+User challenge: "have you tested week 9 and 10? if not do the proper and unbiased qc". The Week 10 commit said "10/10 mutations caught" — true at the unit level — but I had NOT done the integration QA round across Weeks 1-10 that I did across Weeks 1-9 in `test_qa_round_week9.py`. This round filled the gap.
+
+### What this round caught
+
+**No new production bugs.** This is the honest result, and a positive signal that the Tier-0 pre-flight discipline (introduced post-Bug-4 in Week 9) actually works:
+
+- Hero 7 shipped Tier-0-from-start in Week 9 → Bug 4 surfaced in the integration QA round.
+- Hero 10 shipped Tier-0-from-start in Week 10 → no integration bugs found in this round.
+
+The discipline changes the cadence: "Bug X" surfaces during the per-hero implementation week, not 5 weeks later.
+
+### What this round added (19 new integration tests)
+
+| Section | Tests | Verifies |
+|---|---|---|
+| J1 — Default registration with H10 | 3 | All 7 heroes registered; SessionStart eligibility = {H10}; H10 silent on PRE/POST/PROMPT/STOP |
+| J4 — Kill switch on SessionStart | 1 | `CODEVIRA_ENGINE=0` short-circuits SessionStart dispatch (was only tested for PRE in W9) |
+| J5 — H10 crash isolation | 1 | Crashing H10 doesn't break SessionStart dispatch (multi-policy proof) |
+| J6 — Bug 3 regression for H10 | 1 | `enabled_by_default=False` actually opts H10 out (per-hero re-verification) |
+| J7 — Cache non-collision | 2 | `signals.outcomes` + `signals.decisions` keyspaces don't collide on pathological filenames |
+| J8 — Wiring path edge cases | 4 | SessionStart through `claude_code_hooks.handle()`: no-outcomes silent / mode=off silent / outcomes-present injects / multi-inject ordering |
+| J12 — CLI parse_since | 3 | Malformed warns + falls back; clamps `999d` → 365 + `0d` → 1; valid units parse |
+| J13 — Locked decision no-suggestion | 2 | CLI omits "consider locking" on already-locked reverted decisions; positive control |
+| J14 — Promotion score graceful failure | 1 | `aggregate_decision_outcomes` returns `[]` on schema mismatch (Bug-1-shape defense) |
+| J15 — Hero 7 Bug 4 fix re-verified | 1 | `_extract_after_block` still handles BOTH Edit + Write formats; doesn't leak BEFORE block |
+
+Plus 5 manual mutations on the seams, all caught:
+
+| # | Mutation | Caught by |
+|---|---|---|
+| M11 | Drop try/except around `signals.outcomes` in policy | Hero 10's `test_signals_outcomes_raises_does_not_break_policy` |
+| M12 | Drop stderr warning in `_parse_since` | J12's `test_parse_since_warns_on_malformed_input` |
+| M13 | Always show "consider locking" in CLI (drop `if not locked` check) | J13 catches via the locked-decision negative test |
+| M14 | Drop the `score` field assignment in `aggregate_decision_outcomes` | 8 tests fail — Hero 10's filter can't find score |
+| M15 | Drop the `CODEVIRA_ENGINE=0` kill switch entirely | J4 + W9's I8 both catch |
+
+### Honest known-limitations surfaced (not bugs, documented gaps)
+
+During the audit I found these areas with WEAKER coverage that are worth noting for v2.0.x post-release:
+
+1. **Hero 7 silently no-ops on MultiEdit and NotebookEdit through Claude Code wiring.** `claude_code_hooks._build_event` only constructs `proposed_diff` for `Edit` and `Write`. MultiEdit + NotebookEdit fall through with `proposed_diff=None`, which Hero 7 correctly skips (no-content → no scan). This is the **safe** default — false positives from a partial diff would be worse — but it means Hero 7's coverage of AI editing tools is incomplete. Tracked as a v2.0.1 enhancement.
+
+2. **MCP `post_call` doesn't populate `proposed_diff`.** This is by design (MCP `post_call` wraps codevira's own MCP tools, not editing tools), but worth a code comment to prevent future "why doesn't Hero 7 fire on `update_node`?" debugging. Tracked as a docs-only fix.
+
+3. **`promotion_score._clamp_since_days` clamping is tested via the CLI parser but not directly.** The `cmd_insights` path covers it end-to-end; the policy's hardcoded `_INJECT_SINCE_DAYS = 30` bypasses the clamp entirely. Acceptable for v2.0-alpha; a v2.1 user-configurable since-window would need a direct test.
+
+### What this round did NOT find
+
+No Bug 5. Honest report: 19 tests + 5 mutations + targeted audit of cache collisions, wiring paths, and Bug-shape defenses for both Heroes 7 and 10 surfaced no production bugs. Per-hero Tier-0 discipline (post-Bug-4) is paying off.
+
+### Bug ledger after Week 10 integration QA
+
+| Bug | Caught at | Survived | Shape |
+|---|---|---|---|
+| 1 | Week-5 R8 redo | 5 weeks | `signals.decisions` SQL column drift |
+| 2 | Week-5 R8 redo | 5 weeks | runner missed signals kwarg |
+| 3 | Week-7 mutation M9 | 7 weeks | `enabled_by_default` flag was dead |
+| 4 | Week-9 integration QA | 0 weeks | Hero 7 silent on Write tool |
+| — | Week-10 integration QA | n/a | **0 new bugs** — Tier-0 discipline working |
+
+### Test status
+
+505/505 across `tests/engine/` + `tests/test_paths.py` + `tests/test_setup_wizard.py` + `tests/test_cli_insights.py` (was 486 → +19 integration QA round 10 tests).
+
+### What's next
+
+Week 11 — Hero 9 (Proactive Intent Inference) per the master plan. With the Tier-0 discipline now muscle memory and integration QA between hero-ship and next-hero-start, the cadence is:
+
+```
+Week N: spec → implement → unit tests (Tier-0) → ship
+Week N (after): integration QA round across Weeks 1-N → catch Bug-X-shape
+Week N+1: next hero
+```
+
+This is the rhythm that's catching bugs in 0 weeks instead of 5.
+
+---
+
 ## Template for new entries
 
 ```markdown

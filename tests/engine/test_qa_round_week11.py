@@ -610,6 +610,240 @@ class TestK11_NonePromptText:
 # =====================================================================
 
 
+class TestK15_Bug7HeroSevenAllEditTools:
+    """Bug 7 (Weeks 9-10 deep re-audit, surfaced Week 11): Hero 7's
+    ``_EDIT_TOOLS`` set declares Edit, Write, MultiEdit, NotebookEdit
+    but the wiring layer ``claude_code_hooks._build_event`` only
+    populated ``proposed_diff`` for Edit + Write. MultiEdit and
+    NotebookEdit fell through with ``proposed_diff=None`` →  Hero 7
+    silently no-op'd on them.
+
+    Same shape as Bug 4 (Hero 7 silent on Write before the
+    ``_extract_after_block`` fallback fix). Documented as a "known
+    limitation" in the Week-9 execution log instead of treated as a bug.
+    The user's Week-11 challenge ("did you actually do unbiased QA?")
+    surfaced this when re-checking the same questions across weeks.
+
+    Fix: ``claude_code_hooks._build_event`` now constructs
+    ``proposed_diff`` for all four _EDIT_TOOLS:
+      - Edit:         markered ``--- before / --- after`` format
+      - Write:        raw content (Hero 7's _extract_after_block
+                      handles both markered + raw via the Bug-4 fix)
+      - MultiEdit:    join all edits' old_strings + new_strings into
+                      one before/after pair
+      - NotebookEdit: raw content from ``new_source``
+    """
+
+    def _fire_hook(
+        self,
+        tool_name: str,
+        tool_input: dict,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> dict:
+        from mcp_server.engine.wiring import claude_code_hooks
+
+        raw = {
+            "session_id": "s1",
+            "cwd": str(isolated_project),
+            "tool_name": tool_name,
+            "tool_input": tool_input,
+        }
+        stdin_buf = io.StringIO(json.dumps(raw))
+        stdin_buf.isatty = lambda: False  # type: ignore[method-assign]
+        monkeypatch.setattr(sys, "stdin", stdin_buf)
+        stdout_buf = io.StringIO()
+        monkeypatch.setattr(sys, "stdout", stdout_buf)
+        rc = claude_code_hooks.handle("PostToolUse")
+        assert rc == 0
+        return json.loads(stdout_buf.getvalue())
+
+    def _setup_with_pref(
+        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> Path:
+        """Plant a snake_case preference and register the default policies."""
+        from indexer.sqlite_graph import SQLiteGraph
+        from mcp_server.engine import register_default_policies, reset_policies
+
+        _set_project(monkeypatch, isolated_project)
+        target = isolated_project / "auth.py"
+        target.write_text("")
+
+        from mcp_server.paths import get_data_dir
+        graph_db = get_data_dir() / "graph" / "graph.db"
+        graph_db.parent.mkdir(parents=True, exist_ok=True)
+        g = SQLiteGraph(graph_db)
+        g.conn.execute(
+            "INSERT INTO preferences (category, signal, example, frequency, source) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("naming", "snake_case", "def fetch_user():", 42, "manual"),
+        )
+        g.conn.commit()
+        g.close()
+
+        reset_policies()
+        register_default_policies()
+        return target
+
+    def test_hero_7_fires_on_edit_through_wiring(
+        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Positive control — Edit was already working post-Bug-4 fix."""
+        target = self._setup_with_pref(isolated_project, monkeypatch)
+        emitted = self._fire_hook(
+            "Edit",
+            {
+                "file_path": str(target),
+                "old_string": "old",
+                "new_string": "def fetchUserMetadata(): pass",
+            },
+            isolated_project, monkeypatch,
+        )
+        sysmsg = emitted.get("systemMessage", "")
+        assert "snake_case" in sysmsg, (
+            f"Edit positive control failed: {emitted}"
+        )
+        assert "fetchUserMetadata" in sysmsg
+
+    def test_hero_7_fires_on_write_through_wiring(
+        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Positive control — Write was Bug 4's fix."""
+        target = self._setup_with_pref(isolated_project, monkeypatch)
+        emitted = self._fire_hook(
+            "Write",
+            {
+                "file_path": str(target),
+                "content": "def fetchUserMetadata(): pass\n",
+            },
+            isolated_project, monkeypatch,
+        )
+        sysmsg = emitted.get("systemMessage", "")
+        assert "snake_case" in sysmsg, (
+            f"Write (Bug 4) regression: {emitted}"
+        )
+
+    def test_bug7_hero_7_fires_on_multiedit_through_wiring(
+        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Bug 7: MultiEdit was silently bypassed before the wiring fix.
+        The wiring now constructs proposed_diff from the edits[] list."""
+        target = self._setup_with_pref(isolated_project, monkeypatch)
+        emitted = self._fire_hook(
+            "MultiEdit",
+            {
+                "file_path": str(target),
+                "edits": [
+                    {"old_string": "x", "new_string": "def fetchUserMetadata(): pass"},
+                    {"old_string": "y", "new_string": "def anotherCamelCase(): pass"},
+                ],
+            },
+            isolated_project, monkeypatch,
+        )
+        sysmsg = emitted.get("systemMessage", "")
+        assert "snake_case" in sysmsg, (
+            f"Bug 7 regression: Hero 7 silent on MultiEdit. Emitted: {emitted}"
+        )
+        # Both camelCase identifiers should be detected (or at least one).
+        # Hero 7 reports up to 3 violations, so both showing is the stronger
+        # assertion if we want to catch a regression where only the first
+        # edit's content reaches the detector.
+        assert (
+            "fetchUserMetadata" in sysmsg
+            or "anotherCamelCase" in sysmsg
+        ), f"Bug 7 partial: no specific identifier in warn. {sysmsg}"
+
+    def test_bug7_hero_7_fires_on_notebookedit_through_wiring(
+        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Bug 7: NotebookEdit was silently bypassed. Now treated as raw
+        content like Write (cell source = ``new_source``)."""
+        target = self._setup_with_pref(isolated_project, monkeypatch)
+        emitted = self._fire_hook(
+            "NotebookEdit",
+            {
+                "notebook_path": str(target),
+                "new_source": "def fetchUserMetadata(): pass",
+            },
+            isolated_project, monkeypatch,
+        )
+        sysmsg = emitted.get("systemMessage", "")
+        assert "snake_case" in sysmsg, (
+            f"Bug 7 regression: Hero 7 silent on NotebookEdit. Emitted: {emitted}"
+        )
+
+    def test_multiedit_with_empty_edits_list_does_not_crash(
+        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Defensive: MultiEdit with empty edits list (legal Claude Code
+        payload) must not crash the wiring."""
+        target = self._setup_with_pref(isolated_project, monkeypatch)
+        emitted = self._fire_hook(
+            "MultiEdit",
+            {"file_path": str(target), "edits": []},
+            isolated_project, monkeypatch,
+        )
+        # No content → no warn; just continue
+        assert emitted.get("continue") is True
+
+
+class TestK16_Bug8CLIInvalidProjectRoot:
+    """Bug 8 (Weeks 9-10 deep re-audit, surfaced Week 11): the
+    ``codevira insights`` CLI didn't validate ``--project`` against
+    ``is_invalid_project_root()`` like the wiring layer does. A user
+    typing ``codevira insights --project $HOME`` would silently scan
+    a slug-sanitized path under ``~/.codevira/projects/<slug>/`` and
+    say "no codevira data" — confusing instead of helpful.
+
+    Read-only path so no catastrophic state mutation (the v1.8.1
+    hotfix already prevented bootstrap-at-$HOME). But defense-in-depth
+    parity matters — every user-controlled path argument should run
+    through the same validator. Bug-X-shape: declared support for
+    ``--project <PATH>`` without uniform validation.
+    """
+
+    def test_cli_rejects_home_as_project_root(self, tmp_path: Path):
+        """``--project $HOME`` should produce a clear error, not a
+        confusing 'no codevira data found at <slug>/graph.db'."""
+        from mcp_server.cli_insights import cmd_insights
+
+        # Use the user's HOME (or a stand-in). is_invalid_project_root
+        # checks against $HOME directly via os.path.expanduser.
+        from pathlib import Path as P
+        home = P("~").expanduser()
+        out_buf = io.StringIO()
+        rc = cmd_insights(
+            project=home,
+            since="7d",
+            ascii_mode=True,
+            out=out_buf,
+        )
+        assert rc == 1, f"Expected rc=1 on invalid project; got {rc}"
+        out = out_buf.getvalue()
+        assert "not a valid project root" in out, (
+            f"CLI should explain WHY $HOME is rejected; got: {out!r}"
+        )
+        assert "No codevira data" not in out, (
+            "CLI should NOT fall through to the slug-sanitized lookup "
+            f"when project is invalid; got: {out!r}"
+        )
+
+    def test_cli_accepts_valid_project_root(
+        self, isolated_project: Path,
+    ):
+        """Positive control: a directory with pyproject.toml IS valid."""
+        from mcp_server.cli_insights import cmd_insights
+
+        out_buf = io.StringIO()
+        rc = cmd_insights(
+            project=isolated_project,
+            since="7d",
+            ascii_mode=True,
+            out=out_buf,
+        )
+        assert rc == 0, f"Valid project should rc=0; got {rc}: {out_buf.getvalue()}"
+
+
 class TestK13_Bug5PathTraversalDefense:
     """Bug 5 (Week-11 QA round): Hero 9 resolved file_mentions via
     ``(project_root / file_str).resolve()`` with no containment check.

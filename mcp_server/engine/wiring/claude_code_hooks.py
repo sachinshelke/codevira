@@ -199,9 +199,22 @@ def _build_event(cc_event: EventType, raw: dict[str, Any]) -> HookEvent:
             except OSError:
                 target_file = None
 
-    # Best-effort proposed_diff for Write/Edit. Edit gives old_string/new_string;
-    # Write gives content. We don't synthesize unified diffs here — policies
-    # that need them can do so. We just pass enough text for heuristic checks.
+    # Best-effort proposed_diff for Write/Edit/MultiEdit/NotebookEdit.
+    # Each tool exposes its content differently:
+    #   - Edit:         tool_input.{old_string, new_string}
+    #   - Write:        tool_input.content (raw)
+    #   - MultiEdit:    tool_input.edits[i].{old_string, new_string}
+    #   - NotebookEdit: tool_input.new_source (raw, like Write)
+    #
+    # Bug 7 (Week-11 deep re-audit): originally only Edit + Write were
+    # handled. MultiEdit and NotebookEdit fell through with
+    # ``proposed_diff=None``, so Hero 7 silently no-op'd on them even
+    # though its ``_EDIT_TOOLS`` set declared support. Same shape as
+    # Bug 4 (Hero 7 silent on Write was the same kind of declared-but-
+    # not-integrated gap).
+    #
+    # We don't synthesize unified diffs — policies that need them can
+    # do so. We just pass enough text for heuristic detectors.
     proposed_diff: str | None = None
     if tool_name == "Edit":
         old = tool_input.get("old_string", "")
@@ -210,6 +223,38 @@ def _build_event(cc_event: EventType, raw: dict[str, Any]) -> HookEvent:
             proposed_diff = f"--- before\n{old}\n--- after\n{new}\n"
     elif tool_name == "Write":
         content = tool_input.get("content")
+        if isinstance(content, str):
+            proposed_diff = content
+    elif tool_name == "MultiEdit":
+        edits = tool_input.get("edits") or []
+        if isinstance(edits, list) and edits:
+            # Concatenate each edit's old/new into one before/after pair.
+            # Hero 7 (and any future Edit-format detector) only reads the
+            # AFTER block; the BEFORE block is informational. Joining with
+            # newline preserves line-anchored regex behavior.
+            old_parts: list[str] = []
+            new_parts: list[str] = []
+            for e in edits:
+                if not isinstance(e, dict):
+                    continue
+                old_parts.append(str(e.get("old_string", "")))
+                new_parts.append(str(e.get("new_string", "")))
+            joined_old = "\n".join(old_parts)
+            joined_new = "\n".join(new_parts)
+            if joined_old or joined_new:
+                proposed_diff = (
+                    f"--- before\n{joined_old}\n--- after\n{joined_new}\n"
+                )
+    elif tool_name == "NotebookEdit":
+        # Notebook cell content lives at ``new_source`` (modern Claude
+        # Code) or sometimes ``cell_source`` (older versions). Treat as
+        # raw content like Write — Hero 7's _extract_after_block handles
+        # both raw + marker formats since the Bug-4 fix.
+        content = (
+            tool_input.get("new_source")
+            or tool_input.get("cell_source")
+            or tool_input.get("source")
+        )
         if isinstance(content, str):
             proposed_diff = content
 

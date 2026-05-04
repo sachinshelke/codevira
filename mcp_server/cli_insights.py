@@ -206,10 +206,30 @@ def cmd_insights(
     try:
         from mcp_server.paths import (
             get_data_dir, get_project_root, set_project_dir,
-            invalidate_data_dir_cache,
+            invalidate_data_dir_cache, is_invalid_project_root,
         )
         if project is not None:
-            set_project_dir(Path(project).resolve())
+            resolved_project = Path(project).resolve()
+            # Bug 8 (Week-11 deep re-audit): defense-in-depth parity with
+            # the wiring layer. The wiring (claude_code_hooks._build_event +
+            # mcp_dispatch._build_pre_event) calls is_invalid_project_root
+            # to refuse $HOME / system dirs as project_root (Round-4 HIGH #2
+            # + v1.8.1 hotfix). The CLI bypassed this check, so
+            # `codevira insights --project $HOME` would silently succeed
+            # against a slug-sanitized path. Read-only path so no
+            # catastrophic state — but the user gets a confusing
+            # "no codevira data" instead of a clear "that's not a valid
+            # project root". Now uniform.
+            rejection = is_invalid_project_root(resolved_project)
+            if rejection:
+                out.write(
+                    f"Error: --project {project!r} is not a valid project "
+                    f"root: {rejection}\n"
+                    f"Use a directory with a .git, pyproject.toml, "
+                    f"package.json, or similar project marker.\n"
+                )
+                return 1
+            set_project_dir(resolved_project)
             invalidate_data_dir_cache()
         project_root = get_project_root()
         graph_db = get_data_dir() / "graph" / "graph.db"

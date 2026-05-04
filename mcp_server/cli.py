@@ -787,6 +787,46 @@ def main() -> None:
         help="Read another project's log instead of cwd",
     )
 
+    # replay (v2.0 hero 8 — Decision Replay)
+    replay_parser = subparsers.add_parser(
+        "replay",
+        help="Browse the decisions timeline (Hero 8)",
+        description=(
+            "Browse this project's decision history with outcomes + session "
+            "context. Three output formats: terminal (default), markdown, html. "
+            "Use --query to filter by substring; --since to widen lookback."
+        ),
+    )
+    replay_parser.add_argument(
+        "--query", default=None,
+        help="Filter decisions/files/context by substring",
+    )
+    replay_parser.add_argument(
+        "--since", default="30d",
+        help="Lookback window: e.g. 7d, 30d, 90d (default 30d, max 365d)",
+    )
+    replay_parser.add_argument(
+        "--top", type=int, default=20,
+        help="Max decisions to render (clamped 1-200, default 20)",
+    )
+    replay_parser.add_argument(
+        "--format", default="terminal",
+        choices=["terminal", "markdown", "html"],
+        help="Output format (default: terminal)",
+    )
+    replay_parser.add_argument(
+        "--project", metavar="PATH", default=None,
+        help="Read another project's decisions (validated)",
+    )
+    replay_parser.add_argument(
+        "--ascii", action="store_true",
+        help="Use ASCII fallbacks instead of unicode badges in terminal mode",
+    )
+    replay_parser.add_argument(
+        "--out", metavar="FILE", default=None,
+        help="Write to FILE instead of stdout (e.g. --format html --out timeline.html)",
+    )
+
     # insights (v2.0 hero 10 — AI Promotion Score)
     insights_parser = subparsers.add_parser(
         "insights",
@@ -958,6 +998,21 @@ def main() -> None:
             last=getattr(args, "last", 10),
             full=getattr(args, "full", False),
             project=Path(project_arg) if project_arg else None,
+        )
+        sys.exit(rc)
+    elif args.command == "replay":
+        # Hero 8 — Decision Replay. Browses decisions timeline.
+        from mcp_server.cli_replay import cmd_replay
+        project_arg = getattr(args, "project", None)
+        out_arg = getattr(args, "out", None)
+        rc = cmd_replay(
+            query=getattr(args, "query", None),
+            since=getattr(args, "since", "30d"),
+            top=getattr(args, "top", 20),
+            format=getattr(args, "format", "terminal"),
+            project=Path(project_arg) if project_arg else None,
+            ascii_mode=getattr(args, "ascii", False),
+            out_file=Path(out_arg) if out_arg else None,
         )
         sys.exit(rc)
     elif args.command == "insights":

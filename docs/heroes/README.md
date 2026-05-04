@@ -35,7 +35,7 @@ Specs cap at ~500 lines each.
 | 10 | **AI Promotion Score** | [`10-ai-promotion.md`](./10-ai-promotion.md) | 10 | ✅ shipped Week 10; Tier-0 pre-flight from start (35 + 2 subprocess tests, real outcomes DB, 10/10 mutations); first SESSION_START policy + `codevira insights` CLI |
 | 9 | **Proactive Intent Inference** | [`09-intent-inference.md`](./09-intent-inference.md) | 11 | ✅ shipped Week 11; Tier-0 pre-flight (45 unit + 12 integration QA, real DB, 9/10 mutations + 1 documented redundant); regex classifier + per-intent fetcher; second UserPromptSubmit policy alongside Hero 5 |
 | 3 | **Scope Contract Lock** | [`03-scope-contract.md`](./03-scope-contract.md) | 12 | ✅ shipped Week 12; **highest-risk hero** (off-by-default); Tier-0 + deep-audit from start (36 unit + 11 integration QA, 8/10 mutations + 2 documented redundant); first multi-event policy (UserPromptSubmit builds, PreToolUse enforces); reuses Hero 9's classifier; Bug-5 + Bug-7 + Lesson #19 defenses applied from start |
-| 8 | **Decision Replay** | `08-decision-replay.md` (TBD) | 13 | spec pending |
+| 8 | **Decision Replay** | [`08-decision-replay.md`](./08-decision-replay.md) | 13 | ✅ shipped Week 13 — **LAST HERO**; not a Policy (browse surface); 3 renderers (terminal/markdown/HTML) + MCP `codevira://decisions` resource + `codevira replay` CLI; 26 unit + 9 CLI subprocess + 9 integration QA; 10/10 mutations; HTML XSS escape audit; deep-audit from start = 0 new bugs |
 
 The order is dependency-aware (front-load easiest wins; defer riskiest), not numerical.
 

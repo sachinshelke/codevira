@@ -2156,6 +2156,118 @@ After Week 13: **Week 14 — Comprehensive E2E Integration Testing** (the releas
 
 ---
 
+## Week 13 — Hero 8 (Decision Replay) — **LAST HERO** (2026-05-04)
+
+### Shipped
+
+**Hero 8: Decision Replay — the tenth hero, FIRST non-policy hero.**
+
+Browse surface, not an event-intercepting policy. Surfaces decision history through three universal channels:
+
+1. **Pure data path** (`mcp_server/decision_replay.py`, ~290 LOC): `build_timeline()` SQL aggregation joining decisions ⨝ outcomes ⨝ sessions ⨝ nodes. Plus three renderers: `render_terminal()`, `render_markdown()`, `render_html()` (with XSS escaping via `html.escape()`).
+
+2. **MCP resources** (extended `mcp_server/server.py`):
+   - `codevira://decisions` — full timeline (last 30 days)
+   - `codevira://decisions/<query>` — filtered by URL-encoded query
+   - Both wired via `@server.list_resources()` + `@server.read_resource()` decorators
+
+3. **CLI** (`mcp_server/cli_replay.py`, ~140 LOC): `codevira replay [--query Q] [--since 30d] [--top 20] [--format terminal|markdown|html] [--out FILE] [--ascii] [--project PATH]`. Bug-8 lesson applied: `--project` runs through `is_invalid_project_root()`.
+
+### Tier-0 + deep-audit from start (lessons #15-21)
+
+- ✅ Real DB integration via real `record_outcome` + INSERT INTO decisions (same path Heroes 1, 5, 10 use).
+- ✅ End-to-end through MCP `read_resource` handler (Bug-4 lesson; await-then-asyncio.run).
+- ✅ End-to-end through CLI subprocess (Bug-4 lesson; second wiring path).
+- ✅ **HTML XSS probe** (Bug-X-shape audit) — declared "renders decision text" must trace through `html.escape`. Adversarial inputs `<script>`, `<img onerror>`, `</article><script>` all escape correctly. Tested at the unit layer AND through the full async handler path.
+- ✅ **Empty-section probe for all 3 renderers** (Lesson #19) — terminal/markdown/html each emit a friendly placeholder, never an empty section header.
+- ✅ **Bug-8 parity for CLI** — `codevira replay --project $HOME` rejected with rc=1 + clear error.
+- ✅ Bug-shape audit: every URI path traces, every config option exercised.
+
+### Tests + mutations
+
+- **26 unit tests** in `tests/engine/test_decision_replay.py` (4 pure functions + 8 build_timeline + 3 empty-renderer + 4 populated-renderer + 6 MCP handler + 1 perf)
+- **9 CLI subprocess tests** in `tests/test_cli_replay.py` (terminal/markdown/html formats, query filter, no-match, --out file, invalid format, Bug-8 rejection, empty project)
+- **9 integration QA tests** in `tests/engine/test_qa_round_week13.py` (proactive deep-audit round)
+- **10 mutations from start, 10 caught**:
+  - M1 drop `html.escape` on decision → XSS test catches
+  - M2 drop terminal empty placeholder → 2 tests fail (unit + CLI)
+  - M3 SQL query filter broken → 2 build_timeline tests fail
+  - M4 locked flag always False → unit test catches
+  - M5 drop SQL try/except → graceful-failure test catches
+  - M6 drop bare `codevira://decisions` URI handling → resource handler test fails
+  - M7 drop unknown-URI ValueError → defensive test catches
+  - M8 drop URL-decoding → URL-encoded query test fails
+  - M9 drop Bug-8 invalid-project check in CLI → Bug-8 regression test fails
+  - M10 always emit embeddable HTML (no `<html>` shell) → empty-render test fails
+
+All caught. **Zero observably-redundant mutations** — first hero this round.
+
+### Surprises
+
+- **MCP Python SDK supports resources without async-test infra** — converted tests to use `asyncio.run()` wrappers instead of adding `pytest-asyncio` as a dependency. Clean and minimal.
+- **Hero 8 is the FIRST non-Policy hero** — added a test (`test_hero_8_is_browse_surface_not_policy`) that locks this architectural choice. If a future refactor accidentally creates a Policy subclass in `decision_replay.py`, the test catches it and forces a deliberate decision.
+- **MCP Apps SEP-1865 ui:// scheme** — the SDK doesn't expose this yet. Shipped standard HTML at standard URIs (`codevira://decisions`); Claude Desktop renders HTML in resource content well enough. v2.1 may upgrade to `ui://` when SDK lands.
+- **CLI `--query NONEXISTENT` correctly returns the empty placeholder**, not an empty header — validated end-to-end through subprocess.
+
+### What changed in the spec
+
+- Confirmed v2.0-alpha ships with standard MCP resources, not SEP-1865 `ui://` URIs (SDK constraint).
+- Added explicit "Hero 8 is NOT a Policy" architectural lock-in test.
+
+### Bug ledger after Week 13 — **0 new bugs**
+
+| Bug | Caught at | Survived |
+|---|---|---|
+| 1 | Week-5 R8 | 5 weeks |
+| 2 | Week-5 R8 | 5 weeks |
+| 3 | Week-7 M9 | 7 weeks |
+| 4 | Week-9 QA | 0 weeks |
+| 5 | Week-11 QA | 0 weeks |
+| 6 | Week-11 QA | 0 weeks |
+| 7 | Week-11 deep re-audit | 2 weeks |
+| 8 | Week-11 deep re-audit | 1 week |
+| **— Week 13** | n/a | **0 new bugs** |
+
+The deep-audit-from-start discipline applied since Week 11 has held: Hero 7 (Week 9 originally), Hero 10 (Week 10), Hero 9 (Week 11) all required deep re-audit later. Heroes 3 (Week 12) and Hero 8 (Week 13) shipped with the discipline applied from start — both had **zero** new bugs surface afterwards.
+
+### Test status
+
+664/664 across `tests/engine/` + `tests/test_paths.py` + `tests/test_setup_wizard.py` + `tests/test_cli_insights.py` + `tests/test_cli_replay.py` (was 620 → +26 unit + 9 CLI subprocess + 9 integration QA).
+
+### Heroes shipped: **10 of 10** 🎉
+
+All ten heroes from the master plan are now live:
+
+| # | Hero | Week | Type |
+|---|---|---|---|
+| 4 | Blast-Radius Veto | 4 | PreToolUse blocker |
+| 1 | Decision Lock | 5 | PreToolUse blocker |
+| 5 | Cross-Session Consistency | 6 | UserPromptSubmit injector |
+| 6 | Token Budget Live View | 7 | Stop / PostToolUse |
+| 2 | Anti-Regression Memory | 8 | PreToolUse blocker |
+| 7 | Live Style Enforcement | 9 | PostToolUse warner |
+| 10 | AI Promotion Score | 10 | SessionStart injector + CLI |
+| 9 | Proactive Intent Inference | 11 | UserPromptSubmit injector |
+| 3 | Scope Contract Lock | 12 | UserPromptSubmit + PreToolUse (off-by-default) |
+| 8 | **Decision Replay** | **13** | **MCP resource + CLI (browse surface)** |
+
+### What's next
+
+**Week 14 — Comprehensive E2E Integration Testing** (the release-candidate gate per user request). No new heroes; this is the final-pass round across all 10 heroes:
+
+- Multi-day real-codebase exercise
+- Cross-tool universality (Claude Code → Cursor → Windsurf → Antigravity)
+- Stress test (100+ decisions, 1000+ outcomes)
+- Failure-mode test (corrupt DBs)
+- Schema-migration (v1.8 → v2.0)
+- Concurrent-policy test
+- Public-API contract test (fresh `pipx install`)
+- Final unbiased deep-re-audit pass across all 10 heroes
+
+Without Week 14 clean: no v2.0 GA tag.
+
+---
+
 ## Template for new entries
 
 ```markdown

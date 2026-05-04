@@ -120,6 +120,88 @@ async def handle_get_prompt(name: str, arguments: dict | None = None):
     )
 
 
+# ---- MCP Resources (Hero 8 — Decision Replay) ----
+#
+# We expose two URIs:
+#   - codevira://decisions          — full timeline (last 30 days)
+#   - codevira://decisions/<query>  — filtered by query substring
+#
+# Clients that render HTML in resource content (Claude Desktop) display
+# the rich timeline. Plain-text clients fall back to the raw HTML string
+# (acceptable degradation; the user can pipe through a viewer).
+#
+# v2.1 may upgrade to MCP Apps SEP-1865 ``ui://`` URIs for proper iframe
+# rendering once the SDK exposes that scheme.
+
+
+@server.list_resources()
+async def handle_list_resources():
+    from mcp.types import Resource
+    from pydantic import AnyUrl
+
+    return [
+        Resource(
+            uri=AnyUrl("codevira://decisions"),
+            name="Codevira decisions timeline",
+            description=(
+                "Browse this project's decision history with outcomes "
+                "and session context. Use codevira://decisions/<query> "
+                "to filter by substring."
+            ),
+            mimeType="text/html",
+        ),
+    ]
+
+
+@server.read_resource()
+async def handle_read_resource(uri):
+    """Render a decision-replay timeline at the requested URI.
+
+    Defensive: any read error returns a friendly HTML message rather
+    than raising — Hero 8 is a browse surface; data flakiness must
+    yield a degraded result, not a broken client experience.
+    """
+    from mcp_server.decision_replay import build_timeline, render_html
+    from mcp_server.paths import get_data_dir
+
+    uri_str = str(uri)
+    query: str | None = None
+
+    if uri_str == "codevira://decisions":
+        title = "Codevira Replay"
+    elif uri_str.startswith("codevira://decisions/"):
+        # Everything after the prefix is the query, URL-decoded if needed.
+        from urllib.parse import unquote
+        raw_query = uri_str[len("codevira://decisions/"):]
+        query = unquote(raw_query) or None
+        title = f"Codevira Replay — query: {query!r}"
+    else:
+        # Unknown URI — let the SDK report not-found via ValueError.
+        raise ValueError(f"Unknown codevira resource: {uri_str!r}")
+
+    try:
+        from indexer.sqlite_graph import SQLiteGraph
+        graph_db = get_data_dir() / "graph" / "graph.db"
+        if not graph_db.exists():
+            return render_html([], title=title)
+        g = SQLiteGraph(graph_db)
+        try:
+            timeline = build_timeline(g.conn, query=query, since_days=30, limit=20)
+        finally:
+            g.close()
+        return render_html(timeline, title=title)
+    except Exception as e:  # noqa: BLE001
+        # Bug-X-shape defense: never let resource-read crash the MCP
+        # client. Return an HTML page with the error so the user knows.
+        import html as _html
+        return (
+            f"<!DOCTYPE html><html><body>"
+            f"<h1>{_html.escape(title)}</h1>"
+            f"<p style='color:red'>Codevira couldn't load decisions: "
+            f"{_html.escape(str(e))}</p></body></html>"
+        )
+
+
 @server.list_tools()
 async def list_tools() -> list[Tool]:
     # Hide tools whose deps aren't installed — AI agents only see what works.

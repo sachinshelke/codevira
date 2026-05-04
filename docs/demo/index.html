@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Codevira — 30-second demo</title>
+<style>
+  /* ----- Reset + base ----- */
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    height: 100%;
+    background: #0a0e14;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    color: #d4d4d4;
+    overflow: hidden;
+  }
+  body {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* ----- Stage ----- */
+  .stage {
+    position: relative;
+    width: 1280px;
+    height: 720px;
+    background: #0d1117;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+  }
+
+  /* Each scene fades in/out via opacity + visibility */
+  .scene {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 400ms ease, visibility 400ms;
+    padding: 40px;
+    display: flex;
+    flex-direction: column;
+  }
+  .scene.active {
+    opacity: 1;
+    visibility: visible;
+  }
+
+  /* ----- Window chrome (mock IDE / terminal) ----- */
+  .window {
+    background: #161b22;
+    border-radius: 8px;
+    border: 1px solid #30363d;
+    overflow: hidden;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+  }
+  .window-bar {
+    background: #21262d;
+    padding: 10px 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border-bottom: 1px solid #30363d;
+    font-size: 13px;
+    color: #8b949e;
+  }
+  .window-dots {
+    display: flex;
+    gap: 6px;
+  }
+  .dot { width: 12px; height: 12px; border-radius: 50%; }
+  .dot.red { background: #ff5f56; }
+  .dot.yellow { background: #ffbd2e; }
+  .dot.green { background: #27c93f; }
+  .window-title { margin-left: 12px; font-weight: 500; }
+  .window-tool-badge {
+    margin-left: auto;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+  }
+  .badge-claude { background: #d4865c33; color: #ffaa70; border: 1px solid #d4865c; }
+  .badge-cursor { background: #6f73ff33; color: #9aa0ff; border: 1px solid #6f73ff; }
+  .badge-windsurf { background: #00b89333; color: #4ddabd; border: 1px solid #00b893; }
+  .badge-antigravity { background: #ff6b9d33; color: #ffaecc; border: 1px solid #ff6b9d; }
+  .badge-terminal { background: #58a6ff33; color: #79c0ff; border: 1px solid #58a6ff; }
+
+  .window-body {
+    flex: 1;
+    padding: 24px;
+    overflow-y: auto;
+    font-size: 16px;
+    line-height: 1.6;
+  }
+
+  /* ----- Chat bubble layout (IDE chats) ----- */
+  .chat-msg {
+    margin-bottom: 18px;
+    padding: 14px 18px;
+    border-radius: 10px;
+    max-width: 88%;
+    opacity: 0;
+    animation: fadeUp 500ms ease forwards;
+  }
+  .chat-msg.user {
+    background: #1f2c40;
+    margin-left: auto;
+    color: #c8d3e2;
+    border: 1px solid #2d3f5b;
+  }
+  .chat-msg.ai {
+    background: #1c2e23;
+    color: #c5e8c5;
+    border: 1px solid #2e4a36;
+  }
+  .chat-msg.codevira-inject {
+    background: #2d2618;
+    color: #e7d394;
+    border: 1px solid #4a3e1f;
+    border-left: 4px solid #d4865c;
+    font-size: 14px;
+  }
+  .chat-msg.codevira-inject .label {
+    color: #d4865c;
+    font-weight: 600;
+    font-size: 12px;
+    letter-spacing: 0.5px;
+    margin-bottom: 6px;
+  }
+  .chat-msg .role {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    opacity: 0.6;
+    margin-bottom: 4px;
+    font-weight: 600;
+  }
+
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  /* ----- Terminal (scene 2) ----- */
+  .terminal {
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 14px;
+    color: #c9d1d9;
+    line-height: 1.55;
+    padding: 18px 24px;
+    flex: 1;
+    overflow: hidden;
+  }
+  .term-line { white-space: pre; }
+  .term-prompt { color: #79c0ff; }
+  .term-cmd { color: #d4865c; }
+  .term-out { color: #8b949e; }
+  .term-ok { color: #56d364; }
+  .term-bullet { color: #d4865c; }
+  .term-fade-in {
+    opacity: 0;
+    animation: fadeIn 200ms forwards;
+  }
+  @keyframes fadeIn { to { opacity: 1; } }
+
+  /* ----- Stage 4 (cross-tool grid) ----- */
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 18px;
+    flex: 1;
+  }
+  .grid .window {
+    flex: 1;
+  }
+  .grid .window-body {
+    padding: 16px;
+    font-size: 13px;
+  }
+  .grid .chat-msg {
+    padding: 10px 14px;
+    margin-bottom: 10px;
+    font-size: 13px;
+  }
+
+  /* ----- End cards (scenes 6, 7) ----- */
+  .end-card {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 28px;
+    text-align: center;
+  }
+  .logo {
+    font-size: 80px;
+    font-weight: 800;
+    letter-spacing: -3px;
+    color: #d4865c;
+    text-shadow: 0 0 30px rgba(212, 134, 92, 0.3);
+  }
+  .install-cmd {
+    background: #0d1117;
+    padding: 18px 32px;
+    border-radius: 10px;
+    border: 1px solid #30363d;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 22px;
+    color: #79c0ff;
+  }
+  .install-cmd .term-prompt { color: #56d364; }
+  .github-url {
+    font-size: 18px;
+    color: #8b949e;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+  }
+  .tagline {
+    font-size: 56px;
+    font-weight: 700;
+    letter-spacing: -1.5px;
+    color: #f0f6fc;
+    line-height: 1.2;
+  }
+  .tagline-emphasis {
+    background: linear-gradient(90deg, #d4865c, #ffaa70);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+  }
+  .tagline-sub {
+    font-size: 22px;
+    color: #8b949e;
+    margin-top: 16px;
+    font-weight: 400;
+  }
+
+  /* ----- Scene-2 hero "DEMO" overlay (the install) ----- */
+  .scene-title {
+    position: absolute;
+    top: 24px;
+    right: 32px;
+    font-size: 12px;
+    color: #8b949e;
+    font-family: monospace;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+
+  /* ----- Bottom HUD (progress + replay) ----- */
+  .hud {
+    position: absolute;
+    bottom: 12px;
+    left: 0;
+    right: 0;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 20px;
+    padding: 0 24px;
+    pointer-events: none;
+  }
+  .progress {
+    width: 60%;
+    max-width: 600px;
+    height: 4px;
+    background: #21262d;
+    border-radius: 2px;
+    overflow: hidden;
+    pointer-events: auto;
+  }
+  .progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, #d4865c, #ffaa70);
+    width: 0%;
+    transition: width 150ms linear;
+  }
+  .hud-time {
+    font-family: monospace;
+    font-size: 12px;
+    color: #8b949e;
+    pointer-events: auto;
+  }
+  .replay-btn {
+    background: #d4865c;
+    color: #0d1117;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    pointer-events: auto;
+    transition: opacity 200ms;
+  }
+  .replay-btn:hover { opacity: 0.85; }
+
+  /* ----- Highlight (scene 5 file edit) ----- */
+  .highlight {
+    background: #2d4a1c;
+    padding: 0 4px;
+    border-radius: 3px;
+    color: #b6f5a8;
+    font-weight: 600;
+  }
+
+  /* ----- Banner (scene 4 reveal) ----- */
+  .reveal-banner {
+    position: absolute;
+    bottom: 80px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 16px 32px;
+    background: linear-gradient(135deg, #d4865c, #ffaa70);
+    color: #0d1117;
+    font-size: 22px;
+    font-weight: 700;
+    border-radius: 10px;
+    letter-spacing: -0.5px;
+    box-shadow: 0 8px 24px rgba(212, 134, 92, 0.4);
+    opacity: 0;
+    animation: bannerIn 600ms 1500ms forwards;
+  }
+  @keyframes bannerIn {
+    from { opacity: 0; transform: translate(-50%, 20px); }
+    to   { opacity: 1; transform: translate(-50%, 0); }
+  }
+
+  /* ----- Codevira logo / mark ----- */
+  .codevira-mark {
+    color: #d4865c;
+    font-weight: 700;
+  }
+
+  /* Cursor blinking effect for terminal */
+  .cursor-blink::after {
+    content: "▋";
+    color: #d4865c;
+    animation: blink 1s steps(2) infinite;
+  }
+  @keyframes blink {
+    50% { opacity: 0; }
+  }
+</style>
+</head>
+<body>
+
+<div class="stage" id="stage">
+
+  <!-- ====================================================== -->
+  <!-- SCENE 1 (4s): "Without codevira" — generic AI guess     -->
+  <!-- ====================================================== -->
+  <div class="scene" id="scene-1">
+    <div class="scene-title">SCENE 1 / 7  •  WITHOUT CODEVIRA</div>
+    <div class="window">
+      <div class="window-bar">
+        <div class="window-dots"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span></div>
+        <span class="window-title">my-app/auth.py</span>
+        <span class="window-tool-badge badge-claude">Claude Code</span>
+      </div>
+      <div class="window-body">
+        <div class="chat-msg user" style="animation-delay: 200ms">
+          <div class="role">You</div>
+          What did I decide about retries last week?
+        </div>
+        <div class="chat-msg ai" style="animation-delay: 1500ms">
+          <div class="role">Claude</div>
+          I don't have context on previous decisions you've made.
+          Generally, retries should use exponential backoff with jitter,
+          but the right policy depends on your specific system…
+          <em style="opacity: 0.6">(generic suggestion follows…)</em>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ====================================================== -->
+  <!-- SCENE 2 (6s): pipx install + codevira setup            -->
+  <!-- ====================================================== -->
+  <div class="scene" id="scene-2">
+    <div class="scene-title">SCENE 2 / 7  •  60-SECOND INSTALL</div>
+    <div class="window">
+      <div class="window-bar">
+        <div class="window-dots"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span></div>
+        <span class="window-title">~/my-app  —  zsh</span>
+        <span class="window-tool-badge badge-terminal">Terminal</span>
+      </div>
+      <div class="terminal">
+        <div class="term-line term-fade-in" style="animation-delay: 100ms"><span class="term-prompt">$</span> <span class="term-cmd">pipx install codevira</span></div>
+        <div class="term-line term-fade-in term-out" style="animation-delay: 600ms">  installed package codevira 2.0.0</div>
+        <div class="term-line term-fade-in term-out" style="animation-delay: 700ms">  installed: codevira</div>
+        <div class="term-line">&nbsp;</div>
+        <div class="term-line term-fade-in" style="animation-delay: 1100ms"><span class="term-prompt">$</span> <span class="term-cmd">codevira setup</span></div>
+        <div class="term-line term-fade-in term-out" style="animation-delay: 1500ms">  detecting installed AI tools…</div>
+        <div class="term-line term-fade-in" style="animation-delay: 2000ms">    <span class="term-bullet">▸</span> Claude Code      <span class="term-ok">✓ found</span></div>
+        <div class="term-line term-fade-in" style="animation-delay: 2200ms">    <span class="term-bullet">▸</span> Cursor           <span class="term-ok">✓ found</span></div>
+        <div class="term-line term-fade-in" style="animation-delay: 2400ms">    <span class="term-bullet">▸</span> Windsurf         <span class="term-ok">✓ found</span></div>
+        <div class="term-line term-fade-in" style="animation-delay: 2600ms">    <span class="term-bullet">▸</span> Antigravity      <span class="term-ok">✓ found</span></div>
+        <div class="term-line term-fade-in" style="animation-delay: 2800ms">    <span class="term-bullet">▸</span> GitHub Copilot   <span class="term-ok">✓ found</span></div>
+        <div class="term-line">&nbsp;</div>
+        <div class="term-line term-fade-in term-out" style="animation-delay: 3300ms">  writing nudge files…</div>
+        <div class="term-line term-fade-in" style="animation-delay: 3700ms">    <span class="term-ok">✓</span> CLAUDE.md, AGENTS.md, .cursor/rules/codevira.mdc,</div>
+        <div class="term-line term-fade-in" style="animation-delay: 3850ms">      .windsurfrules, GEMINI.md, .github/copilot-instructions.md</div>
+        <div class="term-line">&nbsp;</div>
+        <div class="term-line term-fade-in" style="animation-delay: 4400ms">  installing Claude Code lifecycle hooks…</div>
+        <div class="term-line term-fade-in" style="animation-delay: 4700ms">    <span class="term-ok">✓</span> SessionStart, PreToolUse, PostToolUse, UserPromptSubmit, Stop</div>
+        <div class="term-line">&nbsp;</div>
+        <div class="term-line term-fade-in term-ok" style="animation-delay: 5200ms"><span class="term-bullet">●</span> codevira ready in this project. Open any AI tool and start.</div>
+        <div class="term-line term-fade-in cursor-blink" style="animation-delay: 5600ms"><span class="term-prompt">$</span> </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ====================================================== -->
+  <!-- SCENE 3 (4s): same Claude Code, same question, RICH answer -->
+  <!-- ====================================================== -->
+  <div class="scene" id="scene-3">
+    <div class="scene-title">SCENE 3 / 7  •  WITH CODEVIRA  •  same question, real answer</div>
+    <div class="window">
+      <div class="window-bar">
+        <div class="window-dots"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span></div>
+        <span class="window-title">my-app/auth.py</span>
+        <span class="window-tool-badge badge-claude">Claude Code</span>
+      </div>
+      <div class="window-body">
+        <div class="chat-msg user" style="animation-delay: 100ms">
+          <div class="role">You</div>
+          What did I decide about retries last week?
+        </div>
+        <div class="chat-msg codevira-inject" style="animation-delay: 700ms">
+          <div class="label">⚡ CODEVIRA INJECT — SessionStart context</div>
+          📌 <strong>retries.py</strong> — "exponential backoff with jitter; max 5 attempts"
+          <br><span style="opacity: 0.7; font-size: 12px;">Score 0.88 · 4/4 kept · session 2026-04-28 · "tune retry policy after timeout incident"</span>
+        </div>
+        <div class="chat-msg ai" style="animation-delay: 1700ms">
+          <div class="role">Claude</div>
+          You decided <strong>exponential backoff with jitter, max 5 attempts</strong>
+          on April 28 in <code>retries.py</code> — after the timeout incident.
+          The decision is locked. Want me to verify the current
+          implementation matches?
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ====================================================== -->
+  <!-- SCENE 4 (6s): SWITCH TOOLS — same memory in Cursor + Windsurf + Antigravity -->
+  <!-- ====================================================== -->
+  <div class="scene" id="scene-4">
+    <div class="scene-title">SCENE 4 / 7  •  SWITCH TOOLS  •  same memory follows you</div>
+    <div class="grid">
+      <div class="window" style="animation: fadeUp 500ms 200ms backwards;">
+        <div class="window-bar">
+          <div class="window-dots"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span></div>
+          <span class="window-title">my-app</span>
+          <span class="window-tool-badge badge-cursor">Cursor</span>
+        </div>
+        <div class="window-body">
+          <div class="chat-msg user" style="animation-delay: 400ms; padding: 8px 12px; font-size: 13px;">
+            What about retries?
+          </div>
+          <div class="chat-msg ai" style="animation-delay: 1200ms; padding: 10px 14px; font-size: 13px;">
+            <strong>Exponential backoff with jitter, max 5 attempts</strong> in
+            <code>retries.py</code>. Decision locked Apr 28.
+          </div>
+        </div>
+      </div>
+      <div class="window" style="animation: fadeUp 500ms 800ms backwards;">
+        <div class="window-bar">
+          <div class="window-dots"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span></div>
+          <span class="window-title">my-app</span>
+          <span class="window-tool-badge badge-windsurf">Windsurf</span>
+        </div>
+        <div class="window-body">
+          <div class="chat-msg user" style="animation-delay: 1100ms; padding: 8px 12px; font-size: 13px;">
+            What about retries?
+          </div>
+          <div class="chat-msg ai" style="animation-delay: 2000ms; padding: 10px 14px; font-size: 13px;">
+            <strong>Exponential backoff with jitter, max 5 attempts</strong> in
+            <code>retries.py</code>. Decision locked Apr 28.
+          </div>
+        </div>
+      </div>
+      <div class="window" style="animation: fadeUp 500ms 1400ms backwards;">
+        <div class="window-bar">
+          <div class="window-dots"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span></div>
+          <span class="window-title">my-app</span>
+          <span class="window-tool-badge badge-antigravity">Antigravity</span>
+        </div>
+        <div class="window-body">
+          <div class="chat-msg user" style="animation-delay: 1900ms; padding: 8px 12px; font-size: 13px;">
+            What about retries?
+          </div>
+          <div class="chat-msg ai" style="animation-delay: 2800ms; padding: 10px 14px; font-size: 13px;">
+            <strong>Exponential backoff with jitter, max 5 attempts</strong> in
+            <code>retries.py</code>. Decision locked Apr 28.
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="reveal-banner">
+      Same memory in every tool. ✦ Same project. ✦ Local-first.
+    </div>
+  </div>
+
+  <!-- ====================================================== -->
+  <!-- SCENE 5 (5s): Edit in Claude Code, see it in Cursor    -->
+  <!-- ====================================================== -->
+  <div class="scene" id="scene-5">
+    <div class="scene-title">SCENE 5 / 7  •  WRITE ONCE  •  every other tool sees it</div>
+    <div class="grid" style="grid-template-columns: 1fr 1fr;">
+      <div class="window">
+        <div class="window-bar">
+          <div class="window-dots"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span></div>
+          <span class="window-title">retries.py</span>
+          <span class="window-tool-badge badge-claude">Claude Code</span>
+        </div>
+        <div class="window-body" style="font-family: monospace; font-size: 13px;">
+          <div style="color: #8b949e;">def retry_with_backoff(fn, max_attempts=5):</div>
+          <div style="color: #8b949e;">&nbsp;&nbsp;&nbsp;&nbsp;for attempt in range(max_attempts):</div>
+          <div style="color: #8b949e;">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;try: return fn()</div>
+          <div style="color: #8b949e;">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;except Exception:</div>
+          <div class="highlight" style="display: inline-block; opacity: 0; animation: fadeIn 300ms 1500ms forwards; margin-left: 32px;">+ wait_with_jitter(2 ** attempt)</div>
+          <br><br>
+          <div class="chat-msg ai" style="margin-top: 28px; padding: 10px 14px; font-size: 13px; opacity: 0; animation: fadeUp 400ms 2200ms forwards;">
+            <div class="role" style="font-size: 10px;">Claude · auto-logged decision</div>
+            ✓ Logged: "added jitter to retry backoff"
+            <br><span style="font-size: 12px; opacity: 0.7;">linked to retries.py · session today</span>
+          </div>
+        </div>
+      </div>
+      <div class="window">
+        <div class="window-bar">
+          <div class="window-dots"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span></div>
+          <span class="window-title">retries.py</span>
+          <span class="window-tool-badge badge-cursor">Cursor</span>
+        </div>
+        <div class="window-body">
+          <div class="chat-msg user" style="animation-delay: 3300ms; padding: 8px 12px; font-size: 13px;">
+            What changed in retries.py recently?
+          </div>
+          <div class="chat-msg codevira-inject" style="animation-delay: 4000ms; padding: 10px 14px; font-size: 13px;">
+            <div class="label" style="font-size: 11px;">⚡ CODEVIRA INJECT</div>
+            Recent decision (today): <strong>"added jitter to retry backoff"</strong>
+          </div>
+          <div class="chat-msg ai" style="animation-delay: 4400ms; padding: 10px 14px; font-size: 13px;">
+            <div class="role" style="font-size: 10px;">Cursor</div>
+            Today, jitter was added to the retry backoff — makes the
+            5-attempt max less likely to thunder.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ====================================================== -->
+  <!-- SCENE 6 (3s): END CARD — install + GitHub               -->
+  <!-- ====================================================== -->
+  <div class="scene" id="scene-6">
+    <div class="end-card">
+      <div class="logo">codevira</div>
+      <div class="install-cmd">
+        <span class="term-prompt">$</span> pipx install codevira && codevira setup
+      </div>
+      <div class="github-url">github.com/yourname/codevira ★</div>
+    </div>
+  </div>
+
+  <!-- ====================================================== -->
+  <!-- SCENE 7 (2s): TAGLINE                                   -->
+  <!-- ====================================================== -->
+  <div class="scene" id="scene-7">
+    <div class="end-card">
+      <div class="tagline">
+        <span class="tagline-emphasis">One memory.</span><br>
+        Every AI tool.<br>
+        <span style="font-size: 36px; opacity: 0.7;">Local-first.</span>
+      </div>
+      <div class="tagline-sub">codevira · MIT · no signup</div>
+    </div>
+  </div>
+
+  <!-- HUD: progress + replay -->
+  <div class="hud">
+    <button class="replay-btn" id="replayBtn" onclick="play()">▸ play</button>
+    <div class="progress"><div class="progress-bar" id="progressBar"></div></div>
+    <span class="hud-time" id="hudTime">00:00 / 00:30</span>
+  </div>
+
+</div>
+
+<script>
+  // ====== Scene timeline (in seconds) ======
+  const TIMELINE = [
+    { id: "scene-1", at:  0, dur: 4, label: "Without codevira" },
+    { id: "scene-2", at:  4, dur: 6, label: "Install" },
+    { id: "scene-3", at: 10, dur: 4, label: "With codevira" },
+    { id: "scene-4", at: 14, dur: 6, label: "Switch tools" },
+    { id: "scene-5", at: 20, dur: 5, label: "Cross-tool sync" },
+    { id: "scene-6", at: 25, dur: 3, label: "Install card" },
+    { id: "scene-7", at: 28, dur: 2, label: "Tagline" },
+  ];
+  const TOTAL = 30; // seconds
+
+  let startTime = null;
+  let raf = null;
+
+  function setActive(t) {
+    let active = TIMELINE[0].id;
+    for (const s of TIMELINE) {
+      if (t >= s.at) active = s.id;
+    }
+    document.querySelectorAll(".scene").forEach(el => {
+      el.classList.toggle("active", el.id === active);
+    });
+  }
+
+  function fmt(t) {
+    const s = Math.max(0, Math.floor(t));
+    const m = Math.floor(s / 60);
+    const r = s % 60;
+    return `${String(m).padStart(2,"0")}:${String(r).padStart(2,"0")}`;
+  }
+
+  function tick(now) {
+    if (!startTime) startTime = now;
+    const t = (now - startTime) / 1000;
+    if (t >= TOTAL) {
+      setActive(TOTAL - 0.001);
+      document.getElementById("progressBar").style.width = "100%";
+      document.getElementById("hudTime").textContent = `00:30 / 00:30`;
+      document.getElementById("replayBtn").textContent = "↻ replay";
+      raf = null;
+      return;
+    }
+    setActive(t);
+    document.getElementById("progressBar").style.width = `${(t / TOTAL) * 100}%`;
+    document.getElementById("hudTime").textContent = `${fmt(t)} / 00:30`;
+    raf = requestAnimationFrame(tick);
+  }
+
+  function play() {
+    if (raf) cancelAnimationFrame(raf);
+    startTime = null;
+    // Reset all CSS animations by re-cloning each .scene's body
+    document.querySelectorAll(".scene").forEach(s => {
+      const clone = s.cloneNode(true);
+      s.replaceWith(clone);
+    });
+    document.getElementById("replayBtn").textContent = "▸ playing…";
+    raf = requestAnimationFrame(tick);
+  }
+
+  // Auto-play on load
+  window.addEventListener("load", () => {
+    setTimeout(play, 500);
+  });
+</script>
+</body>
+</html>

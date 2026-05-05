@@ -121,9 +121,21 @@ class TestCmdAgents:
         paths_mod.invalidate_data_dir_cache()
 
         # First run: creates everything
-        cmd_agents(out=io.StringIO())
+        first_out = io.StringIO()
+        cmd_agents(out=first_out)
         first_size = (isolated_project / "CLAUDE.md").stat().st_size
-        first_mtime = (isolated_project / "CLAUDE.md").stat().st_mtime
+        # First run: every supported IDE → "written" (the summary line)
+        first_summary_line = [
+            line for line in first_out.getvalue().splitlines()
+            if "summary:" in line
+        ]
+        assert first_summary_line, "first run should print summary"
+        # Should report 6 written (codex + agents_md both point at
+        # AGENTS.md; codex creates, agents_md sees the same content
+        # and reports unchanged → 6 written, 1 unchanged).
+        assert "6 would write / wrote" in first_summary_line[0]
+        assert "1 unchanged" in first_summary_line[0]
+
         # Second run: idempotent — content same, file likely unchanged
         out = io.StringIO()
         rc = cmd_agents(out=out)
@@ -133,6 +145,26 @@ class TestCmdAgents:
         text = (isolated_project / "CLAUDE.md").read_text()
         assert agents_md.START_MARKER in text
         assert agents_md.END_MARKER in text
+        # M6 regression: SECOND run summary must report unchanged ≥ 1
+        # (confirms no_change actions are reported as "unchanged",
+        # not as "written"). Without this assertion, the CLI could
+        # silently lose its idempotency reporting and tests still pass.
+        second_summary = [
+            line for line in out.getvalue().splitlines()
+            if "summary:" in line
+        ]
+        assert second_summary
+        # At least some IDEs should be reported as unchanged (some
+        # templates produce no_change on re-run, some produce
+        # would_be_no_change in dry-run; here the second run is
+        # not dry-run so all should be no_change → unchanged).
+        assert "unchanged" in second_summary[0]
+        # And NOT "0 unchanged" — at least 1 IDE must be unchanged
+        # to lock the contract.
+        assert "0 unchanged" not in second_summary[0], (
+            f"M6 regression: second idempotent run reported 0 unchanged. "
+            f"Summary: {second_summary[0]}"
+        )
 
     def test_invalid_project_root_rejected_bug8(self):
         """Bug-8 parity: an invalid project root (system top like ``/``)

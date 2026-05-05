@@ -396,6 +396,11 @@ def cmd_configure(
         data_dir = get_data_dir()
     except Exception as e:
         print(f"Error: could not resolve .codevira/: {e}", file=sys.stderr)
+        print(
+            "  → run `codevira doctor` to diagnose, "
+            "or `codevira setup` to re-init.",
+            file=sys.stderr,
+        )
         return 1
 
     # Project root is NOT necessarily data_dir.parent — in v1.6+ centralized
@@ -412,6 +417,11 @@ def cmd_configure(
     rejection = is_invalid_project_root(project_root)
     if rejection:
         print(f"Error: {rejection}", file=sys.stderr)
+        print(
+            "  → cd into a project directory or pass "
+            "--project-dir <real-project-path>.",
+            file=sys.stderr,
+        )
         return 1
 
     # Note: we deliberately do NOT require data_dir to exist. `codevira
@@ -449,6 +459,12 @@ def cmd_configure(
             except (PermissionError, OSError) as e:
                 print(
                     f"Error: cannot create {data_dir}: {e}",
+                    file=sys.stderr,
+                )
+                print(
+                    f"  → check permissions on {data_dir.parent} "
+                    f"(`ls -la {data_dir.parent}`) and ensure your user "
+                    f"can write there.",
                     file=sys.stderr,
                 )
                 return 1
@@ -632,6 +648,11 @@ def cmd_configure(
             )
         except NonInteractiveError as e:
             print(f"Error: {e}", file=sys.stderr)
+            print(
+                "  → run `codevira configure --dirs DIR1,DIR2 "
+                "--extensions .py,.ts` for non-interactive mode.",
+                file=sys.stderr,
+            )
             return 1
 
         if chosen_dirs is None:
@@ -655,6 +676,11 @@ def cmd_configure(
                 return 0
             if not chosen_dirs:
                 print("Error: no directories selected. Aborting.", file=sys.stderr)
+                print(
+                    "  → run `codevira configure --dirs <list>` to specify "
+                    "directories non-interactively.",
+                    file=sys.stderr,
+                )
                 return 2
 
         preselected_exts = set(scan["exts_now"])
@@ -668,6 +694,11 @@ def cmd_configure(
             )
         except NonInteractiveError as e:
             print(f"Error: {e}", file=sys.stderr)
+            print(
+                "  → run `codevira configure --extensions .py,.ts,.js` "
+                "for non-interactive mode.",
+                file=sys.stderr,
+            )
             return 1
         if chosen_exts is None:
             print("Aborted.")
@@ -692,6 +723,11 @@ def cmd_configure(
                 return 0
             if not chosen_exts:
                 print("Error: no extensions selected. Aborting.", file=sys.stderr)
+                print(
+                    "  → run `codevira configure --extensions .py,.ts` to "
+                    "specify extensions non-interactively.",
+                    file=sys.stderr,
+                )
                 return 2
     else:
         # Non-interactive: flags drive the selection, unspecified => keep current.

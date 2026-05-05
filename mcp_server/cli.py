@@ -65,6 +65,11 @@ def cmd_init() -> None:
     rejection = is_invalid_project_root(cwd)
     if rejection:
         print(f"Error: {rejection}", file=sys.stderr)
+        print(
+            "  → cd into a project directory (one with .git, pyproject.toml, "
+            "package.json, or similar marker) and re-run `codevira init`.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     data_dir = get_data_dir()
@@ -355,6 +360,11 @@ def cmd_index(full: bool = False, quiet: bool = False) -> None:
     rejection = is_invalid_project_root(get_project_root())
     if rejection:
         print(f"Error: {rejection}", file=sys.stderr)
+        print(
+            "  → cd into a project directory and re-run `codevira index`, "
+            "or pass --project-dir <real-project-path>.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     if full:
@@ -437,6 +447,11 @@ def cmd_serve(
         rejection = is_invalid_project_root(candidate_root)
         if rejection:
             print(f"Error: {rejection}", file=sys.stderr)
+            print(
+                "  → cd into a project directory or pass "
+                "--project-dir <real-project-path>.",
+                file=sys.stderr,
+            )
             sys.exit(1)
 
     if install_service:
@@ -499,6 +514,11 @@ def cmd_register(
     rejection = is_invalid_project_root(project_root)
     if rejection:
         print(f"Error: {rejection}", file=sys.stderr)
+        print(
+            "  → cd into a project directory and re-run `codevira register` "
+            "(or `codevira setup` for the v2.0 one-prompt installer).",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     cmd_path, python_exe = _resolve_command()
@@ -1089,6 +1109,11 @@ def main() -> None:
             sys.exit(rc)
         else:
             print("Error: unknown hooks subcommand", file=sys.stderr)
+            print(
+                "  → run `codevira hooks install --help` to see valid "
+                "subcommands.",
+                file=sys.stderr,
+            )
             sys.exit(2)
     elif args.command == "replay":
         # Hero 8 — Decision Replay. Browses decisions timeline.

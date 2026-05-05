@@ -75,6 +75,11 @@ def _resolve_project(explicit: Path | None) -> Path | None:
                 f"Error: --project {explicit} is not a directory.",
                 file=sys.stderr,
             )
+            print(
+                "  → pass an existing project directory, "
+                "or omit --project to use the current directory.",
+                file=sys.stderr,
+            )
             return None
         return explicit.resolve()
 

@@ -2375,6 +2375,186 @@ The build phase is complete. The launch phase begins.
 
 ---
 
+## v2.0 close-out: Phases 1-6 + QA round (2026-05-05)
+
+After Week 14's RC gate, the user surfaced honest gaps from the
+master plan that had been deprioritized during hero work. Closed in
+6 phases over one session, then properly QA'd in a 7th round.
+
+### Phase 1 — Lock the wedge (commit `4293d78`)
+
+Pillar 2.2 + 2.3 of master plan, never wired:
+- `codevira agents [--ide IDE] [--dry-run] [--project PATH]` — regen
+  per-IDE nudge files (CLAUDE.md, AGENTS.md, .cursor/rules/, etc.).
+  `agents_md.py` had the generator; CLI subcommand was missing.
+- `codevira hooks install` — focused re-runner for Claude Code lifecycle
+  hooks. Same shape as `agents`.
+- `tests/test_cli_agents.py` — 16 tests including the **wedge consistency**
+  contract: every IDE template renders with the canonical block intact;
+  `{{CODEVIRA_BLOCK}}` placeholder must be present in every template.
+  Catches the worst silent-failure mode: a template drifts and
+  per-IDE nudge file ships without codevira instructions.
+
+### Phase 2 — Lock the promise (commit `5cec21f`)
+
+The North Star promise (master plan: "same memory in every AI tool")
+had no automated guard. A regression in dispatch or any read surface
+could silently break the wedge while per-hero tests stayed green.
+
+`tests/e2e/test_cross_tool_universality.py` — 4 tests:
+- Tool A records → Tool B (Cursor) sees via UserPromptSubmit inject
+- Same data via 4 surfaces (UserPromptSubmit hook / MCP signals /
+  codevira://decisions resource / `codevira replay` CLI)
+- 4 tools in sequence (Claude → Cursor → Windsurf → Antigravity) all
+  receive the same decision
+- Kill switch defense: `CODEVIRA_ENGINE=0` opts out
+
+### Phase 3 — User safety net (commit `39bae4e`)
+
+Pillar 1.3 — the `codevira doctor` health check, never shipped. 9
+checks shipped (python_version, codevira_data_dir, project_root,
+graph_db, global_db, detected_ides, nudge_files, watcher_circuit,
+engine_kill_switch, crash_log_size). Each returns PASS / WARN / FAIL +
+exact fix command on non-pass.
+
+`tests/test_doctor.py` — 21 tests covering individual checks +
+runner crash isolation + cmd_doctor exit codes + subprocess
+end-to-end.
+
+Real-world test on this machine surfaced a real ⚠ on the first run:
+"missing nudge files for 4 detected IDEs → to fix: codevira agents".
+The exact command (which Phase 1 had just shipped) closed the loop.
+
+### Phase 4 — Launch deliverables (commit `a258b60`)
+
+- `RELEASE_NOTES.md` v2.0-rc.1 entry: full hero list + CLI surface +
+  bug ledger (8 bugs caught + locked in via regression tests)
+- `README.md` v2.0 highlights section: link to demo video,
+  10-hero table with trigger events, v2.0 CLI surface, link to
+  differentiation page; Quick Start updated to use `codevira setup`
+  (was `register`, deprecated but kept working with redirect message)
+- `docs/vs-other-memory-tools.md` — Pillar 4.3 honest comparison vs
+  Mem0, claude-mem, MemPalace, MemClaw, Zep, Väinämöinen, memsearch.
+  Includes a "when NOT to use codevira" section.
+
+### Phase 5 — Quality cleanup (commit `2d242b5`)
+
+- **3.1 crash_logger rotation** — discovered already shipped (5MB cap,
+  3 backups via RotatingFileHandler). Master plan completion-plan was
+  outdated.
+- **3.2 watcher restart circuit breaker** — NEW. ~80 LOC + 9 tests.
+  3 consecutive failures opens; geometric backoff 60s → 30 min cap.
+  `codevira doctor` surfaces the state.
+- **3.3 shared `_enable_wal_with_retry`** — deduped 25 lines × 2 into
+  `indexer/_sqlite_util.py::enable_wal_with_retry`. Both callers
+  reduced to thin shims.
+- **3.4 14 silent-exception sites** — audited each. ALL 14 were
+  defensive crash-logger guards. Replaced with single
+  `mcp_server/_safe_crash.py::safe_log_crash(error, context)` helper.
+
+Bonus: 5 cross-test pollution bugs fixed when running the full
+2170-test suite (test_cli string-patch fragility, test_chunker fake
+treesitter pollution, test_server.py + test_http_server.py global
+mock leakage, test_index_codebase chroma_write_lock leakage).
+
+### Phase 6 — Manual handoff (commit `3622371`)
+
+- `DOGFOOD.md` refreshed for v2.0-rc.1 (was scoped for alpha.2). 6
+  trigger scenarios including the universality-wedge cross-tool test.
+- `docs/alpha-tester-invites.md` — 5 ready-to-paste templates (DM /
+  email / Slack) + tester-onboarding checklist + ship/don't-ship rule.
+
+### QA round 7 — closing the discipline gap (commit `05cca07`)
+
+User challenge: "while doing this you have to do the test it as we did
+earlier. if all our weeks plan done then we need to do the integration
+end to end testing as well."
+
+Honest: I shipped Phases 1-6 without applying our Tier-0 + integration
+QA discipline. Closed the gap in this round:
+
+- **16 mutations**: 14 caught + 2 documented redundant
+  - Phase 1: 5 caught + 1 redundant + **M6 test gap closed** (CLI
+    summary line wasn't asserted)
+  - Phase 3: 5 caught
+  - Phase 5: 4 caught + 1 redundant + **U1 test gap closed** (WAL
+    retry loop was production-critical but never exercised → added
+    `tests/test_sqlite_util.py` with 5 tests)
+- **5 deep-audit probes** clean (path traversal, fresh-install
+  doctor, circuit thread safety, --ide partial-match, graph.db as
+  directory)
+- **12 integration tests** in `tests/e2e/test_qa_round_v2_completion.py`
+  covering Phase × Phase seams (doctor + circuit, agents ↔ doctor
+  contract, Bug-8 parity across all CLIs parametrized, safe_log_crash
+  positive + negative, _sqlite_util on real graph, all-phases coexist)
+
+### Bugs found in QA round: 0 production, 4 test-only
+
+| # | Where | Severity | Fix |
+|---|---|---|---|
+| 1 | M6 test gap | test-only | strengthened assertion in test_cli_agents.py |
+| 2 | U1 test gap | test-only | new tests/test_sqlite_util.py (5 tests) |
+| 3 | Self-pollution in QA round | test-only | proper sys.modules cleanup |
+| 4 | Concurrent partial-numpy-load race in test_http_server | test-only | force-import numpy in conftest.py before any test runs (see "numpy pre-import" comment block) |
+
+The Phase 1-6 code was correct. The QA layer was incomplete.
+
+Bug 4 was a flaky `AttributeError: module 'numpy' has no attribute
+'isscalar'` in `test_rule_learner` and `test_sqlite_util` after
+`test_http_server::TestRunHttpServerBearerToken` had run. Root cause:
+real `uvicorn.run` is patched in those tests, but importing real
+uvicorn (to be patched) triggers a chain that lazily imports numpy
+on a background-import path. When `pytest.approx` ran later it called
+`_as_numpy_array` → `np.isscalar(...)` against a partially-initialised
+numpy module. Fix: pre-import numpy in conftest at module load time so
+later imports always hit the cached, fully-initialised module.
+
+### Final test status
+
+**2187 passed, 1 skipped, 0 failed (deterministic across 5+ runs)**
+
+Up from 2170 before the QA round → +5 test_sqlite_util + 12
+test_qa_round_v2_completion.
+
+### Pillar 1.4 — error-message fix-suggestions audit
+
+Master plan Pillar 1.4 ("Better error messages everywhere") was partly
+done by v1.8.1 work but had ~12 sites without the `→ to fix:` suffix
+pattern. Audited and patched in `mcp_server/cli.py` (5 sites),
+`mcp_server/cli_configure.py` (7 sites), `mcp_server/cli_budget.py`
+(1 site), `mcp_server/setup_wizard.py` (1 site). Each error now ends
+with one concrete next-step the user can run. Pattern matches the
+v1.8.1 project-root guard precedent.
+
+### HN-day runbook
+
+`docs/hn-launch-day.md` — pre-flight (T-7 → T-24h) + day-of timeline
++ first-comment template + cross-post + 24h tally. Replaces the
+"figure it out on launch day" risk with a tickable checklist. Reserved
+launch-window guidance (Tue/Wed 9-10am Pacific) and the "what NOT to
+do" rules (no sock-puppet votes, don't reply with install command
+every time, mention weak spots yourself).
+
+### State of v2.0
+
+| Item | Status |
+|---|---|
+| 10 heroes shipped (Weeks 4-13) | ✅ |
+| Week 14 RC gate (28 tests) | ✅ |
+| Phases 1-6 close-out work | ✅ |
+| Mutation + deep-audit + integration QA | ✅ |
+| Comprehensive E2E suite (2187 tests) | ✅ |
+| Tag v2.0-rc.1 | ⏳ ready (awaiting user authorization) |
+| Founder dogfood (1 week) | ⏳ manual |
+| Recruit 3 alpha testers | ⏳ manual |
+| Tag v2.0.0 + HN submit | ⏳ after alpha clean |
+
+The build phase is complete. The launch phase is your work, with all
+materials prepped (DOGFOOD.md, docs/alpha-tester-invites.md,
+docs/demo/codevira-demo.mp4, RELEASE_NOTES rc.1).
+
+---
+
 ## Template for new entries
 
 ```markdown

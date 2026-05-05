@@ -737,6 +737,11 @@ def cmd_setup(
         detected = detect_targets(project_root, only_ides=only_ides)
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
+        print(
+            "  → check your --ide value against `codevira setup --help`. "
+            "Valid IDEs: claude, cursor, windsurf, antigravity, codex, copilot.",
+            file=sys.stderr,
+        )
         return 1
 
     if not detected:

@@ -9,6 +9,34 @@ import pytest
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
+# Pre-import numpy at conftest load time.
+#
+# Why: pytest.approx (and several pytest assertion helpers) lazy-import numpy
+# at use time. If a test (e.g. tests/test_http_server.py) starts a background
+# uvicorn / watcher thread that lazy-imports numpy concurrently with another
+# test thread doing pytest.approx, Python returns a partially-initialised
+# numpy module — `module 'numpy' has no attribute 'isscalar'` — to the latter.
+# That manifests as flaky AttributeError in ``tests/test_rule_learner.py`` and
+# ``tests/test_sqlite_util.py`` only when those files run after the http
+# server tests have ever touched a real uvicorn / startup chain.
+#
+# Force-importing numpy here, before ANY test runs, guarantees the module is
+# fully loaded once. Subsequent imports (in any thread) hit the cached, fully
+# initialised module and `numpy.isscalar` is always present. Negligible cost
+# (numpy is already a transitive dep of chromadb, sentence-transformers, etc).
+# ---------------------------------------------------------------------------
+try:
+    import numpy as _numpy  # noqa: F401 — eager import to avoid concurrent partial-load
+    # Sanity-check: if isscalar isn't present, our pre-import didn't actually
+    # complete the load. Force attribute access to surface that immediately.
+    _ = _numpy.isscalar
+except (ImportError, AttributeError):
+    # numpy isn't required by the suite as a whole — only by pytest.approx
+    # paths. If numpy can't load, tests that don't use approx still run; the
+    # ones that do will fail with a clear AttributeError downstream.
+    pass
+
+# ---------------------------------------------------------------------------
 # Install a comprehensive mock of indexer.treesitter_parser BEFORE any test
 # file imports modules that depend on it. This mock provides all attributes
 # that code_reader.py, chunker.py, and graph_generator.py import.

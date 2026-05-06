@@ -229,6 +229,36 @@ def get_session_context() -> dict:
                 if len(recent_decisions) >= 3:
                     break
 
+        # v2.0-rc.2: Surface key_decisions from recently-completed phases.
+        # Bug 5 — ``complete_phase(key_decisions=[...])`` writes to the
+        # roadmap store, NOT the ``decisions`` table. Without this block
+        # those decisions are invisible to ``get_session_context``, so a
+        # new session starting fresh after a phase completion has no way
+        # to learn what was just decided. We pull the most recent
+        # completed phase's key_decisions (capped at 5) and surface them
+        # tagged with their source so the AI can distinguish.
+        recent_phase_decisions: list[dict] = []
+        try:
+            from mcp_server.tools.roadmap import _load_roadmap
+            roadmap_data = _load_roadmap()
+            completed = roadmap_data.get("completed_phases", []) or []
+            # Latest first
+            for phase in reversed(completed[-3:]):
+                phase_num = phase.get("number")
+                phase_name = phase.get("name")
+                for decision in (phase.get("key_decisions") or [])[:5]:
+                    recent_phase_decisions.append({
+                        "decision": _truncate(decision, 120),
+                        "phase_number": phase_num,
+                        "phase_name": phase_name,
+                        "source": "phase_completion",
+                    })
+                if len(recent_phase_decisions) >= 5:
+                    break
+            recent_phase_decisions = recent_phase_decisions[:5]
+        except Exception:
+            recent_phase_decisions = []
+
         return {
             "current_phase": current_phase,
             "open_changesets": open_changesets,
@@ -244,9 +274,11 @@ def get_session_context() -> dict:
                 {
                     "decision": _truncate(d.get("decision"), 120),
                     "file_path": d.get("file_path"),
+                    "source": "session",
                 }
                 for d in recent_decisions[:3]
             ],
+            "recent_phase_decisions": recent_phase_decisions,
             "focus_source": focus_source,
             "confidence": {
                 "overall_rate": confidence.get("overall_rate"),

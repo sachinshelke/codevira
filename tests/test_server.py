@@ -955,3 +955,44 @@ class TestServerMain:
 
         assert exc.value.code == 1
         mock_start_watcher.assert_not_called()
+
+
+# ===========================================================================
+# v2.0-rc.2 — Bug 1 (update_node description discoverability) regression
+#
+# The other Claude Code session in dogfood explicitly missed do_not_revert
+# because it lived only in inputSchema.changes.description, not the outer
+# tool description. Symptom: "None of the Codevira write tools accept a
+# do_not_revert flag" — refused to mark Sachin's Postgres decision protected.
+#
+# This contract test pins the description so a future "tighten the wording"
+# pass doesn't accidentally drop the visibility of `do_not_revert`.
+# ===========================================================================
+
+
+class TestUpdateNodeDescriptionContract:
+    def test_update_node_description_mentions_do_not_revert(self):
+        """update_node's outer description must explicitly mention
+        do_not_revert. Regression of Bug 1: the field was buried in the
+        inner schema and AIs missed it during tool discovery."""
+        from mcp_server.server import list_tools
+        tools = _run(list_tools())
+        update_node = next(t for t in tools if t.name == "update_node")
+        assert "do_not_revert" in update_node.description, (
+            f"Bug 1 regression: update_node description does not mention "
+            f"`do_not_revert`. AIs scanning tool surfaces will miss the "
+            f"protection mechanism. Description: {update_node.description!r}"
+        )
+
+    def test_update_node_inner_changes_description_mentions_do_not_revert(self):
+        """The inputSchema.changes.description should ALSO mention
+        do_not_revert (defense in depth — different AIs read different
+        levels of the schema)."""
+        from mcp_server.server import list_tools
+        tools = _run(list_tools())
+        update_node = next(t for t in tools if t.name == "update_node")
+        changes_desc = (
+            update_node.inputSchema["properties"]["changes"]
+            .get("description", "")
+        )
+        assert "do_not_revert" in changes_desc

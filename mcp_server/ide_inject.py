@@ -123,7 +123,31 @@ def _claude_config_path(project_root: Path) -> Path:
     return project_root / ".claude" / "settings.json"
 
 def _claude_global_config_path() -> Path:
-    return Path.home() / ".claude" / "settings.json"
+    """Return the file Claude Code reads ``mcpServers`` from.
+
+    User-scope MCP servers live in ``~/.claude.json`` (the JSON file at
+    home root), NOT ``~/.claude/settings.json`` (which is for hooks /
+    permissions / env). Confirmed via ``claude mcp list`` returning
+    empty when the entry was in settings.json — Claude Code did not
+    discover it. The 43KB ``~/.claude.json`` is the authoritative
+    user-scope MCP config; we mutate it cooperatively (preserving all
+    other top-level keys: oauthAccount, projects, telemetry, etc.).
+
+    Caught in v2.0-rc.1 → rc.2 dogfood on Sachin's UDAP machine: setup
+    looked successful but Claude Code didn't see codevira at all.
+    """
+    return Path.home() / ".claude.json"
+
+
+def _claude_cli_path() -> str | None:
+    """Return absolute path to the ``claude`` CLI binary if installed.
+
+    Used to prefer ``claude mcp add --scope user codevira <path>`` over
+    direct mutation of ~/.claude.json (43KB user state). Returns None
+    if Claude Code CLI isn't installed (some users only run Claude
+    Desktop) — caller falls back to direct merge.
+    """
+    return shutil.which("claude")
 
 def _claude_desktop_config_path() -> Path:
     """Return the Claude Desktop config file path (platform-aware)."""
@@ -396,14 +420,136 @@ def _inject_antigravity(project_root: Path, cmd_path: str, python_exe: str, proj
 # ---------------------------------------------------------------------------
 
 def inject_global_claude_code(cmd_path: str, python_exe: str) -> str | None:
-    """Inject global codevira config into Claude Code (~/.claude/settings.json).
+    """Inject global codevira config into Claude Code (``~/.claude.json``).
 
-    Global mode: no cwd, no --project-dir. The server auto-detects the project
-    from cwd when Claude Code opens each project directory.
+    Two-tier strategy:
+
+      1. **Preferred** — shell out to ``claude mcp add --scope user
+         codevira <cmd_path>``. Delegates the merge to the official
+         Claude Code CLI, which owns ``~/.claude.json``'s file format.
+         Safer than mutating 43KB of user state ourselves.
+
+      2. **Fallback** — if ``claude`` CLI isn't on PATH or the
+         subprocess fails, merge ``mcpServers.codevira`` into
+         ``~/.claude.json`` directly via ``_read_json_safe`` /
+         ``_write_json_safe`` (atomic via tempfile + os.replace,
+         preserves every other top-level key).
+
+    Returns the path of the file Claude Code now reads codevira from
+    (always ``~/.claude.json`` regardless of which tier wrote it).
     """
     config_path = _claude_global_config_path()
-    existing = _read_json_safe(config_path)
     server_config = _build_global_server_config(cmd_path, python_exe)
+
+    cli = _claude_cli_path()
+    if cli is not None:
+        # Prefer CLI shell-out — it knows the file format and handles
+        # idempotency (re-adding overwrites the existing entry).
+        if _claude_cli_add_codevira(cli, cmd_path, server_config):
+            return str(config_path)
+        # CLI failed (unsupported flag, version mismatch, perms, etc.)
+        # Fall through to direct merge.
+
+    # Fallback: direct cooperative merge of ~/.claude.json
+    existing = _read_json_safe(config_path)
+    merged = _merge_mcp_config(existing, "codevira", server_config)
+    _write_json_safe(config_path, merged)
+    return str(config_path)
+
+
+def _claude_cli_add_codevira(
+    cli: str,
+    cmd_path: str,
+    server_config: dict,
+) -> bool:
+    """Run ``claude mcp add --scope user codevira <cmd_path>``.
+
+    Returns True on success. Returns False on any failure (caller
+    falls back to direct ~/.claude.json merge).
+
+    Note: ``claude mcp add`` overwrites an existing entry with the
+    same name silently, so it's safe to run repeatedly. We pass
+    args separately if the server_config has any (e.g. python
+    fallback path uses ``-m mcp_server``).
+    """
+    import subprocess
+
+    # If we need to call as ``python -m mcp_server`` (fallback when
+    # codevira binary not on PATH), append `-- -m mcp_server`. The
+    # ``--`` separator tells claude CLI everything after is args to
+    # the spawned MCP server, not flags to ``claude mcp add``.
+    extra_args = list(server_config.get("args") or [])
+
+    cmd = [
+        cli, "mcp", "add",
+        "--scope", "user",
+        "codevira",
+        cmd_path,
+    ]
+    if extra_args:
+        cmd.extend(["--", *extra_args])
+
+    try:
+        # First, remove any existing entry to ensure a clean overwrite
+        # (some claude versions error on duplicate add). Best-effort.
+        subprocess.run(
+            [cli, "mcp", "remove", "codevira", "-s", "user"],
+            capture_output=True, text=True, timeout=10,
+        )
+        # Now add fresh.
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode != 0:
+            logger.warning(
+                "claude mcp add returned %d: %s",
+                result.returncode, result.stderr.strip(),
+            )
+            return False
+        return True
+    except (subprocess.TimeoutExpired, OSError, ValueError) as exc:
+        logger.warning("claude mcp add invocation failed: %s", exc)
+        return False
+
+
+def inject_global_claude_desktop(cmd_path: str, python_exe: str) -> str | None:
+    """Inject codevira into Claude Desktop's ``claude_desktop_config.json``.
+
+    Claude Desktop is detected separately from Claude Code (the CLI)
+    and reads MCP server config from a different file managed by the
+    desktop app itself — not ``~/.claude.json`` (CLI-scope) and not
+    ``~/.claude/settings.json`` (CLI hooks/permissions).
+
+    Constraints (from Claude Desktop docs):
+      - stdio only (no HTTP url format)
+      - no ``cwd`` field — must use ``--project-dir`` arg if scoping
+      - requires the FULL absolute binary path
+
+    For global mode here we use ``--project-dir`` set to the user's
+    cwd at install time. The server still auto-detects the actual
+    project from the spawning process's cwd at session start, so
+    this default is largely cosmetic (and matches the behaviour of
+    the per-project ``_inject_claude_desktop`` injector).
+
+    Caught in v2.0-rc.1 → rc.2 dogfood: Claude Desktop was detected
+    but ``_mcp_config_path_for()`` had no case for ``claude_desktop``,
+    so the wizard silently skipped it.
+    """
+    config_path = _claude_desktop_config_path()
+    existing = _read_json_safe(config_path)
+
+    is_python_fallback = (cmd_path == python_exe)
+    if is_python_fallback:
+        server_config = {
+            "command": cmd_path,
+            "args": ["-m", "mcp_server"],
+        }
+    else:
+        server_config = {
+            "command": cmd_path,
+            "args": [],
+        }
+
     merged = _merge_mcp_config(existing, "codevira", server_config)
     _write_json_safe(config_path, merged)
     return str(config_path)

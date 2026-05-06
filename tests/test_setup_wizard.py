@@ -591,13 +591,51 @@ class TestIntegrationFindings:
         """
         from mcp_server.setup_wizard import _mcp_config_path_for
         from mcp_server.ide_inject import (
-            _claude_global_config_path, _cursor_global_config_path,
+            _claude_global_config_path, _claude_desktop_config_path,
+            _cursor_global_config_path,
             _windsurf_global_config_path, _antigravity_config_path,
         )
         assert _mcp_config_path_for("claude") == _claude_global_config_path()
+        assert _mcp_config_path_for("claude_desktop") == _claude_desktop_config_path()
         assert _mcp_config_path_for("cursor") == _cursor_global_config_path()
         assert _mcp_config_path_for("windsurf") == _windsurf_global_config_path()
         assert _mcp_config_path_for("antigravity") == _antigravity_config_path()
+
+    def test_claude_desktop_step_is_planned_when_detected(self, isolated: Path):
+        """Bug 6b regression: when claude_desktop is in the detected list,
+        setup_wizard MUST plan a step for it (with the correct desktop
+        config path) — previously it was silently skipped because
+        ``_mcp_config_path_for()`` had no claude_desktop branch.
+        """
+        from mcp_server.setup_wizard import _mcp_config_path_for
+        from mcp_server.ide_inject import _claude_desktop_config_path
+        result = _mcp_config_path_for("claude_desktop")
+        assert result is not None, (
+            "claude_desktop must produce a planned MCP-config path; "
+            "regression of Bug 6b (silently skipped in setup wizard)"
+        )
+        assert result == _claude_desktop_config_path()
+
+    def test_setup_wizard_dispatcher_includes_claude_desktop(self):
+        """Verify the _execute_mcp_config dispatcher routes ``claude_desktop``
+        to ``inject_global_claude_desktop`` (not silently skipped). We
+        check the dispatcher key directly to avoid wiring a full setup
+        run — this is a contract test, not an integration test.
+        """
+        from mcp_server import setup_wizard
+        # The dispatcher dict is constructed inside _execute_mcp_config.
+        # Read the source to ensure both keys are present (cheap regex
+        # check is fine — change-detector but pinned to the bug shape).
+        import inspect
+        src = inspect.getsource(setup_wizard._execute_mcp_config)
+        assert '"claude_desktop"' in src, (
+            "Bug 6b regression: _execute_mcp_config dispatcher must "
+            "include a 'claude_desktop' handler"
+        )
+        assert "inject_global_claude_desktop" in src, (
+            "Bug 6b regression: _execute_mcp_config must import and call "
+            "inject_global_claude_desktop"
+        )
 
     def test_nudge_write_is_atomic_no_temp_files_on_success(
         self, isolated: Path

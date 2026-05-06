@@ -447,12 +447,14 @@ def _execute_mcp_config(
         return StepResult(step, True, "would_merge" if step.will_merge else "would_create")
 
     from mcp_server.ide_inject import (
-        inject_global_claude_code, inject_global_cursor,
+        inject_global_claude_code, inject_global_claude_desktop,
+        inject_global_cursor,
         inject_global_windsurf, inject_global_antigravity,
     )
 
     handler = {
         "claude": lambda: inject_global_claude_code(cmd_path, python_exe),
+        "claude_desktop": lambda: inject_global_claude_desktop(cmd_path, python_exe),
         "cursor": lambda: inject_global_cursor(cmd_path, python_exe),
         "windsurf": lambda: inject_global_windsurf(cmd_path, python_exe),
         "antigravity": lambda: inject_global_antigravity(cmd_path, python_exe),
@@ -675,11 +677,14 @@ def _mcp_config_path_for(ide: str) -> Path | None:
     # ~/.gemini/settings.json but the inject function wrote to
     # ~/.gemini/antigravity/mcp_config.json.)
     from mcp_server.ide_inject import (
-        _claude_global_config_path, _cursor_global_config_path,
+        _claude_global_config_path, _claude_desktop_config_path,
+        _cursor_global_config_path,
         _windsurf_global_config_path, _antigravity_config_path,
     )
     if ide == "claude":
         return _claude_global_config_path()
+    if ide == "claude_desktop":
+        return _claude_desktop_config_path()
     if ide == "cursor":
         return _cursor_global_config_path()
     if ide == "windsurf":

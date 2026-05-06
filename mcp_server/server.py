@@ -475,6 +475,10 @@ async def list_tools() -> list[Tool]:
             name="update_node",
             description=(
                 "Update a graph node after modifying a file. "
+                "Use changes={'do_not_revert': true} to PROTECT a file from "
+                "future AI edits that would undo architectural decisions "
+                "(this is THE mechanism for marking architectural choices "
+                "irrevocable — Hero 1 / Decision Lock enforces it). "
                 "Call at session end for each file you changed."
             ),
             inputSchema={
@@ -483,7 +487,11 @@ async def list_tools() -> list[Tool]:
                     "file_path": {"type": "string"},
                     "changes": {
                         "type": "object",
-                        "description": "Fields to update: last_changed_by (str), new_rules (list), do_not_revert (bool)",
+                        "description": (
+                            "Fields to update: do_not_revert (bool — "
+                            "protect file from AI reverts), "
+                            "last_changed_by (str), new_rules (list)"
+                        ),
                     },
                 },
                 "required": ["file_path", "changes"],

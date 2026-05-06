@@ -47,6 +47,7 @@ from mcp_server.ide_inject import (
     detect_installed_ides,
     inject_claude_http_url,
     inject_global_claude_code,
+    inject_global_claude_desktop,
     inject_global_cursor,
     inject_global_windsurf,
     inject_ide_config,
@@ -295,6 +296,10 @@ class TestGlobalModeInject:
     def test_global_claude_code_has_no_project_path(self, tmp_path, monkeypatch):
         config_file = tmp_path / "settings.json"
         monkeypatch.setattr(ide_inject, "_claude_global_config_path", lambda: config_file)
+        # Force the direct-merge fallback path (not CLI shell-out) so the
+        # test exercises file mutation deterministically regardless of
+        # whether `claude` CLI is installed in the test environment.
+        monkeypatch.setattr(ide_inject, "_claude_cli_path", lambda: None)
 
         inject_global_claude_code("/usr/bin/codevira", "python3")
 
@@ -332,6 +337,7 @@ class TestGlobalModeInject:
             "mcpServers": {"some-other": {"command": "other"}}
         }))
         monkeypatch.setattr(ide_inject, "_claude_global_config_path", lambda: config_file)
+        monkeypatch.setattr(ide_inject, "_claude_cli_path", lambda: None)
 
         inject_global_claude_code("/usr/bin/codevira", "python3")
 
@@ -901,3 +907,213 @@ class TestChaosIdeInject:
         assert len(keys) == 1
         # Should be lowercased and sanitized
         assert keys[0].startswith("codevira-")
+
+
+# ===========================================================================
+# v2.0-rc.2 \u2014 Claude Code CLI shell-out path (Bug 6) + Claude Desktop global
+# (Bug 6b)
+#
+# Claude Code reads `mcpServers` from `~/.claude.json` (NOT
+# `~/.claude/settings.json` \u2014 that's hooks/permissions). Bug surfaced by
+# real dogfood install: setup looked successful, `claude mcp list` showed
+# nothing. Fix: prefer shelling out to `claude mcp add --scope user`,
+# fall back to direct `~/.claude.json` merge if CLI unavailable.
+# ===========================================================================
+
+
+class TestClaudeCodeCliShellOut:
+    def test_uses_cli_when_available(self, tmp_path, monkeypatch):
+        """When claude CLI is on PATH, inject_global_claude_code shells out
+        to it instead of mutating ~/.claude.json directly."""
+        config_file = tmp_path / "claude.json"
+        monkeypatch.setattr(ide_inject, "_claude_global_config_path", lambda: config_file)
+        monkeypatch.setattr(ide_inject, "_claude_cli_path",
+                            lambda: "/fake/path/to/claude")
+
+        captured_calls: list[list[str]] = []
+
+        def fake_subprocess_run(cmd, *args, **kwargs):
+            captured_calls.append(list(cmd))
+            class _Result:
+                returncode = 0
+                stderr = ""
+                stdout = "Added stdio MCP server codevira"
+            return _Result()
+
+        monkeypatch.setattr("subprocess.run", fake_subprocess_run)
+
+        result_path = inject_global_claude_code("/usr/bin/codevira", "python3")
+
+        # Should have called: remove (best-effort) then add
+        assert len(captured_calls) == 2, f"expected remove+add, got {captured_calls}"
+        assert captured_calls[0][:4] == ["/fake/path/to/claude", "mcp", "remove", "codevira"]
+        assert captured_calls[1][:4] == ["/fake/path/to/claude", "mcp", "add", "--scope"]
+        assert "codevira" in captured_calls[1]
+        assert "/usr/bin/codevira" in captured_calls[1]
+
+        # Returns ~/.claude.json (the file claude CLI mutates, not our
+        # tmp_path mock since we delegated to the CLI).
+        assert result_path == str(config_file)
+
+        # We did NOT write to the file directly \u2014 that's the CLI's job.
+        assert not config_file.exists()
+
+    def test_falls_back_to_direct_merge_when_cli_missing(self, tmp_path, monkeypatch):
+        """When claude CLI is NOT on PATH, fall back to direct merge of
+        ~/.claude.json."""
+        config_file = tmp_path / "claude.json"
+        monkeypatch.setattr(ide_inject, "_claude_global_config_path", lambda: config_file)
+        monkeypatch.setattr(ide_inject, "_claude_cli_path", lambda: None)
+
+        # subprocess.run should NOT be called in this branch \u2014 make it
+        # raise to detect any accidental invocation.
+        def boom(*args, **kwargs):
+            raise AssertionError("subprocess.run should not run when CLI missing")
+        monkeypatch.setattr("subprocess.run", boom)
+
+        inject_global_claude_code("/usr/bin/codevira", "python3")
+
+        assert config_file.exists()
+        data = json.loads(config_file.read_text())
+        assert data["mcpServers"]["codevira"]["command"] == "/usr/bin/codevira"
+
+    def test_falls_back_when_cli_returns_nonzero(self, tmp_path, monkeypatch):
+        """If claude CLI exists but invocation fails (bad args, version
+        mismatch, perms), fall back to direct merge \u2014 never lose the
+        registration."""
+        config_file = tmp_path / "claude.json"
+        monkeypatch.setattr(ide_inject, "_claude_global_config_path", lambda: config_file)
+        monkeypatch.setattr(ide_inject, "_claude_cli_path",
+                            lambda: "/fake/path/to/claude")
+
+        def fake_subprocess_run(cmd, *args, **kwargs):
+            class _Result:
+                returncode = 2  # nonzero = failure
+                stderr = "Error: unknown flag --scope"
+                stdout = ""
+            return _Result()
+
+        monkeypatch.setattr("subprocess.run", fake_subprocess_run)
+
+        inject_global_claude_code("/usr/bin/codevira", "python3")
+
+        # Fallback path wrote the file directly
+        assert config_file.exists()
+        data = json.loads(config_file.read_text())
+        assert "codevira" in data["mcpServers"]
+
+    def test_falls_back_when_subprocess_raises(self, tmp_path, monkeypatch):
+        """OSError / TimeoutExpired during subprocess invocation must trigger
+        fallback, not crash."""
+        import subprocess as _subprocess
+
+        config_file = tmp_path / "claude.json"
+        monkeypatch.setattr(ide_inject, "_claude_global_config_path", lambda: config_file)
+        monkeypatch.setattr(ide_inject, "_claude_cli_path",
+                            lambda: "/fake/path/to/claude")
+
+        def fake_subprocess_run(cmd, *args, **kwargs):
+            raise _subprocess.TimeoutExpired(cmd=cmd, timeout=10)
+
+        monkeypatch.setattr("subprocess.run", fake_subprocess_run)
+
+        inject_global_claude_code("/usr/bin/codevira", "python3")
+
+        # Fallback wrote the file
+        assert config_file.exists()
+        data = json.loads(config_file.read_text())
+        assert "codevira" in data["mcpServers"]
+
+    def test_direct_merge_preserves_other_top_level_keys(self, tmp_path, monkeypatch):
+        """The 43KB ~/.claude.json has many top-level keys (oauthAccount,
+        projects, telemetry, etc.). Direct-merge fallback must preserve
+        every one of them \u2014 only mcpServers.codevira changes."""
+        config_file = tmp_path / "claude.json"
+        config_file.write_text(json.dumps({
+            "userID": "abc-123",
+            "oauthAccount": {"email": "user@example.com"},
+            "projects": {"/some/path": {"hasTrustDialogAccepted": True}},
+            "numStartups": 47,
+            "mcpServers": {"existing-server": {"command": "/bin/other"}},
+        }))
+        monkeypatch.setattr(ide_inject, "_claude_global_config_path", lambda: config_file)
+        monkeypatch.setattr(ide_inject, "_claude_cli_path", lambda: None)
+
+        inject_global_claude_code("/usr/bin/codevira", "python3")
+
+        data = json.loads(config_file.read_text())
+        # Every original top-level key preserved
+        assert data["userID"] == "abc-123"
+        assert data["oauthAccount"]["email"] == "user@example.com"
+        assert data["projects"]["/some/path"]["hasTrustDialogAccepted"] is True
+        assert data["numStartups"] == 47
+        # Other MCP servers preserved
+        assert data["mcpServers"]["existing-server"]["command"] == "/bin/other"
+        # Codevira added
+        assert data["mcpServers"]["codevira"]["command"] == "/usr/bin/codevira"
+
+
+class TestClaudeDesktopGlobalInject:
+    def test_creates_config_with_no_cwd_no_url(self, tmp_path, monkeypatch):
+        """Claude Desktop config must NOT use cwd (Desktop ignores it) and
+        NOT use url format (stdio only)."""
+        config_file = tmp_path / "claude_desktop_config.json"
+        monkeypatch.setattr(ide_inject, "_claude_desktop_config_path", lambda: config_file)
+
+        result_path = inject_global_claude_desktop("/usr/bin/codevira", "python3")
+
+        assert config_file.exists()
+        data = json.loads(config_file.read_text())
+        entry = data["mcpServers"]["codevira"]
+        assert entry["command"] == "/usr/bin/codevira"
+        assert "cwd" not in entry
+        assert "url" not in entry
+        assert result_path == str(config_file)
+
+    def test_python_fallback_uses_module_form(self, tmp_path, monkeypatch):
+        """When codevira binary isn't on PATH (cmd_path == python_exe),
+        Claude Desktop entry must use `python -m mcp_server`."""
+        config_file = tmp_path / "claude_desktop_config.json"
+        monkeypatch.setattr(ide_inject, "_claude_desktop_config_path", lambda: config_file)
+
+        # Simulate fallback: cmd_path == python_exe means binary not found
+        inject_global_claude_desktop("/usr/bin/python3", "/usr/bin/python3")
+
+        data = json.loads(config_file.read_text())
+        entry = data["mcpServers"]["codevira"]
+        assert entry["command"] == "/usr/bin/python3"
+        assert entry["args"] == ["-m", "mcp_server"]
+
+    def test_preserves_existing_servers(self, tmp_path, monkeypatch):
+        """Claude Desktop user may have other MCP servers configured.
+        Inject must not clobber them."""
+        config_file = tmp_path / "claude_desktop_config.json"
+        config_file.write_text(json.dumps({
+            "mcpServers": {
+                "filesystem": {"command": "/usr/bin/fs-mcp"},
+                "github": {"command": "/usr/bin/github-mcp"},
+            }
+        }))
+        monkeypatch.setattr(ide_inject, "_claude_desktop_config_path", lambda: config_file)
+
+        inject_global_claude_desktop("/usr/bin/codevira", "python3")
+
+        data = json.loads(config_file.read_text())
+        assert data["mcpServers"]["filesystem"]["command"] == "/usr/bin/fs-mcp"
+        assert data["mcpServers"]["github"]["command"] == "/usr/bin/github-mcp"
+        assert data["mcpServers"]["codevira"]["command"] == "/usr/bin/codevira"
+
+
+class TestClaudeGlobalConfigPathIsCorrect:
+    def test_path_is_dot_claude_dot_json_not_settings(self):
+        """Regression test for Bug 6 \u2014 the showstopper. Claude Code reads
+        mcpServers from ~/.claude.json, NOT ~/.claude/settings.json. If
+        anyone tries to 'fix' this back to settings.json (which seems
+        intuitive \u2014 settings file holds settings) the wedge breaks
+        silently for every new install."""
+        from pathlib import Path
+        result = ide_inject._claude_global_config_path()
+        # Must be ~/.claude.json
+        assert result == Path.home() / ".claude.json"
+        # Must NOT be ~/.claude/settings.json (that's hooks/permissions)
+        assert result != Path.home() / ".claude" / "settings.json"

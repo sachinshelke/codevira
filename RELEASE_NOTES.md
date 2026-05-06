@@ -1,3 +1,139 @@
+# v2.0-rc.2 — Dogfood bug fixes (4 bugs, 17 new tests)
+
+**Released:** 2026-05-06
+**Test status:** 2204 / 2204 passing (deterministic across 3+ full runs)
+
+Honest dogfood after `pipx install codevira` of rc.1 onto a real project
+(UDAP, Sachin's solo work) surfaced 7 bugs in the install + first-call
+path. rc.2 closes the 4 most critical (the 2 showstoppers that broke
+out-of-box install, plus 2 product gaps that confused the AI). The
+remaining 3 are tracked for rc.3 / rc.4 / post-GA.
+
+## Bugs fixed in rc.2
+
+### 🚨 Bug 6 (SHOWSTOPPER): Claude Code MCP config written to the wrong file
+
+`mcp_server/ide_inject.py:_claude_global_config_path()` was returning
+`~/.claude/settings.json`. That's correct for **hooks / permissions / env**
+but Claude Code reads `mcpServers` from `~/.claude.json` (the user-scope
+JSON file at home root). Symptom: setup looked successful, hooks fired,
+but `claude mcp list` was empty and codevira tools were invisible to the
+AI. Required manual `claude mcp add --scope user codevira <path>` to
+unblock.
+
+**Fix:** two-tier strategy in `inject_global_claude_code()`:
+
+1. **Preferred** — if `claude` CLI is on PATH, shell out to
+   `claude mcp add --scope user codevira <cmd_path>`. Delegates to the
+   official tool that owns the file format.
+2. **Fallback** — direct cooperative merge of `~/.claude.json` (preserves
+   all 60+ other top-level keys: `oauthAccount`, `projects`, `userID`,
+   etc.). Atomic via tempfile + os.replace per existing
+   `_write_json_safe`.
+
+**Tests:** 5 new tests in `TestClaudeCodeCliShellOut` cover both branches
++ failure modes + key preservation. Plus `TestClaudeGlobalConfigPathIsCorrect`
+explicitly pins the path to `~/.claude.json` so a future "fix" back to
+`settings.json` (which seems intuitive — "settings file holds settings")
+breaks loudly.
+
+### 🚨 Bug 6b: Claude Desktop detected but never planned
+
+`setup_wizard._mcp_config_path_for()` had no `claude_desktop` branch.
+Even though Claude Desktop was detected by the wizard's preview
+("Detected: Claude Code, Claude Desktop, Windsurf, Antigravity"), it
+was silently dropped from the plan. The Claude Desktop injector existed
+(`_inject_claude_desktop`, line 334) but was never wired through global
+mode.
+
+**Fix:** added `inject_global_claude_desktop()` in `ide_inject.py` and
+wired both the path-resolver (`_mcp_config_path_for`) and the dispatcher
+(`_execute_mcp_config`) in `setup_wizard.py` to handle `claude_desktop`.
+Writes `~/Library/Application Support/Claude/claude_desktop_config.json`
+(macOS) / `%APPDATA%/Claude/...` (Windows) with stdio config (no `cwd`,
+no `url` — Claude Desktop constraints).
+
+**Tests:** 3 in `TestClaudeDesktopGlobalInject` (file shape, fallback,
+preservation) + 2 in `test_setup_wizard.py` (planning + dispatcher
+contract).
+
+### 🟡 Bug 1: `update_node` description didn't mention `do_not_revert`
+
+The `do_not_revert` field was buried in the inputSchema's inner
+`changes.description`. AIs scanning tool surfaces during dogfood missed
+it entirely — the dogfood Claude Code session refused to log a
+protection request claiming "None of the Codevira write tools accept a
+do_not_revert flag."
+
+**Fix:** outer `update_node` description now explicitly mentions
+`do_not_revert` and tags it as the Hero 1 / Decision Lock mechanism.
+
+**Tests:** 2 contract tests in `TestUpdateNodeDescriptionContract`.
+
+### 🟡 Bug 5: `complete_phase.key_decisions` invisible to `get_session_context`
+
+`complete_phase(phase_number, key_decisions=[...])` writes to the
+roadmap store, NOT the `decisions` table. So `get_session_context()`
+(which reads decisions from the table only) showed zero recent decisions
+even after a phase was completed with 4 key_decisions recorded. Fresh
+sessions had no way to learn what was just decided.
+
+**Fix:** `get_session_context()` now also queries the roadmap's
+recently-completed phases and surfaces their `key_decisions` in a new
+field `recent_phase_decisions`, tagged with `source: "phase_completion"`.
+The existing `recent_decisions` (from sessions table) gets
+`source: "session"` so the AI can distinguish them. Capped at 5 entries
+to stay within the ~500-token budget.
+
+**Tests:** 4 in `TestGetSessionContext` covering happy path, cap,
+empty completed_phases, and source tagging on the existing decisions.
+
+## Tracked for rc.3 / rc.4 / post-GA
+
+- **Bug 3** (rc.3): No MCP tool to retire stale `learned_rules`. Sachin's
+  UDAP project has 3 high-confidence rules pinning tests to deleted
+  `src/control/cli/` paths; they'll fire false positives after the
+  Week-2 commit.
+- **Bug 2** (rc.4 / GA): No decision-level `do_not_revert` flag — only
+  per-file via `update_node`. Master plan's Hero 1 positioning implies
+  decision-level. Needs schema migration on `decisions` table.
+- **Bug 4** (post-GA backlog): `search_codebase` doesn't read
+  `pyproject.toml::project.scripts` for ranking. Wrappers rank above
+  real entry points.
+
+## How to upgrade
+
+```bash
+# Republish to local PyPI (Sachin's setup)
+cd ~/Documents/Projects/LogisticsOS/agent-mcp
+.venv/bin/python -m build
+twine upload --repository-url <local-pypi-url> dist/codevira-2.0.0rc2*
+
+# On the consuming machine
+pipx upgrade codevira
+
+# Wipe rc.1's manual workaround + the wrong settings.json entry
+claude mcp remove codevira -s user 2>/dev/null
+# (also remove the dead "mcpServers.codevira" block from
+# ~/.claude/settings.json — the hooks block is correct, leave it)
+
+# Re-run setup — should now do the right thing automatically
+codevira setup -y
+
+# Verify (was broken on rc.1)
+claude mcp list | grep codevira
+# expect: codevira: <path> - ✓ Connected
+```
+
+## Test status
+
+2204 / 2204 passing (rc.1's 2187 + 17 new). Deterministic across 3+
+consecutive full-suite runs. One flaky test
+(`test_starts_daemon_thread`) is pre-existing and unrelated — passes
+in isolation.
+
+---
+
 # v2.0-rc.1 — Release candidate: 10/10 heroes + universality wedge locked
 
 **Released:** 2026-05-05

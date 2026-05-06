@@ -491,6 +491,119 @@ class TestGetSessionContext:
         assert result["top_signals"]["preferences"] == []
         assert result["top_signals"]["rules"] == []
 
+    def test_session_context_surfaces_phase_key_decisions(self, tmp_path, monkeypatch):
+        """Bug 5 regression: complete_phase(key_decisions=[...]) writes to
+        the roadmap store, NOT the decisions table. Without surfacing in
+        session_context, a fresh session has no way to learn what was
+        just decided when the previous phase completed.
+
+        Fix: query the roadmap's recently-completed phases and include
+        their key_decisions tagged with source='phase_completion'.
+        """
+        _, _, db = _setup_project(tmp_path, monkeypatch)
+        db.close()
+
+        # Simulate two completed phases with key_decisions
+        mock_roadmap_for_get = {
+            "current_phase": {"name": "Phase 5", "next_action": "Do", "status": "in_progress"},
+        }
+        mock_roadmap_data = {
+            "completed_phases": [
+                {
+                    "number": 1,
+                    "name": "Stub closure",
+                    "key_decisions": [
+                        "Plan 1 Week 1 multi-host Go client foundation shipped (commit ce24961).",
+                        "Hardening pass commit 3a4bc05 closes Week 1.",
+                    ],
+                },
+                {
+                    "number": 2,
+                    "name": "Plan 1 Week 2 — Core commands ported",
+                    "key_decisions": [
+                        "12 Python CLI commands ported to Go (operator/cmd/uadp/*.go).",
+                    ],
+                },
+            ],
+        }
+
+        with patch("mcp_server.tools.roadmap.get_roadmap",
+                   return_value=mock_roadmap_for_get):
+            with patch("mcp_server.tools.roadmap._load_roadmap",
+                       return_value=mock_roadmap_data):
+                with patch("mcp_server.tools.changesets.list_open_changesets",
+                           return_value={"open_changesets": [], "count": 0, "warning": None}):
+                    result = learning.get_session_context()
+
+        assert "recent_phase_decisions" in result, (
+            "Bug 5 regression: get_session_context must include "
+            "`recent_phase_decisions` field"
+        )
+        decisions = result["recent_phase_decisions"]
+        assert len(decisions) >= 2
+        # Most recent completed phase first (phase 2)
+        assert decisions[0]["phase_number"] == 2
+        assert decisions[0]["source"] == "phase_completion"
+        assert "Go" in decisions[0]["decision"]
+        # Phase 1 decisions present too
+        phase_1_decisions = [d for d in decisions if d["phase_number"] == 1]
+        assert len(phase_1_decisions) >= 1
+
+    def test_session_context_phase_decisions_capped_at_5(self, tmp_path, monkeypatch):
+        """Don't blow the ~500-token budget — cap phase decisions at 5."""
+        _, _, db = _setup_project(tmp_path, monkeypatch)
+        db.close()
+
+        many_decisions = [f"Decision {i}" for i in range(20)]
+        mock_roadmap_data = {
+            "completed_phases": [
+                {"number": 1, "name": "Phase 1", "key_decisions": many_decisions},
+            ],
+        }
+        with patch("mcp_server.tools.roadmap._load_roadmap",
+                   return_value=mock_roadmap_data):
+            with patch("mcp_server.tools.changesets.list_open_changesets",
+                       return_value={"open_changesets": [], "count": 0, "warning": None}):
+                result = learning.get_session_context()
+
+        assert len(result["recent_phase_decisions"]) <= 5
+
+    def test_session_context_no_completed_phases(self, tmp_path, monkeypatch):
+        """Empty completed_phases → recent_phase_decisions is empty list,
+        not missing or None."""
+        _, _, db = _setup_project(tmp_path, monkeypatch)
+        db.close()
+
+        with patch("mcp_server.tools.roadmap._load_roadmap",
+                   return_value={"completed_phases": []}):
+            with patch("mcp_server.tools.changesets.list_open_changesets",
+                       return_value={"open_changesets": [], "count": 0, "warning": None}):
+                result = learning.get_session_context()
+
+        assert result["recent_phase_decisions"] == []
+
+    def test_session_context_recent_decisions_tagged_with_source(self, tmp_path, monkeypatch):
+        """Bug 5 — the existing recent_decisions list (from sessions table)
+        should now be tagged source='session' so AIs can distinguish it
+        from the new recent_phase_decisions list."""
+        project, data_dir, db = _setup_project(tmp_path, monkeypatch)
+        # Seed a real decision so recent_decisions isn't empty
+        db.log_session("s-test", "test session", "1", [
+            {"file_path": "src/api.py", "decision": "Use REST", "context": "ctx"},
+        ])
+        db.close()
+
+        with patch("mcp_server.tools.changesets.list_open_changesets",
+                   return_value={"open_changesets": [], "count": 0, "warning": None}):
+            result = learning.get_session_context()
+
+        if result["recent_decisions"]:
+            for d in result["recent_decisions"]:
+                assert d.get("source") == "session", (
+                    f"recent_decisions entries must be tagged source='session'; "
+                    f"got {d}"
+                )
+
 
 # =====================================================================
 # get_session_context exception branches (lines 171-173, 180-182)

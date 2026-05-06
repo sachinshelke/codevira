@@ -120,7 +120,18 @@ def _gh_copilot_extension_present() -> bool:
 # ---------------------------------------------------------------------------
 
 def _claude_config_path(project_root: Path) -> Path:
-    return project_root / ".claude" / "settings.json"
+    """Return the file Claude Code reads PROJECT-SCOPE ``mcpServers`` from.
+
+    v2.0-rc.5 (Bug 16): same shape as Bug 6 at project scope. Pre-rc.5
+    this returned ``<project>/.claude/settings.json`` — but Claude Code
+    reads project-scope MCP from ``<project>/.mcp.json``. ``settings.json``
+    is for project-scope hooks/permissions/env, NOT mcpServers.
+
+    Confirmed via Claude Code docs: a committed ``.mcp.json`` is the
+    canonical project-scope MCP mechanism. The user is prompted to
+    trust it on first use of the project.
+    """
+    return project_root / ".mcp.json"
 
 def _claude_global_config_path() -> Path:
     """Return the file Claude Code reads ``mcpServers`` from.

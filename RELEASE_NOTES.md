@@ -1,3 +1,47 @@
+# v2.0-rc.5 — Re-audit pass 2: more FK races + project-scope MCP fix (4 bugs, 10 new tests)
+
+**Released:** 2026-05-07
+**Test status:** 2301 / 2301 passing (deterministic)
+
+Bug 9 (rc.4) fixed `add_call_edge`'s FK race. The same shape exists in
+two more inserts; rc.5 closes them. Also: re-audit found that the
+PROJECT-scope Claude Code MCP config path had the same wrong-file shape
+as Bug 6 (which was fixed at user scope in rc.2). rc.5 fixes the
+project-scope variant too.
+
+## Bugs fixed in rc.5
+
+### 🚨 Bug 13: `add_edge` FK race (same shape as Bug 9)
+
+`edges` has FK constraints to `nodes(id)` for both source and target. When the watcher reindexes a file it deletes that file's edges then re-adds them; a concurrent reindex on the *target* node can delete the row mid-flight, raising IntegrityError and crashing the watcher. The crash signature was identical to Bug 9 — same `WHERE EXISTS` fix applies.
+
+**Fix** (`indexer/sqlite_graph.py::add_edge`): INSERT now uses `WHERE EXISTS` subqueries so rows referencing missing nodes are silently dropped.
+
+### 🚨 Bug 14: `add_symbol` FK race
+
+`symbols.file_node_id` has FK → `nodes(id)`. If the file node was deleted between the parse pass and the symbol insert, FK fires.
+
+**Fix**: same `WHERE EXISTS` pattern; symbol re-adds on the next reindex.
+
+### 🛡 Bug 15: `record_outcome` FK race
+
+`outcomes.session_id` has FK → `sessions`. If a cleanup task deleted the session between policy evaluation and outcome write, the engine crashes.
+
+**Fix**: same `WHERE EXISTS` pattern; the outcome is dropped silently rather than crashing the policy engine.
+
+### 🚨 Bug 16: project-scope Claude Code MCP wrote to wrong file
+
+**Symptom**
+`codevira init` writes per-project MCP config to `<project>/.claude/settings.json` — same wrong-file shape as Bug 6 (which fixed only the *user-scope* version in rc.2). Result: project-committed `.mcp.json` is never created; Claude Code's project-scope MCP discovery doesn't find codevira on per-project mode.
+
+**Fix** (`mcp_server/ide_inject.py::_claude_config_path`): now returns `<project>/.mcp.json` (the canonical project-scope MCP file). `<project>/.claude/settings.json` is reserved for hooks / permissions / env, NOT mcpServers.
+
+**Tests:** `tests/test_fk_safety_extended.py` (10) — covers all four bugs + a regression guard that fails if `_inject_claude` ever writes to settings.json again.
+
+## Tests
+
+**2301 passing, 1 skipped, 0 failed** — deterministic.
+
 # v2.0-rc.4 — Re-audit: FK race + doctor coverage gaps (4 bugs, 16 new tests)
 
 **Released:** 2026-05-07

@@ -366,10 +366,24 @@ class SQLiteGraph:
     # ------------------------------------------------------------------
 
     def add_edge(self, source_id: str, target_id: str, kind: str = "imports", line: int | None = None):
+        """Insert / replace an edge between two nodes.
+
+        v2.0-rc.5 (Bug 13): same FK-race shape as ``add_call_edge``
+        (Bug 9 in rc.4). When the watcher reindexes a file it deletes
+        all that file's edges then re-adds them; a concurrent reindex
+        on the target node can delete the row mid-flight, raising
+        ``IntegrityError: FOREIGN KEY constraint failed`` and crashing
+        the watcher. Same fix: silently drop edges referencing missing
+        nodes via WHERE EXISTS subqueries. The edge is rebuilt on the
+        next full reindex.
+        """
         with self.transaction() as conn:
             conn.execute(
-                'INSERT OR REPLACE INTO edges (source_id, target_id, kind, line) VALUES (?, ?, ?, ?)',
-                (source_id, target_id, kind, line),
+                'INSERT OR REPLACE INTO edges (source_id, target_id, kind, line) '
+                'SELECT ?, ?, ?, ? '
+                'WHERE EXISTS (SELECT 1 FROM nodes WHERE id = ?) '
+                '  AND EXISTS (SELECT 1 FROM nodes WHERE id = ?)',
+                (source_id, target_id, kind, line, source_id, target_id),
             )
 
     def remove_edges_for_node(self, node_id: str):
@@ -394,11 +408,21 @@ class SQLiteGraph:
 
     def record_outcome(self, session_id: str, file_path: str, outcome_type: str,
                        decision_id: int | None = None, delta_summary: str | None = None):
+        """Record an outcome (kept / modified / reverted) for a session.
+
+        v2.0-rc.5 (Bug 15): outcomes.session_id has FK → sessions, and
+        outcomes.decision_id has FK → decisions(id) ON DELETE SET NULL.
+        If the parent session was deleted (e.g. by a cleanup task) we
+        can't insert. Drop the outcome silently — the next session's
+        outcomes are still recorded; we don't want one cleanup race
+        to break the policy engine's read path.
+        """
         with self.transaction() as conn:
             conn.execute('''
                 INSERT INTO outcomes (session_id, file_path, decision_id, outcome_type, delta_summary)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (session_id, file_path, decision_id, outcome_type, delta_summary))
+                SELECT ?, ?, ?, ?, ?
+                WHERE EXISTS (SELECT 1 FROM sessions WHERE session_id = ?)
+            ''', (session_id, file_path, decision_id, outcome_type, delta_summary, session_id))
 
     def get_outcomes_for_file(self, file_path: str, limit: int = 20) -> list[dict]:
         cur = self.conn.execute('''
@@ -763,15 +787,24 @@ class SQLiteGraph:
                    return_type: str | None = None, start_line: int | None = None,
                    end_line: int | None = None, docstring: str | None = None,
                    is_public: bool = True, calls: str | None = None):
-        """Insert or replace a function/class symbol."""
+        """Insert or replace a function/class symbol.
+
+        v2.0-rc.5 (Bug 14): symbols.file_node_id has FK → nodes(id). If
+        the file node was deleted by a concurrent watcher reindex
+        between the parse pass and this insert, FK fires. Same fix as
+        Bug 9 / Bug 13: drop the row silently if the parent node is
+        gone — the symbol re-adds on the next reindex.
+        """
         with self.transaction() as conn:
             conn.execute('''
                 INSERT OR REPLACE INTO symbols
                     (id, file_node_id, name, kind, signature, parameters, return_type,
                      start_line, end_line, docstring, is_public, calls)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                WHERE EXISTS (SELECT 1 FROM nodes WHERE id = ?)
             ''', (symbol_id, file_node_id, name, kind, signature, parameters,
-                  return_type, start_line, end_line, docstring, is_public, calls))
+                  return_type, start_line, end_line, docstring, is_public, calls,
+                  file_node_id))
 
     def remove_symbols_for_file(self, file_node_id: str):
         """Remove all symbols (and their call_edges) for a file node."""

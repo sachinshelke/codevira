@@ -208,30 +208,38 @@ class TestClaudeDesktopInject:
 
 class TestInjectClaude:
     def test_writes_per_project_settings(self, tmp_path):
+        """v2.0-rc.5 (Bug 16): per-project Claude Code MCP now goes to
+        ``<project>/.mcp.json`` (the canonical project-scope MCP file)
+        instead of ``<project>/.claude/settings.json`` (which is for
+        hooks / permissions / env, NOT mcpServers)."""
         project = tmp_path / "proj"
         project.mkdir()
         result = _inject_claude(project, "/usr/bin/codevira", "python3")
         config_path = Path(result)
         assert config_path.exists()
-        assert config_path == project / ".claude" / "settings.json"
+        assert config_path == project / ".mcp.json"
         data = json.loads(config_path.read_text())
         assert "codevira" in data["mcpServers"]
         entry = data["mcpServers"]["codevira"]
         assert entry["command"] == "/usr/bin/codevira"
         assert entry["cwd"] == str(project)
 
-    def test_preserves_existing_settings(self, tmp_path):
+    def test_preserves_existing_mcp_json(self, tmp_path):
+        """If <project>/.mcp.json already has other MCP servers, the
+        merge must preserve them."""
         project = tmp_path / "proj"
-        claude_dir = project / ".claude"
-        claude_dir.mkdir(parents=True)
-        settings = claude_dir / "settings.json"
-        settings.write_text(json.dumps({"mcpServers": {"other": {"command": "x"}}, "theme": "dark"}))
+        project.mkdir()
+        mcp_json = project / ".mcp.json"
+        mcp_json.write_text(json.dumps({
+            "mcpServers": {"other": {"command": "x"}},
+            "comment": "user content",
+        }))
 
         _inject_claude(project, "/usr/bin/codevira", "python3")
-        data = json.loads(settings.read_text())
+        data = json.loads(mcp_json.read_text())
         assert "other" in data["mcpServers"]
         assert "codevira" in data["mcpServers"]
-        assert data["theme"] == "dark"
+        assert data["comment"] == "user content"
 
 
 class TestInjectCursor:

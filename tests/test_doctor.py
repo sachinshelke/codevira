@@ -174,11 +174,147 @@ class TestNudgeFiles:
 # =====================================================================
 
 
+# =====================================================================
+# v2.0-rc.4 (Bugs 10, 11, 12) — new doctor checks
+# =====================================================================
+
+
+class TestClaudeMcpVisibility:
+    """Bug 10: codevira doctor must catch the rc.1 regression where
+    codevira was silently invisible to Claude Code's MCP runtime."""
+
+    def test_warns_when_claude_cli_missing(
+        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+    ):
+        import shutil
+        monkeypatch.setattr(shutil, "which", lambda name: None)
+        result = doctor.check_claude_mcp_visibility()
+        assert result.state == "WARN"
+        assert "claude CLI" in result.message or "claude cli" in result.message.lower()
+
+    def test_pass_when_codevira_listed_and_connected(
+        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+    ):
+        import shutil
+        import subprocess
+
+        monkeypatch.setattr(shutil, "which", lambda name: "/fake/claude")
+
+        class FakeResult:
+            returncode = 0
+            stdout = "codevira: /usr/local/bin/codevira  - ✓ Connected\n"
+            stderr = ""
+
+        monkeypatch.setattr(subprocess, "run", lambda *a, **kw: FakeResult())
+        result = doctor.check_claude_mcp_visibility()
+        assert result.state == "PASS"
+
+    def test_fail_when_codevira_missing_from_list(
+        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+    ):
+        import shutil
+        import subprocess
+
+        monkeypatch.setattr(shutil, "which", lambda name: "/fake/claude")
+
+        class FakeResult:
+            returncode = 0
+            stdout = "claude.ai Notion: https://... - ✓ Connected\n"
+            stderr = ""
+
+        monkeypatch.setattr(subprocess, "run", lambda *a, **kw: FakeResult())
+        result = doctor.check_claude_mcp_visibility()
+        assert result.state == "FAIL"
+        assert "codevira" in result.message.lower()
+        assert "codevira setup" in result.fix_command or "claude mcp add" in result.fix_command
+
+    def test_warn_when_listed_but_not_connected(
+        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+    ):
+        import shutil
+        import subprocess
+
+        monkeypatch.setattr(shutil, "which", lambda name: "/fake/claude")
+
+        class FakeResult:
+            returncode = 0
+            stdout = "codevira: /usr/local/bin/codevira  - ✗ Failed to connect\n"
+            stderr = ""
+
+        monkeypatch.setattr(subprocess, "run", lambda *a, **kw: FakeResult())
+        result = doctor.check_claude_mcp_visibility()
+        assert result.state == "WARN"
+
+
+class TestCodeindexFreshness:
+    """Bug 11: detect codeindex/ from older codevira version."""
+
+    def test_pass_when_no_codeindex(self, isolated_project: Path):
+        result = doctor.check_codeindex_freshness()
+        assert result.state == "PASS"
+
+    def test_pass_when_codeindex_recent(self, isolated_project: Path):
+        from mcp_server.paths import get_data_dir
+        ci = get_data_dir() / "codeindex"
+        ci.mkdir(parents=True)
+        # Create a fresh file
+        (ci / "data.bin").write_text("recent")
+        result = doctor.check_codeindex_freshness()
+        assert result.state == "PASS"
+
+    def test_warn_when_codeindex_stale(
+        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+    ):
+        import os
+        from mcp_server.paths import get_data_dir
+        ci = get_data_dir() / "codeindex"
+        ci.mkdir(parents=True)
+        old_file = ci / "data.bin"
+        old_file.write_text("old")
+        # Backdate 30 days
+        old_time = old_file.stat().st_mtime - (30 * 86400)
+        os.utime(old_file, (old_time, old_time))
+
+        result = doctor.check_codeindex_freshness()
+        assert result.state == "WARN"
+        assert "stale" in result.message.lower()
+        assert "rm -rf" in result.fix_command
+
+
+class TestSemanticSearchHealth:
+    """Bug 12: surface ChromaDB chunks=0 as a doctor warning."""
+
+    def test_warn_when_no_codeindex(self, isolated_project: Path):
+        result = doctor.check_semantic_search_health()
+        assert result.state == "WARN"
+        assert "codevira index" in result.fix_command
+
+    def test_warn_when_codeindex_tiny(self, isolated_project: Path):
+        from mcp_server.paths import get_data_dir
+        ci = get_data_dir() / "codeindex"
+        ci.mkdir(parents=True)
+        (ci / "data.bin").write_text("tiny")  # < 100 KB
+        result = doctor.check_semantic_search_health()
+        assert result.state == "WARN"
+        assert "empty" in result.message.lower() or "degraded" in result.message.lower()
+
+    def test_pass_when_codeindex_substantial(self, isolated_project: Path):
+        from mcp_server.paths import get_data_dir
+        ci = get_data_dir() / "codeindex"
+        ci.mkdir(parents=True)
+        # Write 200 KB so it crosses the 100 KB threshold
+        (ci / "data.bin").write_text("x" * (200 * 1024))
+        result = doctor.check_semantic_search_health()
+        assert result.state == "PASS"
+
+
 class TestRunAllChecks:
 
     def test_run_all_returns_report(self, isolated_project: Path):
         report = doctor.run_all_checks()
-        assert len(report.results) >= 9
+        # rc.4 added 3 new checks: claude_mcp_visibility, codeindex_freshness,
+        # semantic_search_health. Total checks ≥ 12 now.
+        assert len(report.results) >= 12
         # Every result is a CheckResult
         for r in report.results:
             assert isinstance(r, doctor.CheckResult)

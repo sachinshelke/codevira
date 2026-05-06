@@ -1,3 +1,64 @@
+# v2.0-rc.4 — Re-audit: FK race + doctor coverage gaps (4 bugs, 16 new tests)
+
+**Released:** 2026-05-07
+**Test status:** 2291 / 2291 passing (deterministic)
+
+Re-audit after rc.3 found one real production bug (evidenced 67 times in
+the user's own crash log) and three coverage gaps in `codevira doctor`
+that would silently let rc.1/rc.2-shape regressions through. rc.4 closes
+all four.
+
+## Bugs fixed in rc.4
+
+### 🚨 Bug 9: `add_call_edge` FK race during incremental reindex (67 crashes recorded)
+
+**Symptom**
+```
+sqlite3.IntegrityError: FOREIGN KEY constraint failed
+WHERE: background watcher: incremental reindex
+```
+The user's `~/.codevira/logs/crashes.log` recorded 67 instances of this in v1.8.1. The v2.0 schema and watcher path inherited the bug.
+
+**Root cause**
+`graph_generator.py` builds a ``name → symbol_id`` lookup at the top of phase 3, then iterates symbols inserting call edges. If a concurrent transaction (e.g. a watcher reindex on a different file) deletes a symbol between the lookup and the INSERT, ``add_call_edge`` raises FK violation and crashes the watcher.
+
+**Fix** (`indexer/sqlite_graph.py::add_call_edge`):
+INSERT now uses ``WHERE EXISTS`` subqueries so rows referencing missing symbols are silently dropped. Losing one call edge beats crashing — the edge rebuilds on the next full reindex.
+
+**Tests:** `tests/test_call_edge_fk_safety.py` (6) including a concurrent-symbol-delete simulation.
+
+### 🛡 Bug 10: doctor doesn't verify Claude Code MCP visibility
+
+**Why this matters**
+rc.1 shipped a showstopper where codevira was silently invisible to Claude Code (wrong config file). Doctor reported 9/9 green at the time. Without an end-to-end "is Claude Code actually seeing codevira?" check, that whole class of regression slips through.
+
+**Fix** (`mcp_server/doctor.py::check_claude_mcp_visibility`):
+Shells out to ``claude mcp list``. If codevira appears as ✓ Connected → PASS. If listed but disconnected → WARN. If listed but missing → FAIL with the exact ``codevira setup -y`` / ``claude mcp add`` fix command. If ``claude`` CLI isn't installed → WARN (informational; user only has Desktop / Cursor / etc).
+
+### 🛡 Bug 11: doctor doesn't detect stale codeindex from older codevira version
+
+**Why this matters**
+AgentStore project (rc.3 dogfood) had a v1.8.1-era codeindex/ that contributed to the segfault on first re-index. Doctor didn't flag it, so the user only learned of the issue when `codevira index` crashed.
+
+**Fix** (`mcp_server/doctor.py::check_codeindex_freshness`):
+WARN if the freshest mtime in `<project>/.codevira/codeindex/` is more than 14 days old; print the exact `rm -rf <path> && codevira index` fix command. Read-only; never auto-wipes.
+
+### 🛡 Bug 12: doctor silently ignores degraded semantic search
+
+**Why this matters**
+Both UDAP and agent-mcp showed `ChromaDB Chunks: 0` in their `codevira status` output — meaning `search_codebase` was running structural-only fallback. Users only noticed when search results felt weak.
+
+**Fix** (`mcp_server/doctor.py::check_semantic_search_health`):
+WARN when codeindex is missing OR < 100 KB (empty / unindexed). Prints the `codevira index` fix command.
+
+## Tests
+
+**2291 passing, 1 skipped, 0 failed** — deterministic.
+
+Net new coverage in rc.4:
+- `tests/test_call_edge_fk_safety.py` (6) — happy path + 3 FK-violation paths + concurrent-delete simulation
+- `tests/test_doctor.py` extended (10) — 4 for claude_mcp_visibility, 3 for codeindex_freshness, 3 for semantic_search_health
+
 # v2.0-rc.3 — Second dogfood pass: native crash + write-side wedge fixes (4 bugs, 71 new tests)
 
 **Released:** 2026-05-07

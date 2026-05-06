@@ -389,6 +389,220 @@ def check_engine_kill_switch() -> CheckResult:
     )
 
 
+def check_claude_mcp_visibility() -> CheckResult:
+    """C13 (v2.0-rc.4 / Bug 10) — verify codevira is reachable to Claude Code.
+
+    Catches the regression that broke rc.1: setup wrote MCP config to the
+    wrong file (~/.claude/settings.json instead of ~/.claude.json) and
+    Claude Code didn't see codevira at all. Hooks fired, doctor reported
+    green, but `claude mcp list` returned nothing for codevira.
+
+    Strategy: shell out to ``claude mcp list`` if the CLI is present.
+    If ``codevira`` shows up → PASS. If the CLI runs but codevira is
+    missing → FAIL with the exact ``claude mcp add`` command. If the
+    CLI isn't installed (user only has Claude Desktop or some other
+    AI tool) → WARN with a note that this check is informational.
+    """
+    import shutil
+    import subprocess
+
+    claude = shutil.which("claude")
+    if not claude:
+        return CheckResult(
+            "claude_mcp_visibility", _WARN,
+            "claude CLI not found on PATH (skipped)",
+            details=(
+                "This check verifies Claude Code's MCP runtime sees "
+                "codevira. Without the `claude` CLI we can't probe it. "
+                "If you only use Claude Desktop / Cursor / Windsurf, "
+                "this is fine — those tools have their own indicators."
+            ),
+        )
+
+    try:
+        result = subprocess.run(
+            [claude, "mcp", "list"],
+            capture_output=True, text=True, timeout=10, check=False,
+        )
+    except (subprocess.TimeoutExpired, OSError) as e:
+        return CheckResult(
+            "claude_mcp_visibility", _WARN,
+            f"claude mcp list failed: {e}",
+        )
+
+    if result.returncode != 0:
+        return CheckResult(
+            "claude_mcp_visibility", _WARN,
+            f"claude mcp list exited {result.returncode}",
+            details=(result.stderr or "")[:400],
+        )
+
+    out = result.stdout or ""
+    if "codevira" in out.lower():
+        # Optional: pick up the "Connected" / "Failed" status that the
+        # CLI prints alongside the entry.
+        connected = "✓ Connected" in out or "Connected" in out
+        if connected:
+            return CheckResult(
+                "claude_mcp_visibility", _PASS,
+                "codevira visible to Claude Code (✓ Connected)",
+            )
+        return CheckResult(
+            "claude_mcp_visibility", _WARN,
+            "codevira listed but not connected — restart Claude Code",
+        )
+
+    return CheckResult(
+        "claude_mcp_visibility", _FAIL,
+        "codevira NOT in claude mcp list — Claude Code can't see it",
+        fix_command=(
+            "codevira setup -y   # re-runs the user-scope MCP merge; "
+            "if that fails, fall back to: claude mcp add --scope user "
+            "codevira $(which codevira)"
+        ),
+    )
+
+
+def check_codeindex_freshness() -> CheckResult:
+    """C14 (v2.0-rc.4 / Bug 11) — detect stale codeindex from older
+    codevira version.
+
+    AgentStore dogfood (2026-05-06): a v1.8.1-era codeindex/ directory
+    persisted into the v2.0.0rc2 install and contributed to the
+    sentence-transformers segfault on first re-index. Doctor should
+    detect codeindex dirs whose embedding-model state is incompatible
+    with the current codevira version and recommend wiping them.
+
+    Heuristic: if a per-project ``codeindex/`` exists and was last
+    written more than 2 weeks before the current codevira's install
+    time, flag as WARN. We don't auto-wipe — that risks losing data.
+    """
+    try:
+        from mcp_server.paths import get_data_dir, get_project_root
+        project_root = get_project_root()
+        if project_root is None:
+            return CheckResult(
+                "codeindex_freshness", _PASS,
+                "no project — skipped",
+            )
+        data_dir = get_data_dir()
+        codeindex = data_dir / "codeindex"
+    except Exception as e:  # noqa: BLE001
+        return CheckResult(
+            "codeindex_freshness", _PASS,
+            f"could not resolve codeindex path: {e}",
+        )
+
+    if not codeindex.exists():
+        return CheckResult(
+            "codeindex_freshness", _PASS,
+            "no codeindex directory yet (will be built on first index)",
+        )
+
+    # Find the freshest mtime in codeindex/ (recursive). If everything
+    # is older than 2 weeks AND we have at least one chromadb file,
+    # warn that the codeindex may be incompatible.
+    import time
+    now = time.time()
+    THRESHOLD_DAYS = 14
+    threshold_seconds = THRESHOLD_DAYS * 86400
+
+    freshest = 0.0
+    has_files = False
+    for path in codeindex.rglob("*"):
+        if path.is_file():
+            has_files = True
+            try:
+                m = path.stat().st_mtime
+                if m > freshest:
+                    freshest = m
+            except OSError:
+                continue
+    if not has_files:
+        return CheckResult(
+            "codeindex_freshness", _PASS,
+            "codeindex empty (clean state)",
+        )
+
+    age_days = (now - freshest) / 86400
+    if age_days > THRESHOLD_DAYS:
+        return CheckResult(
+            "codeindex_freshness", _WARN,
+            f"codeindex last touched {int(age_days)} days ago (>{THRESHOLD_DAYS}) — may be stale",
+            fix_command=f"rm -rf '{codeindex}' && codevira index",
+            details=(
+                "Older codeindex directories may use embedding model "
+                "state incompatible with the current codevira install. "
+                "Wiping forces a fresh build on the next index."
+            ),
+        )
+    return CheckResult(
+        "codeindex_freshness", _PASS,
+        f"codeindex last touched {int(age_days)} day(s) ago (recent)",
+    )
+
+
+def check_semantic_search_health() -> CheckResult:
+    """C15 (v2.0-rc.4 / Bug 12) — surface ChromaDB chunks=0 as a WARN.
+
+    A project with 0 indexed chunks degrades search_codebase to a
+    structural-only fallback (still returns matches, but with no
+    semantic ranking). Without this check the user only finds out
+    when search_codebase results feel weak. Doctor flagging it gives
+    one-line fix guidance.
+    """
+    try:
+        from mcp_server.paths import get_data_dir, get_project_root
+        project_root = get_project_root()
+        if project_root is None:
+            return CheckResult(
+                "semantic_search_health", _PASS,
+                "no project — skipped",
+            )
+        data_dir = get_data_dir()
+    except Exception as e:  # noqa: BLE001
+        return CheckResult(
+            "semantic_search_health", _PASS,
+            f"could not resolve data dir: {e}",
+        )
+
+    # Check for chromadb importability + chunks. We don't actually open
+    # chromadb here — opening it loads sentence-transformers which is
+    # slow and can crash (Bug 7). Instead, sniff the codeindex SQLite
+    # file size as a cheap proxy.
+    codeindex = data_dir / "codeindex"
+    if not codeindex.exists():
+        return CheckResult(
+            "semantic_search_health", _WARN,
+            "no codeindex — semantic search degraded",
+            fix_command="codevira index   # builds the embedding index",
+        )
+
+    # Sum sizes of all chromadb files; tiny total = empty collection.
+    total_size = 0
+    file_count = 0
+    for path in codeindex.rglob("*"):
+        if path.is_file():
+            try:
+                total_size += path.stat().st_size
+                file_count += 1
+            except OSError:
+                continue
+
+    # 100 KB is the empty-but-initialised baseline (chromadb metadata).
+    # Real projects exceed 1 MB after a small index.
+    if total_size < 100 * 1024:
+        return CheckResult(
+            "semantic_search_health", _WARN,
+            f"codeindex looks empty ({total_size // 1024} KB) — semantic search degraded",
+            fix_command="codevira index   # rebuild the embedding index",
+        )
+    return CheckResult(
+        "semantic_search_health", _PASS,
+        f"codeindex {total_size // 1024} KB across {file_count} file(s)",
+    )
+
+
 def check_crash_log_size() -> CheckResult:
     """C12 — crash log isn't pathologically large."""
     try:
@@ -431,6 +645,9 @@ _CHECKS: tuple[Callable[[], CheckResult], ...] = (
     check_nudge_files,
     check_watcher_circuit,
     check_engine_kill_switch,
+    check_claude_mcp_visibility,    # rc.4 (Bug 10)
+    check_codeindex_freshness,      # rc.4 (Bug 11)
+    check_semantic_search_health,   # rc.4 (Bug 12)
     check_crash_log_size,
 )
 

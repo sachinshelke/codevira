@@ -780,12 +780,27 @@ class SQLiteGraph:
             conn.execute("DELETE FROM symbols WHERE file_node_id = ?", (file_node_id,))
 
     def add_call_edge(self, caller_id: str, callee_id: str, line: int | None = None):
-        """Record a function call relationship."""
+        """Record a function call relationship.
+
+        v2.0-rc.4 (Bug 9): the previous implementation used INSERT OR REPLACE
+        unconditionally and raised ``IntegrityError: FOREIGN KEY constraint
+        failed`` when a referenced symbol was deleted by a concurrent watcher
+        reindex (the ``all_symbols`` lookup in graph_generator can go stale
+        between read and write). 67 such crashes were recorded in the
+        wild before this fix.
+
+        New behaviour: the INSERT now uses an EXISTS subquery so rows that
+        reference a missing symbol are silently dropped. The call edge is
+        not critical (it can be rebuilt on the next full reindex) — losing
+        the row beats crashing the watcher.
+        """
         with self.transaction() as conn:
             conn.execute('''
                 INSERT OR REPLACE INTO call_edges (caller_id, callee_id, line)
-                VALUES (?, ?, ?)
-            ''', (caller_id, callee_id, line))
+                SELECT ?, ?, ?
+                WHERE EXISTS (SELECT 1 FROM symbols WHERE id = ?)
+                  AND EXISTS (SELECT 1 FROM symbols WHERE id = ?)
+            ''', (caller_id, callee_id, line, caller_id, callee_id))
 
     def get_callers(self, symbol_id: str) -> list[dict]:
         """Get all functions that call this symbol."""

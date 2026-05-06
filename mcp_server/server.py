@@ -475,10 +475,13 @@ async def list_tools() -> list[Tool]:
             name="update_node",
             description=(
                 "Update a graph node after modifying a file. "
-                "Use changes={'do_not_revert': true} to PROTECT a file from "
+                "Use changes={'do_not_revert': true} to PROTECT a FILE from "
                 "future AI edits that would undo architectural decisions "
-                "(this is THE mechanism for marking architectural choices "
-                "irrevocable — Hero 1 / Decision Lock enforces it). "
+                "(Hero 1 / Decision Lock enforces it). "
+                "For DECISION-LEVEL protection (a specific decision rather "
+                "than the whole file), use record_decision(do_not_revert=true) "
+                "instead — that's lighter and lets one file hold multiple "
+                "independently-protected decisions. "
                 "Call at session end for each file you changed."
             ),
             inputSchema={
@@ -594,6 +597,76 @@ async def list_tools() -> list[Tool]:
                     "full": {"type": "boolean", "description": "Untruncated decision text (default false)"},
                 },
                 "required": ["file_path"],
+            },
+        ),
+        Tool(
+            name="record_decision",
+            description=(
+                "Record a single architectural decision and (optionally) mark "
+                "it as protected with do_not_revert=true so future AI sessions "
+                "treat it as an architectural constraint. Use this for "
+                "decisions you want to LOCK across sessions and across IDEs "
+                "(e.g. 'use Postgres for the cortex metadata store, not "
+                "SQLite — we need multi-host operator access'). Lighter-"
+                "weight than write_session_log, ideal for ad-hoc captures. "
+                "Returns {decision_id, session_id} for follow-up edits via "
+                "mark_decision_protected. The flag is surfaced in subsequent "
+                "search_decisions() calls so other AI sessions see it."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "decision": {
+                        "type": "string",
+                        "description": "The decision itself (1 sentence is fine)",
+                    },
+                    "file_path": {
+                        "type": "string",
+                        "description": "Optional file/path the decision pertains to",
+                    },
+                    "context": {
+                        "type": "string",
+                        "description": "Why this won (alternatives, what would force re-examination)",
+                    },
+                    "do_not_revert": {
+                        "type": "boolean",
+                        "description": (
+                            "If true, mark the decision as protected — future "
+                            "sessions will see do_not_revert=true and must NOT "
+                            "propose changes that conflict without surfacing "
+                            "this decision to the user first. Default false."
+                        ),
+                    },
+                    "session_id": {
+                        "type": "string",
+                        "description": "Optional session id to attach to (auto-generated if omitted)",
+                    },
+                },
+                "required": ["decision"],
+            },
+        ),
+        Tool(
+            name="mark_decision_protected",
+            description=(
+                "Flip the do_not_revert flag on an existing decision by id. "
+                "Use to retroactively protect a decision that was originally "
+                "logged without do_not_revert, or to UNprotect one that no "
+                "longer applies (pass do_not_revert=false). Find the id via "
+                "search_decisions()."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "decision_id": {
+                        "type": "integer",
+                        "description": "Decision id from search_decisions output",
+                    },
+                    "do_not_revert": {
+                        "type": "boolean",
+                        "description": "true to protect, false to unprotect",
+                    },
+                },
+                "required": ["decision_id", "do_not_revert"],
             },
         ),
         Tool(
@@ -837,7 +910,9 @@ async def list_tools() -> list[Tool]:
                 "Get auto-generated rules from observed patterns across sessions. "
                 "These rules are learned from what works — test pairing patterns, import rules, "
                 "co-change patterns. Higher confidence = more reliable. "
-                "Use alongside get_playbook() for comprehensive guidance."
+                "Use alongside get_playbook() for comprehensive guidance. "
+                "Each rule comes with a numeric `id` — pass that to retire_rule() "
+                "if a rule has gone stale (e.g. pinned to a deleted directory)."
             ),
             inputSchema={
                 "type": "object",
@@ -850,7 +925,37 @@ async def list_tools() -> list[Tool]:
                         "type": "string",
                         "description": "Filter: 'testing' | 'imports' | 'structure' | 'patterns' | 'naming'",
                     },
+                    "include_retired": {
+                        "type": "boolean",
+                        "description": "Include rules previously retired (default false — audit only)",
+                    },
                 },
+            },
+        ),
+        Tool(
+            name="retire_rule",
+            description=(
+                "Retire a stale learned rule by its numeric id. The rule is "
+                "marked retired (kept in the table for audit) and stops "
+                "appearing in get_learned_rules() / get_session_context() "
+                "and stops firing as a high-confidence signal in policies. "
+                "Call this when get_learned_rules surfaces a rule pinned to "
+                "a directory or pattern that no longer exists in the codebase. "
+                "Provide a short reason so future sessions understand why it was retired."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "rule_id": {
+                        "type": "integer",
+                        "description": "Numeric id from get_learned_rules() output",
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "Why the rule is being retired (e.g. 'src/control/cli/ deleted in Plan 1 Week 2')",
+                    },
+                },
+                "required": ["rule_id"],
             },
         ),
         Tool(
@@ -1113,6 +1218,25 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 decisions=arguments["decisions"],
                 next_steps=arguments["next_steps"],
             )
+        elif name == "record_decision":
+            from mcp_server.tools.learning import (
+                record_decision as learning_record_decision,
+            )
+            result = learning_record_decision(
+                decision=arguments["decision"],
+                file_path=arguments.get("file_path"),
+                context=arguments.get("context"),
+                do_not_revert=arguments.get("do_not_revert", False),
+                session_id=arguments.get("session_id"),
+            )
+        elif name == "mark_decision_protected":
+            from mcp_server.tools.learning import (
+                mark_decision_protected as learning_mark_decision_protected,
+            )
+            result = learning_mark_decision_protected(
+                decision_id=arguments["decision_id"],
+                do_not_revert=arguments["do_not_revert"],
+            )
         elif name == "refresh_index":
             result = refresh_index(file_paths=arguments.get("file_paths") or [])
         elif name == "get_playbook":
@@ -1148,6 +1272,13 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             result = learning_get_learned_rules(
                 file_path=arguments.get("file_path"),
                 category=arguments.get("category"),
+                include_retired=arguments.get("include_retired", False),
+            )
+        elif name == "retire_rule":
+            from mcp_server.tools.learning import retire_rule as learning_retire_rule
+            result = learning_retire_rule(
+                rule_id=arguments["rule_id"],
+                reason=arguments.get("reason"),
             )
         elif name == "get_project_maturity":
             result = learning_get_project_maturity()

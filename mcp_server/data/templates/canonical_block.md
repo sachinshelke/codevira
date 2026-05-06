@@ -26,6 +26,26 @@ Call these MCP tools at the moments the description matches your action — they
 
 - For commits that fix a bug, prefer commit messages starting with `fix:`, `bug:`, `hotfix:`, or `fixes #N`. Codevira scans these into a fix-history database used by the Anti-Regression hero to block silent re-introduction of fixed bugs.
 
+### Before you finish a meaningful unit of work — NON-NEGOTIABLE
+
+Codevira's promise is "the project remembers what you did." That promise breaks if you don't write to it. Before you respond to the user with the final result of a meaningful change, **call ONE of these**:
+
+- **`update_phase_status(status, ...)`** — if you started or are blocked on the current phase
+- **`complete_phase(phase_number, key_decisions=[...])`** — if you finished a phase
+- **`complete_changeset(changeset_id, decisions=[...])`** — if you closed a multi-file fix
+- **`write_session_log(...)`** — at minimum, at the end of any session that produced commits or non-trivial output
+
+A session that ships code WITHOUT a codevira write call leaves the project's memory stale for the next AI. That's the most common way the wedge breaks. Treat it as part of the definition-of-done, not optional.
+
+### When you see "Roadmap drift detected" in your SessionStart context
+
+That warning fires when codevira's claimed phase hasn't been updated for several days OR many commits have landed since the last update. Before relying on `get_roadmap` state:
+
+1. Read recent commits: `git log --oneline -20`
+2. Compare against codevira's `current_phase` from `get_session_context()`
+3. If reality has moved on, call `update_phase_status` or `complete_phase` with the actual state, then proceed
+4. If reality matches the claimed phase, the warning is informational — note it and continue
+
 ### When the user asks "what did we decide about X"
 
 - **`search_decisions(query="X")`** is the answer. Don't guess — surface the actual decision log.

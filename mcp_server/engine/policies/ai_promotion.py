@@ -99,6 +99,7 @@ def _truncate(text: str, n: int = _DECISION_DISPLAY_CHARS) -> str:
 def _format_inject(
     stable: list[dict[str, Any]],
     rules: list[dict[str, Any]],
+    drift: dict[str, Any] | None = None,
 ) -> str:
     """Build the human-readable context block injected into the AI's
     first turn. Kept tight (< 50 lines on a typical project) to respect
@@ -106,6 +107,18 @@ def _format_inject(
     lines: list[str] = []
     lines.append("## Codevira insights — what's been working in this project")
     lines.append("")
+
+    # v2.0-rc.3: Bug 8 — surface roadmap drift FIRST so the AI can act
+    # on it before relying on the stale state below.
+    if drift and drift.get("drifted"):
+        lines.append("### ⚠ Roadmap drift detected")
+        lines.append(drift.get("message", "Codevira roadmap may be stale."))
+        recent = drift.get("recent_commit_subjects") or []
+        if recent:
+            lines.append("Recent commits not yet reflected in codevira:")
+            for subj in recent[:3]:
+                lines.append(f"  - {subj}")
+        lines.append("")
 
     if stable:
         lines.append("### Stable past decisions (kept across multiple commits)")
@@ -285,10 +298,31 @@ class AIPromotionScore(Policy):
             if d.get("score", 0.0) >= config["min_score"]
         ][: config["max_inject"]]
 
-        if not stable and not rules:
+        # Stage 4b (v2.0-rc.3 / Bug 8): roadmap drift detection. If
+        # codevira's claimed phase is stale relative to git activity,
+        # surface a warning so the AI proactively reconciles. Drift
+        # detection is best-effort and never fails the inject path.
+        drift = None
+        try:
+            from mcp_server.roadmap_drift import check_drift
+            from mcp_server.tools.roadmap import _load_roadmap
+            from mcp_server.paths import get_project_root
+            roadmap = _load_roadmap()
+            current_phase = roadmap.get("current_phase") or {}
+            drift = check_drift(
+                project_root=get_project_root(),
+                current_phase=current_phase,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.debug("ai_promotion: drift check failed: %s", e)
+            drift = None
+
+        # If we have NOTHING to inject (no stable, no rules, no drift)
+        # don't bother sending an empty block.
+        if not stable and not rules and not drift:
             return PolicyVerdict.allow()
 
-        context = _format_inject(stable, rules)
+        context = _format_inject(stable, rules, drift=drift)
         return PolicyVerdict(
             action="inject",
             inject_context=context,
@@ -296,6 +330,7 @@ class AIPromotionScore(Policy):
             metadata={
                 "stable_count": len(stable),
                 "rules_count": len(rules),
+                "drift_detected": bool(drift),
                 "since_days": _INJECT_SINCE_DAYS,
                 "min_score": config["min_score"],
             },

@@ -20,6 +20,12 @@ Global flags:
 """
 from __future__ import annotations
 
+# IMPORTANT: fork-safety must run BEFORE any code path can transitively
+# import chromadb / sentence-transformers / torch. Importing the indexer
+# package triggers ``indexer/_fork_safety.py`` which sets the macOS env
+# vars + multiprocessing start method. Bug 7 fix (v2.0-rc.3).
+import indexer  # noqa: F401  — fork-safety side-effect import
+
 import argparse
 import sys
 from pathlib import Path

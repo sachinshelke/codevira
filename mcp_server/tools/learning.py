@@ -51,24 +51,158 @@ def get_preferences(category: str | None = None) -> dict:
         db.close()
 
 
-def get_learned_rules(file_path: str | None = None, category: str | None = None) -> dict:
-    """Get auto-generated rules from observed patterns."""
+def get_learned_rules(
+    file_path: str | None = None,
+    category: str | None = None,
+    include_retired: bool = False,
+) -> dict:
+    """Get auto-generated rules from observed patterns.
+
+    v2.0-rc.3 (Bug 3): emits ``id`` per rule + ``retired`` flag so AIs
+    can call ``retire_rule(rule_id=...)`` when they detect a stale rule
+    (e.g. one pinned to a directory that has since been deleted).
+    """
     db = _get_db()
     try:
-        rules = db.get_learned_rules(category=category, file_pattern=file_path, min_confidence=0.3)
+        rules = db.get_learned_rules(
+            category=category,
+            file_pattern=file_path,
+            min_confidence=0.3,
+            include_retired=include_retired,
+        )
         return {
             "rules": [
                 {
+                    "id": r["id"],
                     "rule": r["rule_text"],
                     "confidence": r["confidence"],
                     "category": r["category"],
                     "applies_to": r.get("file_pattern"),
+                    "retired": bool(r.get("retired_at")),
+                    "retired_reason": r.get("retired_reason"),
                 }
                 for r in rules
             ],
             "total": len(rules),
-            "hint": "These rules were learned from past sessions. Higher confidence = more reliable."
-                    if rules else "No rules learned yet. They emerge after multiple sessions.",
+            "hint": (
+                "These rules were learned from past sessions. Higher confidence = "
+                "more reliable. If a rule references a file/directory that no "
+                "longer exists, call retire_rule(rule_id=N, reason='...') so it "
+                "stops firing as a high-confidence signal."
+                if rules else
+                "No rules learned yet. They emerge after multiple sessions."
+            ),
+        }
+    finally:
+        db.close()
+
+
+def record_decision(
+    decision: str,
+    file_path: str | None = None,
+    context: str | None = None,
+    do_not_revert: bool = False,
+    session_id: str | None = None,
+) -> dict:
+    """Record a single decision with optional do_not_revert flag.
+
+    Bug 2 (v2.0-rc.3): the canonical "log a decision and protect it"
+    primitive — the missing piece of Hero 1's positioning. Lighter
+    than ``write_session_log`` for ad-hoc captures during a session.
+
+    Returns ``{decision_id, session_id, do_not_revert}``.
+    """
+    if not decision or not isinstance(decision, str):
+        return {
+            "recorded": False,
+            "error": "decision must be a non-empty string",
+        }
+    db = _get_db()
+    try:
+        result = db.record_decision(
+            decision=decision.strip(),
+            file_path=file_path,
+            context=context,
+            do_not_revert=bool(do_not_revert),
+            session_id=session_id,
+        )
+        return {
+            "recorded": True,
+            "decision_id": result["decision_id"],
+            "session_id": result["session_id"],
+            "do_not_revert": bool(do_not_revert),
+            "hint": (
+                "Decision recorded as protected. Future search_decisions() "
+                "calls in this OR other AI tools will surface "
+                "do_not_revert=true. Use mark_decision_protected(decision_id, "
+                "do_not_revert=false) to unprotect later."
+                if do_not_revert else
+                "Decision recorded. Pass do_not_revert=true if it should "
+                "be locked against future revert."
+            ),
+        }
+    finally:
+        db.close()
+
+
+def mark_decision_protected(
+    decision_id: int,
+    do_not_revert: bool,
+) -> dict:
+    """Flip the do_not_revert flag on an existing decision."""
+    db = _get_db()
+    try:
+        ok = db.set_decision_protection(int(decision_id), bool(do_not_revert))
+        if not ok:
+            return {
+                "updated": False,
+                "decision_id": int(decision_id),
+                "error": (
+                    f"No decision with id={decision_id}. Use "
+                    f"search_decisions() to find the correct id."
+                ),
+            }
+        return {
+            "updated": True,
+            "decision_id": int(decision_id),
+            "do_not_revert": bool(do_not_revert),
+        }
+    finally:
+        db.close()
+
+
+def retire_rule(rule_id: int, reason: str | None = None) -> dict:
+    """Mark a learned rule as retired.
+
+    Bug 3 (v2.0-rc.3): real dogfood found that high-confidence rules can
+    point at directories the user later deletes (e.g. tests/control/cli/
+    pinned via test-pairing detection, then the whole directory got
+    ported to Go). Without this tool the rule kept firing as a
+    confidence: 1.00 signal in get_session_context, polluting every
+    session. ``retire_rule`` flips a column so the rule is preserved
+    for audit but excluded from default surfaces.
+    """
+    db = _get_db()
+    try:
+        ok = db.retire_learned_rule(rule_id=int(rule_id), reason=reason)
+        if not ok:
+            return {
+                "retired": False,
+                "rule_id": int(rule_id),
+                "error": (
+                    f"No active rule with id={rule_id}. It may have been "
+                    f"retired already or the id is wrong. Use "
+                    f"get_learned_rules() to list current ids."
+                ),
+            }
+        return {
+            "retired": True,
+            "rule_id": int(rule_id),
+            "reason": reason,
+            "hint": (
+                "Rule retired. It will stop appearing in get_learned_rules() "
+                "and get_session_context() unless you pass include_retired=true."
+            ),
         }
     finally:
         db.close()
@@ -259,8 +393,25 @@ def get_session_context() -> dict:
         except Exception:
             recent_phase_decisions = []
 
+        # v2.0-rc.3: Bug 8 — roadmap drift detection.
+        # If codevira's claimed phase hasn't been updated in days but
+        # commits keep landing, the roadmap is stale and the AI should
+        # be prompted to reconcile. The check is best-effort and never
+        # crashes the session-context call.
+        drift_warning = None
+        try:
+            from mcp_server.roadmap_drift import check_drift
+            from mcp_server.paths import get_project_root
+            drift_warning = check_drift(
+                project_root=get_project_root(),
+                current_phase=current_phase,
+            )
+        except Exception:
+            drift_warning = None
+
         return {
             "current_phase": current_phase,
+            "drift_warning": drift_warning,
             "open_changesets": open_changesets,
             "recent_sessions": [
                 {
@@ -297,6 +448,8 @@ def get_session_context() -> dict:
             "hint": (
                 "Before touching a file: get_node(path) + get_impact(path). "
                 "For past decisions: search_decisions(query). "
+                "After meaningful work, call update_phase_status / "
+                "complete_phase / write_session_log to keep memory current. "
                 "Admin tools (export_graph, find_hotspots) available via CLI."
             ),
         }

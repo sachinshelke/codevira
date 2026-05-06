@@ -245,6 +245,36 @@ class SQLiteGraph:
                 conn.execute("ALTER TABLE learned_rules ADD COLUMN source TEXT DEFAULT 'local'")
             except sqlite3.OperationalError:
                 pass  # Column already exists
+            # v2.0-rc.3 (Bug 3): retire stale learned rules from MCP.
+            # When a rule is retired it stays in the table (audit trail)
+            # but is filtered from default ``get_learned_rules()`` queries
+            # so it doesn't keep firing false positives on deleted code.
+            try:
+                conn.execute(
+                    "ALTER TABLE learned_rules ADD COLUMN retired_at DATETIME DEFAULT NULL"
+                )
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+            try:
+                conn.execute(
+                    "ALTER TABLE learned_rules ADD COLUMN retired_reason TEXT DEFAULT NULL"
+                )
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+            # v2.0-rc.3 (Bug 2): decision-level do_not_revert. Hero 1
+            # positioning ("AI cannot undo your protected decisions")
+            # was previously only honored at file granularity via
+            # nodes.do_not_revert. Adding the same flag at decision
+            # granularity lets the AI mark "use Postgres for the
+            # cortex metadata store" as do_not_revert without locking
+            # the entire file. ``search_decisions`` surfaces the flag
+            # so policies / agents can respect it.
+            try:
+                conn.execute(
+                    "ALTER TABLE decisions ADD COLUMN do_not_revert INTEGER DEFAULT 0"
+                )
+            except sqlite3.OperationalError:
+                pass  # Column already exists
 
     def add_node(self, node_id: str, kind: str, name: str, file_path: str, **kwargs):
         existing = self.get_node(node_id)
@@ -474,9 +504,17 @@ class SQLiteGraph:
                 conn.execute(f'UPDATE learned_rules SET {", ".join(updates)} WHERE id = ?', values)
 
     def get_learned_rules(self, category: str | None = None, file_pattern: str | None = None,
-                          min_confidence: float = 0.0) -> list[dict]:
+                          min_confidence: float = 0.0,
+                          include_retired: bool = False) -> list[dict]:
+        """List active (non-retired) learned rules by default.
+
+        v2.0-rc.3 (Bug 3): retired rules are excluded from the default
+        result set. Pass ``include_retired=True`` for audit/admin views.
+        """
         query = 'SELECT * FROM learned_rules WHERE confidence >= ?'
         params: list = [min_confidence]
+        if not include_retired:
+            query += ' AND retired_at IS NULL'
         if category:
             query += ' AND category = ?'
             params.append(category)
@@ -486,6 +524,37 @@ class SQLiteGraph:
         query += ' ORDER BY confidence DESC'
         cur = self.conn.execute(query, params)
         return [dict(r) for r in cur.fetchall()]
+
+    def retire_learned_rule(self, rule_id: int, reason: str | None = None) -> bool:
+        """Mark a learned rule as retired.
+
+        Retired rules remain in the table (audit trail) but are filtered
+        from ``get_learned_rules()`` by default so they stop firing as
+        active high-confidence signals on deleted/refactored code.
+
+        Returns True if a row was updated, False if rule_id not found.
+
+        Bug 3 (v2.0-rc.3): exposed via the new ``retire_rule`` MCP tool.
+        """
+        with self.transaction() as conn:
+            cur = conn.execute(
+                'UPDATE learned_rules '
+                'SET retired_at = CURRENT_TIMESTAMP, retired_reason = ? '
+                'WHERE id = ? AND retired_at IS NULL',
+                (reason, rule_id),
+            )
+            return cur.rowcount > 0
+
+    def unretire_learned_rule(self, rule_id: int) -> bool:
+        """Reverse a retire_learned_rule. Returns True if a row was updated."""
+        with self.transaction() as conn:
+            cur = conn.execute(
+                'UPDATE learned_rules '
+                'SET retired_at = NULL, retired_reason = NULL '
+                'WHERE id = ? AND retired_at IS NOT NULL',
+                (rule_id,),
+            )
+            return cur.rowcount > 0
 
     # ------------------------------------------------------------------
     # Project maturity metrics
@@ -541,6 +610,58 @@ class SQLiteGraph:
             ORDER BY d.created_at DESC LIMIT ?
         ''', (limit,))
         return [dict(r) for r in cur.fetchall()]
+
+    def record_decision(
+        self,
+        *,
+        decision: str,
+        file_path: str | None = None,
+        context: str | None = None,
+        do_not_revert: bool = False,
+        session_id: str | None = None,
+        summary: str | None = None,
+        phase: str | None = None,
+    ) -> dict:
+        """Insert a single decision with optional do_not_revert flag.
+
+        Bug 2 (v2.0-rc.3): unblocks the canonical "log a decision and
+        protect it from being reverted" flow. Without this method the
+        AI had to use ``write_session_log`` (heavyweight, no flag) or
+        ``update_node`` (per-FILE, not per-decision).
+
+        If ``session_id`` is omitted, an auto-generated id is used and
+        a session row is created on the fly so the FK constraint
+        passes. Returns ``{decision_id, session_id}``.
+        """
+        import uuid
+        sid = session_id or f"rec_{uuid.uuid4().hex[:8]}"
+        with self.transaction() as conn:
+            # Ensure parent session exists (FK constraint).
+            conn.execute(
+                'INSERT OR IGNORE INTO sessions (session_id, summary, phase) '
+                'VALUES (?, ?, ?)',
+                (sid, summary or "ad-hoc record_decision", phase),
+            )
+            cur = conn.execute(
+                'INSERT INTO decisions '
+                '(session_id, file_path, decision, context, do_not_revert) '
+                'VALUES (?, ?, ?, ?, ?)',
+                (sid, file_path, decision, context, 1 if do_not_revert else 0),
+            )
+            decision_id = cur.lastrowid
+        return {"decision_id": decision_id, "session_id": sid}
+
+    def set_decision_protection(self, decision_id: int, do_not_revert: bool) -> bool:
+        """Flip the do_not_revert flag on an existing decision.
+
+        Returns True if a row was updated, False if decision_id not found.
+        """
+        with self.transaction() as conn:
+            cur = conn.execute(
+                'UPDATE decisions SET do_not_revert = ? WHERE id = ?',
+                (1 if do_not_revert else 0, decision_id),
+            )
+            return cur.rowcount > 0
 
     def get_file_hash(self, file_path: str) -> str | None:
         cur = self.conn.execute('SELECT sha256 FROM file_hashes WHERE file_path = ?', (file_path,))
@@ -602,8 +723,11 @@ class SQLiteGraph:
         (3 places — summary is the implicit ELSE tier).
         """
         pat = f'%{query}%'
+        # v2.0-rc.3 (Bug 2): include d.id + d.do_not_revert so AI sees
+        # the protection flag and can mark_decision_protected by id.
         sql = '''
-            SELECT d.decision, d.context, d.file_path, s.summary, s.phase, d.created_at
+            SELECT d.id, d.decision, d.context, d.file_path,
+                   d.do_not_revert, s.summary, s.phase, d.created_at
             FROM decisions d
             JOIN sessions s ON d.session_id = s.session_id
             WHERE (d.file_path LIKE ? OR d.decision LIKE ? OR d.context LIKE ? OR s.summary LIKE ?)

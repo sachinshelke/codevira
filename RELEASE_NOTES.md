@@ -1,3 +1,123 @@
+# v2.0-rc.3 — Second dogfood pass: native crash + write-side wedge fixes (4 bugs, 71 new tests)
+
+**Released:** 2026-05-07
+**Test status:** 2275 / 2275 passing (deterministic; +71 from rc.2 baseline)
+
+Second dogfood round on a fresh project (AgentStore) hit two new
+classes of failure that rc.1/rc.2 didn't expose:
+
+1. **Native segfault on first index** — sentence-transformers + chromadb
+   stack crashes the codevira process on macOS Apple Silicon during the
+   embedding model's first load. New project setup blocked entirely.
+2. **Roadmap drift** — codevira shows "Phase 1A" while git log shows 7
+   weeks of work since. The MCP server is connected, hooks fire, the
+   schema is sound — but the AI never *calls* the write tools, so
+   memory freezes at the seeded state. Reads stay fresh; writes go
+   unused; the wedge promise breaks silently.
+
+rc.3 closes both, plus the two GA-blocking gaps from the rc.2 dogfood
+that rc.2 deferred (decision-level `do_not_revert` and a tool to retire
+stale learned rules).
+
+## Bugs fixed in rc.3
+
+### 🚨 Bug 7 (SHOWSTOPPER): macOS native segfault on first `codevira index`
+
+**Symptom**
+```
+Loading weights: 100%|█████████| 103/103 [00:00<00:00, 3299.17it/s]
+zsh: segmentation fault  codevira index
+resource_tracker: There appear to be 1 leaked semaphore objects to clean up at shutdown: {'/loky-...'}
+```
+
+**Root cause**
+sentence-transformers loads its tokenizer through HuggingFace's Rust crate; chromadb's default embedding function imports torch; loky/joblib runs a multiprocessing pool. On macOS Apple Silicon any of those paths can call `fork()` after libdispatch / Foundation has been initialised, and the child process crashes inside `+[__NSCFConstantString initialize]` before it can speak back to the parent.
+
+**Fix** (`indexer/_fork_safety.py`, auto-applied at indexer-package import time):
+- `OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES` — bypasses the libdispatch crash
+- `TOKENIZERS_PARALLELISM=false` — avoids the Rust threadpool fork race
+- `OMP_NUM_THREADS=1` — sidesteps libomp/libiomp duplicate runtimes
+- `multiprocessing.set_start_method("spawn", force=True)` — defensive
+
+The init runs from `mcp_server/cli.py` BEFORE any chromadb / torch import, so first-time `codevira index` no longer segfaults. Linux/Windows are unchanged (no-op).
+
+**Tests:** `tests/test_fork_safety.py` (14 tests covering darwin behaviour, Linux no-op, idempotency, user override respect, mp.set_start_method failure-mode).
+
+### 🎯 Bug 8 (WEDGE-KILLER): Roadmap drift — codevira goes stale silently
+
+**Symptom**
+Open AgentStore project after 4 days. Claude Desktop reads files cold and gives an 85%-accurate state ("you're on Pass 8, prompt caching not done"). Codevira responds with "Phase 1A — Production Hardening (Upstash Redis)" — frozen at the May-2 seed state. 7 weeks of work since, never logged.
+
+**Root cause**
+Codevira's read surface works (MCP tools callable, hooks fire, schema sound). But the AI in those sessions never *called* the write tools — it chatted, coded, committed, never invoked `update_phase_status` / `complete_phase` / `record_decision`. The roadmap froze. The wedge promise ("the project remembers what you did") quietly breaks.
+
+**Fix** — three layers:
+
+1. **Drift detector** (`mcp_server/roadmap_drift.py`): at SessionStart, compare codevira's claimed phase timestamp vs `git log --since`. If `days_since > 3` OR `commits_since > 5`, surface a warning. Best-effort, never blocks.
+2. **AI-Promotion-Score policy update** (`mcp_server/engine/policies/ai_promotion.py`): the SessionStart "## Codevira insights" block now includes a prominent "⚠ Roadmap drift detected" section with the recent commit subjects, so the AI sees the warning in turn 1.
+3. **Stronger nudge templates** (`mcp_server/data/templates/canonical_block.md`): explicit "before you respond to the user with the final result of meaningful work, call ONE of these write tools — non-negotiable, not optional" + drift response playbook.
+
+**Tests:** `tests/test_roadmap_drift.py` (26 tests across iso parsing, reference-time resolution, threshold logic, defensive paths, and `get_session_context` integration).
+
+### 🛠 Bug 3: No MCP tool to retire stale learned rules
+
+**Symptom (from rc.2 dogfood)**
+UDAP project had 3 rules with confidence 1.00 pinned to `src/control/cli/`. The user was about to delete that directory in a Python→Go migration. Once committed, the rules would fire false positives on every SessionStart. The MCP surface had no way to retire them — the AI explicitly noted "Codevira's confidence: 1.00 rules don't appear retire-able through the MCP tools I've loaded."
+
+**Fix**
+- Schema: `learned_rules.retired_at` + `retired_reason` columns (idempotent ALTER, auto-applied)
+- DB: `retire_learned_rule(rule_id, reason)` + `unretire_learned_rule(rule_id)`. `get_learned_rules()` filters retired by default; pass `include_retired=True` for audit
+- MCP tool: `retire_rule(rule_id, reason)` — surfaces in `tools/list`
+- `get_learned_rules()` now emits `id` per rule so the AI can find what to retire
+
+**Tests:** `tests/test_retire_rule.py` (13 tests including the SessionStart-context regression — retired rules must NOT surface in `top_signals.rules`).
+
+### 🛡 Bug 2: Decision-level `do_not_revert` flag (Hero 1 polish)
+
+**Symptom (from rc.2 dogfood)**
+User asked AI to "log this as a decision via codevira and mark `do_not_revert=true`." The AI scanned the MCP write surface and concluded "no tool accepts `do_not_revert` on a decision — only on a file via `update_node`." Correct. Hero 1's positioning ("AI cannot undo your protected decisions") had no canonical write path.
+
+**Fix**
+- Schema: `decisions.do_not_revert` column (idempotent ALTER)
+- DB: `record_decision(decision, file_path, context, do_not_revert)` returns `{decision_id, session_id}`. `set_decision_protection(decision_id, do_not_revert)` flips an existing decision. `search_decisions()` SELECT now includes `id` + `do_not_revert`
+- MCP tools:
+  - `record_decision` — lightweight per-decision capture with optional `do_not_revert=true`
+  - `mark_decision_protected` — flips an existing decision by id
+- `update_node` description tightened to point AIs at `record_decision` for decision-level protection (vs file-level)
+
+**Tests:** `tests/test_record_decision.py` (18 tests covering schema migration, DB layer, tool layer, `search_decisions` integration, and MCP tool registration contract).
+
+## Tests
+
+**2275 passing, 1 skipped, 0 failed** — deterministic.
+
+Net new coverage in rc.3:
+- `tests/test_fork_safety.py` (14)
+- `tests/test_roadmap_drift.py` (26)
+- `tests/test_retire_rule.py` (13)
+- `tests/test_record_decision.py` (18)
+- 2 `test_server.py` dispatch tests updated for `include_retired` arg
+
+## Verification on UDAP / AgentStore
+
+```bash
+# AgentStore (was the segfault site)
+cd ~/Documents/Projects/Agentic/AgentStore
+pipx upgrade codevira      # picks up rc.3 from local PyPI
+codevira index             # should now NOT segfault on first load
+codevira doctor            # 9-10 pass, 0 fail
+
+# UDAP (was the rule-staleness + decision-protection site)
+cd ~/Documents/Projects/LogisticsOS/UDAP
+codevira doctor
+# In Claude Code:
+#   "Use record_decision to log: 'use Postgres for cortex metadata' with do_not_revert=true"
+#   "Use search_decisions for 'database' — verify do_not_revert: true surfaces"
+#   "Use get_learned_rules — verify each rule has an id"
+#   "Use retire_rule with id=X reason='src/control/cli/ deleted'"
+#   Quit + new conversation → "Use get_session_context — verify drift_warning + retired rules dropped"
+```
+
 # v2.0-rc.2 — Dogfood bug fixes (4 bugs, 17 new tests)
 
 **Released:** 2026-05-06

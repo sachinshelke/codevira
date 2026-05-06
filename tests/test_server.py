@@ -428,7 +428,10 @@ class TestCallToolAdditionalRoutes:
         with patch("mcp_server.server.learning_get_learned_rules", return_value=sentinel) as mock_fn, \
              patch("mcp_server.auto_init.ensure_project_initialized"):
             result = _run(call_tool("get_learned_rules", {"file_path": "src/api.py", "category": "testing"}))
-        mock_fn.assert_called_once_with(file_path="src/api.py", category="testing")
+        # v2.0-rc.3 (Bug 3): include_retired added with False default.
+        mock_fn.assert_called_once_with(
+            file_path="src/api.py", category="testing", include_retired=False,
+        )
         assert len(result) == 1
         parsed = json.loads(result[0].text)
         assert parsed == sentinel
@@ -439,7 +442,9 @@ class TestCallToolAdditionalRoutes:
         with patch("mcp_server.server.learning_get_learned_rules", return_value=sentinel) as mock_fn, \
              patch("mcp_server.auto_init.ensure_project_initialized"):
             result = _run(call_tool("get_learned_rules", {}))
-        mock_fn.assert_called_once_with(file_path=None, category=None)
+        mock_fn.assert_called_once_with(
+            file_path=None, category=None, include_retired=False,
+        )
         assert len(result) == 1
 
     def test_dispatch_get_project_maturity(self):
@@ -769,7 +774,10 @@ class TestCallToolMissingDispatches:
         with patch("mcp_server.server.learning_get_learned_rules", return_value=sentinel) as m, \
              patch("mcp_server.auto_init.ensure_project_initialized"):
             _run(call_tool("get_learned_rules", {}))
-        m.assert_called_once_with(file_path=None, category=None)
+        # v2.0-rc.3 (Bug 3): dispatch now passes include_retired=False default.
+        m.assert_called_once_with(
+            file_path=None, category=None, include_retired=False,
+        )
 
     def test_dispatch_get_project_maturity(self):
         sentinel = {"maturity": "Senior"}

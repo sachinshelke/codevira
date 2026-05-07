@@ -4,20 +4,34 @@
 # Used for telemetry (token meter, decision logging, style checks). Most
 # verdicts are `allow`; this hook rarely blocks but may inject context
 # for the next AI turn.
+#
+# Bug 18 hardening: capture codevira stdout; fall back to no-op when not
+# valid JSON. Never block.
 
-# Round-3 QA fast path: skip Python startup when engine is disabled.
 if [[ "${CODEVIRA_ENGINE:-1}" == "0" ]]; then
   printf '{"continue": true}\n'
   exit 0
 fi
 
+CODEVIRA=""
 if [[ -x "${HOME}/.local/bin/codevira" ]]; then
   CODEVIRA="${HOME}/.local/bin/codevira"
 elif command -v codevira >/dev/null 2>&1; then
   CODEVIRA="$(command -v codevira)"
-else
+fi
+
+if [[ -z "$CODEVIRA" ]]; then
   printf '{"continue": true}\n'
   exit 0
 fi
 
-exec "${CODEVIRA}" engine handle PostToolUse
+RESPONSE="$("${CODEVIRA}" engine handle PostToolUse 2>/dev/null)"
+RC=$?
+
+if [[ -z "$RESPONSE" || "${RESPONSE:0:1}" != "{" ]]; then
+  printf '{"continue": true}\n'
+  exit 0
+fi
+
+printf '%s\n' "$RESPONSE"
+exit "$RC"

@@ -1,11 +1,11 @@
-# v2.0-rc.3 — Second dogfood pass: 13 bugs across native, wedge, schema, and CLI (consolidated, 117 new tests)
+# v2.0-rc.3 — Second dogfood pass: 14 bugs across native, wedge, schema, hooks, and CLI (consolidated, 143 new tests)
 
-**Released:** 2026-05-07
-**Test status:** 2304 / 2304 passing (deterministic; +100 from rc.2)
+**Released:** 2026-05-08
+**Test status:** 2330 / 2330 passing (deterministic; +126 from rc.2)
 
-This rc consolidates four internal iteration rounds (originally tagged rc.3 → rc.6 in dev) into a single user-visible release, since none of the intermediate versions were ever installed by an end user. Each bug below was caught either by real dogfood (Sachin's UDAP and AgentStore projects) or by re-audit of the same bug shape elsewhere in the codebase.
+This rc consolidates five internal iteration rounds (originally tagged rc.3 → rc.7 in dev) into a single user-visible release, since none of the intermediate versions were ever installed by an end user. Each bug below was caught either by real dogfood (Sachin's UDAP and AgentStore projects) or by re-audit of the same bug shape elsewhere in the codebase.
 
-## Bug ledger — 13 closed in rc.3
+## Bug ledger — 14 closed in rc.3
 
 ### Native + first-install (P0 dealbreakers)
 
@@ -105,6 +105,30 @@ AgentStore had a v1.8.1-era `codeindex/` that contributed to the segfault. Docto
 #### 🛡 Bug 12 — `codevira doctor` silently ignores degraded semantic search
 Both UDAP and agent-mcp showed `ChromaDB Chunks: 0`. Users only noticed when search felt weak. **Fix** — `check_semantic_search_health` WARNs on missing or <100 KB codeindex; prints `codevira index`. **Tests:** 3.
 
+### Hook resilience
+
+#### 🚨 Bug 18 — stale codevira binary blocks the user's prompt
+
+**Symptom**
+```
+UserPromptSubmit operation blocked by hook:
+[bash /Users/sachin/.claude/hooks/codevira-user_prompt_submit.sh]:
+usage: codevira [-h] [--project-dir PATH] {init,index,...,clean} ...
+codevira: error: argument command: invalid choice: 'engine'
+(choose from init, index, status, report, serve, register, configure, clean)
+```
+
+When an OLDER codevira (pre-v2.0) was on PATH while the installed hook scripts were v2.0 templates, argparse exited nonzero on every hook invocation and Claude Code surfaced "operation blocked by hook" — the user couldn't even submit a prompt.
+
+**Root cause** — all 5 hook scripts used `exec "${CODEVIRA}" engine handle <Event>` which propagates the binary's exit code unchanged. Stale binaries exit 2 from argparse; Claude Code reads exit 2 as "block."
+
+**Fix** — capture-stdout pattern across all 5 hook scripts:
+- Run codevira in a subshell, capture stdout
+- If stdout is empty or doesn't start with `{` → emit `{"continue": true}` and exit 0 (no-op)
+- If stdout is valid-looking JSON → forward verbatim AND propagate the engine's exit code (so legitimate exit-2 blocks still work — critical for PreToolUse / Hero 1)
+
+**Tests:** `tests/test_hook_resilience.py` (26) — every hook × 4 failure modes (binary missing, stale-binary argparse error, garbage stdout, valid-JSON happy path) + a dedicated test that PreToolUse still exits 2 when the engine legitimately blocks (so Hero 1 doesn't get silently disabled) + 5 kill-switch tests.
+
 ### CLI UX
 
 #### Bug 17 — `codevira --version` / `-V` flag missing
@@ -112,7 +136,7 @@ Every Python CLI exposes `--version`. **Fix** — `argparse` `action="version"` 
 
 ## Tests
 
-**2304 passing, 1 skipped, 0 failed** — deterministic across multiple full runs.
+**2330 passing, 1 skipped, 0 failed** — deterministic across multiple full runs.
 
 Net new coverage since rc.2:
 - `tests/test_fork_safety.py` (14)
@@ -122,6 +146,7 @@ Net new coverage since rc.2:
 - `tests/test_call_edge_fk_safety.py` (6)
 - `tests/test_fk_safety_extended.py` (10)
 - `tests/test_cli_version.py` (3)
+- `tests/test_hook_resilience.py` (26)
 - `tests/test_doctor.py` extended (10)
 - 2 dispatch tests updated for new `include_retired` arg
 

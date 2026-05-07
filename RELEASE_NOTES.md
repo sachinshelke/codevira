@@ -1,282 +1,159 @@
-# v2.0-rc.6 — `codevira --version` standard CLI flag (1 bug, 3 new tests)
+# v2.0-rc.3 — Second dogfood pass: 13 bugs across native, wedge, schema, and CLI (consolidated, 117 new tests)
 
 **Released:** 2026-05-07
-**Test status:** 2304 / 2304 passing
+**Test status:** 2304 / 2304 passing (deterministic; +100 from rc.2)
 
-User tried `codevira --version` to verify the installed version after a
-pipx upgrade and got ``error: unrecognized arguments: --version``. Every
-standard Python CLI exposes ``--version``; codevira didn't.
+This rc consolidates four internal iteration rounds (originally tagged rc.3 → rc.6 in dev) into a single user-visible release, since none of the intermediate versions were ever installed by an end user. Each bug below was caught either by real dogfood (Sachin's UDAP and AgentStore projects) or by re-audit of the same bug shape elsewhere in the codebase.
 
-## Bug fixed in rc.6
+## Bug ledger — 13 closed in rc.3
 
-### Bug 17: `codevira --version` / `-V` flag missing
+### Native + first-install (P0 dealbreakers)
 
-**Symptom**
-```
-$ codevira --version
-codevira: error: unrecognized arguments: --version
-```
-
-**Fix** (`mcp_server/cli.py`): standard `argparse` ``action="version"``
-that reads from ``mcp_server.__version__``. Single source of truth — a
-version bump in `__init__.py` updates both the CLI flag output and the
-package metadata. Long form (``--version``) and short (``-V``) both work.
-
-**Tests:** `tests/test_cli_version.py` (3) — long form, short form, and a
-defensive guard against accidental ``__version__ = "0.0.0"`` regressions.
-
-# v2.0-rc.5 — Re-audit pass 2: more FK races + project-scope MCP fix (4 bugs, 10 new tests)
-
-**Released:** 2026-05-07
-**Test status:** 2301 / 2301 passing (deterministic)
-
-Bug 9 (rc.4) fixed `add_call_edge`'s FK race. The same shape exists in
-two more inserts; rc.5 closes them. Also: re-audit found that the
-PROJECT-scope Claude Code MCP config path had the same wrong-file shape
-as Bug 6 (which was fixed at user scope in rc.2). rc.5 fixes the
-project-scope variant too.
-
-## Bugs fixed in rc.5
-
-### 🚨 Bug 13: `add_edge` FK race (same shape as Bug 9)
-
-`edges` has FK constraints to `nodes(id)` for both source and target. When the watcher reindexes a file it deletes that file's edges then re-adds them; a concurrent reindex on the *target* node can delete the row mid-flight, raising IntegrityError and crashing the watcher. The crash signature was identical to Bug 9 — same `WHERE EXISTS` fix applies.
-
-**Fix** (`indexer/sqlite_graph.py::add_edge`): INSERT now uses `WHERE EXISTS` subqueries so rows referencing missing nodes are silently dropped.
-
-### 🚨 Bug 14: `add_symbol` FK race
-
-`symbols.file_node_id` has FK → `nodes(id)`. If the file node was deleted between the parse pass and the symbol insert, FK fires.
-
-**Fix**: same `WHERE EXISTS` pattern; symbol re-adds on the next reindex.
-
-### 🛡 Bug 15: `record_outcome` FK race
-
-`outcomes.session_id` has FK → `sessions`. If a cleanup task deleted the session between policy evaluation and outcome write, the engine crashes.
-
-**Fix**: same `WHERE EXISTS` pattern; the outcome is dropped silently rather than crashing the policy engine.
-
-### 🚨 Bug 16: project-scope Claude Code MCP wrote to wrong file
-
-**Symptom**
-`codevira init` writes per-project MCP config to `<project>/.claude/settings.json` — same wrong-file shape as Bug 6 (which fixed only the *user-scope* version in rc.2). Result: project-committed `.mcp.json` is never created; Claude Code's project-scope MCP discovery doesn't find codevira on per-project mode.
-
-**Fix** (`mcp_server/ide_inject.py::_claude_config_path`): now returns `<project>/.mcp.json` (the canonical project-scope MCP file). `<project>/.claude/settings.json` is reserved for hooks / permissions / env, NOT mcpServers.
-
-**Tests:** `tests/test_fk_safety_extended.py` (10) — covers all four bugs + a regression guard that fails if `_inject_claude` ever writes to settings.json again.
-
-## Tests
-
-**2301 passing, 1 skipped, 0 failed** — deterministic.
-
-# v2.0-rc.4 — Re-audit: FK race + doctor coverage gaps (4 bugs, 16 new tests)
-
-**Released:** 2026-05-07
-**Test status:** 2291 / 2291 passing (deterministic)
-
-Re-audit after rc.3 found one real production bug (evidenced 67 times in
-the user's own crash log) and three coverage gaps in `codevira doctor`
-that would silently let rc.1/rc.2-shape regressions through. rc.4 closes
-all four.
-
-## Bugs fixed in rc.4
-
-### 🚨 Bug 9: `add_call_edge` FK race during incremental reindex (67 crashes recorded)
-
-**Symptom**
-```
-sqlite3.IntegrityError: FOREIGN KEY constraint failed
-WHERE: background watcher: incremental reindex
-```
-The user's `~/.codevira/logs/crashes.log` recorded 67 instances of this in v1.8.1. The v2.0 schema and watcher path inherited the bug.
-
-**Root cause**
-`graph_generator.py` builds a ``name → symbol_id`` lookup at the top of phase 3, then iterates symbols inserting call edges. If a concurrent transaction (e.g. a watcher reindex on a different file) deletes a symbol between the lookup and the INSERT, ``add_call_edge`` raises FK violation and crashes the watcher.
-
-**Fix** (`indexer/sqlite_graph.py::add_call_edge`):
-INSERT now uses ``WHERE EXISTS`` subqueries so rows referencing missing symbols are silently dropped. Losing one call edge beats crashing — the edge rebuilds on the next full reindex.
-
-**Tests:** `tests/test_call_edge_fk_safety.py` (6) including a concurrent-symbol-delete simulation.
-
-### 🛡 Bug 10: doctor doesn't verify Claude Code MCP visibility
-
-**Why this matters**
-rc.1 shipped a showstopper where codevira was silently invisible to Claude Code (wrong config file). Doctor reported 9/9 green at the time. Without an end-to-end "is Claude Code actually seeing codevira?" check, that whole class of regression slips through.
-
-**Fix** (`mcp_server/doctor.py::check_claude_mcp_visibility`):
-Shells out to ``claude mcp list``. If codevira appears as ✓ Connected → PASS. If listed but disconnected → WARN. If listed but missing → FAIL with the exact ``codevira setup -y`` / ``claude mcp add`` fix command. If ``claude`` CLI isn't installed → WARN (informational; user only has Desktop / Cursor / etc).
-
-### 🛡 Bug 11: doctor doesn't detect stale codeindex from older codevira version
-
-**Why this matters**
-AgentStore project (rc.3 dogfood) had a v1.8.1-era codeindex/ that contributed to the segfault on first re-index. Doctor didn't flag it, so the user only learned of the issue when `codevira index` crashed.
-
-**Fix** (`mcp_server/doctor.py::check_codeindex_freshness`):
-WARN if the freshest mtime in `<project>/.codevira/codeindex/` is more than 14 days old; print the exact `rm -rf <path> && codevira index` fix command. Read-only; never auto-wipes.
-
-### 🛡 Bug 12: doctor silently ignores degraded semantic search
-
-**Why this matters**
-Both UDAP and agent-mcp showed `ChromaDB Chunks: 0` in their `codevira status` output — meaning `search_codebase` was running structural-only fallback. Users only noticed when search results felt weak.
-
-**Fix** (`mcp_server/doctor.py::check_semantic_search_health`):
-WARN when codeindex is missing OR < 100 KB (empty / unindexed). Prints the `codevira index` fix command.
-
-## Tests
-
-**2291 passing, 1 skipped, 0 failed** — deterministic.
-
-Net new coverage in rc.4:
-- `tests/test_call_edge_fk_safety.py` (6) — happy path + 3 FK-violation paths + concurrent-delete simulation
-- `tests/test_doctor.py` extended (10) — 4 for claude_mcp_visibility, 3 for codeindex_freshness, 3 for semantic_search_health
-
-# v2.0-rc.3 — Second dogfood pass: native crash + write-side wedge fixes (4 bugs, 71 new tests)
-
-**Released:** 2026-05-07
-**Test status:** 2275 / 2275 passing (deterministic; +71 from rc.2 baseline)
-
-Second dogfood round on a fresh project (AgentStore) hit two new
-classes of failure that rc.1/rc.2 didn't expose:
-
-1. **Native segfault on first index** — sentence-transformers + chromadb
-   stack crashes the codevira process on macOS Apple Silicon during the
-   embedding model's first load. New project setup blocked entirely.
-2. **Roadmap drift** — codevira shows "Phase 1A" while git log shows 7
-   weeks of work since. The MCP server is connected, hooks fire, the
-   schema is sound — but the AI never *calls* the write tools, so
-   memory freezes at the seeded state. Reads stay fresh; writes go
-   unused; the wedge promise breaks silently.
-
-rc.3 closes both, plus the two GA-blocking gaps from the rc.2 dogfood
-that rc.2 deferred (decision-level `do_not_revert` and a tool to retire
-stale learned rules).
-
-## Bugs fixed in rc.3
-
-### 🚨 Bug 7 (SHOWSTOPPER): macOS native segfault on first `codevira index`
+#### 🚨 Bug 7 — macOS native segfault on first `codevira index`
 
 **Symptom**
 ```
 Loading weights: 100%|█████████| 103/103 [00:00<00:00, 3299.17it/s]
 zsh: segmentation fault  codevira index
-resource_tracker: There appear to be 1 leaked semaphore objects to clean up at shutdown: {'/loky-...'}
+resource_tracker: leaked semaphore objects: {'/loky-...'}
 ```
 
-**Root cause**
-sentence-transformers loads its tokenizer through HuggingFace's Rust crate; chromadb's default embedding function imports torch; loky/joblib runs a multiprocessing pool. On macOS Apple Silicon any of those paths can call `fork()` after libdispatch / Foundation has been initialised, and the child process crashes inside `+[__NSCFConstantString initialize]` before it can speak back to the parent.
+**Root cause** — sentence-transformers loads its tokenizer via HuggingFace's Rust crate; chromadb's default embedding function imports torch; loky/joblib runs a multiprocessing pool. On macOS Apple Silicon, fork() inside any of these crashes inside `+[__NSCFConstantString initialize]` because libdispatch wasn't initialised fork-safely.
 
-**Fix** (`indexer/_fork_safety.py`, auto-applied at indexer-package import time):
+**Fix** (`indexer/_fork_safety.py`, auto-applied at indexer-package import time, BEFORE any chromadb/torch import):
 - `OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES` — bypasses the libdispatch crash
 - `TOKENIZERS_PARALLELISM=false` — avoids the Rust threadpool fork race
 - `OMP_NUM_THREADS=1` — sidesteps libomp/libiomp duplicate runtimes
 - `multiprocessing.set_start_method("spawn", force=True)` — defensive
 
-The init runs from `mcp_server/cli.py` BEFORE any chromadb / torch import, so first-time `codevira index` no longer segfaults. Linux/Windows are unchanged (no-op).
+Linux/Windows: no-op. **Tests:** `tests/test_fork_safety.py` (14).
 
-**Tests:** `tests/test_fork_safety.py` (14 tests covering darwin behaviour, Linux no-op, idempotency, user override respect, mp.set_start_method failure-mode).
+### Wedge + memory primitives (real product gaps)
 
-### 🎯 Bug 8 (WEDGE-KILLER): Roadmap drift — codevira goes stale silently
+#### 🎯 Bug 8 — Roadmap drift: codevira goes stale silently (the wedge-killer)
 
-**Symptom**
-Open AgentStore project after 4 days. Claude Desktop reads files cold and gives an 85%-accurate state ("you're on Pass 8, prompt caching not done"). Codevira responds with "Phase 1A — Production Hardening (Upstash Redis)" — frozen at the May-2 seed state. 7 weeks of work since, never logged.
+**Symptom** — Open AgentStore after 4 days. Claude Desktop reads files cold and gives an 85%-accurate state. Codevira responds with a phase from May 2 — frozen at the seed state. 7 weeks of work since, never logged.
 
-**Root cause**
-Codevira's read surface works (MCP tools callable, hooks fire, schema sound). But the AI in those sessions never *called* the write tools — it chatted, coded, committed, never invoked `update_phase_status` / `complete_phase` / `record_decision`. The roadmap froze. The wedge promise ("the project remembers what you did") quietly breaks.
+**Root cause** — the AI in those sessions never called `update_phase_status` / `complete_phase` / `record_decision`. Reads stayed fresh, writes went unused, the wedge promise ("the project remembers what you did") quietly broke.
 
 **Fix** — three layers:
+1. **`mcp_server/roadmap_drift.py`** — at SessionStart, compare codevira's claimed phase timestamp vs `git log --since`. Drift fires if `days_since > 3` OR `commits_since > 5`. Best-effort, never blocks.
+2. **AI-Promotion-Score policy update** — the SessionStart "## Codevira insights" block now leads with "⚠ Roadmap drift detected" + recent commit subjects.
+3. **Stronger nudge templates** — explicit "before you respond to the user with the final result of meaningful work, call ONE of these write tools — non-negotiable, not optional" in `canonical_block.md` plus a drift-response playbook.
 
-1. **Drift detector** (`mcp_server/roadmap_drift.py`): at SessionStart, compare codevira's claimed phase timestamp vs `git log --since`. If `days_since > 3` OR `commits_since > 5`, surface a warning. Best-effort, never blocks.
-2. **AI-Promotion-Score policy update** (`mcp_server/engine/policies/ai_promotion.py`): the SessionStart "## Codevira insights" block now includes a prominent "⚠ Roadmap drift detected" section with the recent commit subjects, so the AI sees the warning in turn 1.
-3. **Stronger nudge templates** (`mcp_server/data/templates/canonical_block.md`): explicit "before you respond to the user with the final result of meaningful work, call ONE of these write tools — non-negotiable, not optional" + drift response playbook.
+**Tests:** `tests/test_roadmap_drift.py` (26).
 
-**Tests:** `tests/test_roadmap_drift.py` (26 tests across iso parsing, reference-time resolution, threshold logic, defensive paths, and `get_session_context` integration).
+#### 🛠 Bug 3 — No MCP tool to retire stale learned rules
 
-### 🛠 Bug 3: No MCP tool to retire stale learned rules
-
-**Symptom (from rc.2 dogfood)**
-UDAP project had 3 rules with confidence 1.00 pinned to `src/control/cli/`. The user was about to delete that directory in a Python→Go migration. Once committed, the rules would fire false positives on every SessionStart. The MCP surface had no way to retire them — the AI explicitly noted "Codevira's confidence: 1.00 rules don't appear retire-able through the MCP tools I've loaded."
+**Symptom** — UDAP had 3 rules with confidence 1.00 pinned to `src/control/cli/`. The user was about to delete that directory; rules would fire false positives forever. AI noted "no MCP tool retires rules."
 
 **Fix**
-- Schema: `learned_rules.retired_at` + `retired_reason` columns (idempotent ALTER, auto-applied)
-- DB: `retire_learned_rule(rule_id, reason)` + `unretire_learned_rule(rule_id)`. `get_learned_rules()` filters retired by default; pass `include_retired=True` for audit
-- MCP tool: `retire_rule(rule_id, reason)` — surfaces in `tools/list`
-- `get_learned_rules()` now emits `id` per rule so the AI can find what to retire
+- Schema: `learned_rules.retired_at` + `retired_reason` columns (idempotent ALTER, auto-applied on existing graphs)
+- DB: `retire_learned_rule(rule_id, reason)` + `unretire_learned_rule(rule_id)`. `get_learned_rules()` filters retired by default; pass `include_retired=True` for audit.
+- New MCP tool: `retire_rule(rule_id, reason)`
+- `get_learned_rules()` now emits `id` per rule so the AI can find what to retire.
 
-**Tests:** `tests/test_retire_rule.py` (13 tests including the SessionStart-context regression — retired rules must NOT surface in `top_signals.rules`).
+**Tests:** `tests/test_retire_rule.py` (13) — including SessionStart regression (retired rules must NOT surface in `top_signals.rules`).
 
-### 🛡 Bug 2: Decision-level `do_not_revert` flag (Hero 1 polish)
+#### 🛡 Bug 2 — Decision-level `do_not_revert` (Hero 1's missing write path)
 
-**Symptom (from rc.2 dogfood)**
-User asked AI to "log this as a decision via codevira and mark `do_not_revert=true`." The AI scanned the MCP write surface and concluded "no tool accepts `do_not_revert` on a decision — only on a file via `update_node`." Correct. Hero 1's positioning ("AI cannot undo your protected decisions") had no canonical write path.
+**Symptom** — User: "log this as a decision via codevira and mark `do_not_revert=true`." AI: "no MCP write tool accepts that flag on a decision — only on a file via `update_node`." Correct. Hero 1's positioning ("AI cannot undo your protected decisions") had no canonical write path.
 
 **Fix**
 - Schema: `decisions.do_not_revert` column (idempotent ALTER)
-- DB: `record_decision(decision, file_path, context, do_not_revert)` returns `{decision_id, session_id}`. `set_decision_protection(decision_id, do_not_revert)` flips an existing decision. `search_decisions()` SELECT now includes `id` + `do_not_revert`
-- MCP tools:
+- DB: `record_decision(decision, file_path, context, do_not_revert)` returns `{decision_id, session_id}`. `set_decision_protection(decision_id, do_not_revert)` flips an existing decision. `search_decisions()` SELECT now includes `id` + `do_not_revert`.
+- New MCP tools:
   - `record_decision` — lightweight per-decision capture with optional `do_not_revert=true`
   - `mark_decision_protected` — flips an existing decision by id
-- `update_node` description tightened to point AIs at `record_decision` for decision-level protection (vs file-level)
+- `update_node` description tightened to point AIs at `record_decision` for decision-level protection (vs file-level).
 
-**Tests:** `tests/test_record_decision.py` (18 tests covering schema migration, DB layer, tool layer, `search_decisions` integration, and MCP tool registration contract).
+**Tests:** `tests/test_record_decision.py` (18).
+
+### Schema robustness (FK race fixes)
+
+These four bugs share the same shape: an `INSERT OR REPLACE` whose FK constraint can fail when a parent row is deleted by a concurrent transaction. Pre-rc.3 the watcher would crash with `IntegrityError: FOREIGN KEY constraint failed` (Sachin's crash log recorded **67** such crashes in v1.8.1; v2.0 inherited the bug). All four fixed with the same `WHERE EXISTS` subquery pattern: silently drop rows referencing missing parents instead of crashing.
+
+#### 🚨 Bug 9 — `add_call_edge` FK race (67 crashes recorded)
+`call_edges.{caller_id, callee_id}` → `symbols(id)`. Concurrent reindex deletes a symbol mid-flight → crash. **Fix:** `INSERT ... SELECT ... WHERE EXISTS`. **Tests:** `tests/test_call_edge_fk_safety.py` (6).
+
+#### 🚨 Bug 13 — `add_edge` FK race
+Same shape; `edges.{source_id, target_id}` → `nodes(id)`. **Tests:** `tests/test_fk_safety_extended.py::TestAddEdgeFKSafety` (3).
+
+#### 🚨 Bug 14 — `add_symbol` FK race
+`symbols.file_node_id` → `nodes(id)`. **Tests:** `TestAddSymbolFKSafety` (2).
+
+#### 🛡 Bug 15 — `record_outcome` FK race
+`outcomes.session_id` → `sessions`. Same fix; outcome silently dropped beats engine crash. **Tests:** `TestRecordOutcomeFKSafety` (2).
+
+### Install / config correctness
+
+#### 🚨 Bug 16 — Project-scope Claude MCP wrote to wrong file (same shape as Bug 6 at user scope)
+`codevira init`'s per-project flow wrote MCP config to `<project>/.claude/settings.json`. That file is for project-scope hooks/permissions/env, NOT mcpServers. Result: the project-committed `.mcp.json` was never created.
+
+**Fix** (`mcp_server/ide_inject.py::_claude_config_path`): now returns `<project>/.mcp.json` (canonical project-scope MCP file). Added regression test that fails if `_inject_claude` ever writes to settings.json again.
+
+**Tests:** `tests/test_fk_safety_extended.py::TestClaudeConfigPathProjectScope` (3) + updated `test_ide_inject.py::TestInjectClaude` (2).
+
+### Doctor coverage gaps (catch the regression class earlier)
+
+#### 🛡 Bug 10 — `codevira doctor` doesn't verify Claude Code MCP visibility
+rc.1 shipped a showstopper where codevira was silently invisible to Claude Code. Doctor reported all-green. Without an end-to-end check, that whole regression class slips through. **Fix** — `check_claude_mcp_visibility` shells out to `claude mcp list`. PASS only when codevira shows ✓ Connected. FAIL with the exact `codevira setup -y` / `claude mcp add` fix command otherwise. **Tests:** 4.
+
+#### 🛡 Bug 11 — `codevira doctor` doesn't detect stale codeindex from older codevira version
+AgentStore had a v1.8.1-era `codeindex/` that contributed to the segfault. Doctor never warned. **Fix** — `check_codeindex_freshness` WARNs if the freshest mtime is >14 days old, prints `rm -rf <path> && codevira index`. **Tests:** 3.
+
+#### 🛡 Bug 12 — `codevira doctor` silently ignores degraded semantic search
+Both UDAP and agent-mcp showed `ChromaDB Chunks: 0`. Users only noticed when search felt weak. **Fix** — `check_semantic_search_health` WARNs on missing or <100 KB codeindex; prints `codevira index`. **Tests:** 3.
+
+### CLI UX
+
+#### Bug 17 — `codevira --version` / `-V` flag missing
+Every Python CLI exposes `--version`. **Fix** — `argparse` `action="version"` reading from `mcp_server.__version__`. Single source of truth. **Tests:** `tests/test_cli_version.py` (3).
 
 ## Tests
 
-**2275 passing, 1 skipped, 0 failed** — deterministic.
+**2304 passing, 1 skipped, 0 failed** — deterministic across multiple full runs.
 
-Net new coverage in rc.3:
+Net new coverage since rc.2:
 - `tests/test_fork_safety.py` (14)
 - `tests/test_roadmap_drift.py` (26)
 - `tests/test_retire_rule.py` (13)
 - `tests/test_record_decision.py` (18)
-- 2 `test_server.py` dispatch tests updated for `include_retired` arg
+- `tests/test_call_edge_fk_safety.py` (6)
+- `tests/test_fk_safety_extended.py` (10)
+- `tests/test_cli_version.py` (3)
+- `tests/test_doctor.py` extended (10)
+- 2 dispatch tests updated for new `include_retired` arg
+
+## Upgrade
+
+```bash
+pipx install --force --pip-args "--index-url http://localhost:8080/simple/" codevira
+codevira --version       # codevira 2.0.0rc3
+codevira doctor          # 13 checks; expect 0 fail
+```
 
 ## Verification on UDAP / AgentStore
 
 ```bash
 # AgentStore (was the segfault site)
 cd ~/Documents/Projects/Agentic/AgentStore
-pipx upgrade codevira      # picks up rc.3 from local PyPI
-codevira index             # should now NOT segfault on first load
-codevira doctor            # 9-10 pass, 0 fail
+codevira index           # should NOT segfault on first load (Bug 7)
+codevira doctor          # claude_mcp_visibility, codeindex_freshness, semantic_search_health all PASS or actionable WARN
 
 # UDAP (was the rule-staleness + decision-protection site)
 cd ~/Documents/Projects/LogisticsOS/UDAP
 codevira doctor
-# In Claude Code:
-#   "Use record_decision to log: 'use Postgres for cortex metadata' with do_not_revert=true"
-#   "Use search_decisions for 'database' — verify do_not_revert: true surfaces"
-#   "Use get_learned_rules — verify each rule has an id"
-#   "Use retire_rule with id=X reason='src/control/cli/ deleted'"
-#   Quit + new conversation → "Use get_session_context — verify drift_warning + retired rules dropped"
+
+# In a fresh Claude Code conversation:
+#   "Use record_decision to log 'use Postgres for cortex metadata' with do_not_revert=true"   (Bug 2)
+#   "Use search_decisions for 'database'"                                                      (verify do_not_revert: true surfaces)
+#   "Use get_learned_rules"                                                                    (verify each rule has an id)
+#   "Use retire_rule rule_id=X reason='src/control/cli/ deleted'"                              (Bug 3)
+#   Quit + new conversation → "Use get_session_context"                                        (verify drift_warning + retired rules dropped — Bug 8 + Bug 3)
 ```
 
 # v2.0-rc.2 — Dogfood bug fixes (4 bugs, 17 new tests)
-
-**Released:** 2026-05-06
-**Test status:** 2204 / 2204 passing (deterministic across 3+ full runs)
-
-Honest dogfood after `pipx install codevira` of rc.1 onto a real project
-(UDAP, Sachin's solo work) surfaced 7 bugs in the install + first-call
-path. rc.2 closes the 4 most critical (the 2 showstoppers that broke
-out-of-box install, plus 2 product gaps that confused the AI). The
-remaining 3 are tracked for rc.3 / rc.4 / post-GA.
-
-## Bugs fixed in rc.2
-
-### 🚨 Bug 6 (SHOWSTOPPER): Claude Code MCP config written to the wrong file
-
-`mcp_server/ide_inject.py:_claude_global_config_path()` was returning
-`~/.claude/settings.json`. That's correct for **hooks / permissions / env**
-but Claude Code reads `mcpServers` from `~/.claude.json` (the user-scope
-JSON file at home root). Symptom: setup looked successful, hooks fired,
-but `claude mcp list` was empty and codevira tools were invisible to the
-AI. Required manual `claude mcp add --scope user codevira <path>` to
-unblock.
-
-**Fix:** two-tier strategy in `inject_global_claude_code()`:
-
-1. **Preferred** — if `claude` CLI is on PATH, shell out to
-   `claude mcp add --scope user codevira <cmd_path>`. Delegates to the
    official tool that owns the file format.
 2. **Fallback** — direct cooperative merge of `~/.claude.json` (preserves
    all 60+ other top-level keys: `oauthAccount`, `projects`, `userID`,

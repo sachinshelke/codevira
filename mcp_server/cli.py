@@ -608,6 +608,16 @@ def main() -> None:
         prog="codevira",
         description="Codevira — AI context layer for your codebase",
     )
+    # v2.0-rc.6 (Bug 17): standard --version flag. Every Python CLI
+    # should expose one. Reads __version__ from mcp_server/__init__.py
+    # so the bumper script can update one place.
+    from mcp_server import __version__ as _codevira_version
+    parser.add_argument(
+        "--version",
+        "-V",
+        action="version",
+        version=f"codevira {_codevira_version}",
+    )
     parser.add_argument(
         "--project-dir",
         metavar="PATH",

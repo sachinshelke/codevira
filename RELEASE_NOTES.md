@@ -1,3 +1,30 @@
+# v2.0-rc.6 — `codevira --version` standard CLI flag (1 bug, 3 new tests)
+
+**Released:** 2026-05-07
+**Test status:** 2304 / 2304 passing
+
+User tried `codevira --version` to verify the installed version after a
+pipx upgrade and got ``error: unrecognized arguments: --version``. Every
+standard Python CLI exposes ``--version``; codevira didn't.
+
+## Bug fixed in rc.6
+
+### Bug 17: `codevira --version` / `-V` flag missing
+
+**Symptom**
+```
+$ codevira --version
+codevira: error: unrecognized arguments: --version
+```
+
+**Fix** (`mcp_server/cli.py`): standard `argparse` ``action="version"``
+that reads from ``mcp_server.__version__``. Single source of truth — a
+version bump in `__init__.py` updates both the CLI flag output and the
+package metadata. Long form (``--version``) and short (``-V``) both work.
+
+**Tests:** `tests/test_cli_version.py` (3) — long form, short form, and a
+defensive guard against accidental ``__version__ = "0.0.0"`` regressions.
+
 # v2.0-rc.5 — Re-audit pass 2: more FK races + project-scope MCP fix (4 bugs, 10 new tests)
 
 **Released:** 2026-05-07

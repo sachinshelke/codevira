@@ -27,13 +27,13 @@ See [ROADMAP.md](ROADMAP.md#-v21--honest-known-limitations-from-the-rc5-audit-20
 
 ---
 
-## [2.0.0rc1] — 2026-05-14 — First public 2.0 release candidate
+## [2.0.0] — 2026-05-14 — First public 2.0 release
 
 The 2.0 release moves codevira from "memory layer for one developer in one IDE" to
 "active guardian for every AI coding tool you use, on every project, on your local
-machine." Five internal iterations (rc1..rc5 in dev tags) of dogfood + audit +
-product-credibility work consolidate here as the first publicly-published 2.0
-release candidate. **Full changelog: [RELEASE_NOTES.md](RELEASE_NOTES.md).**
+machine." Five internal iterations (rc1..rc5 in dev tags) plus a same-day public
+release-candidate cycle (`2.0.0rc1`) of dogfood + audit + product-credibility
+work consolidate into 2.0.0. **Full changelog: [RELEASE_NOTES.md](RELEASE_NOTES.md).**
 
 ### Added
 
@@ -119,10 +119,13 @@ release candidate. **Full changelog: [RELEASE_NOTES.md](RELEASE_NOTES.md).**
 - ~1091 net new tests since v1.8.0 (mostly from the v2.0 hero policies +
   audit-driven regression coverage).
 
-### Note on internal v1.8.1
+### Note on internal v1.8.1 + 2.0.0rc1
 
 A v1.8.1 production hotfix existed in dev tags but was never published to
-PyPI; its fixes are folded into 2.0.0rc1.
+PyPI; its fixes are folded into 2.0.0. A `2.0.0rc1` was briefly published
+on PyPI (2026-05-14) as a same-day public release candidate; the code is
+identical to 2.0.0. Anyone who installed `codevira==2.0.0rc1` can
+`pipx install --upgrade codevira` to move to 2.0.0 final.
 
 ---
 

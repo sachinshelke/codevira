@@ -1,13 +1,13 @@
 # Migrating to Codevira 2.0
 
-This guide walks through upgrading from Codevira 1.x to **2.0.0rc1** (or
+This guide walks through upgrading from Codevira 1.x to **2.0.0** (or
 later 2.x). Codevira 2.0 is a substantial change: the memory layer becomes
 **active** (intercepts every AI tool call) instead of passive (the AI looks
 things up). Most upgrades are seamless — your existing data carries forward
 — but a few defaults changed and one CLI command is on a deprecation path.
 
-> **TL;DR — for the impatient.** `pipx install --pre --upgrade codevira`
-> picks up 2.0. Existing `~/.codevira/global.db` migrates safely (idempotent
+> **TL;DR — for the impatient.** `pipx install --upgrade codevira` picks
+> up 2.0. Existing `~/.codevira/global.db` migrates safely (idempotent
 > dedup runs once on first connect). Three default-behavior changes: `init`
 > now indexes all source/config/docs extensions; `agents` only renders for
 > detected IDEs; `register` is deprecated (use `setup`). No data loss.
@@ -32,30 +32,31 @@ things up). Most upgrades are seamless — your existing data carries forward
 
 | You're on | Upgrade path | Data migration | User action |
 |-----------|--------------|----------------|-------------|
-| **1.6.x** | `pipx install --pre --upgrade codevira` | Auto on first run | Run `codevira setup` once |
+| **1.6.x** | `pipx install --upgrade codevira` | Auto on first run | Run `codevira setup` once |
 | **1.7.x** | Same | Auto on first run | Run `codevira setup` once |
-| **1.8.0** | Same (latest stable on PyPI) | Auto on first run | Run `codevira setup` once |
+| **1.8.0** | Same (last 1.x on PyPI) | Auto on first run | Run `codevira setup` once |
 | **1.8.1** | (was internal-only; never on PyPI) | Already 2.0-shaped | Run `codevira setup` once |
-| **fresh install** | `pipx install --pre codevira` | None | Run `codevira setup` |
+| **fresh install** | `pipx install codevira` | None | Run `codevira setup` |
 
-`--pre` is required because `2.0.0rc1` is a release candidate. After 2.0.0
-ships final, plain `pipx install --upgrade codevira` works.
+If you previously installed the `2.0.0rc1` release candidate via
+`pip install --pre codevira`, plain `pipx install --upgrade codevira`
+moves you to the 2.0.0 final.
 
 ---
 
 ## Step-by-step upgrade
 
-### 1. Install 2.0.0rc1
+### 1. Install 2.0.0
 
 ```bash
 # Recommended: pipx (isolated venv)
-pipx install --pre --upgrade codevira
+pipx install --upgrade codevira
 
 # OR pip (in your project's environment)
-pip install --pre --upgrade codevira
+pip install --upgrade codevira
 
 # Verify
-codevira --version    # codevira 2.0.0rc1
+codevira --version    # codevira 2.0.0
 ```
 
 ### 2. Run setup once to refresh per-IDE configs
@@ -229,7 +230,7 @@ If you're scripting `register` in CI, plan to migrate before v2.1.
 | **2.1.x** | **Removed** — invocation errors with "use `codevira setup` instead" |
 | 2.2.x+ | Gone for good |
 
-There are no other deprecations in 2.0.0rc1. See the [v2.1 roadmap
+There are no other deprecations in 2.0.0. See the [v2.1 roadmap
 section](ROADMAP.md#-v21--honest-known-limitations-from-the-rc5-audit-2026-05-13)
 for design-tension items being resolved next.
 
@@ -343,16 +344,16 @@ codevira clean --ghosts                # remove them
 This preserves all your `tracked` projects and their indexes — only
 removes the half-initialised ones.
 
-### `pipx upgrade codevira` says "already at 1.8.0" instead of upgrading to 2.0.0rc1
+### `pipx upgrade codevira` says "already at 1.8.0" instead of upgrading
 
-**Cause:** 2.0.0rc1 is a pre-release. By default `pip` / `pipx` ignore
-pre-releases on plain `--upgrade`.
+**Cause:** pipx may have a stale cache or the wrong Python interpreter
+on your system pointing at the old install.
 
-**Fix:** add `--pip-args "--pre"` (pipx) or `--pre` (pip):
+**Fix:** force reinstall:
 ```bash
-pipx install --force --pre --upgrade codevira
+pipx install --force --upgrade codevira
 # OR pin explicitly
-pipx install --force codevira==2.0.0rc1
+pipx install --force codevira==2.0.0
 ```
 
 ### `codevira` no-args prints help instead of starting an MCP server
@@ -428,7 +429,7 @@ cycle.
 
 ## Reference
 
-- **Full v2.0.0rc1 changelog:** [CHANGELOG.md](CHANGELOG.md#200rc1--2026-05-14--first-public-20-release-candidate)
+- **Full v2.0.0 changelog:** [CHANGELOG.md](CHANGELOG.md#200--2026-05-14--first-public-20-release)
 - **Long-form release notes:** [RELEASE_NOTES.md](RELEASE_NOTES.md)
 - **Roadmap (what's coming in v2.1):** [ROADMAP.md](ROADMAP.md)
 - **Hero policy specs:** [docs/heroes/](docs/heroes/)

@@ -78,7 +78,7 @@ Codevira is a [Model Context Protocol](https://modelcontextprotocol.io) server t
 
 | Capability | What it means for you |
 |---|---|
-| **Zero-config setup** | `pipx install --pre codevira && codevira setup` — that's it. No prompts, no JSON editing. Auto-detects every installed AI tool and configures all of them |
+| **Zero-config setup** | `pipx install codevira && codevira setup` — that's it. No prompts, no JSON editing. Auto-detects every installed AI tool and configures all of them |
 | **Cross-tool continuity** | One `get_session_context()` call brings any AI agent up to speed in ~800 tokens — works identically in Claude Code, Cursor, Windsurf, Antigravity |
 | **Decision protection** | `do_not_revert` flags + searchable decision log stop AI agents from undoing past architectural choices |
 | **Context graph** | Every source file has a node: role, rules, dependencies, stability, blast radius. AI calls `get_node(path)` instead of re-reading the file |
@@ -106,7 +106,7 @@ The agent always asks for what it needs, in the size it needs.
 
 ```bash
 # 1. Install
-pipx install --pre codevira
+pipx install codevira
 
 # 2. Connect every AI tool you have (idempotent — safe to re-run)
 codevira setup
@@ -121,10 +121,6 @@ the first MCP tool call. No per-project `codevira init` needed.
 **Try it.** Ask your AI agent: *"Use `get_session_context` to brief me on this project."*
 You'll get a structured project state in one tool call instead of the AI
 re-reading docs.
-
-> **Note:** the `--pre` flag is needed because v2.0 is currently a release
-> candidate (`2.0.0rc1`). Once 2.0.0 ships final, plain `pipx install codevira`
-> works.
 
 ### What `codevira setup` actually does
 
@@ -147,7 +143,7 @@ limit to one tool. Use `-y` to skip the confirmation prompt (handy in scripts).
 
 ### Already on v1.x?
 
-`pipx install --pre --upgrade codevira` then `codevira setup`. Three default
+`pipx install --upgrade codevira` then `codevira setup`. Three default
 behaviors changed (all opt-out-able for legacy compatibility) — see
 [MIGRATING.md](MIGRATING.md) for the full upgrade guide. No data loss; your
 existing `~/.codevira/global.db` migrates safely.
@@ -418,7 +414,7 @@ codevira clean --dry-run    # preview what would be removed
 ```mermaid
 flowchart LR
 
-A["pipx install --pre codevira"] --> B["codevira setup"]
+A["pipx install codevira"] --> B["codevira setup"]
 B --> C["Open project in\nClaude Code / Cursor /\nWindsurf / Antigravity"]
 C --> D["First MCP tool call\ntriggers auto-init"]
 D --> E["✓ Config written\n✓ Graph built\n✓ Roadmap created\n✓ Ready"]

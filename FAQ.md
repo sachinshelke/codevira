@@ -14,13 +14,13 @@ A persistent memory layer for AI coding agents — so Claude Code, Cursor, Winds
 
 **Not for teams (yet)** — Codevira is local-first. Every developer has their own `~/.codevira/` directory with their own project memory. Team-shared memory is on the roadmap but not in v2.0.
 
-### I'm on v1.x — should I upgrade to 2.0.0rc1?
+### I'm on v1.x — should I upgrade to 2.0?
 
 Probably yes, but read [MIGRATING.md](MIGRATING.md) first. Three default
 behaviors changed (`init` indexes more, `agents` renders fewer files,
 `register` is deprecated in favor of `setup`), all opt-out-able if you
 want the legacy behavior. No data loss; existing `~/.codevira/global.db`
-migrates safely. The upgrade is `pipx install --pre --upgrade codevira`.
+migrates safely. The upgrade is `pipx install --upgrade codevira`.
 
 The biggest reason to upgrade: 2.0 introduces the **active guardian
 engine** — codevira now intercepts every AI tool call and can block /
@@ -151,7 +151,7 @@ No need to re-explain. Switch to Antigravity to run tests — same memory. The A
 - You're running Codevira in a headless/remote environment
 - You want a long-lived process for diagnostics
 
-**Multi-project HTTPS is planned for v1.8** — the server will read the MCP `initialize` handshake's `rootUri` to route each AI session to the right project. Until then, stdio is the answer for multi-project work.
+**Multi-project HTTPS is still on the roadmap** (see [ROADMAP.md](ROADMAP.md)) — when implemented, the server will read the MCP `initialize` handshake's `rootUri` to route each AI session to the right project. Until then, stdio is the answer for multi-project work, and `codevira setup` configures it for every detected AI tool in one command.
 
 ### How do I configure Claude Desktop specifically?
 

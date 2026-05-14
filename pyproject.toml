@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "codevira"
-version = "2.0.0rc1"
+version = "2.0.0"
 description = "Persistent adaptive memory for AI coding agents — MCP server with context graph, semantic search, adaptive learning, roadmap tracking, and cross-tool continuity."
 readme = "README.md"
 license = { text = "MIT" }
@@ -30,7 +30,7 @@ keywords = [
   "knowledge-graph"
 ]
 classifiers = [
-  "Development Status :: 4 - Beta",
+  "Development Status :: 5 - Production/Stable",
   "Intended Audience :: Developers",
   "License :: OSI Approved :: MIT License",
   "Operating System :: OS Independent",

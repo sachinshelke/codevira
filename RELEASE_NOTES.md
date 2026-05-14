@@ -1,15 +1,17 @@
-# v2.0.0rc1 — First public 2.0 release candidate
+# v2.0.0 — First public 2.0 release
 
 **Released:** 2026-05-14
-**Test status:** 2395 / 2395 passing (+8 net new since the last internal iteration)
+**Test status:** 2395 / 2395 passing (+1091 net new since v1.8.0)
 **Previous PyPI release:** v1.8.0 (2026-04-23)
 
 The 2.0 release closes a gap that's been a year in the making: codevira
 moves from "memory layer for one developer in one IDE" to "active
 guardian for every AI coding tool you use, on every project, on your
-local machine." Five internal iterations (rc1..rc5 in dev tags) of
-dogfood + audit + product-credibility work consolidate here as the
-first publicly-published 2.0 release candidate.
+local machine." Five internal iterations (rc1..rc5 in dev tags) plus
+a same-day public RC cycle (`2.0.0rc1`) of dogfood + audit +
+product-credibility work consolidate into 2.0.0.
+
+> Migrating from 1.x? See [MIGRATING.md](MIGRATING.md).
 
 ## What's new since v1.8.0
 
@@ -120,8 +122,8 @@ full runs.
 ## Upgrade
 
 ```bash
-pipx install --pre --upgrade codevira
-codevira --version       # codevira 2.0.0rc1
+pipx install --upgrade codevira
+codevira --version       # codevira 2.0.0
 codevira doctor          # 14 checks
 ```
 

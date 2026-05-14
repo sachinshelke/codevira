@@ -130,7 +130,12 @@ This one-prompt v2.0 command:
 
 Idempotent — re-run any time to re-sync. Use `--dry-run` to preview, `--ide=claude` to limit to one tool.
 
-> **Migrating from v1.x?** If you've been using `codevira register`, switch to `codevira setup` — register only injects MCP server config; setup ALSO writes the nudge files + lifecycle hooks that power the v2.0 hero capabilities.
+> **Migrating from v1.x?** Read [MIGRATING.md](MIGRATING.md) — it covers
+> the three default-behavior changes (`init` indexes more, `agents` renders
+> for detected IDEs only, `register` is deprecated in favor of `setup`),
+> all opt-out-able. No data loss; existing `~/.codevira/global.db` migrates
+> safely. Quick path: `pipx install --pre --upgrade codevira` then
+> `codevira setup`.
 
 ### 2.5 Verify the install (optional but recommended)
 

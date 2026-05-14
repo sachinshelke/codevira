@@ -12,7 +12,26 @@ A persistent memory layer for AI coding agents — so Claude Code, Cursor, Winds
 
 **Solo developers** working on local projects with AI coding tools. If you switch between AI agents (Claude Code in the morning, Cursor for autocomplete, Antigravity to test), Codevira makes them all share one memory of your project.
 
-**Not for teams (yet)** — Codevira is local-first. Every developer has their own `~/.codevira/` directory with their own project memory. Team-shared memory is on the roadmap but not in v1.7.0.
+**Not for teams (yet)** — Codevira is local-first. Every developer has their own `~/.codevira/` directory with their own project memory. Team-shared memory is on the roadmap but not in v2.0.
+
+### I'm on v1.x — should I upgrade to 2.0.0rc1?
+
+Probably yes, but read [MIGRATING.md](MIGRATING.md) first. Three default
+behaviors changed (`init` indexes more, `agents` renders fewer files,
+`register` is deprecated in favor of `setup`), all opt-out-able if you
+want the legacy behavior. No data loss; existing `~/.codevira/global.db`
+migrates safely. The upgrade is `pipx install --pre --upgrade codevira`.
+
+The biggest reason to upgrade: 2.0 introduces the **active guardian
+engine** — codevira now intercepts every AI tool call and can block /
+warn / inject context (10 hero policies). Pre-2.0 was passive: the AI
+looked things up only when it remembered to. Post-2.0 is active: codevira
+surfaces relevant prior decisions, blocks reverts of `do_not_revert`
+items, etc.
+
+If you don't want the active layer (just the memory tools), you can
+disable the engine with `CODEVIRA_ENGINE=0` in your shell — the rest
+of codevira works identically to v1.x.
 
 ### What problems does Codevira actually solve?
 

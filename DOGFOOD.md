@@ -1,4 +1,11 @@
-# Founder dogfood checklist — v2.0-rc.1
+# Founder dogfood checklist — v2.0.0rc1
+
+> **Note for readers other than the founder.** This is an internal QA
+> checklist that drove the dogfood phase consolidating into the public
+> v2.0.0rc1 release on PyPI (2026-05-14). Kept here for historical
+> reference. If you're a user looking to upgrade from v1.x, see
+> [MIGRATING.md](MIGRATING.md). References to "v2.0-rc.1" / "rc.1" below
+> mean the public v2.0.0rc1 PyPI release.
 
 **Goal**: install codevira on your real daily-use machine and use it for **1 week of actual coding** across **at least 2 different AI tools** (e.g. Claude Code + Cursor) on the same project. This validates the universality wedge end-to-end and surfaces real-world residue our 2170-test suite couldn't find.
 

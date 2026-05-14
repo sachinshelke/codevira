@@ -214,7 +214,7 @@ Codevira supports two transports. Use the right one for your client:
 
 > Tip: find the full binary path with `which codevira`
 
-**HTTP/HTTPS transport** — *Preview in v1.7, single-project only.* The HTTP server binds to one project at startup and cannot switch contexts per request. **Multi-project HTTPS is planned for v1.8.** For multi-project work today, use stdio via `codevira register` (above).
+**HTTP/HTTPS transport** — *Preview only.* The HTTP server binds to one project at startup and cannot switch contexts per request. Multi-project HTTPS is still on the roadmap (see [ROADMAP.md](ROADMAP.md)). For multi-project work today, use stdio via `codevira setup` (above) — `setup` is the v2.0 successor to the now-deprecated `codevira register`.
 
 First start the HTTP server in a terminal:
 ```bash

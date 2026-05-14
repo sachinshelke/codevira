@@ -11,7 +11,122 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-### Planned for v1.9
+### Planned for v2.1
+
+See [ROADMAP.md](ROADMAP.md#-v21--honest-known-limitations-from-the-rc5-audit-2026-05-13).
+
+- **Multi-language `get_signature` / `get_code`** — wire tree-sitter (already
+  used for graph indexing) into these tools so non-Python projects stop
+  getting "Python-only by design".
+- **`record_decisions_batch` API** — compress 50× ~800 B per-call overhead
+  into one round-trip.
+- **CLI naming clarity** — pick a canonical hierarchy among `init` / `setup` /
+  `register` / `configure`; add a `codevira inspect` umbrella; deprecate one
+  of `--project-dir` (global) / `--project PATH` (per-subcommand) on a
+  v2.1 → v2.2 cycle.
+
+---
+
+## [2.0.0rc1] — 2026-05-14 — First public 2.0 release candidate
+
+The 2.0 release moves codevira from "memory layer for one developer in one IDE" to
+"active guardian for every AI coding tool you use, on every project, on your local
+machine." Five internal iterations (rc1..rc5 in dev tags) of dogfood + audit +
+product-credibility work consolidate here as the first publicly-published 2.0
+release candidate. **Full changelog: [RELEASE_NOTES.md](RELEASE_NOTES.md).**
+
+### Added
+
+- **All 10 hero policies** — active guardian engine intercepts every AI tool
+  call (Edit, Write, prompt submit, session start) and routes through
+  registered policies (Decision Lock, Anti-Regression, Scope Contract,
+  Blast-Radius Veto, Cross-Session Consistency, Token Budget, Live Style
+  Enforcement, Decision Replay, Proactive Intent Inference, AI Promotion
+  Score).
+- **`codevira setup`** — one-prompt installer that detects every AI tool
+  on the machine (Claude Code, Cursor, Windsurf, Antigravity, OpenAI Codex,
+  GitHub Copilot, Continue.dev, Aider) and configures all of them at once.
+- **`codevira projects`** — canonical inventory with `tracked / ghost /
+  orphan / stale` classification (`--json` for scripting; `--ghosts-only`
+  pairs with `clean --ghosts`).
+- **`codevira hooks list / uninstall`** — admin commands for Claude Code
+  lifecycle hooks; surgical install + clean removal.
+- **`codevira clean --ghosts`** — surgical removal of incomplete project
+  data dirs without touching tracked projects.
+- **`codevira init --single-language`** — opt-out flag for the new
+  index-everything default.
+- **`codevira engine` subcommand** — internal hook dispatcher; surfaces in
+  `--help` so the lifecycle hooks can call it.
+- **4 new doctor checks** — `claude_mcp_visibility`, `codeindex_freshness`,
+  `semantic_search_health`, `ghost_projects` (total 14 per run).
+- **Per-project config opt-out for cross-session injection** —
+  `.codevira/config.yaml: project: { cross_session_mode: off }` disables
+  the per-prompt context block without touching env vars.
+
+### Changed
+
+- **`codevira init` default** — indexes every common source/config/docs
+  extension (~75 total: `.py`, `.ts`, `.go`, `.yaml`, `.toml`, `.md`,
+  `.html`, `.sql`, `.proto`, …) instead of narrowing to one language.
+- **`codevira agents` default** — renders nudge files for **detected** IDEs
+  only; `--ide=all` opt-in for the legacy "render for every supported IDE"
+  behavior.
+- **`codevira doctor`** — now genuinely read-only; snapshots the projects
+  dir at entry and removes any new dirs at exit.
+- **`search_codebase`** — graceful structural fallback (filename + symbol
+  substring) when the semantic index is unavailable, with the correct
+  `fix_command` instead of a misleading "reinstall codevira" hint.
+- **`get_node` / `get_impact` / `query_graph`** — three-case error
+  differentiation: "no graph DB" / "graph empty" / "file not in populated
+  graph", each with its own `fix_command`.
+- **`get_decision_confidence`** — exposes `decisions_in_db_total` and
+  `decisions_eligible_for_outcomes` plus a four-state interpretation so
+  users understand WHY their `total_decisions` may be zero. Outcome
+  tracker also classifies file-less decisions via mention-extraction.
+- **Playbooks** — project-scoped first
+  (`<data_dir>/playbooks/` or `<project>/.codevira/playbooks/`); bundled
+  Python defaults are skipped with a clear warning when project language
+  ≠ Python.
+- **`register_project`** uses `ON CONFLICT … COALESCE(excluded.git_remote,
+  projects.git_remote)` — subsequent registrations can't silently clear
+  the `git_remote` column.
+- **Auto-init self-heal** runs SYNCHRONOUSLY in the calling thread of every
+  CLI invocation — daemon thread death no longer leaves ghost data dirs.
+- **Default install** includes ChromaDB + sentence-transformers (no
+  `[search]` extra needed for semantic search).
+- **README "92% reduction" claim** qualified with honest scope, per-prompt
+  cost, and amortization curve.
+- **`register` deprecation** now names the removal version (v2.1).
+
+### Fixed
+
+- macOS Apple Silicon **fork-safety segfault on first `codevira index`**
+  (auto-applied at indexer import).
+- **Setup interactive prompt** silent-fail on unexpected input — replaced
+  with a shared `_prompts.confirm` helper that retries, flushes stdout,
+  and handles `KeyboardInterrupt` cleanly.
+- Three **`status --global` UI typos** that always rendered 0/0/0
+  regardless of actual `global.db` state.
+- Four **FK race conditions** in the watcher pipeline.
+- **Python `None` leaked into argparse choices** for `agents --ide` and
+  `budget` positional.
+- Several **silent argument clamps** in `replay --since`, `insights --since`,
+  and `insights --top` now print visible warnings.
+
+### Tests
+
+- 2395 / 2395 passing (deterministic).
+- ~1091 net new tests since v1.8.0 (mostly from the v2.0 hero policies +
+  audit-driven regression coverage).
+
+### Note on internal v1.8.1
+
+A v1.8.1 production hotfix existed in dev tags but was never published to
+PyPI; its fixes are folded into 2.0.0rc1.
+
+---
+
+## [Original v1.9 plan, deferred]
 
 - **Interactive checkbox UI for `codevira configure`**. The current
   prompt asks users to type comma-separated indices ("1,3,5") into a

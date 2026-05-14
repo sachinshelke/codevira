@@ -78,7 +78,7 @@ Codevira is a [Model Context Protocol](https://modelcontextprotocol.io) server t
 
 | Capability | What it means for you |
 |---|---|
-| **Zero-config setup** | `pipx install codevira && codevira register` — that's it. No prompts, no JSON editing. Auto-detects language, source dirs, and IDE configs |
+| **Zero-config setup** | `pipx install --pre codevira && codevira setup` — that's it. No prompts, no JSON editing. Auto-detects every installed AI tool and configures all of them |
 | **Cross-tool continuity** | One `get_session_context()` call brings any AI agent up to speed in ~800 tokens — works identically in Claude Code, Cursor, Windsurf, Antigravity |
 | **Decision protection** | `do_not_revert` flags + searchable decision log stop AI agents from undoing past architectural choices |
 | **Context graph** | Every source file has a node: role, rules, dependencies, stability, blast radius. AI calls `get_node(path)` instead of re-reading the file |
@@ -102,94 +102,152 @@ The agent always asks for what it needs, in the size it needs.
 
 ---
 
-## Quick Start
-
-### 1. Install
+## Quick Start — three commands
 
 ```bash
-# Recommended: global install via pipx (isolated, works everywhere)
-pipx install codevira
+# 1. Install
+pipx install --pre codevira
 
-# Alternative: pip install
-pip install codevira
-```
-
-Installs the full toolkit (23 AI-facing MCP tools + 12 admin/CLI tools) out of the box. Semantic search downloads a ~90MB embedding model on first use.
-
-### 2. Set up every AI tool you have
-
-```bash
+# 2. Connect every AI tool you have (idempotent — safe to re-run)
 codevira setup
-```
 
-This one-prompt v2.0 command:
-- Detects every AI tool installed on your machine (Claude Code, Cursor, Windsurf, Antigravity, Codex CLI, GitHub Copilot, Claude Desktop, Continue, Aider, Roo Code, Cline)
-- Writes per-IDE nudge files so each tool knows codevira exists (`CLAUDE.md`, `AGENTS.md`, `.cursor/rules/codevira.mdc`, `.windsurfrules`, `GEMINI.md`, `.github/copilot-instructions.md`)
-- Installs Claude Code lifecycle hooks (SessionStart, PreToolUse, PostToolUse, UserPromptSubmit, Stop) — turns codevira from passive memory into the **AI guardian** described above
-- Injects MCP server config into each detected tool
-
-Idempotent — re-run any time to re-sync. Use `--dry-run` to preview, `--ide=claude` to limit to one tool.
-
-> **Migrating from v1.x?** Read [MIGRATING.md](MIGRATING.md) — it covers
-> the three default-behavior changes (`init` indexes more, `agents` renders
-> for detected IDEs only, `register` is deprecated in favor of `setup`),
-> all opt-out-able. No data loss; existing `~/.codevira/global.db` migrates
-> safely. Quick path: `pipx install --pre --upgrade codevira` then
-> `codevira setup`.
-
-### 2.5 Verify the install (optional but recommended)
-
-```bash
+# 3. (Optional) Verify the install
 codevira doctor
 ```
 
-Runs 9 health checks, prints `✓` / `⚠` / `✗` per check, and shows the **exact command** to fix anything that's not green. Read-only — never modifies anything.
+That's it. Open any project in your AI tool — codevira auto-initializes on
+the first MCP tool call. No per-project `codevira init` needed.
 
-### 3. Start using
+**Try it.** Ask your AI agent: *"Use `get_session_context` to brief me on this project."*
+You'll get a structured project state in one tool call instead of the AI
+re-reading docs.
 
-Open any project in your AI tool. On the first MCP tool call, Codevira **auto-initializes**:
-- Detects language, source directories, and file extensions from project markers
-- Creates the context graph and roadmap
-- Installs a `post-commit` git hook for automatic reindexing
+> **Note:** the `--pre` flag is needed because v2.0 is currently a release
+> candidate (`2.0.0rc1`). Once 2.0.0 ships final, plain `pipx install codevira`
+> works.
 
-No explicit `codevira init` needed — everything happens on demand.
+### What `codevira setup` actually does
 
-> **Note:** `codevira init` is still available for explicit per-project setup with custom settings.
+The one command above replaces what used to take 5+ steps in v1.x:
 
-### 4. Verify
+* **Detects every installed AI tool** — Claude Code, Claude Desktop, Cursor,
+  Windsurf, Antigravity, Codex CLI, GitHub Copilot, Continue.dev, Aider.
+* **Injects MCP server config** into each tool's config file (per-IDE schema
+  handled automatically — no JSON to hand-edit).
+* **Writes per-IDE nudge files** so each AI tool knows codevira exists:
+  `CLAUDE.md`, `AGENTS.md`, `.cursor/rules/codevira.mdc`, `.windsurfrules`,
+  `GEMINI.md`, `.github/copilot-instructions.md` — only for IDEs you actually
+  have installed.
+* **Installs Claude Code lifecycle hooks** (`SessionStart`, `PreToolUse`,
+  `PostToolUse`, `UserPromptSubmit`, `Stop`) — turns codevira from passive
+  memory into the **active guardian** that intercepts every AI tool call.
 
-Ask your AI agent to call `get_roadmap()` — it should return your current phase and next action.
+Use `--dry-run` to preview without writing anything. Use `--ide=claude` to
+limit to one tool. Use `-y` to skip the confirmation prompt (handy in scripts).
 
-> **Note:** Restart your AI tool after running `codevira register` to pick up the new MCP config.
+### Already on v1.x?
+
+`pipx install --pre --upgrade codevira` then `codevira setup`. Three default
+behaviors changed (all opt-out-able for legacy compatibility) — see
+[MIGRATING.md](MIGRATING.md) for the full upgrade guide. No data loss; your
+existing `~/.codevira/global.db` migrates safely.
+
+### What `codevira doctor` reports
+
+14 health checks in one run, each with a concrete `fix_command` for any
+WARN or FAIL. Read-only — never modifies anything. Use it whenever
+something feels off.
+
+```text
+$ codevira doctor
+Codevira health check
+────────────────────────────────────────────────────────────
+✓  python_version         Python 3.13 (≥ 3.10 required)
+✓  codevira_data_dir      /Users/you/.codevira exists and is writable
+✓  graph_db               graph.db has all 4 expected tables
+✓  global_db              /Users/you/.codevira/global.db opens cleanly
+✓  detected_ides          5 AI tool(s) detected
+✓  claude_mcp_visibility  codevira visible to Claude Code (✓ Connected)
+✓  ghost_projects         12 project(s) tracked — none are ghost dirs
+... (and 7 more checks)
+────────────────────────────────────────────────────────────
+summary: 14 pass · 0 warn · 0 fail
+```
+
+### Daily-use commands you'll actually run
+
+| Command | What it does |
+|---|---|
+| `codevira setup` | Re-sync IDE configs (after installing a new AI tool, etc.) |
+| `codevira doctor` | Health check |
+| `codevira projects` | List every project codevira knows about on this machine |
+| `codevira projects --ghosts-only` | Find half-initialised project dirs |
+| `codevira clean --ghosts` | Remove ghost dirs (preserves real ones) |
+| `codevira insights` | Stable + reverted decisions across past sessions |
+| `codevira replay` | Decisions timeline (terminal / markdown / html output) |
+| `codevira budget` | Per-session token usage |
+| `codevira hooks list` | Show installed Claude Code lifecycle hooks |
+
+Run `codevira --help` for the full subcommand list.
 
 ### Customizing what's indexed
 
-Codevira tries to auto-detect your project's source layout, but monorepo or non-standard layouts sometimes slip through — you'll notice when `codevira index --full` reports `0 chunks indexed` and prints a hint pointing you here.
+By default codevira indexes every common source / config / docs extension
+(~75 total: `.py`, `.ts`, `.go`, `.yaml`, `.md`, `.html`, `.sql`, `.proto`,
+…). For most projects this is what you want. To narrow or widen:
 
 ```bash
-cd your-project
+# Interactive picker — shows discovered dirs + extensions with file counts
 codevira configure
+
+# Non-interactive (CI / scripts)
+codevira configure --dirs src,packages,apps --extensions .py,.ts --no-reindex
+
+# Restore legacy single-language behavior on init
+codevira init --single-language
 ```
 
-Scans your project (gitignore-aware), shows discovered directories and extensions with file counts, and lets you pick which to watch via a numbered-list prompt. It writes your choices back to `.codevira/config.yaml` and offers to rebuild the index.
+After changing watched directories, **restart your AI tool** — running
+watchers snapshot the dir set at boot.
 
-**Non-interactive** (useful in scripts or CI):
+### Reducing per-prompt context overhead
+
+Codevira's Cross-Session Consistency policy injects ~1 KB of relevant prior
+decisions into each `UserPromptSubmit` event. To disable per-project:
+
+```yaml
+# .codevira/config.yaml
+project:
+  cross_session_mode: off          # disable injection entirely
+  cross_session_max_inject: 2      # OR keep it but cap at 2 entries (default 5)
+```
+
+Or system-wide via env: `export CODEVIRA_CROSS_SESSION_MODE=off`.
+
+### Uninstall
+
+See [Uninstall / Reset](#uninstall--reset) below for the full set of
+options (`--all`, `--dry-run`, `--orphans`, `--ghosts`, `--legacy`).
+Quick path:
+
 ```bash
-codevira configure --dirs src,packages,apps --extensions .py,.ts,.tsx --no-reindex
+codevira clean              # remove ~/.codevira/, IDE configs, services
+codevira hooks uninstall    # remove Claude Code lifecycle hook scripts
+pipx uninstall codevira     # remove the binary
 ```
 
-After changing watched directories, **restart your AI tool** — running watchers snapshot the dir set at boot.
+---
 
-### Manual config (only if auto-inject didn't detect your tool)
+## Manual installation — only if `codevira setup` doesn't detect your tool
 
 Codevira supports two transports. Use the right one for your client:
 
 | Client | Transport | Config file |
 |--------|-----------|-------------|
 | Claude Desktop (app) | stdio | `~/Library/Application Support/Claude/claude_desktop_config.json` |
-| Claude Code (CLI) | stdio or HTTP | `.claude/settings.json` |
-| Cursor | stdio | `.cursor/mcp.json` |
-| Windsurf | stdio | `.windsurf/mcp.json` |
+| Claude Code (CLI) | stdio | `~/.claude.json` (user scope — `mcpServers` section) |
+| Cursor | stdio | `~/.cursor/mcp.json` |
+| Windsurf | stdio | `~/.codeium/windsurf/mcp_config.json` |
 | Google Antigravity | stdio | `~/.gemini/antigravity/mcp_config.json` |
 
 **Stdio transport** — Claude Desktop, Cursor, Windsurf (`.claude/settings.json` / `.cursor/mcp.json` / `.windsurf/mcp.json`):
@@ -360,7 +418,7 @@ codevira clean --dry-run    # preview what would be removed
 ```mermaid
 flowchart LR
 
-A["pipx install codevira"] --> B["codevira register"]
+A["pipx install --pre codevira"] --> B["codevira setup"]
 B --> C["Open project in\nClaude Code / Cursor /\nWindsurf / Antigravity"]
 C --> D["First MCP tool call\ntriggers auto-init"]
 D --> E["✓ Config written\n✓ Graph built\n✓ Roadmap created\n✓ Ready"]

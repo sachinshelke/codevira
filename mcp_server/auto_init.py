@@ -96,18 +96,59 @@ def ensure_project_initialized(project_root: Path | None = None) -> InitStatus:
                     total_files=_progress["total_files"],
                 )
 
-        from mcp_server.paths import get_project_root, get_data_dir
+        from mcp_server.paths import get_project_root, get_data_dir, is_invalid_project_root
         root = project_root or get_project_root()
         data_dir = get_data_dir()
 
-        # Check if already initialized (config.yaml exists)
-        if (data_dir / "config.yaml").is_file():
+        # Bug 21a (rc.4): self-heal the cheap pieces (config.yaml +
+        # metadata.json + global.db.projects row) SYNCHRONOUSLY before
+        # deciding whether heavy background init is needed. Pre-fix the
+        # whole init ran on a daemon thread; if the MCP server exited
+        # before that thread finished (a brief tool call from a
+        # short-lived AI session), the data dir was left "ghost"
+        # — present on disk, absent from inventory.
+        #
+        # Refuse system top-levels FIRST (same v1.8.1 guard as the heavy
+        # path uses) — we don't want to repair-bootstrap $HOME etc.
+        rejection = is_invalid_project_root(root)
+        if not rejection:
+            try:
+                from mcp_server._repair_init import repair_incomplete_init
+                repair_incomplete_init(data_dir, root)
+            except Exception as e:
+                logger.warning("Bug 21a self-heal skipped: %s", e)
+
+        # After self-heal, config.yaml + metadata.json + global.db row are
+        # in place (assuming detection didn't fail). The remaining question
+        # is whether HEAVY init (graph + semantic index) is also done.
+        # P0-B (rc.5): "graph.db exists" isn't enough — an empty graph file
+        # (from a prior interrupted init or sqlite-bootstrap-only path) means
+        # tools like get_node and query_graph will still return found=false.
+        # Treat empty graph as "needs heavy build" so the auto-trigger fires.
+        graph_db = data_dir / "graph" / "graph.db"
+        graph_has_nodes = False
+        if graph_db.is_file():
+            try:
+                import sqlite3 as _sqlite3
+                _conn = _sqlite3.connect(str(graph_db))
+                try:
+                    row = _conn.execute("SELECT COUNT(*) FROM nodes").fetchone()
+                    graph_has_nodes = bool(row and row[0] > 0)
+                except Exception:
+                    # nodes table doesn't exist yet — needs build.
+                    graph_has_nodes = False
+                finally:
+                    _conn.close()
+            except Exception:
+                graph_has_nodes = False
+
+        if (data_dir / "config.yaml").is_file() and graph_has_nodes:
             _init_started = True
             with _progress_lock:
                 _progress["status"] = "ready"
             return InitStatus(ready=True, indexing=False)
 
-        # Not initialized — start background init
+        # Heavy init still needed (no graph.db yet). Start background thread.
         logger.info("Project not initialized. Starting auto-init for %s", root)
         _start_time = time.monotonic()
         with _progress_lock:
@@ -262,13 +303,22 @@ def _write_metadata(data_dir: Path, project_root: Path) -> None:
 
 
 def _register_global(data_dir: Path, project_root: Path, detected: dict) -> None:
-    """Register the project in global.db for cross-project intelligence."""
+    """Register the project in global.db for cross-project intelligence.
+
+    Bug 20 (rc.4): registers under ``project_root`` (the canonical project
+    path), not ``data_dir`` (the ``~/.codevira/projects/<slug>`` storage path).
+    Pre-fix, cli.py + auto_init.py both passed ``data_dir`` while
+    global_sync.py passed ``project_root`` — same logical project ended up
+    with two rows in ``global.db.projects`` keyed differently. The
+    one-shot dedup migration in :func:`GlobalDB.dedupe_by_git_remote` collapses
+    legacy duplicates on next startup.
+    """
     try:
         from indexer.global_db import GlobalDB
         from mcp_server.paths import get_global_db_path, _get_git_remote_url
         gdb = GlobalDB(get_global_db_path())
         gdb.register_project(
-            path=str(data_dir),
+            path=str(project_root),
             name=detected["name"],
             language=detected["language"],
             git_remote=_get_git_remote_url(project_root),

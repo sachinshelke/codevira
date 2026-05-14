@@ -266,9 +266,54 @@ def language_extensions(language: str) -> list[str]:
     return LANGUAGE_EXTENSIONS.get(language, [".py"])
 
 
-def auto_detect_project(root: Path) -> dict:
+# rc.5 (P1-2 / "index all the code" question): the union of every meaningful
+# source / config / docs extension across all languages we know about. This
+# is what `auto_detect_project` returns by default now — narrowing to one
+# language's extensions was the cause of polyglot codebases having .yaml,
+# .md, .html, .css, .go etc. silently dropped from the index.
+_ALL_SOURCE_EXTENSIONS: list[str] = sorted({
+    # Code
+    ".py", ".pyi", ".ipynb",
+    ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs",
+    ".go", ".rs", ".rb", ".php", ".java", ".kt", ".scala", ".swift",
+    ".c", ".cc", ".cpp", ".h", ".hpp", ".cs", ".m", ".mm",
+    ".sh", ".bash", ".zsh", ".fish", ".ps1",
+    ".lua", ".pl", ".r", ".jl", ".dart", ".ex", ".exs", ".erl",
+    ".clj", ".cljs", ".elm", ".hs", ".ml", ".mli", ".v",
+    # Config / data — often where the architecture lives
+    ".yaml", ".yml", ".toml", ".json", ".jsonl", ".xml", ".ini",
+    ".env",
+    # Schemas / IDL
+    ".proto", ".graphql", ".prisma", ".sql", ".thrift", ".cap",
+    # Docs
+    ".md", ".mdx", ".rst", ".adoc", ".txt",
+    # Web
+    ".html", ".htm", ".css", ".scss", ".sass", ".less", ".vue", ".svelte", ".astro",
+    # Build
+    ".dockerfile", ".gradle", ".bazel",
+})
+
+
+def all_source_extensions() -> list[str]:
+    """rc.5: full union of source/config/docs extensions across all known languages.
+
+    Used as the default for ``auto_detect_project`` so polyglot projects don't
+    silently lose half their files to single-language narrowing.
+    """
+    return list(_ALL_SOURCE_EXTENSIONS)
+
+
+def auto_detect_project(root: Path, *, single_language: bool = False) -> dict:
     """
     Auto-detect everything needed for codevira init — zero prompts.
+
+    rc.5 (P1-2 + "index all the code"): default behavior is now to index the
+    UNION of every meaningful source/config/docs extension we know about, plus
+    every extension actually present in the project. The ``language`` label
+    still picks the dominant tree-sitter parser for symbol extraction, but
+    extension filtering no longer drops .yaml/.md/.html/.go from a "Python"
+    project. Pass ``single_language=True`` to restore the legacy narrowing
+    (only that language's extensions).
 
     Returns:
         {
@@ -283,10 +328,25 @@ def auto_detect_project(root: Path) -> dict:
     name = root.name
     language = detect_language(root)
     watched_dirs = detect_watched_dirs(root, language)
-    extensions = language_extensions(language)
+    if single_language:
+        extensions = language_extensions(language)
+    else:
+        # Union of (a) all-known extensions, (b) anything we actually saw on disk.
+        # Lets us pick up unusual extensions (e.g. project-specific .myext)
+        # that aren't in our default list.
+        seen_on_disk: set[str] = set()
+        try:
+            from mcp_server.gitignore import discover_source_files
+            for f in discover_source_files(root):
+                if f.suffix:
+                    seen_on_disk.add(f.suffix.lower())
+        except Exception:
+            pass
+        extensions = sorted(set(_ALL_SOURCE_EXTENSIONS) | seen_on_disk)
     collection_name = name.lower().replace("-", "_").replace(" ", "_").replace(".", "_")
 
-    logger.info("Auto-detected: language=%s, dirs=%s, exts=%s", language, watched_dirs, extensions)
+    logger.info("Auto-detected: language=%s, dirs=%s, exts=%d files",
+                language, watched_dirs, len(extensions))
 
     return {
         "name": name,

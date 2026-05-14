@@ -204,7 +204,6 @@ def get_node(file_path: str, full: bool = False) -> dict[str, Any]:
 
     if not node:
         # v1.6: Check if auto-init is running
-        hint = "Call refresh_graph([path]) to generate a node, or verify the file exists."
         try:
             from mcp_server.auto_init import get_init_progress
             prog = get_init_progress()
@@ -214,15 +213,78 @@ def get_node(file_path: str, full: bool = False) -> dict[str, Any]:
                     "status": "initializing",
                     "file_path": file_path,
                     "message": "Graph is being built in the background. Try again in a few seconds.",
-                    "hint": hint,
+                    "hint": "Try the same get_node call again in a few seconds.",
                 }
         except Exception:
             pass
+
+        # P0-B (rc.5): distinguish "graph empty" (run codevira index) from
+        # "file not in graph" (single missing node — refresh_graph helps).
+        # Pre-fix the same hint fired in both cases, sending users to a
+        # MCP-only fix when they actually needed `codevira index`.
+        graph_total_nodes = 0
+        graph_db_present = False
+        try:
+            from mcp_server.paths import get_data_dir
+            graph_db_path = get_data_dir() / "graph" / "graph.db"
+            graph_db_present = graph_db_path.is_file()
+            if graph_db_present:
+                _db = _get_db()
+                try:
+                    graph_total_nodes = _db.conn.execute(
+                        "SELECT COUNT(*) FROM nodes"
+                    ).fetchone()[0]
+                finally:
+                    _db.close()
+        except Exception:
+            pass
+
+        if not graph_db_present:
+            return {
+                "found": False,
+                "file_path": file_path,
+                "message": (
+                    f"No graph DB exists for this project — codevira hasn't been "
+                    f"initialised here yet."
+                ),
+                "fix_command": "codevira init && codevira index",
+                "hint": (
+                    "After running the fix command, re-call get_node(). The graph "
+                    "will then contain every source file in your watched_dirs."
+                ),
+            }
+        if graph_total_nodes == 0:
+            return {
+                "found": False,
+                "file_path": file_path,
+                "message": (
+                    f"Graph DB exists but is empty (0 nodes) — codevira index "
+                    f"has never been run on this project."
+                ),
+                "fix_command": "codevira index",
+                "hint": (
+                    "After indexing, every source file in watched_dirs will have "
+                    "a node. If get_node still returns found=false for a specific "
+                    "file, the file may be excluded by .gitignore or fall outside "
+                    "the configured watched_dirs."
+                ),
+            }
+        # Graph has nodes but this specific file isn't one of them.
         return {
             "found": False,
             "file_path": file_path,
-            "message": f"File '{file_path}' not found in the context graph.",
-            "hint": hint,
+            "message": (
+                f"File '{file_path}' is not in the context graph "
+                f"(graph has {graph_total_nodes} other nodes)."
+            ),
+            "fix_command": "codevira index",
+            "hint": (
+                "Possible causes: (1) the file path doesn't match — try a "
+                "relative path like 'src/foo.py'; (2) the file lives outside "
+                "configured watched_dirs (see `codevira configure --dry-run`); "
+                "(3) it was created since the last index — re-run `codevira "
+                "index` to pick it up."
+            ),
         }
 
     # Parse JSON fields once
@@ -299,10 +361,60 @@ def get_impact(file_path: str, limit: int = 10, summary_only: bool = False) -> d
             node = matches[0]
 
     if not node:
+        # Missed-1 (rc.5): same 3-case differentiation as get_node — tell the
+        # user WHY get_impact failed and the right command to fix it.
+        graph_total_nodes = 0
+        graph_db_present = False
+        try:
+            from mcp_server.paths import get_data_dir
+            graph_db_path = get_data_dir() / "graph" / "graph.db"
+            graph_db_present = graph_db_path.is_file()
+            if graph_db_present:
+                try:
+                    graph_total_nodes = db.conn.execute(
+                        "SELECT COUNT(*) FROM nodes"
+                    ).fetchone()[0]
+                except Exception:
+                    pass
+        except Exception:
+            pass
         db.close()
+
+        if not graph_db_present:
+            return {
+                "found": False,
+                "file_path": file_path,
+                "message": (
+                    "No graph DB exists for this project — codevira hasn't "
+                    "been initialised here yet. Impact analysis unavailable."
+                ),
+                "fix_command": "codevira init && codevira index",
+            }
+        if graph_total_nodes == 0:
+            return {
+                "found": False,
+                "file_path": file_path,
+                "message": (
+                    "Graph DB exists but is empty (0 nodes) — codevira index "
+                    "has never been run on this project."
+                ),
+                "fix_command": "codevira index",
+            }
         return {
             "found": False,
-            "message": f"No graph node for '{file_path}'. Impact analysis unavailable.",
+            "file_path": file_path,
+            "message": (
+                f"File '{file_path}' is not in the context graph "
+                f"(graph has {graph_total_nodes} other nodes). "
+                f"Impact analysis unavailable."
+            ),
+            "fix_command": "codevira index",
+            "hint": (
+                "Possible causes: (1) the file path doesn't match — try a "
+                "relative path like 'src/foo.py'; (2) the file lives outside "
+                "configured watched_dirs; (3) created since last index — "
+                "re-run `codevira index` to pick it up."
+            ),
         }
 
     file_path = node['file_path']
@@ -553,11 +665,46 @@ def query_graph(file_path: str, symbol: str | None = None,
     query_type: 'callers' | 'callees' | 'tests' | 'dependents' | 'symbols'
     """
     db = _get_db()
+
+    # Missed-2 (rc.5): pre-flight graph-emptiness check so we return the
+    # right fix_command instead of the generic "not found" message that
+    # left the user not knowing whether the file was missing or the index
+    # had never been built.
+    def _maybe_graph_empty_response() -> dict[str, Any] | None:
+        try:
+            from mcp_server.paths import get_data_dir
+            graph_db_path = get_data_dir() / "graph" / "graph.db"
+            if not graph_db_path.is_file():
+                return {
+                    "error": (
+                        "No graph DB exists for this project — codevira hasn't "
+                        "been initialised here yet."
+                    ),
+                    "fix_command": "codevira init && codevira index",
+                }
+            n = db.conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
+            if n == 0:
+                return {
+                    "error": (
+                        "Graph DB exists but is empty (0 nodes) — "
+                        "codevira index has never been run on this project."
+                    ),
+                    "fix_command": "codevira index",
+                }
+        except Exception:
+            pass
+        return None
+
     try:
         if query_type == "symbols":
             # List all symbols in a file
             node_id = f"file:{file_path}"
             symbols = db.get_symbols_for_file(node_id)
+            if not symbols:
+                # Differentiate "no graph at all" vs "this file has no symbols".
+                empty_resp = _maybe_graph_empty_response()
+                if empty_resp:
+                    return empty_resp
             return {
                 "file_path": file_path,
                 "query_type": "symbols",
@@ -576,8 +723,17 @@ def query_graph(file_path: str, symbol: str | None = None,
             return {"error": "symbol is required for callers/callees/tests queries"}
 
         if not sym:
+            # Differentiate "graph empty" from "symbol genuinely missing".
+            empty_resp = _maybe_graph_empty_response()
+            if empty_resp:
+                return empty_resp
             return {"error": f"Symbol '{symbol}' not found in {file_path}",
-                    "hint": "Call query_graph with query_type='symbols' to list available symbols."}
+                    "hint": (
+                        "Call query_graph with query_type='symbols' to list "
+                        "available symbols. If the file isn't indexed, run "
+                        "`codevira index` to refresh."
+                    ),
+                    "fix_command": "codevira index"}
 
         sym_id = sym["id"]
 

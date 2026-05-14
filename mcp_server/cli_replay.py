@@ -120,7 +120,13 @@ def cmd_replay(
     if out_file is not None:
         try:
             Path(out_file).write_text(rendered, encoding="utf-8")
-            out.write(f"Wrote {out_file} ({len(rendered)} bytes)\n")
+            # P1-7 (rc.5): report BYTES, not character count. The previous
+            # code used len(rendered) which is the number of Unicode code
+            # points — but multibyte UTF-8 characters (📌 emoji etc. in the
+            # HTML output) made the on-disk size larger than the reported
+            # size by however many extra bytes those characters needed.
+            byte_size = len(rendered.encode("utf-8"))
+            out.write(f"Wrote {out_file} ({byte_size} bytes)\n")
         except OSError as e:
             out.write(f"Error: could not write {out_file}: {e}\n")
             return 1

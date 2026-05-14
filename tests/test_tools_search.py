@@ -29,14 +29,28 @@ from mcp_server.tools.search import (
 # ---------------------------------------------------------------------------
 
 class TestSearchCodebase:
-    def test_chromadb_not_installed_returns_error(self, project_env):
-        """When _get_chroma_client returns (None, None), returns error with hint."""
+    def test_chromadb_unavailable_falls_back_gracefully(self, project_env):
+        """P0-A (rc.5): when ChromaDB returns (None, None), search_codebase
+        no longer errors with a misleading 'reinstall' hint. It returns a
+        structural-fallback shape with `matches` (possibly empty), a
+        `warning` explaining the fallback, and a `fix_command` with the
+        ACTUAL fix (`codevira index`), not a reinstall instruction.
+        """
         with patch("mcp_server.tools.search._get_chroma_client", return_value=(None, None)):
             result = search_codebase("find auth logic")
-        assert "error" in result
-        assert "Semantic index not found" in result["error"]
-        assert "hint" in result
-        assert "pip install" in result["hint"]
+        # No 'error' key — graceful fallback.
+        assert "error" not in result
+        # Matches may be empty (graph DB doesn't exist in project_env) but
+        # the SHAPE must be search-result-compatible.
+        assert "matches" in result
+        assert isinstance(result["matches"], list)
+        # Warning + correct fix command.
+        assert "warning" in result
+        assert "codevira index" in result.get("fix_command", "")
+        # The bad rc.4 hint about reinstalling MUST NOT appear.
+        all_text = " ".join(str(v) for v in result.values())
+        assert "Reinstall codevira" not in all_text
+        assert "pip install --upgrade codevira" not in all_text
 
     def test_chromadb_available_returns_matches(self, project_env):
         """When ChromaDB is available and has results, returns matches with scores."""

@@ -253,12 +253,40 @@ class CrossSessionConsistency(Policy):
     # ---- Configuration ----
 
     def _config(self) -> dict[str, Any]:
-        mode_raw = os.environ.get(
-            "CODEVIRA_CROSS_SESSION_MODE", _DEFAULT_MODE,
-        ).strip().lower()
+        """Resolve config in priority order: env var > project config > defaults.
+
+        P0-F (rc.5 audit, 2026-05-13): the per-prompt injection costs ~1KB on
+        every UserPromptSubmit when the policy fires. Users who don't want it
+        previously had to know the env var ``CODEVIRA_CROSS_SESSION_MODE=off``
+        — which is invisible to most. Now also read ``cross_session_mode``
+        from ``.codevira/config.yaml`` under ``project`` so individual projects
+        can opt out without touching shell env. Similar for ``max_inject``.
+        """
+        # Env var wins if set.
+        mode_raw = os.environ.get("CODEVIRA_CROSS_SESSION_MODE", "").strip().lower()
+        max_inject_raw = os.environ.get("CODEVIRA_CROSS_SESSION_MAX_INJECT", "")
+
+        # Fall back to project config.yaml.
+        if not mode_raw or not max_inject_raw:
+            try:
+                from mcp_server.paths import get_data_dir
+                import yaml
+                cfg_path = get_data_dir() / "config.yaml"
+                if cfg_path.is_file():
+                    cfg = yaml.safe_load(cfg_path.read_text()) or {}
+                    project_cfg = cfg.get("project", cfg)
+                    if not mode_raw and "cross_session_mode" in project_cfg:
+                        mode_raw = str(project_cfg["cross_session_mode"]).strip().lower()
+                    if not max_inject_raw and "cross_session_max_inject" in project_cfg:
+                        max_inject_raw = str(project_cfg["cross_session_max_inject"])
+            except Exception:
+                pass
+
+        # Defaults if still unset.
+        if not mode_raw:
+            mode_raw = _DEFAULT_MODE
         mode = mode_raw if mode_raw in _MODES else _DEFAULT_MODE
 
-        max_inject_raw = os.environ.get("CODEVIRA_CROSS_SESSION_MAX_INJECT")
         max_inject = _DEFAULT_MAX_INJECT
         if max_inject_raw:
             try:

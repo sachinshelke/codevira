@@ -38,6 +38,16 @@ class GlobalDB:
         # `timeout=30` on the connect — matters for later transactions).
         self.conn.execute("PRAGMA busy_timeout=30000")
         self._init_schema()
+        # Bug 20 (rc.4): collapse legacy duplicate rows where the same logical
+        # project was registered under two paths (the canonical project_root
+        # AND the ~/.codevira/projects/<slug> storage path). One-shot, fast,
+        # silent on no-op. Logic lives in indexer/_dedupe_migration.py — kept
+        # out of this hot file to minimise blast radius.
+        try:
+            from indexer._dedupe_migration import dedupe_projects_by_git_remote
+            dedupe_projects_by_git_remote(self.conn)
+        except Exception as e:
+            logger.warning("Bug 20 dedupe migration failed (continuing): %s", e)
 
     def _enable_wal_with_retry(self, attempts: int = 10, initial_delay: float = 0.02) -> None:
         """Best-effort enable of WAL journal mode.
@@ -103,9 +113,23 @@ class GlobalDB:
                 self.conn.commit()
         except Exception:
             pass
+        # P0-7 (rc.5): protect git_remote from being silently cleared. The
+        # old INSERT OR REPLACE wrote NULL to git_remote whenever the caller
+        # passed None — which subsequent code paths (e.g. doctor → MCP server
+        # → auto_init re-register) often do. That broke the Bug-20 dedup
+        # invariant: rows lost their identity column right after they were
+        # set. Now we COALESCE — existing non-null git_remote is preserved
+        # when the caller passes None.
         self.conn.execute(
-            "INSERT OR REPLACE INTO projects (path, name, language, git_remote, last_synced_at) "
-            "VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)",
+            """
+            INSERT INTO projects (path, name, language, git_remote, last_synced_at)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(path) DO UPDATE SET
+                name = excluded.name,
+                language = excluded.language,
+                git_remote = COALESCE(excluded.git_remote, projects.git_remote),
+                last_synced_at = CURRENT_TIMESTAMP
+            """,
             (path, name, language, git_remote),
         )
         self.conn.commit()

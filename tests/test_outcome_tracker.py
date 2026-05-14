@@ -297,6 +297,57 @@ class TestGitErrorHandling:
 
 
 # ---------------------------------------------------------------------------
+# P0-D (rc.5 audit, 2026-05-13): file mention extraction for file-less decisions
+# ---------------------------------------------------------------------------
+
+class TestExtractFileMentions:
+    """``_extract_file_mentions`` rescues outcome classification for decisions
+    recorded via ``record_decision`` without an explicit ``file_path=`` arg."""
+
+    def test_path_with_directory(self):
+        from indexer.outcome_tracker import _extract_file_mentions
+        text = "Refactored mcp_server/cli.py to add the new subcommand."
+        assert _extract_file_mentions(text) == ["mcp_server/cli.py"]
+
+    def test_path_with_line_suffix_strips_to_path(self):
+        from indexer.outcome_tracker import _extract_file_mentions
+        text = "Bug 19: indexer/index_codebase.py:873 — wrong dict key."
+        assert _extract_file_mentions(text) == ["indexer/index_codebase.py"]
+
+    def test_multiple_mentions_returned_in_order(self):
+        from indexer.outcome_tracker import _extract_file_mentions
+        text = "Touched src/foo.py and tests/test_foo.py — also docs/foo.md"
+        result = _extract_file_mentions(text)
+        assert result == ["src/foo.py", "tests/test_foo.py", "docs/foo.md"]
+
+    def test_skips_urls(self):
+        from indexer.outcome_tracker import _extract_file_mentions
+        text = "See https://example.com/foo.json for the schema."
+        # URL substring "/foo.json" should NOT be extracted as a project file.
+        assert _extract_file_mentions(text) == []
+
+    def test_skips_absolute_paths(self):
+        from indexer.outcome_tracker import _extract_file_mentions
+        text = "The crash log lives at /var/log/system.log on macOS."
+        # Absolute paths can't be validated against project tree.
+        assert _extract_file_mentions(text) == []
+
+    def test_no_mentions_returns_empty(self):
+        from indexer.outcome_tracker import _extract_file_mentions
+        assert _extract_file_mentions("Discussed the design tradeoffs.") == []
+
+    def test_empty_text_returns_empty(self):
+        from indexer.outcome_tracker import _extract_file_mentions
+        assert _extract_file_mentions("") == []
+        assert _extract_file_mentions(None) == []  # type: ignore[arg-type]
+
+    def test_dedupes_repeated_mentions(self):
+        from indexer.outcome_tracker import _extract_file_mentions
+        text = "src/foo.py was changed. Then src/foo.py was reverted."
+        assert _extract_file_mentions(text) == ["src/foo.py"]
+
+
+# ---------------------------------------------------------------------------
 # get_file_outcome_summary
 # ---------------------------------------------------------------------------
 

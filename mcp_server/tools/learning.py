@@ -22,18 +22,84 @@ def _get_db() -> SQLiteGraph:
 
 
 def get_decision_confidence(file_path: str | None = None, pattern: str | None = None) -> dict:
-    """Get confidence scores for decisions about a file or pattern."""
+    """Get confidence scores for decisions about a file or pattern.
+
+    P0-D (rc.5 audit): the underlying outcomes table is only populated for
+    decisions that were recorded WITH a non-null file_path AND have had at
+    least a couple of subsequent commits to classify (kept / modified /
+    reverted). When the table is empty users see ``total_decisions: 0`` and
+    assume the feature is broken; in reality they may have recorded plenty
+    of decisions but all without file_path. We now distinguish those cases
+    explicitly in the returned dict + interpretation text.
+    """
     db = _get_db()
     try:
         confidence = db.get_decision_confidence(file_path=file_path, pattern=pattern)
         label = file_path or pattern or "project-wide"
-        return {
+        # Diagnostic counts so the user can tell which case they're in.
+        try:
+            decisions_total = db.conn.execute(
+                "SELECT COUNT(*) FROM decisions"
+            ).fetchone()[0]
+            decisions_with_file = db.conn.execute(
+                "SELECT COUNT(*) FROM decisions WHERE file_path IS NOT NULL"
+            ).fetchone()[0]
+            decisions_eligible_for_outcomes = decisions_with_file
+        except Exception:
+            decisions_total = decisions_with_file = decisions_eligible_for_outcomes = 0
+
+        result = {
             "scope": label,
             **confidence,
-            "interpretation": _interpret_confidence(confidence["confidence"]),
+            "decisions_in_db_total": decisions_total,
+            "decisions_eligible_for_outcomes": decisions_eligible_for_outcomes,
+            "interpretation": _interpret_confidence_with_eligibility(
+                confidence_score=confidence["confidence"],
+                outcomes_total=confidence["total_decisions"],
+                decisions_total=decisions_total,
+                decisions_eligible=decisions_eligible_for_outcomes,
+            ),
         }
+        return result
     finally:
         db.close()
+
+
+def _interpret_confidence_with_eligibility(
+    *, confidence_score: float, outcomes_total: int,
+    decisions_total: int, decisions_eligible: int,
+) -> str:
+    """P0-D (rc.5): rich interpretation that distinguishes empty cases.
+
+    Cases:
+      A. outcomes > 0  → use existing _interpret_confidence (has data).
+      B. outcomes = 0, eligible > 0 → 'awaiting commits' — git classifier
+         hasn't classified yet because the project's git history doesn't
+         have enough subsequent commits after the recorded decisions.
+      C. outcomes = 0, eligible = 0, decisions > 0 → 'no eligible decisions':
+         user has recorded decisions but ALL without file_path → tracker
+         can't classify any of them. Tell them to use file_path.
+      D. outcomes = 0, decisions = 0 → genuinely fresh project.
+    """
+    if outcomes_total > 0:
+        return _interpret_confidence(confidence_score)
+    if decisions_eligible > 0:
+        return (
+            f"Awaiting outcomes — {decisions_eligible} decision(s) recorded with "
+            f"file_path are queued for classification. The git-based outcome "
+            f"tracker classifies each as kept/modified/reverted after a few "
+            f"subsequent commits touch the file. Make a few more commits and "
+            f"re-run."
+        )
+    if decisions_total > 0:
+        return (
+            f"No eligible decisions — {decisions_total} decision(s) recorded "
+            f"but all without file_path. Outcome tracking requires file_path "
+            f"so the git-based classifier knows which file to watch. Re-record "
+            f"key decisions via record_decision(decision=..., file_path=..., "
+            f"...) to populate the outcomes table."
+        )
+    return _interpret_confidence(confidence_score)  # falls through to "No data"
 
 
 def get_preferences(category: str | None = None) -> dict:

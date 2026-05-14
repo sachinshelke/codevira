@@ -53,6 +53,15 @@ docs/linkedin-*.md
 .codevira/
 .codevira.migrated/
 
+# Per-user / per-machine leftovers (NOT part of the codevira repo)
+pipx_shared.pth
+.claude/settings.local.json
+.cursor/
+
+# Note: CLAUDE.md / AGENTS.md / GEMINI.md / .windsurfrules ARE
+# committed for the codevira project — they're how AI tools learn
+# to use codevira when working ON codevira (dogfood).
+
 # Test coverage artifacts
 .coverage
 htmlcov/

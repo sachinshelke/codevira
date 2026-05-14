@@ -591,7 +591,28 @@ The `search_codebase` tool will be hidden from your AI agent; all other tools wo
 
 Want to understand the full story behind why this was built, the design decisions, what didn't work, and how it compares to other tools in the ecosystem?
 
-Read the full write-up: [How We Cut AI Coding Agent Token Usage by 92%](docs/how-i-built-persistent-memory-for-ai-agents.md)
+Read the full write-up: [How We Built Persistent Memory for AI Coding Agents](docs/how-i-built-persistent-memory-for-ai-agents.md)
+
+### Honest token-cost positioning
+
+The "92% reduction" number was measured for **structural orientation queries**
+(reading a `get_node` summary vs. reading the full source file) on a Python codebase
+with well-populated graph nodes. It's **not** a per-session, per-prompt, or
+per-conversation savings number — and the gross savings always need to be
+weighed against codevira's own per-prompt context-injection cost
+(~1 KB on every `UserPromptSubmit` when relevant prior decisions exist) and
+one-time setup cost (recording the decisions in the first place).
+
+For short-to-medium sessions, expect rough neutrality on token cost. The real
+wins are over **weeks of work on the same project** (cross-session decision
+queries amortize the setup cost) and in **automation and cross-tool continuity**
+(decisions recorded in Claude Code are visible in Cursor / Windsurf / next
+session without you doing anything).
+
+To minimise the per-prompt overhead, set
+`project: { cross_session_mode: off }` in `.codevira/config.yaml`, or export
+`CODEVIRA_CROSS_SESSION_MODE=off` in your shell. The injection is opt-out, not
+on-by-default-with-no-escape.
 
 ---
 

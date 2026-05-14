@@ -151,12 +151,21 @@ class TestMissingRuleFile:
         with _patch_data_dir(tmp_path):
             result = get_playbook("add_tool")
 
-        assert result["found"] is True
-        missing = [r for r in result["rules"] if "File not found" in r["content"]]
-        assert len(missing) == 1
-        assert missing[0]["file"] == "testing-standards.md"
+        # P0-C (rc.5): missing rule files are now skipped silently rather than
+        # served as "[File not found: ...]" placeholders. Pre-fix, an absent
+        # bundled file leaked the path into the response.
+        # The remaining file is still served normally.
+        files_returned = [r["file"] for r in result["rules"]]
+        assert "testing-standards.md" not in files_returned, (
+            "Missing files should be skipped, not served as placeholders."
+        )
 
-    def test_all_files_missing_returns_all_placeholders(self, tmp_path):
+    def test_all_files_missing_returns_empty_with_actionable_hint(self, tmp_path):
+        """P0-C (rc.5): when no playbook content can be loaded, return found=False
+        with a hint telling the user how to bootstrap project-specific playbooks.
+        Pre-fix this returned found=True with placeholder strings, which made the
+        emptiness invisible to callers.
+        """
         rules_dir = tmp_path / "rules"
         rules_dir.mkdir()
         # Create NO rule files
@@ -164,8 +173,10 @@ class TestMissingRuleFile:
         with _patch_data_dir(tmp_path):
             result = get_playbook("add_tool")
 
-        assert result["found"] is True
-        assert all("File not found" in r["content"] for r in result["rules"])
+        assert result["found"] is False
+        assert result["rules"] == []
+        assert "hint" in result
+        assert "playbook" in result["hint"].lower()
 
 
 # ---------------------------------------------------------------
@@ -244,7 +255,8 @@ class TestNoteAndHintFields:
 
         assert "note" in result
         assert "add_service" in result["note"]
-        assert "rule files" in result["note"]
+        # P0-C (rc.5): note text now uses "rule file(s)" plural-aware phrasing.
+        assert "rule file" in result["note"]
 
     def test_hint_field_present_on_unknown_task(self, tmp_path):
         with _patch_data_dir(tmp_path):
@@ -260,7 +272,8 @@ class TestNoteAndHintFields:
         with _patch_data_dir(tmp_path):
             result = get_playbook("commit")
 
-        assert "2 rule files" in result["note"]
+        # P0-C (rc.5): now "rule file(s)" — plural-aware phrasing.
+        assert "2 bundled rule file" in result["note"]
 
     def test_valid_task_has_no_hint(self, tmp_path):
         """Valid tasks should not have a 'hint' field (that's only for unknown types)."""

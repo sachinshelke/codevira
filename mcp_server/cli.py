@@ -93,8 +93,9 @@ def cmd_init() -> None:
             print(f"  Project markers found in: {parent}")
             print(f"  Current directory:        {cwd}")
             print()
-            answer = input("  Continue initializing here anyway? [y/N] ").strip().lower()
-            if answer != "y":
+            # Bug 22 (rc.4): use shared confirm() helper for retry-on-bad-input + flush.
+            from mcp_server._prompts import confirm
+            if not confirm("Continue initializing here anyway?", default=False):
                 print("  Aborted. Run `codevira init` from your project root.")
                 sys.exit(0)
             print()
@@ -149,7 +150,11 @@ def cmd_init() -> None:
     # Step 4: Zero-config auto-detection (no interactive prompts)
     print()
     from mcp_server.detect import auto_detect_project
-    detected = auto_detect_project(cwd)
+    # rc.5 (P1-2): default is the union of all known source extensions so
+    # polyglot projects don't lose .yaml / .md / .html silently. Pass
+    # --single-language on the CLI to restore legacy narrowing.
+    single_lang = getattr(cmd_init, "_single_language", False)
+    detected = auto_detect_project(cwd, single_language=single_lang)
 
     # Apply CLI overrides if provided (parsed from args later)
     if hasattr(cmd_init, '_overrides'):
@@ -312,7 +317,13 @@ def cmd_init() -> None:
 
         git_remote = _get_git_remote_url(cwd)
         gdb = GlobalDB(get_global_db_path())
-        gdb.register_project(str(data_dir), detected["name"], detected["language"], git_remote=git_remote)
+        # Bug 20 (rc.4): register under the project_root path (cwd), NOT the
+        # storage dir (data_dir = ~/.codevira/projects/<slug>). Pre-fix this
+        # produced duplicate rows for the same logical project — one row keyed
+        # by data_dir (from cli.py + auto_init.py) and another keyed by
+        # project_root (from global_sync.py). Downstream lookups by canonical
+        # project path missed half the projects.
+        gdb.register_project(str(cwd), detected["name"], detected["language"], git_remote=git_remote)
         proj_count = gdb.get_project_count()
         gdb.close()
         if proj_count > 1:
@@ -604,6 +615,22 @@ def main() -> None:
         from mcp_server.paths import set_project_dir
         set_project_dir(project_dir)
 
+    # P2-8 (rc.5): scoped ArgumentParser for subcommands.
+    # When argparse hits a bad arg on a SUBPARSER it normally walks up to
+    # the root parser and prints the top-level usage line ("usage: codevira
+    # [-h] [--version] [--project-dir PATH] {init,index,…17 subcommands…}
+    # ..."). That's not useful when the user's mistake was in
+    # `codevira doctor --bogus`. The override below makes each subparser
+    # print its own usage when it errors.
+    class _ScopedSubparser(argparse.ArgumentParser):
+        def error(self, message):  # type: ignore[override]
+            # Mirror argparse's default error path but using self.print_usage()
+            # explicitly — keeps the usage scoped to the failing subcommand
+            # instead of bubbling up to the root parser's combined usage.
+            import sys as _sys
+            self.print_usage(_sys.stderr)
+            self.exit(2, f"{self.prog}: error: {message}\n")
+
     parser = argparse.ArgumentParser(
         prog="codevira",
         description="Codevira — AI context layer for your codebase",
@@ -624,23 +651,67 @@ def main() -> None:
         help="Project directory (alternative to cwd; useful for Google Antigravity)",
     )
 
-    subparsers = parser.add_subparsers(dest="command")
+    # P2-8: every subparser uses the scoped class so usage prints are
+    # subcommand-local on error.
+    subparsers = parser.add_subparsers(dest="command", parser_class=_ScopedSubparser)
 
     # init
-    init_parser = subparsers.add_parser("init", help="Initialize Codevira in the current project")
+    # init (P2-1 rc.5: added description)
+    init_parser = subparsers.add_parser(
+        "init",
+        help="Initialize Codevira in the current project",
+        description=(
+            "Bootstrap codevira state for the current project: write config.yaml "
+            "(auto-detects language, source dirs, file extensions), create the "
+            "per-project data directory under ~/.codevira/projects/, register in "
+            "global.db, and (unless --no-inject) inject MCP config + nudge files "
+            "into detected IDEs. Equivalent to first-MCP-call auto-init but "
+            "explicit. Use --dirs / --ext to override the auto-detected values."
+        ),
+    )
     init_parser.add_argument("--name", help="Override project name")
     init_parser.add_argument("--language", help="Override detected language")
     init_parser.add_argument("--dirs", help="Override source directories (comma-separated)")
     init_parser.add_argument("--ext", help="Override file extensions (comma-separated)")
     init_parser.add_argument("--no-inject", action="store_true", help="Skip auto-injecting IDE configs")
+    init_parser.add_argument(
+        "--single-language", action="store_true",
+        help=(
+            "Index only the dominant language's extensions (legacy pre-rc.5 "
+            "behavior). Default since rc.5 is to index every common source / "
+            "config / docs extension so polyglot projects don't lose .yaml / "
+            ".md / .html / etc. silently."
+        ),
+    )
 
-    # index
-    index_parser = subparsers.add_parser("index", help="Run the code indexer")
+    # index (P2-1 rc.5: added description)
+    index_parser = subparsers.add_parser(
+        "index",
+        help="Run the code indexer",
+        description=(
+            "Build (or incrementally update) the codebase index for this project. "
+            "Parses every watched source file with tree-sitter, refreshes the graph "
+            "in graph/graph.db, and rebuilds the ChromaDB semantic-search index in "
+            "codeindex/. Incremental by default — only re-processes files changed "
+            "since the last index. Use --full to rebuild from scratch; --quiet to "
+            "suppress progress output (used by the post-commit git hook)."
+        ),
+    )
     index_parser.add_argument("--full", action="store_true", help="Full rebuild from scratch")
     index_parser.add_argument("--quiet", action="store_true", help="Suppress output (used by git hook)")
 
-    # status
-    status_parser = subparsers.add_parser("status", help="Show index health and statistics")
+    # status (P2-1 rc.5: added description)
+    status_parser = subparsers.add_parser(
+        "status",
+        help="Show index health and statistics",
+        description=(
+            "Report this project's index health: graph node count, ChromaDB chunk "
+            "count, and (with --check-stale) which source files have changed since "
+            "the last index. With --global, also append a Global Status panel "
+            "listing tracked projects + cross-project preferences/rules learned. "
+            "Read-only — never modifies state."
+        ),
+    )
     status_parser.add_argument(
         "--check-stale",
         action="store_true",
@@ -653,15 +724,32 @@ def main() -> None:
         help="Also show cross-project memory stats and launchd service status",
     )
 
-    # report
-    report_parser = subparsers.add_parser("report", help="Show recent crash logs")
+    # report (P2-1 rc.5: added description)
+    report_parser = subparsers.add_parser(
+        "report",
+        help="Show recent crash logs",
+        description=(
+            "Print recent codevira crash log entries (~/.codevira/crash.log) with "
+            "secret sanitization applied. Use this when the MCP server or watcher "
+            "behaved unexpectedly; the file accumulates structured tracebacks + "
+            "context. Use --clear to truncate the log after reading."
+        ),
+    )
     report_parser.add_argument("--limit", type=int, default=20, help="Number of recent crashes to show (default: 20)")
     report_parser.add_argument("--clear", action="store_true", help="Clear the crash log")
 
-    # serve
+    # serve (P2-1 rc.5: added description)
     serve_parser = subparsers.add_parser(
         "serve",
         help="[Preview, v1.7] Start MCP HTTP server — single-project; multi-project HTTPS is v1.8",
+        description=(
+            "Run the codevira MCP server over HTTP/HTTPS instead of stdio. PREVIEW "
+            "in v1.7+: the server binds to one project at startup; multi-project "
+            "HTTPS arrives in v1.8. Most users should NOT use this — `codevira "
+            "setup` configures every IDE with the standard stdio transport, which "
+            "supports multi-project out of the box. Use --install-service to "
+            "register a macOS launchd job that starts the server on login."
+        ),
     )
     serve_parser.add_argument(
         "--port", type=int, default=7007,
@@ -733,11 +821,13 @@ def main() -> None:
         "register",
         help="[DEPRECATED — use `codevira setup`] One-time global IDE registration",
         description=(
-            "DEPRECATED in v2.0. Use `codevira setup` instead — it does "
-            "what `register` does plus installs Claude Code lifecycle "
-            "hooks and writes per-IDE nudge files (CLAUDE.md, AGENTS.md, "
-            ".cursor/rules/codevira.mdc, etc.) in one prompt. `register` "
-            "still works for now and will be removed in a future release."
+            "DEPRECATED in v2.0 — will be REMOVED in v2.1. Use `codevira setup` "
+            "instead: it does what `register` does plus installs Claude Code "
+            "lifecycle hooks and writes per-IDE nudge files (CLAUDE.md, "
+            "AGENTS.md, .cursor/rules/codevira.mdc, etc.) in one prompt. "
+            "`register` still works for now (v2.0.x) but every invocation "
+            "prints a deprecation banner. P2-7 (rc.5): named the removal "
+            "version explicitly so users know when to migrate by."
         ),
     )
     register_parser.add_argument(
@@ -794,8 +884,11 @@ def main() -> None:
         ),
     )
     budget_parser.add_argument(
+        # P1-5 (rc.5): include None as a default-only sentinel via nargs="?"+default=None
+        # but DO NOT list None in `choices=` — argparse renders it as the literal
+        # string "None" in error messages, which users tried as a real value.
         "subaction", nargs="?", default=None,
-        choices=[None, "history"],
+        choices=["history"],
         help="Optional: 'history' to list multiple sessions",
     )
     budget_parser.add_argument(
@@ -829,6 +922,27 @@ def main() -> None:
         help="Show extra details under each warning / failure",
     )
 
+    # projects (Bug 21b, rc.4) — inventory of every tracked project on this machine
+    projects_parser = subparsers.add_parser(
+        "projects",
+        help="List every project codevira is tracking on this machine",
+        description=(
+            "Inventory of ~/.codevira/projects/. Shows each project's "
+            "completeness (config + metadata + global.db row), graph + "
+            "index presence, and disk size. Use --ghosts-only to filter "
+            "for incomplete dirs (Bug 21 — pair with `codevira clean` to "
+            "remove them)."
+        ),
+    )
+    projects_parser.add_argument(
+        "--json", action="store_true", dest="output_json",
+        help="Emit machine-readable JSON instead of the rich-table view",
+    )
+    projects_parser.add_argument(
+        "--ghosts-only", action="store_true",
+        help="Show only project dirs that are missing config / metadata / global.db row",
+    )
+
     # agents (v2.0 Pillar 2.2 — universal nudge generator)
     agents_parser = subparsers.add_parser(
         "agents",
@@ -844,11 +958,21 @@ def main() -> None:
         ),
     )
     agents_parser.add_argument(
+        # P1-5 (rc.5): drop None from `choices=`; default=None still works because
+        # argparse uses `default` independently of `choices`. Previously listed
+        # None and users tried `--ide None` as a literal string.
+        # P1-1 (rc.5): default now renders nudge files for DETECTED IDEs only
+        # (aligned with `setup`). Pass --ide=all to render for every supported
+        # IDE regardless of whether it's installed.
         "--ide", default=None,
-        choices=[None, *list({"claude", "cursor", "windsurf",
-                              "antigravity", "codex", "copilot",
-                              "agents_md"})],
-        help="Only regenerate this one IDE's nudge file",
+        choices=sorted({"claude", "cursor", "windsurf",
+                        "antigravity", "codex", "copilot",
+                        "agents_md", "all"}),
+        help=(
+            "Render nudge files only for this IDE (default: every IDE detected "
+            "on this machine). Use 'all' to render for every supported IDE "
+            "regardless of detection."
+        ),
     )
     agents_parser.add_argument(
         "--dry-run", action="store_true",
@@ -883,6 +1007,34 @@ def main() -> None:
     hooks_install.add_argument(
         "--project", metavar="PATH", default=None,
         help="Operate on another project (validated)",
+    )
+    # P2-6 (rc.5): list + uninstall subcommands. The previous surface only
+    # supported `install`; to remove hooks the user had to delete files +
+    # edit ~/.claude/settings.json by hand.
+    hooks_subparsers.add_parser(
+        "list", help="List installed Claude Code hook scripts + their state",
+        description=(
+            "Show every codevira-* hook script under ~/.claude/hooks/, its "
+            "size, last-modified mtime, and whether it's registered in "
+            "~/.claude/settings.json. Read-only."
+        ),
+    )
+    hooks_uninstall = hooks_subparsers.add_parser(
+        "uninstall",
+        help="Remove all codevira-* hook scripts and unregister from settings.json",
+        description=(
+            "Remove every codevira-* hook script from ~/.claude/hooks/ AND "
+            "drop the codevira entries from ~/.claude/settings.json's hooks "
+            "block. Other entries in those files are preserved."
+        ),
+    )
+    hooks_uninstall.add_argument(
+        "--dry-run", action="store_true",
+        help="Show what would be removed without deleting anything",
+    )
+    hooks_uninstall.add_argument(
+        "-y", "--yes", action="store_true",
+        help="Skip confirmation prompt",
     )
 
     # replay (v2.0 hero 8 — Decision Replay)
@@ -957,10 +1109,19 @@ def main() -> None:
         help="Use ASCII fallbacks instead of unicode badges",
     )
 
-    # clean
+    # clean (P2-1 + P2-10 rc.5: added description + self-contained flag help)
     clean_parser = subparsers.add_parser(
         "clean",
         help="Remove all Codevira data, IDE configs, and services",
+        description=(
+            "Uninstall codevira's machine-wide state: wipe ~/.codevira/ (all "
+            "project data, learned preferences/rules, decisions), remove "
+            "mcpServers.codevira from every detected IDE config, and remove any "
+            "installed launchd service. Use --all to also remove per-project "
+            "artifacts (legacy .codevira/ directories committed into repos, git "
+            "post-commit hooks, per-project IDE config files). Always preview "
+            "with --dry-run first."
+        ),
     )
     clean_parser.add_argument(
         "--all", action="store_true",
@@ -976,21 +1137,42 @@ def main() -> None:
     )
     clean_parser.add_argument(
         "--legacy", action="store_true",
-        help="Only remove .codevira.migrated/ backup dirs from project repos (post-v1.6 migration)",
+        help="Only remove .codevira.migrated/ backup directories from project "
+             "repos. These directories are created when an older in-repo "
+             ".codevira/ layout is auto-migrated to centralised storage on "
+             "first run; they're kept around for one cycle as a safety net.",
     )
     clean_parser.add_argument(
         "--orphans", action="store_true",
-        help="Only remove project data dirs whose original_path is no longer a "
-             "valid project root ($HOME, system dirs, or deleted) — recovery for "
-             "users who bootstrapped at $HOME on v1.8.0 (see CHANGELOG v1.8.1)",
+        help="Only remove project data dirs whose original_path is no longer "
+             "a valid project root — covers projects that were registered at "
+             "$HOME or system top-levels (a v1.8.0-era bug fixed in v1.8.1) "
+             "and projects whose repo directory was deleted.",
+    )
+    clean_parser.add_argument(
+        "--ghosts", action="store_true",
+        help="P2-4 (rc.5): only remove dirs classified as 'ghost' by "
+             "`codevira projects` — present on disk but missing config.yaml "
+             "or metadata.json (created as side effect of MCP tool calls "
+             "without a full init). Surgical cleanup; preserves tracked "
+             "projects and their indexes.",
     )
 
     # engine — internal subcommand invoked by Claude Code lifecycle hook
     # scripts. Not user-facing; surfaces here so `codevira engine handle
-    # PreToolUse` works from data/hooks/*.sh.
+    # PreToolUse` works from data/hooks/*.sh. (P2-1 rc.5: added description)
     engine_parser = subparsers.add_parser(
         "engine",
         help="Internal: lifecycle-hook engine entry (called by hook scripts)",
+        description=(
+            "INTERNAL — invoked by codevira's Claude Code lifecycle hook "
+            "scripts (~/.claude/hooks/codevira-*.sh). Reads a Claude Code "
+            "event JSON from stdin, runs the heroes (Decision Lock, "
+            "Anti-Regression, Scope Contract, etc.) registered for that "
+            "event, and writes the protocol-compatible response on stdout. "
+            "Set CODEVIRA_ENGINE=0 to disable all policies machine-wide "
+            "(the kill switch). End users normally never invoke this directly."
+        ),
     )
     engine_sub = engine_parser.add_subparsers(dest="engine_action")
     handle_parser = engine_sub.add_parser(
@@ -1005,6 +1187,31 @@ def main() -> None:
 
     args = parser.parse_args(raw_args)
 
+    # P0-6 (rc.5): self-heal ghost dirs from CLI invocations too. Before this
+    # rc, only MCP tool dispatch fired the Bug-21a repair. So a CLI-only user
+    # who got a ghost dir from a stale Claude Code session could never recover
+    # via codevira commands — only via `codevira clean` (which wipes
+    # everything). Now every codevira invocation (except commands that have
+    # their own bootstrap logic like `init`, `setup`, `clean`, `engine`) runs
+    # the cheap synchronous repair first.
+    _NO_HEAL_COMMANDS = {"init", "setup", "clean", "engine", "register", "configure"}
+    if args.command and args.command not in _NO_HEAL_COMMANDS:
+        try:
+            from mcp_server.paths import (
+                get_project_root, is_invalid_project_root, get_data_dir,
+            )
+            project_root = get_project_root()
+            if project_root is not None and is_invalid_project_root(project_root) is None:
+                from mcp_server._repair_init import repair_incomplete_init
+                data_dir = get_data_dir()
+                # Only repair if there's already SOME state on disk — never
+                # bootstrap from nothing as a side effect of a read-only CLI.
+                if data_dir.is_dir():
+                    repair_incomplete_init(data_dir, project_root)
+        except Exception:
+            # Self-heal is best-effort — must never break a CLI invocation.
+            pass
+
     if args.command == "init":
         # Pass overrides via function attribute (avoids changing signature)
         cmd_init._overrides = {
@@ -1014,6 +1221,7 @@ def main() -> None:
             "ext": getattr(args, "ext", None),
         }
         cmd_init._no_inject = getattr(args, "no_inject", False)
+        cmd_init._single_language = getattr(args, "single_language", False)
         cmd_init()
     elif args.command == "index":
         cmd_index(full=args.full, quiet=args.quiet)
@@ -1103,6 +1311,14 @@ def main() -> None:
         from mcp_server.doctor import cmd_doctor
         rc = cmd_doctor(verbose=getattr(args, "verbose", False))
         sys.exit(rc)
+    elif args.command == "projects":
+        # Bug 21b (rc.4) — project inventory
+        from mcp_server.cli_projects import cmd_projects
+        rc = cmd_projects(
+            output_json=getattr(args, "output_json", False),
+            ghosts_only=getattr(args, "ghosts_only", False),
+        )
+        sys.exit(rc)
     elif args.command == "agents":
         # Pillar 2.2 — regenerate per-IDE nudge files
         from mcp_server.cli_agents import cmd_agents
@@ -1114,20 +1330,31 @@ def main() -> None:
         )
         sys.exit(rc)
     elif args.command == "hooks":
-        # Pillar 2.3 — install Claude Code lifecycle hooks
-        from mcp_server.cli_agents import cmd_hooks_install
-        if getattr(args, "hooks_subcommand", None) == "install":
+        # Pillar 2.3 — install/list/uninstall Claude Code lifecycle hooks
+        # (P2-6 rc.5: added list + uninstall)
+        sub = getattr(args, "hooks_subcommand", None)
+        if sub == "install":
+            from mcp_server.cli_agents import cmd_hooks_install
             project_arg = getattr(args, "project", None)
             rc = cmd_hooks_install(
                 project=Path(project_arg) if project_arg else None,
                 dry_run=getattr(args, "dry_run", False),
             )
             sys.exit(rc)
+        elif sub == "list":
+            from mcp_server.cli_hooks_admin import cmd_hooks_list
+            sys.exit(cmd_hooks_list())
+        elif sub == "uninstall":
+            from mcp_server.cli_hooks_admin import cmd_hooks_uninstall
+            sys.exit(cmd_hooks_uninstall(
+                dry_run=getattr(args, "dry_run", False),
+                yes=getattr(args, "yes", False),
+            ))
         else:
             print("Error: unknown hooks subcommand", file=sys.stderr)
             print(
-                "  → run `codevira hooks install --help` to see valid "
-                "subcommands.",
+                "  → run `codevira hooks --help` for the available "
+                "subcommands (install | list | uninstall).",
                 file=sys.stderr,
             )
             sys.exit(2)
@@ -1166,6 +1393,7 @@ def main() -> None:
             yes=getattr(args, "yes", False),
             legacy_only=getattr(args, "legacy", False),
             orphans_only=getattr(args, "orphans", False),
+            ghosts_only=getattr(args, "ghosts", False),
         )
     elif args.command == "engine":
         # Internal — Claude Code hook scripts call us with `engine handle <event>`.
@@ -1193,7 +1421,24 @@ def main() -> None:
         engine_parser.print_help()
         sys.exit(2)
     else:
-        # No subcommand → start MCP server (stdio transport)
+        # No subcommand. P1-11 (rc.5): MCP-server stdio mode is correct when
+        # stdin is a pipe (Claude Code etc. spawn us this way), but when a
+        # human runs `codevira` in a terminal we used to print one cryptic
+        # line ("No valid watched_dirs found — watcher not started") and
+        # exit. That made it look broken. Print help in interactive mode
+        # instead; only enter server mode when stdin is piped from a real
+        # MCP client.
+        if sys.stdin.isatty():
+            parser.print_help()
+            print()
+            print(
+                "  Tip: codevira is normally launched by an AI tool (Claude Code, "
+                "Cursor, etc.).\n"
+                "       Run `codevira setup` to configure that, or `codevira "
+                "--help`\n"
+                "       for the subcommand list."
+            )
+            sys.exit(0)
         cmd_server()
 
 
@@ -1202,7 +1447,8 @@ def main() -> None:
 # ---------------------------------------------------------------------------
 
 def cmd_clean(clean_all: bool = False, dry_run: bool = False, yes: bool = False,
-              legacy_only: bool = False, orphans_only: bool = False) -> None:
+              legacy_only: bool = False, orphans_only: bool = False,
+              ghosts_only: bool = False) -> None:
     """Remove all Codevira data, IDE configs, and services.
 
     With --legacy, ONLY removes .codevira.migrated/ backup directories from
@@ -1212,9 +1458,18 @@ def cmd_clean(clean_all: bool = False, dry_run: bool = False, yes: bool = False,
     ``original_path`` is no longer a valid project root ($HOME, system
     dir, or deleted directory). This is the recovery path for users who
     accidentally bootstrapped a project at $HOME on v1.8.0.
+
+    With --ghosts (rc.5 / P2-4), ONLY removes project data dirs classified
+    as 'ghost' by the canonical inventory helper — present on disk but
+    missing config.yaml or metadata.json (created as a side effect of MCP
+    tool calls that didn't complete the full init). Surgical cleanup;
+    preserves tracked projects and their indexes.
     """
     import shutil
 
+    if ghosts_only:
+        _cmd_clean_ghosts(dry_run=dry_run, yes=yes)
+        return
     if orphans_only:
         _cmd_clean_orphans(dry_run=dry_run, yes=yes)
         return
@@ -1240,17 +1495,27 @@ def cmd_clean(clean_all: bool = False, dry_run: bool = False, yes: bool = False,
     print()
 
     # 1. Global data directory
+    # P0-3 (rc.5): use the canonical inventory helper so the count here
+    # agrees with `status --global` and `codevira projects` summary.
     global_home = get_global_home()
     if global_home.exists():
-        # Count projects and size
-        projects_dir = global_home / "projects"
-        project_count = len(list(projects_dir.iterdir())) if projects_dir.exists() else 0
+        try:
+            from mcp_server._project_inventory import enumerate_projects, summarize
+            inv = summarize(enumerate_projects())
+            count_breakdown = (
+                f"{inv['tracked']} tracked"
+                + (f", {inv['ghost']} ghost" if inv["ghost"] else "")
+                + (f", {inv['orphan']} orphan" if inv["orphan"] else "")
+                + (f", {inv['stale']} stale" if inv["stale"] else "")
+            )
+        except Exception:
+            count_breakdown = "(count unavailable)"
         try:
             total_size = sum(f.stat().st_size for f in global_home.rglob("*") if f.is_file())
             size_str = f"{total_size / 1024 / 1024:.1f} MB"
         except Exception:
             size_str = "unknown size"
-        print(f"    • ~/.codevira/ ({project_count} projects, {size_str})")
+        print(f"    • ~/.codevira/ ({count_breakdown}; {size_str})")
         actions.append(("Removed ~/.codevira/", lambda: shutil.rmtree(global_home, ignore_errors=True)))
 
     # 2. IDE configs
@@ -1320,8 +1585,9 @@ def cmd_clean(clean_all: bool = False, dry_run: bool = False, yes: bool = False,
         return
 
     if not yes:
-        answer = input("  Remove all of the above? [y/N] ").strip().lower()
-        if answer != "y":
+        # Bug 22 (rc.4): shared confirm() helper.
+        from mcp_server._prompts import confirm
+        if not confirm("Remove all of the above?", default=False):
             print("  Aborted.")
             print()
             return
@@ -1392,6 +1658,65 @@ def _collect_project_cleanup(project_path: Path, actions: list) -> None:
                     (f"Removed codevira from {name}/{ide_name}",
                      lambda p=config_path: remove_codevira_from_config(p))
                 )
+
+
+def _cmd_clean_ghosts(dry_run: bool = False, yes: bool = False) -> None:
+    """P2-4 (rc.5): remove only the dirs classified as 'ghost' by the
+    canonical inventory helper. Pairs with ``codevira projects --ghosts-only``
+    so the user can list first, then delete.
+
+    A ghost is a ``~/.codevira/projects/<slug>/`` that exists on disk but is
+    missing ``config.yaml`` or ``metadata.json`` — i.e. has SOME state from
+    an MCP tool call but the bookkeeping never completed.
+    """
+    import shutil
+    from mcp_server._project_inventory import enumerate_projects
+
+    ghosts = [e for e in enumerate_projects() if e.status == "ghost" and e.slug]
+    if not ghosts:
+        print("✓ No ghost projects on this machine.")
+        return
+
+    print()
+    print("  Codevira — Clean Ghost Projects")
+    print("  " + "─" * 40)
+    print()
+    print(f"  Found {len(ghosts)} ghost dir(s):")
+    for e in ghosts:
+        size_kb = e.size_bytes // 1024
+        print(f"    • {e.slug}  ({size_kb:,} KB)")
+    print()
+
+    if dry_run:
+        print("  [dry-run] No changes made.")
+        return
+
+    if not yes:
+        # Reuse the shared confirm helper added in Bug 22 / rc.4.
+        from mcp_server._prompts import confirm
+        if not confirm(f"Remove {len(ghosts)} ghost dir(s)?", default=False):
+            print("  Aborted.")
+            return
+
+    print()
+    try:
+        from mcp_server.paths import get_global_home
+        projects_root = get_global_home() / "projects"
+    except Exception as exc:
+        print(f"  ✗ could not resolve projects directory: {exc}")
+        return
+
+    removed = 0
+    for e in ghosts:
+        target = projects_root / e.slug
+        try:
+            shutil.rmtree(target, ignore_errors=True)
+            print(f"  ✓ removed {e.slug}")
+            removed += 1
+        except Exception as exc:
+            print(f"  ✗ {e.slug}: {exc}")
+    print()
+    print(f"  Done: removed {removed} of {len(ghosts)} ghost dir(s).")
 
 
 def _cmd_clean_orphans(dry_run: bool = False, yes: bool = False) -> None:
@@ -1572,8 +1897,9 @@ def _cmd_clean_legacy_only(dry_run: bool = False, yes: bool = False) -> None:
         return
 
     if not yes:
-        answer = input(f"  Delete {len(found)} backup dir(s)? [y/N] ").strip().lower()
-        if answer != "y":
+        # Bug 22 (rc.4): shared confirm() helper.
+        from mcp_server._prompts import confirm
+        if not confirm(f"Delete {len(found)} backup dir(s)?", default=False):
             print("  Aborted.")
             print()
             return

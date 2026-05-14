@@ -117,7 +117,11 @@ def search_codebase(description: str, top_k: int = 5, include_content: bool = Fa
 
     client, embed_fn = _get_chroma_client()
     if not client:
-        # v1.6: Check if auto-init is running and return a friendly status
+        # P0-A (rc.5): graceful fallback — try the structural search instead
+        # of bailing with an unhelpful "Reinstall codevira" hint. The real
+        # fix when the semantic index is missing is `codevira index`, not
+        # a reinstall (chromadb has been bundled since rc.4).
+        # First check if a build is currently in progress.
         try:
             from mcp_server.auto_init import get_init_progress
             prog = get_init_progress()
@@ -128,10 +132,10 @@ def search_codebase(description: str, top_k: int = 5, include_content: bool = Fa
                 }
         except Exception:
             pass
-        return {
-            "error": "Semantic index not found.",
-            "hint": "Reinstall codevira (chromadb is included by default): pip install --upgrade codevira, then run: codevira index --full",
-        }
+        return _structural_fallback(
+            description, top_k,
+            reason="semantic index not built yet",
+        )
 
     # Cap top_k to avoid token bombs
     if top_k < 1:
@@ -176,6 +180,117 @@ def search_codebase(description: str, top_k: int = 5, include_content: bool = Fa
         except Exception:
             pass
         return {"error": f"Search failed: {e}"}
+
+
+def _structural_fallback(query: str, top_k: int, *, reason: str) -> dict[str, Any]:
+    """P0-A (rc.5): structural fallback when semantic search is unavailable.
+
+    Returns the same shape as a normal search_codebase response but uses the
+    graph DB's symbols + nodes tables (filename + symbol substring match) for
+    ranking. The user gets RESULTS — not an error — and a clear note that
+    semantic ranking is unavailable.
+
+    The `reason` parameter explains WHY semantic search couldn't be used; it's
+    surfaced in the response so callers can react (e.g., "the index isn't
+    built — run `codevira index` to enable semantic ranking").
+    """
+    matches: list[dict[str, Any]] = []
+    graph_open = False
+    try:
+        from mcp_server.paths import get_data_dir
+        from indexer.sqlite_graph import SQLiteGraph
+        graph_db_path = get_data_dir() / "graph" / "graph.db"
+        if not graph_db_path.is_file():
+            return {
+                "matches": [],
+                "warning": (
+                    f"Semantic search unavailable ({reason}) AND no graph DB at "
+                    f"{graph_db_path}. Run `codevira index` to build both."
+                ),
+                "fix_command": "codevira index",
+            }
+        g = SQLiteGraph(graph_db_path)
+        graph_open = True
+        # Tokenise the query for cheap substring matching.
+        terms = [t.lower() for t in query.split() if len(t) > 2]
+        if not terms:
+            terms = [query.lower()]
+        seen: set[tuple[str, str]] = set()
+        # Symbol-name match (function / class names that mention any term).
+        try:
+            for term in terms:
+                rows = g.conn.execute(
+                    "SELECT name, file_path, kind FROM symbols "
+                    "WHERE LOWER(name) LIKE ? "
+                    "ORDER BY name LIMIT ?",
+                    (f"%{term}%", top_k * 2),
+                ).fetchall()
+                for r in rows:
+                    key = (r["file_path"], r["name"])
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    matches.append({
+                        "file_path": r["file_path"],
+                        "chunk_type": r["kind"],
+                        "name": r["name"],
+                        "match_type": "symbol_substring",
+                    })
+                    if len(matches) >= top_k:
+                        break
+                if len(matches) >= top_k:
+                    break
+        except Exception:
+            # symbols table missing or empty; fall through to filename match.
+            pass
+        # Filename match (file paths that mention any term) — only if we
+        # haven't filled top_k from symbols.
+        if len(matches) < top_k:
+            try:
+                for term in terms:
+                    rows = g.conn.execute(
+                        "SELECT DISTINCT file_path FROM nodes "
+                        "WHERE LOWER(file_path) LIKE ? "
+                        "ORDER BY file_path LIMIT ?",
+                        (f"%{term}%", top_k * 2),
+                    ).fetchall()
+                    for r in rows:
+                        key = (r["file_path"], "")
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        matches.append({
+                            "file_path": r["file_path"],
+                            "chunk_type": "file",
+                            "name": "",
+                            "match_type": "filename_substring",
+                        })
+                        if len(matches) >= top_k:
+                            break
+                    if len(matches) >= top_k:
+                        break
+            except Exception:
+                pass
+    except Exception:
+        pass
+    finally:
+        if graph_open:
+            try:
+                g.close()
+            except Exception:
+                pass
+
+    return {
+        "query": query,
+        "matches": matches,
+        "warning": (
+            f"Semantic ranking unavailable ({reason}) — falling back to "
+            f"structural (substring) matches against the graph DB. "
+            f"Run `codevira index` to enable semantic search."
+        ),
+        "fix_command": "codevira index",
+    }
+
 
 def write_session_log(session_id: str, task: str, phase: str, files_changed: list[str], decisions: list[dict], next_steps: list[str]) -> dict[str, str]:
     """Write a structured session log to SQLite Memory."""

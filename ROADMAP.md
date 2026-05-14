@@ -200,6 +200,54 @@ Stay local. Stay focused on the one developer working on their machine.
 
 ---
 
+## 🔜 v2.1 — Honest known limitations from the rc.5 audit (2026-05-13)
+
+The rc.5 audit (29 CLI items + 7 product-credibility P0s + the "index all
+the code" question) closed 38 issues but surfaced 5 adjacent items that
+weren't formal P-numbered findings. Two are quick UX siblings already
+addressed during rc.5 (the `get_impact` and `query_graph` error messages
+got the same 3-case differentiation we shipped in `get_node`). The
+other three are bigger and deferred here:
+
+### Multi-language `get_signature` / `get_code`
+
+Today both tools use Python's `ast` module and only read Python files.
+For TypeScript / Go / Rust / Java the response is *"Python-only by
+design"* — leaving the AI to call `Read` directly. **Fix:** wire the
+existing tree-sitter parsers (already used for graph indexing) into
+these two tools so they can extract function signatures and bodies for
+every language we already index. New per-language tests required.
+
+### `record_decision` batch API
+
+Each `record_decision` MCP call costs ~800 B of protocol overhead. A
+session that logs 50 decisions burns ~40 KB on framing alone. Add a
+`record_decisions_batch(items=[...])` (or extend
+`write_session_log(decisions=[...])`) so multi-decision flows compress
+to one round-trip. Backwards-compatible — single-decision callers keep
+working unchanged.
+
+### CLI naming clarity
+
+Three design tensions a new user runs into in the first 10 minutes:
+
+* **`init` vs `setup` vs `register` vs `configure`** — four commands
+  with overlapping scope. Pick a canonical hierarchy
+  (e.g. `setup` becomes the umbrella and the others become
+  `setup init` / `setup configure` subcommands), then add transition
+  aliases for the old spellings.
+* **`codevira inspect`** — a single "tell me everything about this
+  project" command that combines `status`, `status --global`, `doctor`,
+  and `projects --json` into one structured view. New top-level
+  command; doesn't deprecate any existing command.
+* **`--project-dir` (global flag) vs `--project PATH` (per-subcommand
+  flag)** — both work today, do the same thing, take different
+  spellings. Pick one canonical form, deprecate the other on a
+  v2.1 → v2.2 cycle. Print a deprecation banner on the deprecated
+  spelling for a release before removal.
+
+---
+
 ## ❓ Considering (depends on user demand)
 
 These would change Codevira's positioning. We won't build them unless solo developers explicitly ask for them.

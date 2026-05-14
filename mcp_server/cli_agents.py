@@ -75,18 +75,34 @@ def cmd_agents(
         out.write(f"Error: could not resolve project — {e}\n")
         return 1
 
-    # Determine which IDEs to render
+    # Determine which IDEs to render.
+    # P1-1 (rc.5): default to ONLY detected IDEs so this command's plan
+    # matches `codevira setup --dry-run`. Pre-fix, `agents` rendered nudge
+    # files for every codevira-supported IDE regardless of whether the user
+    # had it installed — confusing when comparing `setup` and `agents`
+    # output side-by-side. Pass `ide="all"` (or set `_AGENTS_ALL=1` env)
+    # to restore the legacy "render for everything" behaviour.
     supported = agents_md.supported_ides()
-    if ide is not None:
+    if ide is not None and ide != "all":
         if ide not in supported:
             out.write(
                 f"Error: unknown --ide {ide!r}. "
-                f"Valid: {', '.join(supported)}\n"
+                f"Valid: {', '.join(supported)} or 'all'\n"
             )
             return 1
         targets = (ide,)
-    else:
+    elif ide == "all":
         targets = supported
+    else:
+        # Default: align with detect_installed_ides()
+        try:
+            from mcp_server.ide_inject import detect_installed_ides
+            detected = set(detect_installed_ides(project_root))
+            # Always include agents_md (the universal fallback).
+            detected.add("agents_md")
+            targets = tuple(i for i in supported if i in detected)
+        except Exception:
+            targets = supported
 
     out.write(f"▸ Generating nudge files in {project_root}\n")
     if dry_run:

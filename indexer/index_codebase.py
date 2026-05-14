@@ -759,17 +759,47 @@ def cmd_status(check_stale: bool = False, show_global: bool = False):
     data_dir = get_data_dir()
     graph_db_path = data_dir / "graph" / "graph.db"
 
-    # Fast path: project not initialized. Skip rich/sqlite/chromadb imports
+    # Fast path: project has no local index yet. Skip rich/sqlite/chromadb imports
     # entirely and print a plain-text one-liner.
-    # If --global was requested, still show the global panel after — global
-    # stats don't depend on the current project being initialized.
+    # P0-2 (rc.5): if the project IS registered in global.db (visible to the
+    # cross-project layer), say so explicitly instead of "Not initialized" —
+    # the latter was a lie for projects that had been registered via auto-init
+    # without an in-progress local index build.
     if not graph_db_path.exists():
+        registered_msg: str | None = None
+        try:
+            from mcp_server.paths import get_project_root, get_global_db_path
+            import sqlite3 as _sqlite3
+            project_root = get_project_root()
+            db_path = get_global_db_path()
+            if db_path.is_file():
+                _conn = _sqlite3.connect(str(db_path))
+                row = _conn.execute(
+                    "SELECT name, last_synced_at FROM projects WHERE path = ?",
+                    (str(project_root),),
+                ).fetchone()
+                _conn.close()
+                if row:
+                    registered_msg = (
+                        f"  Codevira — Registered ({row[0]}) but no local index yet"
+                    )
+        except Exception:
+            pass
+
         print()
-        print("  Codevira — Not initialized for this project")
-        print("  " + "─" * 44)
-        print()
-        print("  Run `codevira init` to initialize, or use this project")
-        print("  in an AI tool — auto-init triggers on first MCP tool call.")
+        if registered_msg:
+            print(registered_msg)
+            print("  " + "─" * 44)
+            print()
+            print("  This project is in ~/.codevira/global.db but the local")
+            print("  graph + semantic index haven't been built yet.")
+            print("  Run `codevira index` to build them now.")
+        else:
+            print("  Codevira — Not initialized for this project")
+            print("  " + "─" * 44)
+            print()
+            print("  Run `codevira init` to initialize, or use this project")
+            print("  in an AI tool — auto-init triggers on first MCP tool call.")
         print()
         if show_global:
             from rich.console import Console
@@ -858,21 +888,39 @@ def cmd_status(check_stale: bool = False, show_global: bool = False):
 
 
 def _print_global_status(console, Table, Panel):
-    """Print cross-project intelligence + launchd service status."""
-    # Cross-project intelligence stats
+    """Print cross-project intelligence + launchd service status.
+
+    P0-3 + P2-9 (rc.5): "Projects Tracked" now reads from the canonical
+    inventory helper so the number agrees with `codevira projects` and
+    `codevira clean --dry-run`. We also break the panel into TWO rows
+    (cross-project memory vs project inventory) so the user can tell
+    which scope is which.
+    """
     try:
         from mcp_server.global_sync import get_global_stats
+        from mcp_server._project_inventory import enumerate_projects, summarize
         stats = get_global_stats() or {}
+        inventory = summarize(enumerate_projects())
     except Exception as e:
         stats = {"error": str(e)}
+        inventory = {"tracked": 0, "ghost": 0, "orphan": 0, "stale": 0, "total": 0}
 
     g_table = Table(show_header=False, box=None)
     if "error" in stats:
         g_table.add_row("[cyan]Cross-Project Memory:[/cyan]", f"[dim]error: {stats['error']}[/dim]")
     else:
-        g_table.add_row("[cyan]Projects Tracked:[/cyan]", str(stats.get("projects_count", 0)))
-        g_table.add_row("[cyan]Global Preferences:[/cyan]", str(stats.get("preferences_count", 0)))
-        g_table.add_row("[cyan]Global Rules:[/cyan]", str(stats.get("rules_count", 0)))
+        # Project counts come from the canonical inventory (disk + global.db
+        # joined). "tracked" = registered AND project_root still valid.
+        # Ghost / orphan numbers shown alongside so the user has full picture.
+        proj_summary = (
+            f"{inventory['tracked']} tracked"
+            + (f" · [yellow]{inventory['ghost']} ghost[/yellow]" if inventory['ghost'] else "")
+            + (f" · [red]{inventory['orphan']} orphan[/red]" if inventory['orphan'] else "")
+        )
+        g_table.add_row("[cyan]Projects Tracked:[/cyan]", proj_summary)
+        # Cross-project shared memory (preferences + rules learned across all projects).
+        g_table.add_row("[cyan]Global Preferences:[/cyan]", str(stats.get("total_preferences", 0)))
+        g_table.add_row("[cyan]Global Rules:[/cyan]", str(stats.get("total_rules", 0)))
 
     # Launchd service status (macOS only)
     try:

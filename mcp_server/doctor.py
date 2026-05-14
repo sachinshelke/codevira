@@ -439,17 +439,46 @@ def check_claude_mcp_visibility() -> CheckResult:
 
     out = result.stdout or ""
     if "codevira" in out.lower():
-        # Optional: pick up the "Connected" / "Failed" status that the
-        # CLI prints alongside the entry.
-        connected = "✓ Connected" in out or "Connected" in out
+        # P1-4 (rc.5): the "Connected" indicator that `claude mcp list`
+        # prints reflects the **currently-active Claude Code session's**
+        # MCP state — which depends on the project root that session was
+        # opened in. Running doctor from $HOME or some other cwd will
+        # show codevira as "listed but not connected" even when the
+        # install is fine, because there's no active session in $HOME.
+        # Pre-fix this WARNed on every doctor invocation from a non-active
+        # project, which was a false alarm.
+        #
+        # rc.5 follow-up (post-restart smoke test): the original P1-4 fix
+        # checked for "✗ Failed" anywhere in `out`, but `claude mcp list`
+        # prints ALL registered MCP servers — so a failed unrelated server
+        # (e.g. plugin:github:github with auth issue) made codevira's
+        # check WARN even though codevira itself was ✓ Connected. Now we
+        # parse the codevira-specific line in isolation.
+        codevira_lines = [
+            line for line in out.splitlines()
+            if "codevira" in line.lower() and ":" in line
+        ]
+        codevira_line = codevira_lines[0] if codevira_lines else ""
+        has_failed = "✗ Failed" in codevira_line
+        connected = "✓ Connected" in codevira_line
+        if has_failed:
+            return CheckResult(
+                "claude_mcp_visibility", _WARN,
+                "codevira listed but Claude Code shows ✗ Failed — restart Claude Code",
+            )
         if connected:
             return CheckResult(
                 "claude_mcp_visibility", _PASS,
                 "codevira visible to Claude Code (✓ Connected)",
             )
+        # Listed but no Connected/Failed indicator. Most common cause:
+        # `claude mcp list` was invoked outside an active Claude Code
+        # project — the registration is fine; we just can't probe the
+        # live session state from here.
         return CheckResult(
-            "claude_mcp_visibility", _WARN,
-            "codevira listed but not connected — restart Claude Code",
+            "claude_mcp_visibility", _PASS,
+            "codevira registered in Claude Code MCP config "
+            "(live connection state unprobed from this cwd)",
         )
 
     return CheckResult(
@@ -635,6 +664,10 @@ def check_crash_log_size() -> CheckResult:
 # =====================================================================
 
 
+# Bug 21c (rc.4): check_ghost_projects lives in _ghost_check.py to keep this
+# hot file's signature surface small.
+from mcp_server._ghost_check import check_ghost_projects  # noqa: E402
+
 _CHECKS: tuple[Callable[[], CheckResult], ...] = (
     check_python_version,
     check_codevira_data_dir,
@@ -648,6 +681,7 @@ _CHECKS: tuple[Callable[[], CheckResult], ...] = (
     check_claude_mcp_visibility,    # rc.4 (Bug 10)
     check_codeindex_freshness,      # rc.4 (Bug 11)
     check_semantic_search_health,   # rc.4 (Bug 12)
+    check_ghost_projects,           # rc.4 (Bug 21c)
     check_crash_log_size,
 )
 
@@ -677,9 +711,41 @@ def cmd_doctor(*, verbose: bool = False, out: IO[str] | None = None) -> int:
     """`codevira doctor` — print the report. Returns:
        0 if all checks PASS or WARN
        1 if any check FAILed
+
+    P0-1 (rc.5): the doctor checks unfortunately trip a per-project mkdir
+    somewhere inside the path-resolution stack we haven't been able to
+    isolate cleanly (some chain via ``get_data_dir()`` materialises
+    ``~/.codevira/projects/<slug>/`` as a side effect of statting paths
+    under it). The fix here is post-hoc: snapshot the projects dir at
+    entry, then ALWAYS remove any new dirs at exit. Doctor stays the
+    "read-only diagnostic" the docs promise — without us having to find
+    every mkdir caller.
     """
     out = out or sys.stdout
+
+    # P0-1: snapshot projects dir, restore at exit.
+    snapshot_pre: set[str] = set()
+    snapshot_root = None
+    try:
+        from mcp_server.paths import get_global_home
+        snapshot_root = get_global_home() / "projects"
+        if snapshot_root.is_dir():
+            snapshot_pre = {p.name for p in snapshot_root.iterdir() if p.is_dir()}
+    except Exception:
+        pass
+
     report = run_all_checks()
+
+    # P0-1: restore — remove any project dir that didn't exist before
+    # the doctor run, so doctor genuinely is read-only.
+    if snapshot_root is not None and snapshot_root.is_dir():
+        try:
+            import shutil as _shutil
+            for p in snapshot_root.iterdir():
+                if p.is_dir() and p.name not in snapshot_pre:
+                    _shutil.rmtree(p, ignore_errors=True)
+        except Exception:
+            pass
 
     out.write("Codevira health check\n")
     out.write("─" * 60 + "\n")

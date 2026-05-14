@@ -40,7 +40,10 @@ _MAX_TOP = 20
 def _parse_since(raw: str | None) -> int:
     """Parse `--since` argument like '7d', '30d', '14'.
 
-    Falls back to default + warns on stderr for malformed input.
+    Falls back to default + warns on stderr for malformed input. P1-8/P1-10
+    (rc.5): also warns when the value is OUT OF RANGE (negative, zero, or
+    above max) — previously silently clamped, so users believed their value
+    was honoured.
     """
     if raw is None or raw == "":
         return _DEFAULT_SINCE_DAYS
@@ -52,17 +55,37 @@ def _parse_since(raw: str | None) -> int:
         )
         return _DEFAULT_SINCE_DAYS
     days = int(match.group(1))
-    return max(_MIN_SINCE_DAYS, min(days, _MAX_SINCE_DAYS))
+    clamped = max(_MIN_SINCE_DAYS, min(days, _MAX_SINCE_DAYS))
+    if clamped != days:
+        sys.stderr.write(
+            f"warning: --since={raw} out of range "
+            f"[{_MIN_SINCE_DAYS}d..{_MAX_SINCE_DAYS}d]; "
+            f"clamped to {clamped}d\n"
+        )
+    return clamped
 
 
 def _clamp_top(value: int | None) -> int:
+    """Clamp --top to [_MIN_TOP, _MAX_TOP]. P1-9 (rc.5): warns when the value
+    was clamped — previously silent, so users believed a 999 / 0 / -1 value
+    was honoured."""
     if value is None:
         return _DEFAULT_TOP
     try:
         v = int(value)
     except (TypeError, ValueError):
+        sys.stderr.write(
+            f"warning: --top={value!r} is not a valid integer; "
+            f"using {_DEFAULT_TOP}\n"
+        )
         return _DEFAULT_TOP
-    return max(_MIN_TOP, min(v, _MAX_TOP))
+    clamped = max(_MIN_TOP, min(v, _MAX_TOP))
+    if clamped != v:
+        sys.stderr.write(
+            f"warning: --top={v} out of range [{_MIN_TOP}..{_MAX_TOP}]; "
+            f"clamped to {clamped}\n"
+        )
+    return clamped
 
 
 # ---------------------------------------------------------------------
@@ -276,13 +299,21 @@ def cmd_insights(
     finally:
         g.close()
 
-    # Friendly empty case
+    # Friendly empty case (P2-11 rc.5: aligned with budget/replay first-run UX)
     if not stable and not reverted and not rules:
         out.write(
             f"Codevira insights for {project_root.name} (last {since_days} days)\n\n"
-            "No outcomes recorded yet — use codevira for a few sessions and try again.\n"
-            "Tip: outcomes need a few subsequent commits after each session for `git`-based\n"
-            "outcome detection to classify them.\n"
+            "No outcomes recorded yet for this project.\n"
+            "\n"
+            "How to populate this report:\n"
+            "  1. Use codevira from an AI tool (Claude Code, Cursor, etc.) for\n"
+            "     a few sessions — every record_decision / write_session_log\n"
+            "     call adds an entry.\n"
+            "  2. Make a few commits AFTER each session; codevira's outcome\n"
+            "     tracker classifies decisions as kept/modified/reverted based\n"
+            "     on subsequent git history.\n"
+            "  3. Re-run `codevira insights` — entries with at least 1 outcome\n"
+            "     appear here.\n"
         )
         return 0
 

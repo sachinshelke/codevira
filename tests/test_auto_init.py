@@ -182,12 +182,28 @@ class TestEnsureProjectInitialized:
         assert elapsed < 0.05
 
     def test_already_initialized_project_returns_ready(self, tmp_path):
-        """If config.yaml already exists, returns ready=True without spawning a thread."""
+        """Fully initialized project (config + graph.db WITH NODES) returns ready=True.
+
+        Bug 21a (rc.4): "initialized" requires both bookkeeping (config.yaml)
+        AND heavy state (graph/graph.db).
+        rc.5 (P0-B): the graph.db must additionally contain at least one row in
+        the ``nodes`` table — an empty graph.db (no schema or zero nodes) is
+        treated as "needs build" so the heavy-init path can fire to actually
+        populate it.
+        """
+        import sqlite3 as _sqlite3
         project_root = tmp_path / "proj"
         project_root.mkdir()
         data_dir = tmp_path / "data"
-        data_dir.mkdir()
+        (data_dir / "graph").mkdir(parents=True)
         (data_dir / "config.yaml").write_text("project:\n  name: test\n")
+        # Create a real graph.db with a populated nodes table.
+        graph_db = data_dir / "graph" / "graph.db"
+        conn = _sqlite3.connect(str(graph_db))
+        conn.execute("CREATE TABLE nodes (id TEXT PRIMARY KEY, kind TEXT, name TEXT, file_path TEXT)")
+        conn.execute("INSERT INTO nodes VALUES ('n1', 'file', 'main.py', 'src/main.py')")
+        conn.commit()
+        conn.close()
 
         with patch("mcp_server.paths.get_project_root", return_value=project_root), \
              patch("mcp_server.paths.get_data_dir", return_value=data_dir):
@@ -356,6 +372,12 @@ class TestWriteMetadata:
 
 class TestRegisterGlobal:
     def test_registers_in_global_db(self, tmp_path):
+        """Bug 20 (rc.4): _register_global must register under project_root,
+        NOT data_dir. Pre-fix this asserted path=str(data_dir), which silently
+        accepted the bug — same logical project then accumulated duplicate
+        rows because global_sync.py registered under project_root and these
+        two call sites registered under the storage path.
+        """
         data_dir = tmp_path / "data"
         data_dir.mkdir()
         project_root = tmp_path / "proj"
@@ -368,10 +390,18 @@ class TestRegisterGlobal:
             _register_global(data_dir, project_root, DEFAULT_DETECTED)
 
         mock_gdb.register_project.assert_called_once_with(
-            path=str(data_dir),
+            path=str(project_root),
             name="proj",
             language="python",
             git_remote="git@host:r.git",
+        )
+        # Explicit regression guard: the path MUST NOT be the storage dir.
+        # If a future refactor regresses Bug 20, this assertion fires loudly.
+        call_kwargs = mock_gdb.register_project.call_args.kwargs
+        assert call_kwargs["path"] != str(data_dir), (
+            "Bug 20 regression: _register_global passed data_dir as path. "
+            "It must pass project_root so global.db keys match the canonical "
+            "project path used by global_sync.py."
         )
         mock_gdb.close.assert_called_once()
 

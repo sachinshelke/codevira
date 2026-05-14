@@ -631,7 +631,11 @@ def cmd_configure(
 
     print("\nDiscovered file extensions (top 10 by file count):")
     for item in scan["exts_discovered"][:10]:
-        print(f"  - {item['ext']:<6} {item['files']:>7,} files")
+        # P1-3 (rc.5): files without an extension previously rendered as a
+        # blank cell ("- " followed by the count). Show "(none)" so the user
+        # can tell what's being counted (Dockerfile, Makefile, LICENSE, etc.).
+        ext_display = item["ext"] if item["ext"] else "(none)"
+        print(f"  - {ext_display:<6} {item['files']:>7,} files")
     if len(scan["exts_discovered"]) > 10:
         print(f"  ... (+{len(scan['exts_discovered']) - 10} more)")
 
@@ -811,15 +815,15 @@ def cmd_configure(
         if not sys.stdin.isatty():
             print("(non-interactive: skipping reindex. Run `codevira index --full` yourself.)")
         else:
-            try:
-                answer = input("\nRebuild index now? [Y/n] ").strip().lower()
-            except EOFError:
-                answer = "n"
-            except KeyboardInterrupt:
-                print()
-                print("Config saved; reindex aborted. Run `codevira index --full` later.")
-                return 0
-            should_reindex = answer in ("", "y", "yes")
+            # Bug 22 (rc.4): use shared confirm() helper. Previous code returned
+            # False on any non-matching input (including paste artifacts) — looked
+            # like the prompt rejected legitimate input. confirm() loops on bad
+            # input and handles EOFError / KeyboardInterrupt cleanly (both return
+            # False, so we fall through to the no-reindex branch — config is
+            # already written; user can run `codevira index --full` later).
+            from mcp_server._prompts import confirm
+            print()  # preserve the blank line the old prompt prepended
+            should_reindex = confirm("Rebuild index now?", default=True)
 
     if should_reindex:
         from indexer.index_codebase import cmd_full_rebuild

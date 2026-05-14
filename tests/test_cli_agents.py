@@ -54,17 +54,21 @@ def isolated_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 class TestCmdAgents:
 
-    def test_default_writes_all_ides_in_isolated_project(
+    def test_all_flag_writes_all_ides_in_isolated_project(
         self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
     ):
+        """P1-1 (rc.5): default behaviour is now 'render for detected IDEs
+        only' (aligned with `codevira setup`). The 'render for every supported
+        IDE regardless of installation' behaviour is opt-in via ide='all'.
+        """
         import mcp_server.paths as paths_mod
         paths_mod.set_project_dir(isolated_project)
         paths_mod.invalidate_data_dir_cache()
 
         out = io.StringIO()
-        rc = cmd_agents(out=out)
+        rc = cmd_agents(ide="all", out=out)
         assert rc == 0
-        # Verify the expected files exist
+        # With ide='all' every supported IDE's nudge file is written.
         for rel in (
             "CLAUDE.md",
             ".cursor/rules/codevira.mdc",
@@ -74,7 +78,7 @@ class TestCmdAgents:
             ".github/copilot-instructions.md",
         ):
             assert (isolated_project / rel).exists(), (
-                f"expected {rel} after `codevira agents`"
+                f"expected {rel} after `codevira agents --ide all`"
             )
 
     def test_single_ide_writes_only_that_one(
@@ -116,13 +120,16 @@ class TestCmdAgents:
     def test_idempotent_re_run(
         self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
     ):
+        """P1-1 (rc.5): pass ide='all' to render every supported IDE so this
+        idempotency test isn't gated on detect_installed_ides matching the
+        full set."""
         import mcp_server.paths as paths_mod
         paths_mod.set_project_dir(isolated_project)
         paths_mod.invalidate_data_dir_cache()
 
         # First run: creates everything
         first_out = io.StringIO()
-        cmd_agents(out=first_out)
+        cmd_agents(ide="all", out=first_out)
         first_size = (isolated_project / "CLAUDE.md").stat().st_size
         # First run: every supported IDE → "written" (the summary line)
         first_summary_line = [
@@ -138,7 +145,7 @@ class TestCmdAgents:
 
         # Second run: idempotent — content same, file likely unchanged
         out = io.StringIO()
-        rc = cmd_agents(out=out)
+        rc = cmd_agents(ide="all", out=out)
         assert rc == 0
         assert (isolated_project / "CLAUDE.md").stat().st_size == first_size
         # Content should still be identical (block is the same)

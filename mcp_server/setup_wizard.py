@@ -797,7 +797,48 @@ def _print_plan(plan: SetupPlan) -> None:
     print(f"  Plan ({len(plan.steps)} steps):")
     for step in plan.steps:
         print(f"    • {step.preview}")
+    # P1-6 (rc.5): if every feature flag was disabled the plan is empty.
+    # Surface that loudly so the user knows nothing will happen instead of
+    # silently reporting "Already up to date".
+    if not plan.steps:
+        print()
+        print(
+            "  ⚠  Plan is empty — all of --no-mcp / --no-hooks / --no-nudge-files "
+            "appear to be set."
+        )
+        print(
+            "     Re-run without those flags to actually configure your IDE(s)."
+        )
     print()
+
+
+def _ghost_advisory_for_current_project() -> str:
+    """P2-5 (rc.5): if the current project's data_dir is a 'ghost' shape
+    (graph dir exists but config.yaml/metadata.json missing), return a
+    one-line advisory the caller can print after the "IDE setup up to
+    date" line. Returns empty string when the project is healthy.
+    """
+    try:
+        from mcp_server.paths import get_data_dir
+        d = get_data_dir()
+        if not d.is_dir():
+            return ""
+        has_config = (d / "config.yaml").is_file()
+        has_metadata = (d / "metadata.json").is_file()
+        if has_config and has_metadata:
+            # Also check graph has nodes (ghost variant where graph empty)
+            graph_db = d / "graph" / "graph.db"
+            if not graph_db.is_file():
+                return "this project has no graph index yet — run `codevira index`."
+            return ""
+        # Missing one of config/metadata → classic ghost.
+        return (
+            "this project's data dir is incomplete (missing config.yaml or "
+            "metadata.json). Run `codevira init` to populate it, or "
+            "`codevira projects --ghosts-only` to see the full picture."
+        )
+    except Exception:
+        return ""
 
 
 def _print_summary(result: ExecuteResult, *, elapsed_seconds: float) -> None:
@@ -807,7 +848,15 @@ def _print_summary(result: ExecuteResult, *, elapsed_seconds: float) -> None:
     no_change_count = sum(1 for r in result.steps if r.action == "no_change")
 
     if no_change_count == len(result.steps):
-        print(f"  ✓ Already up to date ({len(result.steps)} steps, no changes needed).")
+        # P2-5 (rc.5): setup is "up to date" only at the IDE-config level.
+        # The current project may still be a ghost (no config.yaml / no graph).
+        # Inspect the current project's data dir and warn if it's incomplete.
+        ghost_note = _ghost_advisory_for_current_project()
+        if ghost_note:
+            print(f"  ✓ IDE setup up to date ({len(result.steps)} steps, no changes).")
+            print(f"  ⚠  However: {ghost_note}")
+        else:
+            print(f"  ✓ Already up to date ({len(result.steps)} steps, no changes needed).")
     elif failed_count == 0:
         print(f"  ✓ Done in {elapsed_seconds:.1f}s. {result.changes_made} changes; "
               f"{no_change_count} already current.")
@@ -833,12 +882,12 @@ def _print_summary(result: ExecuteResult, *, elapsed_seconds: float) -> None:
 
 
 def _confirm(question: str) -> bool:
-    """Yes/no prompt. Defaults to yes on bare Enter."""
-    try:
-        answer = input(f"  {question} [Y/n] ").strip().lower()
-    except EOFError:
-        # Non-interactive context: refuse to proceed without --yes.
-        print()
-        print("  Non-interactive shell — pass --yes to skip the prompt.")
-        return False
-    return answer in ("", "y", "yes")
+    """Yes/no prompt. Defaults to yes on bare Enter.
+
+    Bug 22 (rc.4): delegates to the shared :func:`mcp_server._prompts.confirm`
+    helper so the prompt flushes stdout, loops on unrecognized input, and
+    handles Ctrl+C cleanly instead of silently returning False for any
+    non-matching answer (which surfaced as "I typed Y and nothing happened").
+    """
+    from mcp_server._prompts import confirm
+    return confirm(question, default=True)

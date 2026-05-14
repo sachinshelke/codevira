@@ -354,19 +354,26 @@ class TestAutoDetectProject:
     """Full auto-detection pipeline."""
 
     def test_python_project(self, tmp_path):
+        """rc.5: default is union of all known extensions; pass
+        single_language=True to get the legacy [".py"] narrowing."""
         root = _make_project(tmp_path, "my-api")
         (root / "pyproject.toml").write_text("[project]\nname = 'my-api'\n")
         src = root / "src"
         src.mkdir()
         (src / "main.py").write_text("# main\n")
 
+        # New default: union of extensions (polyglot-friendly)
         result = auto_detect_project(root)
-
         assert result["name"] == "my-api"
         assert result["language"] == "python"
-        assert isinstance(result["watched_dirs"], list)
-        assert result["file_extensions"] == [".py"]
-        assert result["collection_name"] == "my_api"
+        assert ".py" in result["file_extensions"]
+        # Default includes many more — sanity-check a non-Python ext.
+        assert ".md" in result["file_extensions"]
+
+        # Legacy single-language mode
+        narrow = auto_detect_project(root, single_language=True)
+        assert narrow["file_extensions"] == [".py"]
+        assert narrow["collection_name"] == "my_api"
 
     def test_typescript_project(self, tmp_path):
         root = _make_project(tmp_path, "web-app")
@@ -382,6 +389,7 @@ class TestAutoDetectProject:
         assert ".tsx" in result["file_extensions"]
 
     def test_go_project(self, tmp_path):
+        """rc.5: file_extensions defaults to the union, narrows with single_language=True."""
         root = _make_project(tmp_path, "go-service")
         (root / "go.mod").write_text("module example.com/go-service\n")
         cmd = root / "cmd"
@@ -389,9 +397,11 @@ class TestAutoDetectProject:
         (cmd / "main.go").write_text("package main\n")
 
         result = auto_detect_project(root)
-
         assert result["language"] == "go"
-        assert result["file_extensions"] == [".go"]
+        assert ".go" in result["file_extensions"]
+
+        narrow = auto_detect_project(root, single_language=True)
+        assert narrow["file_extensions"] == [".go"]
 
     def test_returns_complete_dict(self, tmp_path):
         """auto_detect_project should always return all required keys."""
@@ -419,18 +429,26 @@ class TestAutoDetectProject:
         assert cn == cn.lower()
 
     def test_empty_project_defaults(self, tmp_path):
-        """Completely empty project should get sensible defaults."""
+        """Completely empty project should get sensible defaults.
+        rc.5: default ext list is the full union; single_language=True
+        returns the legacy single-language list.
+        """
         root = _make_project(tmp_path, "blank")
 
         result = auto_detect_project(root)
-
         assert result["name"] == "blank"
         assert result["language"] == "python"  # ultimate fallback
-        assert result["file_extensions"] == [".py"]
+        # Union default includes .py + dozens more.
+        assert ".py" in result["file_extensions"]
+        assert len(result["file_extensions"]) >= 30
         assert result["watched_dirs"] == ["."]
         assert result["collection_name"] == "blank"
 
+        narrow = auto_detect_project(root, single_language=True)
+        assert narrow["file_extensions"] == [".py"]
+
     def test_rust_project_full(self, tmp_path):
+        """rc.5: file_extensions defaults to union, single_language=True narrows."""
         root = _make_project(tmp_path, "my-crate")
         (root / "Cargo.toml").write_text('[package]\nname = "my-crate"\n')
         src = root / "src"
@@ -438,10 +456,12 @@ class TestAutoDetectProject:
         (src / "lib.rs").write_text("pub fn add(a: i32, b: i32) -> i32 { a + b }\n")
 
         result = auto_detect_project(root)
-
         assert result["language"] == "rust"
-        assert result["file_extensions"] == [".rs"]
+        assert ".rs" in result["file_extensions"]
         assert result["collection_name"] == "my_crate"
+
+        narrow = auto_detect_project(root, single_language=True)
+        assert narrow["file_extensions"] == [".rs"]
 
 
 # ---------------------------------------------------------------------------

@@ -676,6 +676,81 @@ class TestCmdStatusIndexCb:
             cmd_status()  # Should not raise
 
 
+class TestGlobalStatusRendersRealNumbers:
+    """Regression guard for Bug 19 (rc.4 dogfood, 2026-05-13).
+
+    `codevira status --global` rendered "Projects Tracked: 0 / Global Preferences: 0 /
+    Global Rules: 0" even on heavily-indexed projects because the renderer read
+    `projects_count` / `preferences_count` / `rules_count` while `GlobalDB.get_stats()`
+    writes `project_count` / `total_preferences` / `total_rules`. The bug was invisible
+    to all existing tests because they assert on the dict, never on the rendered
+    string. This test asserts on the rendered Rich-table output.
+    """
+
+    def test_global_status_renders_keys_from_get_stats(self, project_env, capsys):
+        """All three Global Status numbers must reflect their canonical sources.
+
+        rc.5 (P0-3 audit): "Projects Tracked" now reads from the canonical
+        project inventory (`mcp_server._project_inventory`), not from
+        `stats['project_count']`. The "Global Preferences" + "Global Rules"
+        rows still read from `get_global_stats()`. This test asserts ALL
+        THREE rendered numbers match their (different) sources.
+        """
+        _project, _data_dir, db = project_env
+        stats = {"project_count": 99, "total_preferences": 13, "total_rules": 22}
+        # Mock the inventory helper so we control "Projects Tracked".
+        inv_summary = {"tracked": 7, "ghost": 0, "orphan": 0, "stale": 0, "total": 7}
+        mock_client = MagicMock()
+        mock_collection = MagicMock()
+        mock_collection.count.return_value = 0
+        mock_client.get_collection.return_value = mock_collection
+        with patch("indexer.index_codebase.SQLiteGraph", return_value=db), \
+             patch("indexer.index_codebase._get_chroma_client", return_value=mock_client), \
+             patch("indexer.index_codebase._get_embedding_fn", return_value=MagicMock()), \
+             patch("indexer.index_codebase._get_changed_files", return_value=[]), \
+             patch("mcp_server.global_sync.get_global_stats", return_value=stats), \
+             patch("mcp_server._project_inventory.enumerate_projects", return_value=[]), \
+             patch("mcp_server._project_inventory.summarize", return_value=inv_summary):
+            from indexer.index_codebase import cmd_status
+            cmd_status(show_global=True)
+        out = capsys.readouterr().out
+        # P0-3: Projects Tracked reads from inventory, NOT from stats.
+        # Even though stats says 99, the rendered value should be 7 (inventory).
+        assert "Projects Tracked" in out and " 7 " in out, (
+            f"Expected 'Projects Tracked: 7 tracked' in rendered output, got:\n{out}"
+        )
+        assert " 99" not in out, (
+            "Should NOT use stats['project_count'] as source — P0-3 fix means "
+            "Projects Tracked is sourced from the project inventory helper."
+        )
+        assert "Global Preferences" in out and " 13" in out, (
+            f"Expected 'Global Preferences: 13' in rendered output, got:\n{out}"
+        )
+        assert "Global Rules" in out and " 22" in out, (
+            f"Expected 'Global Rules: 22' in rendered output, got:\n{out}"
+        )
+
+    def test_global_status_shows_zero_when_stats_missing(self, project_env, capsys):
+        """When get_global_stats() returns None (no global.db yet), numbers default to 0."""
+        _project, _data_dir, db = project_env
+        mock_client = MagicMock()
+        mock_collection = MagicMock()
+        mock_collection.count.return_value = 0
+        mock_client.get_collection.return_value = mock_collection
+        with patch("indexer.index_codebase.SQLiteGraph", return_value=db), \
+             patch("indexer.index_codebase._get_chroma_client", return_value=mock_client), \
+             patch("indexer.index_codebase._get_embedding_fn", return_value=MagicMock()), \
+             patch("indexer.index_codebase._get_changed_files", return_value=[]), \
+             patch("mcp_server.global_sync.get_global_stats", return_value=None):
+            from indexer.index_codebase import cmd_status
+            cmd_status(show_global=True)
+        out = capsys.readouterr().out
+        # All three numbers should default to 0 when stats absent.
+        assert "Projects Tracked" in out
+        assert "Global Preferences" in out
+        assert "Global Rules" in out
+
+
 # ---------------------------------------------------------------------------
 # cmd_generate_graph
 # ---------------------------------------------------------------------------

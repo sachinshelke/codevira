@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "codevira"
 version = "2.0.0"
-description = "Persistent adaptive memory for AI coding agents — MCP server with context graph, semantic search, adaptive learning, roadmap tracking, and cross-tool continuity."
+description = "Stop re-explaining your project to AI agents every session. Codevira gives Claude Code, Cursor, Windsurf, and Antigravity shared persistent memory of your codebase — locally, no signup, MIT-licensed. One install configures every AI tool."
 readme = "README.md"
 license = { text = "MIT" }
 authors = [

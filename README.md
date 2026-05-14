@@ -11,7 +11,17 @@
 
 **Built for solo developers** working on local projects with AI agents. Codevira gives every AI tool you use access to the same persistent project memory — so you stop re-explaining your codebase every session, stop losing carefully-made decisions, and stop burning tokens on re-discovery.
 
-**Works with:** Claude Code · Claude Desktop · Cursor · Windsurf · Google Antigravity · any MCP-compatible AI tool
+**Works with:** Claude Code · Claude Desktop · Cursor · Windsurf · Google Antigravity · OpenAI Codex · GitHub Copilot · Continue.dev · Aider · any MCP-compatible AI tool
+
+---
+
+## What you get
+
+* 🧠 **One brain across every AI tool.** A decision you log in Claude Code shows up in Cursor. Style preferences learned in one session enforce in the next. No per-tool re-onboarding.
+* 🛡️ **Active guardrails, not passive notes.** Codevira intercepts every AI tool call (`Edit`, `Write`, prompt submit, session start). Decisions you mark `do_not_revert` block silent regressions. Out-of-scope edits get warned. The AI literally *cannot* undo your protected choices without surfacing the conflict to you first.
+* ⚡ **Zero-friction setup.** `pipx install codevira && codevira setup` — auto-detects every AI tool you have and configures all of them. No JSON to hand-edit, no per-IDE script, no team server to spin up.
+* 🔒 **Local-first, MIT-licensed.** Your decisions, code graph, and learned preferences live in `~/.codevira/` on your machine. No cloud, no account, no telemetry, no SaaS.
+* 📊 **Honest measurement.** `codevira insights` shows which past decisions held up vs got reverted across your real git history. `codevira budget` reports per-session AI token spend. You can audit what the memory layer is actually costing and earning.
 
 ---
 

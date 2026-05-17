@@ -340,6 +340,34 @@ class SQLiteGraph:
         cur = self.conn.execute(query, params)
         return [dict(r) for r in cur.fetchall()]
 
+    def count_nodes(self, kind: str | None = None) -> int:
+        """Return the total node count, optionally filtered by kind.
+
+        2026-05-17 Bug B fix: cmd_incremental uses this to distinguish
+        "graph empty, never indexed" from "graph populated, no changes."
+        The former returned "Index is up to date" as a lie; now it
+        returns "graph has 0 nodes — run `codevira index --full`".
+
+        Args:
+            kind: optional node kind to filter (e.g. "file"). None = all kinds.
+
+        Returns:
+            Integer count. Returns 0 if the table is empty or doesn't
+            exist (P4 defensive parsing — never crashes the caller).
+        """
+        try:
+            if kind is None:
+                cur = self.conn.execute("SELECT COUNT(*) FROM nodes")
+            else:
+                cur = self.conn.execute("SELECT COUNT(*) FROM nodes WHERE kind = ?", (kind,))
+            row = cur.fetchone()
+            return int(row[0]) if row else 0
+        except Exception:
+            # Defensive: schema-version drift or table missing — treat as 0
+            # so callers degrade gracefully (P9). Worst case the caller
+            # offers the user "run --full" which is correct in this state too.
+            return 0
+
     def get_blast_radius(self, node_id: str, max_depth: int = 3) -> list[dict]:
         query = '''
             WITH RECURSIVE

@@ -11,19 +11,45 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [2.1.0] — 2026-05-17 — Reliability hardening + Pillar 3 discipline scaffold
+
+### Added — Pillar 3: AI development discipline scaffold (2026-05-16)
+
+The codevira repo now ships its own discipline scaffold — the same
+pattern that will be exposed as `codevira discipline install` in
+v2.2. This is the reference implementation, eaten as dog food.
+
+- **`.claude/skills/`** — 4 SKILL.md files: `development-discipline`,
+  `open-source-quality`, `release-readiness`, `epistemic-honesty`.
+- **`.claude/hooks/pre-release-block.sh`** — PreToolUse hard wall.
+  Refuses `twine upload`, `gh release ... --draft=false`,
+  `pipx publish`, etc. unless `.release-evidence/<version>.json`
+  shows G1–G5 pass. Bypass via `CODEVIRA_RELEASE_OVERRIDE=1`.
+- **`Makefile`** — 12 targets including `release-verify-version`,
+  `release-gauntlet`, `release-build`, `release-dry-run`,
+  `release-publish`, `release-smoke`, `release-full`.
+- **`.pre-commit-config.yaml`** — ruff lint+format, mypy, hygiene.
+- **`tests/e2e/test_first_contact.py`** + 4 fixtures (docs_only,
+  code_only_python, polyglot, monorepo). G2 gate.
+- **`.github/workflows/{ci,release-gate}.yml`** — CI hard wall.
+- **`codevira.discipline.yaml`** — central scaffold config.
+- **`scripts/check_real_ide_smoke.sh`** — G3 stub.
+- **`docs/release-process.md`** — step-by-step foolproof release.
+
 ### Planned for v2.1
 
-See [ROADMAP.md](ROADMAP.md#-v21--honest-known-limitations-from-the-rc5-audit-2026-05-13).
+See [ROADMAP.md](ROADMAP.md#-v21--new-user-first-contact--reliability-hardening).
 
-- **Multi-language `get_signature` / `get_code`** — wire tree-sitter (already
-  used for graph indexing) into these tools so non-Python projects stop
-  getting "Python-only by design".
-- **`record_decisions_batch` API** — compress 50× ~800 B per-call overhead
-  into one round-trip.
-- **CLI naming clarity** — pick a canonical hierarchy among `init` / `setup` /
-  `register` / `configure`; add a `codevira inspect` umbrella; deprecate one
-  of `--project-dir` (global) / `--project PATH` (per-subcommand) on a
-  v2.1 → v2.2 cycle.
+- **Reliability hardening (23 bugs A–O)** — silent-failure elimination
+  surfaced by the discipline-scaffold e2e fixtures.
+- **Hybrid search (BM25 + semantic + rerank)** — natural-language
+  decision search.
+- **Decision deduplication** (ADD/UPDATE/NOOP) + audit trail.
+- **Conditional hook injection** — kill the always-on token tax.
+- **Multi-language `get_signature` / `get_code`** — wire tree-sitter.
+- **`record_decisions_batch` API** — compress protocol overhead.
+- **CLI naming clarity** — `init` / `setup` / `register` / `configure`
+  canonical hierarchy.
 
 ---
 

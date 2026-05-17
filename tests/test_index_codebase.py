@@ -676,6 +676,373 @@ class TestCmdStatusIndexCb:
             cmd_status()  # Should not raise
 
 
+class TestChromaCorruptionSignatureP6:
+    """2026-05-17 (post-UDAP/QuickCourier 2026-05-16 crash): the shared
+    `_looks_like_chroma_corruption` predicate (P6 single source of truth)
+    must match every documented HNSW-writer corruption signature so the
+    incremental circuit breaker and the cmd_full_rebuild probe agree on
+    what counts as 'this is corruption, halt' vs 'this is transient, retry'.
+    """
+
+    def test_hnsw_segment_writer_matches(self):
+        from indexer.index_codebase import _looks_like_chroma_corruption
+        # Exact strings from the 2026-05-14 and 2026-05-16 production crashes.
+        for msg in (
+            "Error in compaction: Failed to apply logs to the hnsw segment writer",
+            "Failed to resolve records for deletion: Error sending backfill request to compactor: Failed to apply logs to the hnsw segment writer",
+            "database disk image is malformed",
+        ):
+            err = RuntimeError(msg)
+            assert _looks_like_chroma_corruption(err), (
+                f"P6 regression: corruption signature {msg!r} no longer matches. "
+                f"The circuit breaker will fail to engage on this exact error."
+            )
+
+    def test_unrelated_errors_dont_match(self):
+        from indexer.index_codebase import _looks_like_chroma_corruption
+        for msg in (
+            "Connection refused",
+            "Permission denied",
+            "No such file or directory",
+            "ValueError: invalid input",
+        ):
+            err = RuntimeError(msg)
+            assert not _looks_like_chroma_corruption(err), (
+                f"False positive: {msg!r} matched corruption predicate. "
+                f"Circuit breaker would over-trigger on this transient error."
+            )
+
+
+class TestIncrementalCircuitBreakerP5:
+    """2026-05-17 fix (P5 bounded resources): the 2026-05-16 UDAP/QuickCourier
+    crash log shows two identical HNSW-writer crashes within 15ms — without
+    a circuit breaker, the watcher would have continued through every
+    remaining file and produced N crashes for one root cause (the original
+    41-crash UDAP pattern from 2026-05-14).
+
+    These tests verify cmd_incremental halts after N consecutive Chroma
+    corruption errors.
+    """
+
+    def test_per_file_chroma_failures_halt_after_limit(self, tmp_path, monkeypatch):
+        """If collection.delete/add raises a corruption signature for >5
+        consecutive files, the loop must abort and fall back to graph-only
+        mode (no more crash logs for that batch)."""
+        from unittest.mock import MagicMock, patch
+        import yaml as _yaml
+        from indexer.sqlite_graph import SQLiteGraph
+        from indexer.index_codebase import cmd_incremental
+
+        # Build a minimal project + data dir.
+        project = tmp_path / "proj"
+        data_dir = project / ".codevira"
+        data_dir.mkdir(parents=True)
+        (data_dir / "graph").mkdir()
+        (data_dir / "config.yaml").write_text(_yaml.safe_dump({
+            "project": {
+                "watched_dirs": ["src"],
+                "file_extensions": [".py"],
+                "skip_dirs": [],
+            }
+        }))
+        src = project / "src"
+        src.mkdir()
+        # 10 files so we can observe the breaker kicking in at file 5.
+        for i in range(10):
+            (src / f"file_{i}.py").write_text(f"x = {i}\n")
+
+        monkeypatch.setattr("indexer.index_codebase._project_root", lambda: project)
+        monkeypatch.setattr("indexer.index_codebase.get_data_dir", lambda: data_dir)
+        from mcp_server import paths as _paths
+        _paths._data_dir_cache.clear()
+
+        # Mock Chroma client + collection: every delete raises the corruption
+        # signature. Counts how many times each method gets called.
+        fake_collection = MagicMock()
+        fake_collection.delete.side_effect = RuntimeError(
+            "Error in compaction: Failed to apply logs to the hnsw segment writer"
+        )
+        fake_client = MagicMock()
+        fake_client.list_collections.return_value = []  # healthy probe — corruption surfaces in per-file ops
+        fake_client.get_collection.return_value = fake_collection
+
+        # Force changed_items to include all 10 files (mimics first incremental).
+        from indexer.index_codebase import _compute_hash
+        changed = [(f"src/file_{i}.py", _compute_hash(src / f"file_{i}.py")) for i in range(10)]
+
+        with patch("indexer.index_codebase._check_search_deps", return_value=True), \
+             patch("indexer.index_codebase._get_chroma_client", return_value=fake_client), \
+             patch("indexer.index_codebase._get_embedding_fn", return_value=MagicMock()), \
+             patch("indexer.index_codebase._get_changed_files", return_value=changed), \
+             patch("indexer.graph_generator.generate_graph_sqlite"):
+            cmd_incremental(quiet=True)
+
+        # Circuit-breaker invariant: collection.delete called AT MOST 5 times
+        # before halting. Without the breaker, it would have been called 10×.
+        actual_calls = fake_collection.delete.call_count
+        assert actual_calls <= 5, (
+            f"P5 regression: circuit breaker failed to engage. "
+            f"collection.delete was called {actual_calls} times — should be ≤5 "
+            f"before halting the loop and falling back to graph-only mode."
+        )
+    """2026-05-17 Bug J/K fix (P9 graceful degradation): _check_search_deps
+    must NOT import sentence_transformers (which triggers ~5s of PyTorch
+    tensor init). list_tools() in server.py calls _check_search_deps on
+    every MCP request — slow import here caused Claude Desktop renderer
+    timeouts and silent connection drops.
+    """
+
+    def test_check_search_deps_is_fast(self):
+        """Sanity check: 100 calls complete in well under 1 second."""
+        import time
+        from indexer.index_codebase import _check_search_deps
+        start = time.time()
+        for _ in range(100):
+            _check_search_deps()
+        elapsed = time.time() - start
+        # Generous: 100 calls in 0.5s = 5ms each. The actual import-based
+        # implementation would have been 5s * 100 = 500 seconds — this
+        # test would have taken longer than pytest's default timeout.
+        assert elapsed < 0.5, (
+            f"Bug J/K regression: _check_search_deps took {elapsed:.2f}s "
+            f"for 100 calls — likely re-introduced a heavy import."
+        )
+
+    def test_check_search_deps_uses_find_spec_not_import(self):
+        """Behavioral check: function must complete in <50ms even when the
+        modules are NOT pre-loaded in sys.modules. The old import-based
+        approach took ~5s in that case (cold PyTorch init).
+
+        This is a behavioral guard, not a static-source check — static
+        source checks are brittle against well-meaning refactors that
+        keep the contract but rephrase the implementation.
+        """
+        import time
+        import sys
+        from indexer.index_codebase import _check_search_deps
+
+        # Save & clear sys.modules entries so find_spec actually runs.
+        # If we left them in sys.modules, the fast `sys.modules.get` path
+        # would short-circuit and we wouldn't be measuring find_spec.
+        saved = {}
+        for module_name in ("chromadb", "sentence_transformers"):
+            if module_name in sys.modules:
+                saved[module_name] = sys.modules.pop(module_name)
+        try:
+            start = time.time()
+            for _ in range(50):
+                _check_search_deps()
+            elapsed = time.time() - start
+            # 50 calls in 0.5s = 10ms each. Old import-based path would
+            # have been 5s × 50 = 250 seconds (test would have hung).
+            assert elapsed < 0.5, (
+                f"Bug J/K regression: 50 calls to _check_search_deps "
+                f"took {elapsed:.2f}s — likely re-introduced the slow "
+                f"ML-import path. Critical for Claude Desktop tools/list."
+            )
+        finally:
+            # Restore — don't pollute the test session.
+            for k, v in saved.items():
+                sys.modules[k] = v
+
+
+class TestChromaSelfHealP2:
+    """2026-05-17 HNSW self-heal (P2 self-diagnose + P5 circuit-break):
+    Chroma corruption used to cascade — the 2026-05-14 UDAP install
+    produced 41 InternalError crashes because the watcher hit a corrupted
+    HNSW store and retried every file with no halt. Now _get_chroma_client
+    (probe=True) detects corruption at the boundary and raises
+    ChromaCorrupted with a clear fix_command.
+    """
+
+    def test_chroma_corrupted_raised_for_hnsw_signature(self):
+        """If the Chroma client raises an 'hnsw segment writer' error,
+        _check_chroma_health must raise ChromaCorrupted (with fix_command)."""
+        from unittest.mock import MagicMock
+        from indexer.index_codebase import _check_chroma_health, ChromaCorrupted
+
+        fake_client = MagicMock()
+        fake_client.list_collections.side_effect = RuntimeError(
+            "Failed to apply logs to the hnsw segment writer"
+        )
+        with pytest.raises(ChromaCorrupted) as exc_info:
+            _check_chroma_health(fake_client)
+        # The message must include a remediation hint (P8 helpful errors).
+        msg = str(exc_info.value)
+        assert "heal --vectors" in msg or "codeindex" in msg, (
+            f"P8 regression: ChromaCorrupted message must include fix_command. "
+            f"Got: {msg}"
+        )
+
+    def test_chroma_corrupted_raised_for_db_malformed_signature(self):
+        """Same for 'database disk image is malformed'."""
+        from unittest.mock import MagicMock
+        from indexer.index_codebase import _check_chroma_health, ChromaCorrupted
+
+        fake_client = MagicMock()
+        fake_client.list_collections.side_effect = RuntimeError(
+            "database disk image is malformed"
+        )
+        with pytest.raises(ChromaCorrupted):
+            _check_chroma_health(fake_client)
+
+    def test_chroma_healthy_passes_probe(self):
+        """Healthy Chroma client passes the probe with no exception."""
+        from unittest.mock import MagicMock
+        from indexer.index_codebase import _check_chroma_health
+
+        fake_client = MagicMock()
+        fake_client.list_collections.return_value = []
+        # No exception → probe passed.
+        _check_chroma_health(fake_client)
+
+    def test_non_corruption_errors_re_raised_unchanged(self):
+        """If chromadb raises an error that isn't a corruption signature,
+        we re-raise it unchanged (don't mask transient issues as corruption)."""
+        from unittest.mock import MagicMock
+        from indexer.index_codebase import _check_chroma_health, ChromaCorrupted
+
+        fake_client = MagicMock()
+        fake_client.list_collections.side_effect = RuntimeError(
+            "Network timeout connecting to remote service"
+        )
+        # Must NOT be wrapped as ChromaCorrupted.
+        with pytest.raises(RuntimeError) as exc_info:
+            _check_chroma_health(fake_client)
+        assert not isinstance(exc_info.value, ChromaCorrupted)
+
+
+class TestCmdIndexVerboseBugH:
+    """2026-05-17 Bug H fix (P10): `--verbose` on `codevira index` must
+    emit per-file decisions so users can diagnose silent 0-chunks results.
+    """
+
+    def test_verbose_signature_accepted(self):
+        """cmd_full_rebuild + cmd_incremental must accept verbose kwarg."""
+        from indexer.index_codebase import cmd_full_rebuild, cmd_incremental
+        import inspect
+        full_sig = inspect.signature(cmd_full_rebuild)
+        inc_sig = inspect.signature(cmd_incremental)
+        assert "verbose" in full_sig.parameters, "cmd_full_rebuild needs verbose"
+        assert "verbose" in inc_sig.parameters, "cmd_incremental needs verbose"
+        # Default must be False (preserves silent behavior for git hook).
+        assert full_sig.parameters["verbose"].default is False
+        assert inc_sig.parameters["verbose"].default is False
+
+
+class TestCmdStatusBugC:
+    """2026-05-17 Bug C fix (P1 + P10): `codevira status` was showing
+    'Graph Nodes: 0 / ChromaDB Chunks: 0' with no actionable signal
+    when the graph existed but was empty. Now distinguishes three states.
+    """
+
+    def test_state2_graph_empty_config_matches_warns_run_full(
+        self, project_env, capsys
+    ):
+        """State 2: graph empty + project HAS matching files.
+        Status must warn AND suggest `codevira index --full`."""
+        project, data_dir, db = project_env
+        # Create a Python file matching the fixture's config (watched_dirs=src, ext=.py).
+        src = project / "src"
+        src.mkdir()
+        (src / "main.py").write_text("x = 1\n")
+
+        mock_client = MagicMock()
+        mock_collection = MagicMock()
+        mock_collection.count.return_value = 0  # empty Chroma collection
+        mock_client.get_collection.return_value = mock_collection
+        # Force chroma.sqlite3 to exist so the chunk-count path runs.
+        index_dir = data_dir / "codeindex"
+        index_dir.mkdir()
+        (index_dir / "chroma.sqlite3").write_text("")
+
+        with patch("indexer.index_codebase.SQLiteGraph", return_value=db), \
+             patch("indexer.index_codebase._get_chroma_client", return_value=mock_client), \
+             patch("indexer.index_codebase._get_embedding_fn", return_value=MagicMock()), \
+             patch("indexer.index_codebase._index_dir", return_value=index_dir), \
+             patch("indexer.index_codebase._get_changed_files", return_value=[]):
+            from indexer.index_codebase import cmd_status
+            cmd_status()
+
+        out = capsys.readouterr().out
+        # Must NOT lie about the state.
+        assert "Graph Nodes" in out and "0" in out
+        # Must emit actionable guidance (the fix).
+        assert "index --full" in out, (
+            f"Bug C regression: state 2 (config matches files, graph empty) "
+            f"must suggest `index --full`. Got:\n{out}"
+        )
+        # And NOT the misconfiguration hint — config IS fine.
+        assert "matches NO files" not in out, (
+            f"State 2 must NOT fire the misconfig hint. Got:\n{out}"
+        )
+
+    def test_state3_graph_empty_config_matches_nothing_warns_configure(
+        self, project_env, capsys
+    ):
+        """State 3: graph empty + config matches NO files on disk.
+        Status must point user at `codevira configure`."""
+        project, data_dir, db = project_env
+        # Don't create any .py files — the fixture's config (src/*.py)
+        # will match nothing.
+
+        mock_client = MagicMock()
+        mock_collection = MagicMock()
+        mock_collection.count.return_value = 0
+        mock_client.get_collection.return_value = mock_collection
+        index_dir = data_dir / "codeindex"
+        index_dir.mkdir()
+        (index_dir / "chroma.sqlite3").write_text("")
+
+        with patch("indexer.index_codebase.SQLiteGraph", return_value=db), \
+             patch("indexer.index_codebase._get_chroma_client", return_value=mock_client), \
+             patch("indexer.index_codebase._get_embedding_fn", return_value=MagicMock()), \
+             patch("indexer.index_codebase._index_dir", return_value=index_dir), \
+             patch("indexer.index_codebase._get_changed_files", return_value=[]):
+            from indexer.index_codebase import cmd_status
+            cmd_status()
+
+        out = capsys.readouterr().out
+        assert "Graph Nodes" in out and "0" in out
+        # Must point at configure — config is broken.
+        assert "configure" in out.lower(), (
+            f"Bug C regression: state 3 (config matches nothing) "
+            f"must suggest `codevira configure`. Got:\n{out}"
+        )
+
+    def test_state1_graph_populated_no_warning(
+        self, populated_db, capsys
+    ):
+        """State 1: graph has nodes — no warning, just show the table.
+        Verifies my fix doesn't add false warnings on healthy projects."""
+        project, data_dir, db = populated_db
+
+        mock_client = MagicMock()
+        mock_collection = MagicMock()
+        mock_collection.count.return_value = 42
+        mock_client.get_collection.return_value = mock_collection
+        index_dir = data_dir / "codeindex"
+        index_dir.mkdir()
+        (index_dir / "chroma.sqlite3").write_text("")
+
+        with patch("indexer.index_codebase.SQLiteGraph", return_value=db), \
+             patch("indexer.index_codebase._get_chroma_client", return_value=mock_client), \
+             patch("indexer.index_codebase._get_embedding_fn", return_value=MagicMock()), \
+             patch("indexer.index_codebase._index_dir", return_value=index_dir), \
+             patch("indexer.index_codebase._get_changed_files", return_value=[]):
+            from indexer.index_codebase import cmd_status
+            cmd_status()
+
+        out = capsys.readouterr().out
+        # State 1 must NOT emit either of the warnings.
+        assert "index --full" not in out, (
+            f"State 1 (graph populated) must NOT suggest --full. Got:\n{out}"
+        )
+        assert "matches NO files" not in out, (
+            f"State 1 must NOT fire misconfig hint. Got:\n{out}"
+        )
+
+
 class TestGlobalStatusRendersRealNumbers:
     """Regression guard for Bug 19 (rc.4 dogfood, 2026-05-13).
 
@@ -1521,7 +1888,15 @@ class TestCmdIncrementalHint:
         assert "codevira configure" not in captured.out
         assert "codevira configure" not in captured.err
 
-    def test_hint_NOT_fired_when_files_exist_but_unchanged(self, tmp_path, monkeypatch, capsys, caplog):
+    def test_hint_NOT_fired_when_files_exist_but_unchanged_graph_empty(
+        self, tmp_path, monkeypatch, capsys, caplog
+    ):
+        """2026-05-17 Bug B fix: when files exist, nothing changed, AND
+        the graph is empty, the 'misconfiguration' warning should NOT
+        fire (config is fine) — but neither should we lie about being
+        'up to date.' Correct response: warn that graph is empty + tell
+        user to run --full.
+        """
         import logging as _logging
         with caplog.at_level(_logging.WARNING, logger="indexer.index_codebase"):
             captured = self._run(
@@ -1532,5 +1907,50 @@ class TestCmdIncrementalHint:
                 patch_changed=[],  # force changed=[] — files exist but nothing stale
             )
         log_msgs = [r.getMessage() for r in caplog.records]
-        assert not any("No files matched" in m for m in log_msgs), f"hint should not fire; got {log_msgs}"
-        assert "Index is up to date" in captured.out
+        # Config IS fine — no misconfiguration warning should fire.
+        assert not any("No files matched" in m for m in log_msgs), (
+            f"misconfig hint should not fire — config matches files; got {log_msgs}"
+        )
+        # But the graph is empty (no add_node calls), so the truthful
+        # message is "graph has 0 nodes" + remediation, NOT "up to date".
+        out = captured.out
+        assert "0 nodes" in out or "not been indexed" in out or "index --full" in out, (
+            f"Bug B regression: graph-empty state should be surfaced honestly. "
+            f"Got: {out!r}"
+        )
+
+    def test_up_to_date_fires_when_graph_populated_and_unchanged(
+        self, tmp_path, monkeypatch, capsys, caplog
+    ):
+        """2026-05-17 Bug B fix: legitimate "Index is up to date" path —
+        graph has content AND nothing changed. This is the truthful
+        steady-state. Verifies my graph-empty check doesn't suppress
+        the message when it's actually correct.
+        """
+        import logging as _logging
+        # Monkeypatch count_nodes to return >0, simulating a populated graph.
+        from indexer import sqlite_graph
+        original_count = sqlite_graph.SQLiteGraph.count_nodes
+        monkeypatch.setattr(
+            sqlite_graph.SQLiteGraph, "count_nodes",
+            lambda self, kind=None: 42,  # pretend we have 42 indexed nodes
+        )
+        try:
+            with caplog.at_level(_logging.WARNING, logger="indexer.index_codebase"):
+                captured = self._run(
+                    tmp_path, monkeypatch, capsys,
+                    files={"src/a.py": "x=1"},
+                    config={"watched_dirs": ["src"], "file_extensions": [".py"], "skip_dirs": []},
+                    file_paths=None,
+                    patch_changed=[],
+                )
+        finally:
+            monkeypatch.setattr(sqlite_graph.SQLiteGraph, "count_nodes", original_count)
+        log_msgs = [r.getMessage() for r in caplog.records]
+        assert not any("No files matched" in m for m in log_msgs), (
+            f"misconfig hint should not fire when config matches; got {log_msgs}"
+        )
+        assert "Index is up to date" in captured.out, (
+            f"Expected truthful 'up to date' message when graph is populated. "
+            f"Got: {captured.out!r}"
+        )

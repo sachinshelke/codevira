@@ -17,7 +17,12 @@ import json
 import sys
 
 
-def cmd_projects(*, output_json: bool = False, ghosts_only: bool = False) -> int:
+def cmd_projects(
+    *,
+    output_json: bool = False,
+    ghosts_only: bool = False,
+    show_paths: bool = False,
+) -> int:
     """Print the project inventory. Returns POSIX exit code 0.
 
     Parameters
@@ -26,6 +31,11 @@ def cmd_projects(*, output_json: bool = False, ghosts_only: bool = False) -> int
         If True, emit JSON to stdout instead of the human-readable table.
     ghosts_only
         If True, list only entries with status ``ghost`` (incomplete dirs).
+    show_paths
+        2026-05-17 Bug G partial fix: print ``<project_path>  →  <data_dir>``
+        per line, so users can locate the on-disk data dir for any project
+        by name. Replaces the need to manually translate the long hash-based
+        slug back to a project basename.
     """
     from mcp_server._project_inventory import enumerate_projects, summarize
 
@@ -40,11 +50,47 @@ def cmd_projects(*, output_json: bool = False, ghosts_only: bool = False) -> int
             "summary": summary,
             "projects": [_entry_to_dict(e) for e in entries],
         }
+        # 2026-05-17 Bug G: always include data_dir in JSON output (was absent).
+        # Now `jq` consumers can locate the on-disk path without re-deriving.
+        from mcp_server.paths import get_global_home
+        for p in out["projects"]:
+            if p.get("slug"):
+                p["data_dir"] = str(get_global_home() / "projects" / p["slug"])
         print(json.dumps(out, indent=2, default=str))
+        return 0
+
+    if show_paths:
+        _print_paths(entries)
         return 0
 
     _print_table(entries, summary, ghosts_only=ghosts_only)
     return 0
+
+
+def _print_paths(entries) -> None:
+    """2026-05-17 Bug G partial fix: per-line ``project → data_dir`` output.
+
+    Users with the long-form slug on disk (``Users_sachin_..._6d2f5d4d``)
+    can now grep:
+        codevira projects --paths | grep lh-interface
+
+    and see the data dir absolute path for that project.
+    """
+    from mcp_server.paths import get_global_home
+    projects_root = get_global_home() / "projects"
+    if not entries:
+        print("  (no projects tracked)")
+        return
+    # Compute column widths for alignment.
+    max_src = max(
+        (len(e.canonical_path or e.slug or "?") for e in entries),
+        default=1,
+    )
+    max_src = min(max_src, 80)  # cap to keep terminal-friendly
+    for e in entries:
+        src = e.canonical_path or e.slug or "?"
+        data = str(projects_root / e.slug) if e.slug else "(no data dir)"
+        print(f"  {src:<{max_src}}  →  {data}")
 
 
 def _entry_to_dict(entry) -> dict:

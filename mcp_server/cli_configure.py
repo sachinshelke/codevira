@@ -173,6 +173,57 @@ def scan_project(project_root: Path, current_config: dict) -> dict:
 # Multi-select prompt
 # ---------------------------------------------------------------------------
 
+def _questionary_multiselect(
+    title: str,
+    items: list[dict],
+    preselected: set[str],
+    key_field: str,
+    label_fn,
+) -> set[str] | None:
+    """2026-05-17 Bug O fix: arrow-key multi-select via questionary if
+    installed; returns None (caller falls back to text prompt) if not.
+
+    Why optional: questionary is ~200KB plus deps. We don't want every
+    pipx install to pay that cost just for the configure UX. Users who
+    want the nice TUI: ``pip install questionary``. Users who don't:
+    keep the text prompt that works in any terminal.
+
+    Returns:
+        set of selected keys (user confirmed), OR
+        None if questionary is unavailable / unimportable (caller falls back).
+    """
+    import importlib.util
+    if importlib.util.find_spec("questionary") is None:
+        return None
+    try:
+        import questionary
+        choices = [
+            questionary.Choice(
+                label_fn(item),
+                value=item[key_field],
+                checked=(item[key_field] in preselected),
+            )
+            for item in items
+        ]
+        result = questionary.checkbox(
+            title,
+            choices=choices,
+            instruction="(↑/↓ to move · space to toggle · enter to confirm · ctrl-c to abort)",
+        ).ask()
+        if result is None:  # ctrl-c
+            return None
+        return set(result)
+    except (ImportError, ValueError, RuntimeError) as exc:
+        # P9 (graceful degradation): any questionary failure → fall back
+        # to text prompt rather than crash mid-configure.
+        import logging
+        logging.getLogger(__name__).warning(
+            "questionary failed (%s) — falling back to numbered text prompt",
+            exc,
+        )
+        return None
+
+
 def prompt_multi_select(
     title: str,
     items: list[dict],
@@ -180,7 +231,12 @@ def prompt_multi_select(
     key_field: str,
     label_fn,
 ) -> set[str] | None:
-    """Numbered-list prompt with comma-separated input.
+    """Multi-select prompt with arrow-key UI when questionary is installed.
+
+    2026-05-17 Bug O fix: tries the questionary-based arrow-key UI first
+    (much nicer UX than typing "1,3,5"). Falls back to the numbered text
+    prompt if questionary is not installed or fails — that path is
+    always available, no breaking change.
 
     Returns a set of selected keys, or ``None`` if the user typed ``q``
     (clean abort). See module docstring / plan for the full input grammar.
@@ -194,6 +250,14 @@ def prompt_multi_select(
     if not items:
         print(f"\n{title}: (nothing discovered)")
         return set()
+
+    # Try the arrow-key path first. If unavailable / failed, fall through
+    # to the text prompt below.
+    questionary_result = _questionary_multiselect(
+        title, items, preselected, key_field, label_fn,
+    )
+    if questionary_result is not None:
+        return questionary_result
 
     # `items` is already sorted by the caller (scan_project sorts once).
     print(f"\n{title}")
@@ -807,7 +871,33 @@ def cmd_configure(
             file=sys.stderr,
         )
         return 1
-    print("\n✓ Wrote .codevira/config.yaml")
+    # 2026-05-17 Bug D fix (P6, P8): show the ACTUAL path written.
+    # Previously printed ".codevira/config.yaml" (relative-looking, suggesting
+    # in-repo) but the file is centralized under ~/.codevira/projects/<key>/.
+    # Users went looking in their repo, found nothing, assumed the write failed.
+    written_path = data_dir / "config.yaml"
+    print(f"\n✓ Wrote {written_path}")
+
+    # 2026-05-17 Bug D fix (P6): if a legacy in-repo .codevira/config.yaml
+    # exists, warn the user — that file is NOT read by the indexer and
+    # likely disagrees with the centralized config now. Pre-v1.6 codevira
+    # wrote configs there; rare but real on long-lived machines.
+    try:
+        in_repo_path = project_root / ".codevira" / "config.yaml"
+        if in_repo_path.is_file() and in_repo_path.resolve() != written_path.resolve():
+            print(
+                f"\n[!] Note: a legacy in-repo config exists at {in_repo_path}",
+                file=sys.stderr,
+            )
+            print(
+                "    This file is NOT read by codevira (centralized config is "
+                "authoritative since v1.6). You can safely delete it:\n"
+                f"      rm {in_repo_path}",
+                file=sys.stderr,
+            )
+    except Exception:
+        # P4 (defensive): note display is nice-to-have, never abort on error.
+        pass
 
     # ---- Reindex ------------------------------------------------------------
     should_reindex = False

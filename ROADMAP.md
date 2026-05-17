@@ -200,32 +200,432 @@ Stay local. Stay focused on the one developer working on their machine.
 
 ---
 
-## 🔜 v2.1 — Honest known limitations from the rc.5 audit (2026-05-13)
+## 🔜 v2.1 — New-user first contact + reliability hardening
+
+**Renamed 2026-05-15.** The original v2.1 framing ("close credibility
+gaps + ship benchmark") was correct but premature. Two days of
+fresh-install testing across UDAP / lh-interface / AgentStore /
+ToolsConnector + the Claude Desktop disconnect pattern surfaced 23
+distinct bugs where codevira silently fails or appears broken on first
+contact. Hybrid search and the public benchmark are useless if a new
+HN visitor hits 5 silent failures in their first 5 minutes.
+
+**v2.1 priority order:**
+1. **Reliability hardening** (this section) — close every silent-failure path
+2. **Capabilities to ship** (next section) — the credibility gaps from the
+   benchmark
+3. **Public benchmark suite** — only meaningful after #1 + #2 land
+
+The benchmark, demo video, hackathon launch, and partnership pitches
+shift to **v2.2** — they require a v2.1 install experience that
+doesn't burn first impressions.
+
+### Foolproof-product standard — non-negotiable for every fix
+
+Every bug fix in this section MUST satisfy the 10 product principles
+(P1–P10) defined in [`docs/foolproof-product-charter.md`](../docs/foolproof-product-charter.md):
+
+| P | Principle |
+|---|---|
+| P1 | No silent failures — every 0-result path emits reason + `fix_command` |
+| P2 | Self-diagnose on startup — doctor detects known-bad states |
+| P3 | Atomic state mutations — tmp→fsync→rename, transactions |
+| P4 | Defensive parsing — malformed input → safe default, never crash |
+| P5 | Bounded resources — circuit breakers, rate limits, log rotation |
+| P6 | Predictable detection — one matcher, no parallel implementations |
+| P7 | Reversible operations — every install has tested uninstall |
+| P8 | Helpful error messages — WHAT + WHY + FIX in every error |
+| P9 | Graceful degradation — single-subsystem failure isolated |
+| P10 | Observability — structured logs, doctor reads actual state |
+
+Every PR fixing a bug below MUST:
+1. Add a regression test to `tests/e2e/test_first_contact.py`
+2. Confirm `tests/e2e/test_product_invariants.py` still passes
+3. Walk the P1–P10 checklist explicitly in the PR description
+4. Pass the release gauntlet's G2 before merging
+
+No exceptions. The discipline-scaffold hook + CI enforce this.
+
+### Reliability hardening — silent-failure elimination
+
+Surfaced 2026-05-14 / 2026-05-15 across fresh-install testing. Grouped
+by sub-pillar so engineering ships them coherently.
+
+#### Group 1 — install / setup / detection
+
+| # | Bug / item | Surfaced where | Fix |
+|---|---|---|---|
+| L | `init` lists generic dirs not present in project | `init` says "Source dirs: docs" for a repo where docs is irrelevant | Use the same `discover_source_files()` scanner `configure` uses; emit only dirs that exist AND contain matching files |
+| M | `init` writes ALL 80 known extensions despite "Auto-detected" label | every `init` run | Intersect known extensions with what's actually on disk |
+| F | `init` drops top-level files (CLAUDE.md, README.md) from `watched_dirs` | lh-interface init: "Source dirs: docs" — missing `.` | Include `.` if top-level has matching files |
+| N | `init` is interactive when it should match `configure`'s scanner | `init` and `configure` give different results for same project | `init` becomes "scan + accept everything"; same scanner as `configure`, no prompts |
+| D | `configure` writes in-repo `.codevira/config.yaml`; `init` writes centralized | lh-interface ended up with two disagreeing configs | Both write to `~/.codevira/projects/<key>/config.yaml`; auto-migrate legacy in-repo paths |
+| G | Project keys are unreadable hashes (`Users_sachin_Documents_..._6d2f5d4d`) | `ls ~/.codevira/projects/lh-interface/` returned empty | Readable name + short collision suffix: `lh-interface__6d2f5d4d/` |
+| O | `configure` requires typing "1,3,5" instead of arrow-key multi-select | every `configure` run | Use `questionary` (or `python-prompt-toolkit`) for arrow-key + space multi-select; fall back to text mode if not a TTY |
+| I | `init` UI label "Auto-detected" promises detection but shows defaults | every `init` run | Resolved by L+M (real detection) |
+
+#### Group 2 — file handling
+
+| # | Bug / item | Surfaced where | Fix |
+|---|---|---|---|
+| A | Discovery vs. indexing path mismatch (configure finds 8 files, indexer finds 0) | every docs-only or polyglot project | Single shared file-matcher used by `configure` + `index` + indexer; emit error if discovered > 0 but matched = 0 |
+| E | Docs-only repos silently produce 0 chunks (no markdown chunker) | lh-interface — `.md` + `.json` only | Paragraph-split markdown chunker (~50 lines); also verify `.ipynb` and large JSON schemas don't fall into the same trap |
+| H | No `--verbose` / `--explain` flag on `index` | `codevira index --full -v` rejected | Add `--verbose` flag with per-file rejection reasons (parser missing, size threshold, gitignore'd, etc.) |
+
+#### Group 3 — MCP runtime / startup
+
+| # | Bug / item | Surfaced where | Fix |
+|---|---|---|---|
+| K | MCP server takes ~5s to respond to first `tools/list` (Claude Desktop times out) | Claude Desktop logs at 19:41:56 — connection closed 80ms after listrequest, response 5s later | `tools/list` answers from a static manifest; chromadb / sentence-transformers NOT imported on this critical path |
+| J | sentence-transformers model loads on critical path of every MCP boot | Same as K, plus first-time HF download surprises new users | (a) Pre-warm at install (post-`pipx install` model download). (b) MCP server lazy-loads the model only on first `search_codebase`; background warmup thread starts after `initialize` responds. |
+| (Chroma corruption) | HNSW segment writer crashes; watcher retries 41× with no circuit breaker | UDAP after install/uninstall churn | Detect corrupted Chroma at startup → clear error + remediation hint; circuit-break watcher after 5 same-error failures |
+
+#### Group 4 — diagnostics + observability + self-help
+
+| # | Bug / item | Surfaced where | Fix |
+|---|---|---|---|
+| B | `codevira index` says "up to date" when there's nothing in the index | Fresh `lh-interface` | Index command checks graph state first; says "not initialized" or "no files matched" when appropriate |
+| C | `codevira status` doesn't warn on uninitialized project | Fresh `lh-interface` | Status uses doctor's project-state check; surfaces "run `codevira init`" when applicable |
+| (heal) | `codevira heal` self-service command | User had to manually `rm -rf` Chroma collection | Single command detects + fixes: corrupted Chroma, split config, orphaned hooks, stale graph |
+| (clean A) | `codevira clean` leaves orphaned hook scripts in `~/.claude/hooks/` | Earlier fresh-install test (this session, deferred from v2.0.1) | `clean` removes all `codevira-*` hook scripts AND drops codevira entries from `~/.claude/settings.json` |
+| (clean B) | Post-clean message says deprecated `register` instead of `setup` | Same as above | One-line text fix |
+| (clean C) | `codevira clean --project <name>` for single-project cleanup | Currently all-or-nothing | Per-project flag scoped to one project's data dir |
+| (logs) | `crashes.log` grows forever, never auto-pruned | UDAP had 41 crashes from one session | Auto-prune crashes older than 30 days OR on version change |
+| (atomic) | IDE config writes are non-atomic; one race cleared Claude Desktop config | Earlier in this session, hard to reproduce | Write to `.tmp`, fsync, rename, re-read to verify before reporting success |
+
+#### Group 5 — testing / regression prevention
+
+| # | Bug / item | Why it matters | Fix |
+|---|---|---|---|
+| (e2e) | No end-to-end install tests; every release ships with the same first-contact bugs | Bugs A–O are all things a single e2e test would have caught | `tests/e2e/test_first_contact.py` — runs full `init → configure → index → status` flow against fixtures: docs-only, code-only, polyglot, monorepo. CI blocks merges that regress any flow. |
+
+### Capabilities to ship
+
+These are the user-value items that close the credibility gaps from
+the benchmark. Each is a 1–3 week shipment; total ~10 weeks if focused.
+v2.2 promotes them into the launch story once v2.1 reliability lands.
+
+#### Natural-language decision search (hybrid retrieval)
+**Today.** `search_decisions("DDD architecture layer")` returns 0 hits
+even when the matching decision is literally about 4-layer DDD.
+`search_decisions("codevira backfill")` returns 0 hits 30 seconds after
+recording. BM25-style keyword full-text silently misses every
+natural-language phrasing.
+
+**Impact.** Every agent (and human) phrasing a question naturally gets a
+false "no prior decision exists" → re-decides the same thing → drift.
+The whole memory layer becomes invisible. **Single biggest credibility
+blocker.**
+
+**Fix.** Embed decision text on write, store vectors alongside the
+SQLite row. Search becomes `embedding_top_k + BM25_top_k → rerank`.
+Optional cross-encoder reranking. ChromaDB is already in the stack —
+reuse it. Until shipped, document in tool descriptions: "query with the
+single rarest keyword, not natural language."
+
+#### Decision deduplication (intelligent ADD/UPDATE/NOOP)
+**Today.** Recording the same decision twice creates two rows.
+Conflicting decisions silently both exist. Memory accumulates
+duplicates and contradictions over months of use.
+
+**Impact.** `search_decisions` returns 3 conflicting rows for the same
+question, no signal which is current. Trust collapses. Storage grows
+unbounded.
+
+**Fix.** On every `record_decision`, run a similarity check against
+existing decisions in scope. Decide one of: ADD (no overlap),
+UPDATE (refines existing — bump version, keep history), NOOP
+(identical), CONFLICT (surfaces to user, doesn't silently overwrite).
+Backwards-compatible — agents that don't care still work.
+
+#### Decision audit trail (history per decision)
+**Today.** A decision is a row with timestamps but no edit history.
+Update a decision and the previous wording is lost.
+
+**Impact.** Regulated-codebase users can't adopt codevira — there's no
+auditable trail of "what changed when, by whom." Solo devs hit it less,
+but every team-mode evaluation surfaces it as a blocker.
+
+**Fix.** Add `decision_history` table — every UPDATE writes the
+previous state. Expose `get_decision_history(decision_id)` MCP tool.
+Bonus: `record_decision` accepts optional `commit_hash`; full body
+fetched on demand for `full=true` responses.
+
+#### Conditional hook injection (kill the always-on token tax)
+**Today.** `user_prompt_submit.sh` injects a generic "prior decisions
+you may want to consider" reminder on every turn — ~175 tokens per
+turn. Over a 50-turn session that's 8,750 tokens, ~74% of codevira's
+total cost. Most fires on turns where the AI has no need for memory.
+
+**Impact.** Auto-memory beats codevira on raw token cost above 6
+queries/session because of this hook tax. The "lazy / 0 fixed cost"
+marketing line is undermined.
+
+**Fix.** Hook fires only when the prompt semantically warrants it:
+mentions a file path / decision keyword / phase / changeset / pattern
+name. Else: silent. Inject a 1-line summary of the *most relevant*
+decision (using the new hybrid search), not generic boilerplate. Cost
+drops ~70% on typical sessions.
+
+#### Multi-language `get_signature` / `get_code`
+**Today.** Both tools use Python's `ast` module and only read Python
+files. For TypeScript / Go / Rust / Java the response is "Python-only
+by design" — AI calls `Read` directly, losing the value prop.
+
+**Fix.** Wire the existing tree-sitter parsers (already used for graph
+indexing) into these two tools so they extract function signatures and
+bodies for every language we already index. Per-language tests required.
+
+#### `record_decision` batch API
+**Today.** Each `record_decision` MCP call costs ~800 B of protocol
+overhead. A session logging 50 decisions burns ~40 KB on framing alone.
+
+**Fix.** Add `record_decisions_batch(items=[...])` (or extend
+`write_session_log(decisions=[...])`). Backwards-compatible —
+single-decision callers keep working unchanged.
+
+### Quality / parity items (lower priority but in v2.1)
+
+These don't block launch gates but round out the surface so codevira
+doesn't look unfinished against alternatives:
+
+#### Auto-refresh the stale code graph
+`get_node()` returns `stale:true` with no actionable command. **Fix.**
+Expose `refresh_node(path)` and `refresh_graph()`. Wire a post-commit
+git hook to auto-refresh touched files. Stop returning `stale:true`
+without offering remediation.
+
+#### First-class user-profile / preferences memory
+`search_decisions("Sachin")` returns 0 hits — codevira tracks code
+decisions and rules but not collaboration style. Identity context
+lives elsewhere (CLAUDE.md, auto-memory). **Fix.** Add
+`record_preference(category, observation, confidence)` +
+`get_user_profile()`. Categories: communication-style, commit-discipline,
+depth-vs-speed bias, tooling preferences. Auto-update confidence on
+confirmation/contradiction.
+
+#### Phase number namespacing
+Phase numbers are flat integers. Active "Phase 2 (Go CLI)" collides
+with historical "Phase 2." 14 historical phases had to be backfilled
+as session logs because real phase numbers couldn't be reused.
+**Fix.** Accept `H17`, `v1.1/p1`, `2-Go-CLI` as phase IDs. Group by
+prefix. Add `get_roadmap(track="active")` vs `get_roadmap(track="historical")`.
+
+#### Bulk-import for completed phases
+`complete_phase` is forward-only. No way to register a phase with
+`completed_at = 2026-05-04` after the fact. **Fix.** Admin tool
+`import_completed_phase(number, name, completed_at, key_decisions, files)`.
+Idempotent so re-running the backfill doesn't duplicate.
+
+#### Anti-pattern / "tried-and-rejected" memory
+Codevira captures "we chose X" but not "we tried Y and abandoned it."
+**Fix.** `record_decision` gets a `rejects` field pointing to an
+earlier decision ID. `search_decisions` surfaces the rejection chain:
+"X was tried in Phase 14, abandoned May 2026 because of Y."
+
+---
+
+## 🔜 v2.2 — Public launch + framework reach
+
+v2.1 makes codevira reliable on first contact and closes the
+credibility gaps. v2.2 takes it to market: publish the benchmark, ship
+the cross-tool demo, run the first hackathon, and pitch partnerships.
+
+### Launch gates (the bar before going public)
+
+Five measurable gates. Hit all five and v2.2 ships. Not before.
+
+| Gate | Today | v2.2 bar |
+|---|---|---|
+| **Public benchmark score** (UDAP-derived 8-question suite) | 88/96 | **95+/96** |
+| **Per-session token cost** (20-turn coding session) | ~9,500 | **<2,500** |
+| **Setup steps** (install → working on every project) | 4 commands | **1 command** |
+| **Cross-tool demo reproducibility** (Claude → Cursor recall on fresh machine) | Works manually | **Recorded 60-sec video, no edits** |
+| **Skeptic-to-evangelist conversion** | unmeasured | **5 outside engineers use it for a week + recommend unprompted** |
+
+### Public benchmark suite (the credibility moat)
+
+Open-source the UDAP-derived 8-question benchmark as a runnable repo
+at `codevira/benchmark`. Adapter pattern so anyone can plug in their
+memory tool (mem0, Letta, Zep, Claude auto-memory, CLAUDE.md, git).
+GitHub Action runs nightly; results posted to `codevira.dev/leaderboard`.
+
+Codevira shows up as one entry — sometimes losing on a dimension. That
+honesty is the credibility moat. Within 6 months every memory-tool
+launch references this benchmark.
+
+### Cross-tool demo + 60-sec launch video
+
+Recorded screencast: open Claude Code in a project → make a decision
+→ quit → open Cursor on same project → recall the decision in 30
+seconds. Caption: *"This is impossible without codevira. Local-first,
+free forever."* Posted to HN, X, YouTube on launch day.
+
+### First hackathon
+
+"AI Memory Hackathon" — virtual, 48h, ~$2k prize pool. Drives
+content, early plugin ecosystem, next round of benchmark-feeding
+stories.
+
+### Partnership pitches
+
+One conversation per partner. If Claude Code's onboarding suggests
+codevira as the recommended memory server → mass adoption in weeks.
+Backup plays in priority order: Cursor team, Windsurf team,
+Antigravity team.
+
+### Framework reach + ecosystem adapters
+
+Expanding codevira into ecosystems we don't reach today.
+
+### Capabilities
+
+#### Bring-your-own vector store
+**Today.** Codevira is ChromaDB-only. Users with existing Pinecone /
+Qdrant / pgvector infrastructure can't reuse it.
+
+**Fix.** Adapter pattern for vector stores. Ship Pinecone, Qdrant,
+pgvector adapters. Default stays ChromaDB (no setup needed). Documented
+upgrade path: "if you already run X, point codevira at it."
+
+#### Reranker integration
+**Fix.** Pluggable reranker. Default: cross-encoder via
+sentence-transformers (already in stack, free). Optional: Cohere Rerank
+(BYO API key). LLM-as-reranker for power users.
+
+#### LangChain / LlamaIndex adapters
+**Today.** Python AI agents that aren't on MCP can't use codevira.
+LangChain/LlamaIndex/CrewAI/AutoGen are the dominant frameworks.
+
+**Fix.** Thin adapter packages: `langchain-codevira`,
+`llamaindex-codevira` that wrap codevira's MCP tools as the framework's
+native tool/memory interfaces. No core code change — adapters only.
+
+#### Node SDK + Vercel AI SDK integration
+**Today.** Codevira reaches the JS ecosystem only via MCP. Cursor
+extensions, Vercel AI SDK apps, Continue.dev plugins, browser-side
+agents are locked out.
+
+**Fix.** `@codevira/sdk` Node package. Same operations as Python SDK.
+Vercel AI SDK provider so codevira drops in as a memory layer on the
+Edge.
+
+#### REST API surface
+**Today.** Codevira's HTTP server speaks MCP, not REST. Non-MCP
+consumers can't integrate.
+
+**Fix.** Add `/v1/decisions`, `/v1/preferences`, `/v1/graph` REST
+endpoints alongside MCP. Same auth, same SQLite backend.
+
+#### Memory feedback API + batch ops
+**Fix.** `record_decision_feedback(id, signal)` for explicit quality
+signals. `batch_update_decisions` and `batch_delete_decisions` for
+bulk maintenance.
+
+---
+
+## 🔜 v2.3 — Cloud sync + decision support generalization
+
+v2.1/2.2 establish codevira as the local-first standard. v2.3 expands
+without abandoning that.
+
+### Cloud sync (low-cost, opt-in, $3–5/mo target)
+
+| Feature | Why |
+|---|---|
+| Cross-machine sync (laptop ↔ desktop ↔ work) | "memory follows me" |
+| Encrypted backup | switch machines without losing memory |
+| Hosted MCP endpoint | use from any device, including iPad / browser |
+| Team sharing for 2–5 devs (small teams) | "our team's brain" |
+
+Local-first stays the default. Cloud is purely opt-in sync. No data
+leaves the machine without explicit `codevira sync enable`.
+
+### Decision support generalization (pre-research)
+
+Codevira's primitive — "structured, queryable, persistent decisions
+with confidence scores and outcomes" — applies beyond AI agents.
+Same engine could serve PMs, tech leads, founders making technical
+decisions: "why did we pick Postgres over DynamoDB", "what did we
+try and reject for the rate-limit problem."
+
+Audience expansion from "developers using AI" to "anyone making
+technical decisions." 10–20× the addressable market.
+
+**Critical constraint:** do not pivot until v2.1 launch gates clear
+and v2.2 ecosystem reach is established. Premature generalization
+kills focused products. v2.3 is research/prototyping only — full
+pivot evaluated for v3.0 based on traction signal.
+
+---
+
+## 🔧 v2.0.0 known limitations (rc.5 audit + post-launch surfacing)
 
 The rc.5 audit (29 CLI items + 7 product-credibility P0s + the "index all
 the code" question) closed 38 issues but surfaced 5 adjacent items that
 weren't formal P-numbered findings. Two are quick UX siblings already
 addressed during rc.5 (the `get_impact` and `query_graph` error messages
 got the same 3-case differentiation we shipped in `get_node`). The
-other three are bigger and deferred here:
+other three plus two new post-launch items are deferred here:
 
-### Multi-language `get_signature` / `get_code`
+### `init` output is misleading (auto-detection lies)
 
-Today both tools use Python's `ast` module and only read Python files.
-For TypeScript / Go / Rust / Java the response is *"Python-only by
-design"* — leaving the AI to call `Read` directly. **Fix:** wire the
-existing tree-sitter parsers (already used for graph indexing) into
-these two tools so they can extract function signatures and bodies for
-every language we already index. New per-language tests required.
+Surfaced 2026-05-14 by a fresh-install on a polyglot Python project
+(UDAP). Two related bugs in `mcp_server/detect.py`:
 
-### `record_decision` batch API
+* **Extensions are NOT auto-detected** — `auto_detect_project()`
+  returns the union of all ~80 known source extensions
+  (`_ALL_SOURCE_EXTENSIONS`) regardless of what files exist on disk.
+  The init UI prints "Auto-detected: Extensions: .adoc, .astro, .bash,
+  .bazel, .c, .cap, .cc, .cjs, .clj, …" — a Python-only project
+  reads .swift / .elm / .dart in the list and (rightly) loses trust
+  in the tool. **Fix:** intersect the known-extensions union with
+  extensions actually seen on disk via `discover_source_files()`,
+  OR rename the label from "Auto-detected" to "Indexing (defaults)"
+  so the promise matches the behavior. The existing `configure`
+  command already detects correctly — the same scan should drive
+  init's display.
 
-Each `record_decision` MCP call costs ~800 B of protocol overhead. A
-session that logs 50 decisions burns ~40 KB on framing alone. Add a
-`record_decisions_batch(items=[...])` (or extend
-`write_session_log(decisions=[...])`) so multi-decision flows compress
-to one round-trip. Backwards-compatible — single-decision callers keep
-working unchanged.
+* **`detect_watched_dirs` filters by single-language extension** —
+  `detect.py:193` uses `LANGUAGE_EXTENSIONS.get(language, [".py"])`
+  to pick which dirs count as "source dirs". For a Python project,
+  any top-level dir without `.py` files (`docs/`, `configs/`,
+  `migrations/`, `notebooks/`, `seeds/`, SQL-only dirs, etc.) is
+  invisible — even though those files *would* be indexed because
+  the extension picker is all-languages. Architectural mismatch:
+  dir detector is single-language, extension picker is all-languages.
+  **Fix:** make `detect_watched_dirs` use the same extension union
+  as the extension picker so any top-level dir containing any
+  tracked file shows up.
+
+  Constraint: **do not introduce new commands or flags** to work
+  around this. `--single-language` is a band-aid that pushes the
+  problem onto the user. Installation must stay
+  zero-prompt / zero-flag — the existing `configure` command is the
+  one and only path for users who want to customize after install.
+
+### Hooks documentation gap
+
+Surfaced 2026-05-14 reviewing v2.0.0 docs against the install flow.
+Hooks are mentioned in three docs (README, MIGRATING, CHANGELOG)
+but no standalone page explains:
+
+* What each of the 5 hook scripts actually does (`session_start.sh`,
+  `pre_tool_use.sh`, `post_tool_use.sh`, `user_prompt_submit.sh`,
+  `stop.sh`) — the active-guardian story is asserted, never shown.
+* That `pipx install` does NOT inject hooks — only `codevira setup`
+  (or standalone `codevira hooks install`) does. The boundary lives
+  only in `setup_wizard.py` code, never spelled out for users.
+* Coexistence story: codevira only adds codevira-* entries to
+  `~/.claude/settings.json` and preserves existing user hooks. The
+  code does this correctly but no doc says so, so cautious users
+  assume it stomps their config.
+* "My hooks aren't firing" troubleshooting — `codevira hooks list`
+  exists but is undiscoverable.
+
+**Fix:** add `docs/hooks.md` covering all four points; link from
+README's `What `codevira setup` does` section and from MIGRATING.md's
+"Lifecycle hooks" mention.
 
 ### CLI naming clarity
 
@@ -252,7 +652,6 @@ Three design tensions a new user runs into in the first 10 minutes:
 
 These would change Codevira's positioning. We won't build them unless solo developers explicitly ask for them.
 
-- **Team / cloud sync** — currently out of scope (Codevira is local-first by design). If demand is high, we'd add an optional `codevira sync` daemon that pushes a subset of memory to a sync target you control.
 - **Chrome extension** — overlay Codevira's `get_node` / `get_impact` on GitHub PRs and file views. See README "How It Works" for what this would unlock.
 - **JetBrains plugin** — native MCP integration for IntelliJ/PyCharm/WebStorm.
 - **Natural language graph queries** — "show me all files that handle authentication" via semantic graph traversal.

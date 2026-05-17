@@ -9,12 +9,14 @@ Thank you for your interest in contributing! This is an early-stage open source 
 - [Code of Conduct](#code-of-conduct)
 - [Getting Started](#getting-started)
 - [Contributing with an AI Agent](#contributing-with-an-ai-agent)
+- [Development Discipline (Pillar 3)](#development-discipline-pillar-3)
 - [How to Report a Bug](#how-to-report-a-bug)
 - [How to Request a Feature](#how-to-request-a-feature)
 - [How to Contribute Code](#how-to-contribute-code)
 - [Development Setup](#development-setup)
 - [Pull Request Guidelines](#pull-request-guidelines)
 - [Commit Message Format](#commit-message-format)
+- [Release Process](#release-process)
 - [Good First Issues](#good-first-issues)
 
 ---
@@ -23,6 +25,74 @@ Thank you for your interest in contributing! This is an early-stage open source 
 
 This project follows the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.md).
 By participating, you agree to uphold a respectful and welcoming environment for everyone.
+
+---
+
+## Development Discipline (Pillar 3)
+
+Codevira ships its own AI development discipline scaffold. If you (or
+an AI agent helping you) make changes to this repo, this scaffold
+enforces quality at three layers:
+
+### 1. Skills (conversational guidance — when using Claude Code)
+
+Auto-discovered from `.claude/skills/`:
+
+- **`development-discipline`** — triggers on any Edit/Write. Forces a
+  `CONTEXT → PURPOSE → REASON → CODE` sequence before any code change.
+  Sub-rules: reuse-first, single-source-of-truth, blast-radius-aware,
+  minimal-diff, test-as-evidence.
+- **`open-source-quality`** — triggers on commit/push/PR. Enforces
+  Conventional Commits, atomic commits, ruff+mypy clean, docstrings,
+  actionable error messages, CHANGELOG.md entries, backwards-compat.
+- **`release-readiness`** — triggers on release-related phrases.
+  Walks the G1–G5 gauntlet.
+- **`epistemic-honesty`** — triggers on definitive claims, solution
+  proposals, or bug diagnoses. Forces confidence calibration with
+  inline evidence; refuses unverified "done" claims.
+
+### 2. Pre-commit hooks (run automatically on every `git commit`)
+
+Configured in `.pre-commit-config.yaml`:
+
+- `ruff check --fix` — lint
+- `ruff format` — format
+- `mypy mcp_server indexer` — type-check
+- Hygiene: trailing whitespace, large files, merge conflicts, private keys
+
+Install: `make dev` (or `pip install -e ".[dev]" && pre-commit install`).
+
+### 3. Release gauntlet (`make release-gauntlet`)
+
+Five gates that must pass before a release reaches PyPI:
+
+| Gate | What | How |
+|---|---|---|
+| **G1** | Unit tests | `make test-unit` |
+| **G2** | First-contact e2e | `make test-e2e` against 4 fixtures |
+| **G3** | Real-IDE smoke | `scripts/check_real_ide_smoke.sh` (stub today) |
+| **G4** | Crash-log clean | `codevira report` shows 0 CRASH |
+| **G5** | Human verification | Maintainer confirms on a real machine |
+
+The PreToolUse hook (`.claude/hooks/pre-release-block.sh`) refuses
+`twine upload` / `pipx publish` / `gh release create --draft=false`
+unless `.release-evidence/<version>.json` shows all 5 gates pass.
+
+See [`docs/release-process.md`](docs/release-process.md) for the full
+foolproof release walkthrough.
+
+### Why this exists
+
+v2.0.0 shipped to PyPI with 23 silent-failure bugs (cataloged in
+ROADMAP.md as A–O) because "all unit tests pass" was used as a release
+signal. It wasn't enough. The discipline scaffold makes the gates
+bypass-proof: skills are conversational; hooks + Makefile + CI are
+hard walls that physically refuse unverified releases.
+
+If you're working on this repo with Claude Code, the skills will
+trigger automatically. If you're working without an AI agent, the
+Makefile + hooks + CI still enforce the same discipline at the tool
+layer.
 
 ---
 
@@ -272,6 +342,32 @@ fix(roadmap): auto-create stub when roadmap is missing
 docs(readme): update quick start for v1.5 zero-config
 refactor(graph): migrate from YAML to SQLite
 ```
+
+---
+
+## Release Process
+
+Codevira uses a 5-gate release gauntlet (G1–G5). The full walkthrough
+lives in [`docs/release-process.md`](docs/release-process.md). Short
+version:
+
+```bash
+make release-verify-version    # version coherence + git state
+make release-gauntlet          # G1 (unit) + G2 (e2e) + G3/G4 stubs
+make release-build             # python -m build → dist/
+make release-dry-run           # twine check dist/*
+# ─── Manual G5: install on a real machine, verify, then ──────────────
+#     edit .release-evidence/<version>.json and set:
+#       "G5_human_confirmed": true
+make release-publish           # twine upload (hook will verify gates)
+make release-smoke             # post-release: install from PyPI, verify
+```
+
+The PreToolUse hook (`.claude/hooks/pre-release-block.sh`) refuses
+`twine upload` / `pipx publish` / `gh release ... --draft=false`
+without all 5 gates green in the evidence file. Bypass requires
+explicit `CODEVIRA_RELEASE_OVERRIDE=1` and is logged to
+`.release-evidence/overrides.log` for audit.
 
 ---
 

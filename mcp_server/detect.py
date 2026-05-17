@@ -183,60 +183,93 @@ def detect_watched_dirs(root: Path, language: str) -> list[str]:
 
     Strategy:
       1. Use gitignore-aware discovery to find all source files.
-      2. Extract unique top-level directories that contain source files.
-      3. Fall back to convention list if nothing found.
-      4. Ultimate fallback: ["."]
+      2. Filter against the BROAD extension set (not single-language) —
+         a Python project with docs/, migrations/, configs/ etc. should
+         see those dirs surface too. (Bug F fix.)
+      3. Extract unique top-level directories that contain matching files.
+      4. Include "." in the result when top-level files match (Bug F
+         variant — root-level CLAUDE.md, README.md etc. were dropped
+         because the old code only added dirs deeper than the root).
+      5. Fall back to convention list if nothing found.
+      6. Ultimate fallback: ["."]
+
+    P6 (predictable detection): this function and ``auto_detect_project``
+    now agree on what counts as a source file. They use the same broad
+    extension set, so "discovery says N files; indexing says 0 files"
+    can no longer happen for the per-language case.
     """
-    # Try gitignore-aware discovery first
+    # Broad extension set — matches what auto_detect_project uses for
+    # indexing. Without this match, detect_watched_dirs and the indexer
+    # diverge and produce the configure-vs-index mismatch (Bug A).
+    broad_extensions = set(_ALL_SOURCE_EXTENSIONS)
+
+    # Try gitignore-aware discovery first.
     try:
         from mcp_server.gitignore import discover_source_files
-        extensions = set(LANGUAGE_EXTENSIONS.get(language, [".py"]))
         files = discover_source_files(root)
-        # Filter to language-appropriate files for better dir detection
-        lang_files = [f for f in files if f.suffix.lower() in extensions]
-        if not lang_files:
-            lang_files = files  # fall through to all files if none match
+        # Filter to BROAD-extension files (was: single-language only).
+        # Bug L+F: previously a Python project with only docs/ would
+        # report "Source dirs: docs" missing, because the matcher only
+        # accepted .py files and docs/ has none.
+        matching_files = [f for f in files if f.suffix.lower() in broad_extensions]
+        if not matching_files:
+            matching_files = files  # fall through if even the broad set misses
 
-        # Extract unique top-level dirs relative to project root
+        # Extract unique top-level dirs relative to project root.
+        # Bug F variant: include "." when top-level files exist.
+        # Previously len(rel.parts) > 1 filter skipped root files entirely.
         top_dirs: set[str] = set()
-        for f in lang_files:
+        has_top_level_files = False
+        for f in matching_files:
             try:
                 rel = f.relative_to(root)
-                if len(rel.parts) > 1:
+                if len(rel.parts) == 1:
+                    has_top_level_files = True
+                else:
                     top_dirs.add(rel.parts[0])
             except ValueError:
                 pass
 
-        # Filter out noise dirs
+        # Filter out noise dirs.
         found = sorted(
             d for d in top_dirs
             if not d.startswith(".") and d not in _SKIP_DIRS and not d.endswith("-info")
         )
+        # Prepend "." if top-level has matching files. (Bug F fix.)
+        if has_top_level_files:
+            found = ["."] + found
         if found:
             return found
-    except Exception:
-        pass
+    except Exception as exc:
+        # P4 (defensive parsing): log but don't crash. Fall through to
+        # the manual scan below.
+        logger.warning("discover_source_files failed for %s: %s — falling back to manual scan", root, exc)
 
-    # Legacy fallback: scan top-level dirs manually
-    extensions = set(LANGUAGE_EXTENSIONS.get(language, [".py"]))
+    # Legacy fallback: scan top-level dirs manually using broad extensions
+    # (was: single-language only — same Bug F/L surface).
     found_legacy: list[str] = []
-
+    legacy_has_top_level = False
     try:
         for entry in sorted(root.iterdir()):
+            if entry.is_file() and entry.suffix.lower() in broad_extensions:
+                legacy_has_top_level = True
+                continue
             if not entry.is_dir():
                 continue
             name = entry.name
             if name.startswith(".") or name in _SKIP_DIRS or name.endswith("-info"):
                 continue
-            if _dir_has_sources(entry, extensions, max_depth=6):
+            if _dir_has_sources(entry, broad_extensions, max_depth=6):
                 found_legacy.append(name)
     except PermissionError:
         pass
 
+    if legacy_has_top_level:
+        found_legacy = ["."] + found_legacy
     if found_legacy:
         return found_legacy
 
-    # Convention fallback
+    # Convention fallback.
     candidates = LANGUAGE_DIRS.get(language, [])
     convention = [d for d in candidates if (root / d).is_dir()]
     if convention:
@@ -331,18 +364,42 @@ def auto_detect_project(root: Path, *, single_language: bool = False) -> dict:
     if single_language:
         extensions = language_extensions(language)
     else:
-        # Union of (a) all-known extensions, (b) anything we actually saw on disk.
-        # Lets us pick up unusual extensions (e.g. project-specific .myext)
-        # that aren't in our default list.
+        # Bug M (P1 fix): return ONLY extensions actually present on disk,
+        # intersected with our known set. Previously this returned the
+        # union of all ~80 known extensions regardless of what was on disk,
+        # so a Python-only project saw ".swift, .elm, .dart" in its
+        # "Auto-detected" output and rightly lost trust.
+        #
+        # The new logic:
+        #   seen_on_disk = every extension actually present
+        #   extensions   = intersection with known set, PLUS any seen-on-disk
+        #                  extension that isn't in our known set (defends
+        #                  against project-specific .myext that we'd
+        #                  otherwise drop)
         seen_on_disk: set[str] = set()
         try:
             from mcp_server.gitignore import discover_source_files
             for f in discover_source_files(root):
                 if f.suffix:
                     seen_on_disk.add(f.suffix.lower())
-        except Exception:
-            pass
-        extensions = sorted(set(_ALL_SOURCE_EXTENSIONS) | seen_on_disk)
+        except Exception as exc:
+            # P4 (defensive parsing): log but never crash detection.
+            logger.warning("discover_source_files failed in auto_detect_project: %s", exc)
+
+        known_set = set(_ALL_SOURCE_EXTENSIONS)
+        # Intersection of known + on-disk gives us the curated extensions
+        # the project actually uses. Plus any project-specific extensions
+        # (suffixes seen on disk but not in our known list).
+        in_both = known_set & seen_on_disk
+        unknown_but_seen = seen_on_disk - known_set
+        # If we found NOTHING on disk (edge case: empty repo), fall back
+        # to the broad set so init still produces a usable config that
+        # could pick up files added later.
+        if seen_on_disk:
+            extensions = sorted(in_both | unknown_but_seen)
+        else:
+            extensions = sorted(known_set)
+            logger.info("auto_detect_project: no files seen on disk — defaulting to broad extension set")
     collection_name = name.lower().replace("-", "_").replace(" ", "_").replace(".", "_")
 
     logger.info("Auto-detected: language=%s, dirs=%s, exts=%d files",

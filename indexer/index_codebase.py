@@ -132,15 +132,116 @@ def _load_config() -> dict:
     return {}
 
 def _check_search_deps() -> bool:
-    """Return True if chromadb + sentence-transformers are available."""
-    try:
-        import chromadb  # noqa: F401
-        import sentence_transformers  # noqa: F401
-        return True
-    except ImportError:
-        return False
+    """Return True if chromadb + sentence-transformers are available.
 
-def _get_chroma_client():
+    2026-05-17 Bug J/K fix (P9 graceful degradation):
+    Previously this function loaded the heavy ML package by name to test
+    availability — that triggered the FULL PyTorch tensor init (~5s) on
+    every call. Critically, this fired on EVERY `tools/list` MCP request,
+    exceeding Claude Desktop's ~1s renderer timeout and causing disconnects.
+
+    Strategy (in order, all fast):
+      1. ``sys.modules.get(name)`` not None → available. Covers both real
+         loads earlier in the process AND test fixtures that put a stub
+         object in sys.modules. (Tests use ``sys.modules[name] = None``
+         to simulate the "missing" state — that's correctly treated as
+         not available because ``None is not None`` is False.)
+      2. importlib.util.find_spec → metadata-only check, microseconds.
+      3. Catch ValueError (module in sys.modules without __spec__, e.g.
+         a MagicMock) and ImportError (package metadata absent).
+    """
+    import importlib.util
+    import sys
+    for module_name in ("chromadb", "sentence_transformers"):
+        # Value-based check: handles both real loads (value is the module)
+        # AND the test pattern ``sys.modules[name] = None`` to simulate
+        # missing — neither registers as "available" without an object.
+        existing = sys.modules.get(module_name)
+        if existing is not None:
+            continue
+        try:
+            if importlib.util.find_spec(module_name) is None:
+                return False
+        except (ValueError, ImportError):
+            return False
+    return True
+
+# 2026-05-17 P2 self-heal: ChromaCorrupted is raised by _get_chroma_client
+# (when probe=True) if the on-disk store fails health check. Callers can
+# distinguish "Chroma never indexed" (skip semantic) from "Chroma broken"
+# (warn user + offer heal) instead of getting cryptic InternalError mid-loop
+# the way the 41-crash UDAP pattern surfaced.
+class ChromaCorrupted(RuntimeError):
+    """Raised when ChromaDB's on-disk store is unreadable / corrupt.
+
+    The user-visible message (via str(exc)) MUST include a fix_command
+    (P8 helpful errors). Currently: ``codevira heal --vectors`` (planned),
+    or as a manual fallback: ``rm -rf <chroma_dir> && codevira index --full``.
+    """
+
+
+# 2026-05-17: shared signature predicate. Single source of truth (P6) for
+# what counts as "this is Chroma corruption" — used by both _check_chroma_health
+# (boundary probe) and the cmd_incremental circuit breaker (per-file errors).
+_CHROMA_CORRUPTION_HINTS = (
+    "hnsw segment writer",
+    "Failed to apply logs",
+    "backfill request to compactor",
+    "compaction",
+    "database disk image is malformed",
+)
+
+
+def _looks_like_chroma_corruption(exc: BaseException) -> bool:
+    """Return True if exc matches a known Chroma corruption signature.
+
+    Used by the incremental indexer's circuit breaker to distinguish
+    "transient blip — log + continue" from "store is corrupted — halt
+    the loop and surface the error" (the UDAP 41-crash pattern).
+    """
+    msg = str(exc).lower()
+    return any(hint.lower() in msg for hint in _CHROMA_CORRUPTION_HINTS)
+
+
+def _check_chroma_health(client) -> None:
+    """Probe the Chroma client for a known-broken state.
+
+    The probe is a no-op list_collections call. If the underlying HNSW
+    store / log files are corrupt (the UDAP 2026-05-14 failure mode),
+    chromadb raises InternalError here BEFORE the indexer hits the
+    delete/add loop that produced 41 cascading crashes.
+
+    Raises:
+        ChromaCorrupted: if the probe fails.
+    """
+    try:
+        # Cheap probe — just lists collections, no real work.
+        client.list_collections()
+    except Exception as exc:
+        # Use the shared signature predicate (P6 single source of truth).
+        if _looks_like_chroma_corruption(exc):
+            raise ChromaCorrupted(
+                f"ChromaDB store appears corrupted (HNSW writer error): {exc}. "
+                f"Fix: run `codevira heal --vectors`, OR manually: "
+                f"rm -rf <project_data_dir>/codeindex && codevira index --full"
+            ) from exc
+        # Not a known corruption pattern — re-raise unchanged so the caller
+        # sees the original error.
+        raise
+
+
+def _get_chroma_client(*, probe: bool = False):
+    """Get a Chroma client; optionally probe for corruption.
+
+    Args:
+        probe: if True, call _check_chroma_health() after client init.
+               Default False to keep the common path cheap; set True at
+               server startup or before write-heavy operations.
+
+    Raises:
+        ImportError: chromadb not installed.
+        ChromaCorrupted: probe=True AND the on-disk store fails health check.
+    """
     try:
         import chromadb
     except ImportError:
@@ -152,7 +253,10 @@ def _get_chroma_client():
             "pip install --upgrade codevira"
         )
     db_dir = str(_index_dir())
-    return chromadb.PersistentClient(path=db_dir)
+    client = chromadb.PersistentClient(path=db_dir)
+    if probe:
+        _check_chroma_health(client)
+    return client
 
 def _get_embedding_fn():
     # chromadb's SentenceTransformerEmbeddingFunction raises ValueError
@@ -218,24 +322,48 @@ def _any_files_match(
 ) -> bool:
     """Return True if ≥1 file under watched_dirs has a matching extension.
 
-    Short-circuits on the first match — cheap even on large trees. Used by
-    ``cmd_incremental`` to distinguish "no files changed" (normal) from "no
-    files at all match the config" (misconfiguration → fire hint).
+    2026-05-17 Bug A fix (P6 predictable detection): now delegates to
+    ``discover_source_files`` — the same scanner ``configure`` uses.
+    Previously this function used a raw ``rglob`` walker that didn't
+    respect .gitignore, so configure could find 8 files but
+    ``_any_files_match`` could return False, producing the silent
+    "0 chunks matched" pattern. Single source of truth now.
+
+    Short-circuits on the first match — cheap even on large trees.
     """
-    root = _project_root()
-    for wd in watched_dirs:
-        base = root / wd
-        if not base.exists():
-            continue
-        for p in base.rglob("*"):
-            if not p.is_file():
+    try:
+        from mcp_server.gitignore import discover_source_files
+        files = discover_source_files(
+            _project_root(),
+            config_overrides={
+                "watched_dirs": watched_dirs,
+                "file_extensions": file_extensions,
+                "skip_dirs": skip_dirs,
+            },
+        )
+        return len(files) > 0
+    except Exception as exc:
+        # P9 graceful degradation: fall back to the old rglob walker so
+        # an import error in mcp_server.gitignore doesn't kill the whole
+        # indexer. Logged as warning so the issue is visible.
+        logger.warning(
+            "_any_files_match: discover_source_files failed (%s) — falling back to rglob walker",
+            exc,
+        )
+        root = _project_root()
+        for wd in watched_dirs:
+            base = root / wd
+            if not base.exists():
                 continue
-            if p.suffix not in file_extensions:
-                continue
-            if any(s in p.parts for s in skip_dirs):
-                continue
-            return True
-    return False
+            for p in base.rglob("*"):
+                if not p.is_file():
+                    continue
+                if p.suffix not in file_extensions:
+                    continue
+                if any(s in p.parts for s in skip_dirs):
+                    continue
+                return True
+        return False
 
 
 def _get_changed_files(db: SQLiteGraph) -> list[tuple[str, str]]:
@@ -336,7 +464,13 @@ def _chunk_to_document(chunk) -> tuple[str, str, dict]:
     }
     return doc_id, document, metadata
 
-def cmd_full_rebuild():
+def cmd_full_rebuild(verbose: bool = False):
+    """Full rebuild from scratch.
+
+    Args:
+        verbose: emit per-file decisions (matched / skipped + reason) for
+                 diagnosing silent 0-chunk results. (Bug H, 2026-05-17, P10.)
+    """
     from indexer.chunker import chunk_project
     from indexer.graph_generator import generate_graph_sqlite
     from rich.console import Console
@@ -355,7 +489,26 @@ def cmd_full_rebuild():
         db.close()
         return
 
-    client = _get_chroma_client()
+    # P2 (self-diagnose on startup) + P5 (circuit-break before retry storm):
+    # probe Chroma BEFORE the indexer touches the collection. If the store
+    # is corrupted (the 2026-05-14 UDAP HNSW pattern), this raises
+    # ChromaCorrupted with a clear remediation hint INSTEAD of hitting the
+    # delete/add loop that produced 41 cascading crashes in production.
+    try:
+        client = _get_chroma_client(probe=True)
+    except ChromaCorrupted as exc:
+        console.print(f"[red]✗[/red] {exc}")
+        # P9 (graceful degradation): graph indexing still works without
+        # Chroma — fall through to the graph-only path that already exists.
+        from indexer.graph_generator import generate_graph_sqlite
+        result = generate_graph_sqlite(str(_project_root()), str(get_data_dir() / "graph" / "graph.db"))
+        console.print(
+            f"[yellow]⚠[/yellow] Skipped semantic index (corrupted). "
+            f"Graph built: {result.get('nodes_added', 0)} nodes, "
+            f"{result.get('edges_added', 0)} edges."
+        )
+        db.close()
+        return
     try:
         client.delete_collection(COLLECTION_NAME)
     except Exception:
@@ -373,15 +526,38 @@ def cmd_full_rebuild():
     file_hashes = {}
     seen_chunk_ids = set()
     
+    # 2026-05-17 Bug H fix (P10 observability): track per-file decisions
+    # when verbose is on. Counters here surface as a summary even when
+    # 0 chunks were matched — which is the failure mode the user hits
+    # when discovery and indexing disagree on what counts as a source file.
+    v_matched: int = 0
+    v_skipped_extension: int = 0
+    v_skipped_in_skip_dirs: int = 0
+    v_skipped_other: int = 0
+    if verbose:
+        console.print(f"[dim cyan][verbose][/dim cyan] watched_dirs={watched_dirs}")
+        console.print(f"[dim cyan][verbose][/dim cyan] file_extensions={extensions}")
+        console.print(f"[dim cyan][verbose][/dim cyan] skip_dirs={skip_dirs}")
+
     with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), BarColumn(), TaskProgressColumn(), console=console) as progress:
         task1 = progress.add_task("[cyan]Parsing and chunking source files...", total=None)
-        
+
         # Chunk the entire project once (not per watched_dir)
         all_project_chunks = chunk_project(str(_project_root()))
+        if verbose:
+            console.print(
+                f"[dim cyan][verbose][/dim cyan] chunk_project produced "
+                f"{len(all_project_chunks)} total chunk(s) across all files"
+            )
 
         for watch_dir in watched_dirs:
             abs_dir = _project_root() / watch_dir
             if not abs_dir.exists():
+                if verbose:
+                    console.print(
+                        f"[dim cyan][verbose][/dim cyan] skip watch_dir {watch_dir!r}: "
+                        f"does not exist on disk"
+                    )
                 continue
             wd_str = str(watch_dir)
             for c in all_project_chunks:
@@ -390,16 +566,42 @@ def cmd_full_rebuild():
                     if chunk_id not in seen_chunk_ids:
                         seen_chunk_ids.add(chunk_id)
                         all_chunks.append(c)
-                
+
             # v1.8.1: tolerate per-watch-dir OS errors so a single bad
             # subtree (EINTR, PermissionError, etc.) doesn't abort the
             # full rebuild. Same pattern as _get_changed_files.
             try:
                 for p in abs_dir.rglob("*"):
-                    if p.is_file() and p.suffix in extensions and not any(s in p.parts for s in skip_dirs):
-                        rel = str(p.relative_to(_project_root()))
-                        file_hashes[rel] = _compute_hash(p)
+                    if not p.is_file():
+                        continue
+                    if p.suffix not in extensions:
+                        v_skipped_extension += 1
+                        if verbose:
+                            rel = str(p.relative_to(_project_root()))
+                            console.print(
+                                f"[dim cyan][verbose][/dim cyan] skip {rel}: "
+                                f"extension {p.suffix!r} not in file_extensions"
+                            )
+                        continue
+                    if any(s in p.parts for s in skip_dirs):
+                        v_skipped_in_skip_dirs += 1
+                        if verbose:
+                            rel = str(p.relative_to(_project_root()))
+                            matched_skip = next(s for s in skip_dirs if s in p.parts)
+                            console.print(
+                                f"[dim cyan][verbose][/dim cyan] skip {rel}: "
+                                f"path contains skip_dir {matched_skip!r}"
+                            )
+                        continue
+                    rel = str(p.relative_to(_project_root()))
+                    file_hashes[rel] = _compute_hash(p)
+                    v_matched += 1
+                    if verbose:
+                        console.print(
+                            f"[dim cyan][verbose][/dim cyan] match {rel}"
+                        )
             except (OSError, RuntimeError) as e:
+                v_skipped_other += 1
                 logger.warning(
                     "cmd_full_rebuild: skipping watch_dir %s due to filesystem error: %s",
                     watch_dir, e,
@@ -424,6 +626,15 @@ def cmd_full_rebuild():
                     ids, docs, metadatas = [], [], []
             progress.update(task2, advance=1)
 
+    # Bug H summary: always shown when verbose, regardless of outcome.
+    # When 0 chunks resulted, this is the user's actionable diagnostic.
+    if verbose:
+        console.print(
+            f"[dim cyan][verbose][/dim cyan] summary: "
+            f"matched={v_matched} skipped_extension={v_skipped_extension} "
+            f"skipped_in_skip_dirs={v_skipped_in_skip_dirs} fs_errors={v_skipped_other}"
+        )
+
     # v1.8: safety hint BEFORE the success print so it's the last thing a user
     # sees when their config covers nothing. Logger fires unconditionally so
     # background (auto-init) invocations also leave a trace.
@@ -439,7 +650,16 @@ def cmd_full_rebuild():
     generate_graph_sqlite(str(_project_root()), str(db.db_path))
     db.close()
 
-def cmd_incremental(quiet: bool = False, file_paths: list[str] | None = None):
+def cmd_incremental(quiet: bool = False, file_paths: list[str] | None = None, verbose: bool = False):
+    """Incremental update.
+
+    Args:
+        quiet: suppress all output (git hook usage).
+        file_paths: list of paths to re-index (caller-scoped). If None,
+                    scans the whole project for changed files.
+        verbose: emit per-file decisions for diagnosing why files were
+                 or weren't matched. (Bug H, 2026-05-17, P10.)
+    """
     from indexer.chunker import chunk_file
     from indexer.graph_generator import generate_graph_sqlite
     from rich.console import Console
@@ -455,15 +675,48 @@ def cmd_incremental(quiet: bool = False, file_paths: list[str] | None = None):
             # not misconfiguration. Do NOT fire the zero-chunks hint.
             console.print("[green]✓[/green] No matching files found to re-index.")
         else:
-            # Project-wide incremental scan: distinguish "nothing changed"
-            # (normal) from "config matches no files at all" (misconfig → hint).
+            # Project-wide incremental scan: three distinct states must be
+            # distinguished (Bug B, P1 fix — "up to date" was a lie when
+            # the graph was empty):
+            #
+            #   1. Graph empty + config matches files →
+            #      "graph not built yet, run `codevira index --full`"
+            #   2. Graph empty + config matches nothing →
+            #      _warn_zero_chunks (config misconfigured)
+            #   3. Graph populated + nothing changed → "up to date"  (truthful)
+            #
+            # The old code conflated (1) with (3), telling users they were
+            # "up to date" when nothing had ever been indexed.
             config = _load_config()
             wd = config.get("watched_dirs", ["src"])
             exts = config.get("file_extensions", [".py", ".ts", ".tsx", ".go", ".rs"])
             skip = config.get("skip_dirs", ["node_modules", ".venv", "__pycache__"])
-            if not _any_files_match(wd, exts, skip):
+            config_matches = _any_files_match(wd, exts, skip)
+            # Cheap graph-empty probe: count nodes via the graph DB.
+            try:
+                graph_node_count = db.count_nodes() if hasattr(db, "count_nodes") else None
+            except Exception:
+                graph_node_count = None
+            if graph_node_count == 0:
+                if config_matches:
+                    # State 1: config is fine but nothing has been indexed yet.
+                    console.print(
+                        "[yellow]⚠[/yellow]  Graph has 0 nodes but config matches files on disk."
+                    )
+                    console.print(
+                        "  This project hasn't been indexed yet (or the graph was wiped)."
+                    )
+                    console.print("  Fix: run [bold]codevira index --full[/bold]")
+                else:
+                    # State 2: misconfigured.
+                    _warn_zero_chunks(wd, exts, quiet=quiet)
+            elif not config_matches:
+                # Edge case: graph populated, but current config now matches
+                # nothing (user trimmed watched_dirs to a dir that's empty).
+                # Warn the user — they likely want to fix configure.
                 _warn_zero_chunks(wd, exts, quiet=quiet)
             else:
+                # State 3: legitimate steady-state.
                 console.print("[green]✓[/green] No files changed. Index is up to date.")
         db.close()
         return 0
@@ -477,9 +730,21 @@ def cmd_incremental(quiet: bool = False, file_paths: list[str] | None = None):
 
     if has_search:
         try:
-            client = _get_chroma_client()
+            # 2026-05-17 fix for the 2026-05-16 UDAP/QuickCourier crash pattern:
+            # probe Chroma BEFORE the per-file loop. If the store is corrupted
+            # (HNSW writer error), this raises ChromaCorrupted with a clear
+            # fix_command — fall through to graph-only mode INSTEAD of hitting
+            # the 41-crash-per-file pattern that motivated the rate-limiter.
+            client = _get_chroma_client(probe=True)
             embed_fn = _get_embedding_fn()
             collection = client.get_collection(COLLECTION_NAME, embedding_function=embed_fn)
+        except ChromaCorrupted as exc:
+            collection = None
+            if not quiet:
+                console.print(f"[red]✗[/red] {exc}")
+                console.print("[yellow]⚠[/yellow]  Falling back to graph-only update for this incremental.")
+            from mcp_server._safe_crash import safe_log_crash
+            safe_log_crash(exc, context="incremental index: ChromaCorrupted at startup")
         except Exception:
             # No existing collection — skip semantic indexing, still update graph
             collection = None
@@ -489,14 +754,54 @@ def cmd_incremental(quiet: bool = False, file_paths: list[str] | None = None):
     indexed_any = False
 
     if collection is not None:
+        # 2026-05-17 P5 (bounded resources) circuit breaker: if the same
+        # Chroma error fires N times in a row (the UDAP / QuickCourier
+        # pattern), HALT the loop and fall through to graph-only mode.
+        # Previously each per-file failure logged a crash and continued —
+        # producing 41 identical entries for one root cause. The rate-
+        # limiter coalesced log entries; the circuit breaker stops the
+        # wasted work entirely.
+        consecutive_chroma_failures = 0
+        CHROMA_FAILURE_LIMIT = 5
+        chroma_aborted = False
+
         # Semantic search + graph update
         with _chroma_write_lock:
             for fpath, fhash in changed_items:
+                if chroma_aborted:
+                    # P9 graceful: continue updating graph state for remaining
+                    # files even though Chroma is broken; we'll fall through
+                    # to graph-only path after the loop.
+                    db.update_file_hash(fpath, fhash)
+                    indexed_any = True
+                    continue
+
+                # Per-iteration error flag — RESET only fires when both
+                # delete AND add succeed. Without this, a delete that
+                # consistently fails + add that succeeds would re-zero the
+                # counter every iteration, defeating the breaker entirely.
+                # (Caught by test_per_file_chroma_failures_halt_after_limit
+                # 2026-05-17 — a regression test wrote the wrong logic
+                # twice in a row before this was right.)
+                iter_had_chroma_error = False
+
                 try:
                     collection.delete(where={"file_path": fpath})
                 except Exception as e:
                     from mcp_server._safe_crash import safe_log_crash
                     safe_log_crash(e, context=f"incremental index: delete old chunks for {fpath}")
+                    if _looks_like_chroma_corruption(e):
+                        consecutive_chroma_failures += 1
+                        iter_had_chroma_error = True
+                        if consecutive_chroma_failures >= CHROMA_FAILURE_LIMIT:
+                            chroma_aborted = True
+                            console.print(
+                                f"[red]✗[/red] {CHROMA_FAILURE_LIMIT} consecutive Chroma "
+                                f"errors — circuit broken. Run `codevira heal --vectors` "
+                                f"and `codevira index --full` to recover. "
+                                f"Continuing in graph-only mode for the rest of this batch."
+                            )
+                            continue
 
                 try:
                     chunks = chunk_file(str(_project_root() / fpath), str(_project_root()))
@@ -512,11 +817,28 @@ def cmd_incremental(quiet: bool = False, file_paths: list[str] | None = None):
                     db.update_file_hash(fpath, fhash)
                     indexed_any = True
                     console.print(f"  [green]+[/green] Re-indexed {len(chunks)} chunks for {fpath}")
+                    # Only reset the breaker if THIS iteration had no Chroma
+                    # error at all (neither delete nor add). Without this
+                    # tighter check, a per-file delete that consistently
+                    # fails would never trip the breaker because each
+                    # successful add zeroed the counter.
+                    if not iter_had_chroma_error:
+                        consecutive_chroma_failures = 0
 
                 except Exception as e:
                     console.print(f"[red]Error indexing {fpath}: {e}[/red]")
                     from mcp_server._safe_crash import safe_log_crash
                     safe_log_crash(e, context=f"incremental index: indexing {fpath}")
+                    if _looks_like_chroma_corruption(e):
+                        consecutive_chroma_failures += 1
+                        iter_had_chroma_error = True
+                        if consecutive_chroma_failures >= CHROMA_FAILURE_LIMIT:
+                            chroma_aborted = True
+                            console.print(
+                                f"[red]✗[/red] {CHROMA_FAILURE_LIMIT} consecutive Chroma "
+                                f"errors — circuit broken. Run `codevira heal --vectors` "
+                                f"and `codevira index --full` to recover."
+                            )
                     continue
     else:
         # Graph-only mode: update file hashes without semantic indexing
@@ -870,6 +1192,84 @@ def cmd_status(check_stale: bool = False, show_global: bool = False):
         border_style="green",
     )
     console.print(panel)
+
+    # 2026-05-17 Bug C fix (P1 + P10): when graph.db exists but is empty,
+    # status was showing "Graph Nodes: 0 / Chunks: 0" with no actionable
+    # signal — a silent failure. Now distinguishes three states (mirrors
+    # the cmd_incremental fix for Bug B):
+    #   1. Graph populated → legitimate steady-state, just show the table
+    #   2. Graph empty + config matches files → "never indexed, run --full"
+    #   3. Graph empty + config matches nothing → fire misconfig hint
+    #
+    # 2026-05-17 follow-up: extended to nodes == 0 even when chunks > 0.
+    # The Bug E markdown chunker means a docs-only project can have
+    # semantic chunks (markdown sections) yet zero graph nodes (no parseable
+    # code). The old `nodes == 0 AND chunks == 0` predicate left that
+    # state silent again — caught by the e2e gauntlet's
+    # test_status_reflects_reality[docs_only].
+    if nodes == 0:
+        try:
+            config = _load_config()
+            wd = config.get("watched_dirs", ["src"])
+            exts = config.get("file_extensions", [".py", ".ts", ".tsx", ".go", ".rs"])
+            skip = config.get("skip_dirs", ["node_modules", ".venv", "__pycache__"])
+            config_matches = _any_files_match(wd, exts, skip)
+        except Exception:
+            # P9 (graceful): if config load fails, fall back to generic warning
+            config_matches = None
+
+        if config_matches is True:
+            # State 2: project has matching files but graph is empty.
+            # Two sub-cases: chunks==0 (never indexed) vs chunks>0 (only
+            # docs / non-parseable files; graph empty by design).
+            console.print()
+            if chunk_count == 0:
+                console.print(
+                    "[yellow]⚠[/yellow]  Graph and semantic index are empty, "
+                    "but your project has files matching the config."
+                )
+                console.print(
+                    "  This project hasn't been indexed yet (or the index was wiped)."
+                )
+                console.print("  Fix: run [bold]codevira index --full[/bold]")
+            else:
+                # chunks exist (markdown/text) but no graph nodes — common
+                # for docs-only repos. Explain so the user knows it's
+                # not a bug.
+                console.print(
+                    "[yellow]⚠[/yellow]  Graph has 0 nodes "
+                    f"(but {chunk_count} semantic chunks indexed)."
+                )
+                console.print(
+                    "  This project may have no parseable source code — "
+                    "only docs / configs were indexed. Semantic search works; "
+                    "the symbol-level graph stays empty by design."
+                )
+                console.print(
+                    "  If you expected graph nodes (e.g. Python files), run "
+                    "[bold]codevira index --verbose --full[/bold] to see "
+                    "per-file decisions."
+                )
+        elif config_matches is False:
+            # State 3: config matches nothing — same hint as cmd_incremental.
+            # We can't call _warn_zero_chunks here because it writes to
+            # stderr; the user invoked `status` interactively and wants
+            # the hint on stdout next to the table.
+            console.print()
+            console.print(
+                "[yellow]⚠[/yellow]  Graph and semantic index are empty AND "
+                "your config matches NO files on disk."
+            )
+            console.print(f"  watched_dirs:    {list(wd)}")
+            console.print(f"  file_extensions: {list(exts)}")
+            console.print("  Fix: run [bold]codevira configure[/bold] to pick the right folders")
+        else:
+            # Generic fallback if we couldn't load config.
+            console.print()
+            console.print(
+                "[yellow]⚠[/yellow]  Graph and semantic index are empty. "
+                "Run [bold]codevira index --full[/bold] or [bold]codevira configure[/bold] to diagnose."
+            )
 
     if not search_available:
         console.print("\n[dim]  Tip: reinstall with [bold]pip install --upgrade codevira[/bold] to enable semantic search[/dim]")

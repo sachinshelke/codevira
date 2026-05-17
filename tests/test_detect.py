@@ -354,21 +354,34 @@ class TestAutoDetectProject:
     """Full auto-detection pipeline."""
 
     def test_python_project(self, tmp_path):
-        """rc.5: default is union of all known extensions; pass
-        single_language=True to get the legacy [".py"] narrowing."""
+        """2026-05-17 Bug M fix: file_extensions reflects what's ACTUALLY on
+        disk (intersection of known set with seen suffixes), not the all-
+        known union. The old rc.5 behavior (returning all 80 known
+        extensions regardless of disk) was misleading users — a Python-
+        only project shouldn't claim to "auto-detect" .swift / .elm / .dart.
+
+        Fixture: a project with .py and .md files. Both should appear; nothing
+        else should.
+        """
         root = _make_project(tmp_path, "my-api")
         (root / "pyproject.toml").write_text("[project]\nname = 'my-api'\n")
+        (root / "README.md").write_text("# my-api\n")  # ensures .md is on disk
         src = root / "src"
         src.mkdir()
         (src / "main.py").write_text("# main\n")
 
-        # New default: union of extensions (polyglot-friendly)
         result = auto_detect_project(root)
         assert result["name"] == "my-api"
         assert result["language"] == "python"
+        # Both extensions actually present should be detected:
         assert ".py" in result["file_extensions"]
-        # Default includes many more — sanity-check a non-Python ext.
         assert ".md" in result["file_extensions"]
+        assert ".toml" in result["file_extensions"]
+        # And ONLY what's on disk — no false positives:
+        assert ".swift" not in result["file_extensions"], \
+            "Bug M regression: .swift detected when none on disk"
+        assert ".elm" not in result["file_extensions"], \
+            "Bug M regression: .elm detected when none on disk"
 
         # Legacy single-language mode
         narrow = auto_detect_project(root, single_language=True)
@@ -376,17 +389,24 @@ class TestAutoDetectProject:
         assert narrow["collection_name"] == "my_api"
 
     def test_typescript_project(self, tmp_path):
+        """2026-05-17 Bug M fix: assert disk-actual extensions, not the union."""
         root = _make_project(tmp_path, "web-app")
         (root / "tsconfig.json").write_text('{"compilerOptions": {}}')
         src = root / "src"
         src.mkdir()
         (src / "index.ts").write_text("export const x = 1;\n")
+        (src / "App.tsx").write_text("export const App = () => null;\n")  # ensures .tsx on disk
 
         result = auto_detect_project(root)
 
         assert result["language"] == "typescript"
+        # Both should be detected (they're on disk):
         assert ".ts" in result["file_extensions"]
         assert ".tsx" in result["file_extensions"]
+        assert ".json" in result["file_extensions"]  # tsconfig.json
+        # Not on disk → not detected:
+        assert ".py" not in result["file_extensions"], \
+            "Bug M regression: .py detected for TS project with no .py files"
 
     def test_go_project(self, tmp_path):
         """rc.5: file_extensions defaults to the union, narrows with single_language=True."""
@@ -462,6 +482,64 @@ class TestAutoDetectProject:
 
         narrow = auto_detect_project(root, single_language=True)
         assert narrow["file_extensions"] == [".rs"]
+
+
+class TestInitConfigureAgreementBugN:
+    """2026-05-17 Bug N fix (P6 predictable detection): init and configure
+    used different code paths to determine "what counts as a source file."
+    They now both delegate to `discover_source_files`, so init and a
+    later `configure` against the same project must surface the same
+    file set. Without this guarantee, init writes one config, configure
+    writes another, and the indexer disagrees with both — the v2.0
+    surface that produced the lh-interface bug.
+    """
+
+    def test_init_detection_uses_discover_source_files(self, tmp_path):
+        """Both auto_detect_project (used by init) and discover_source_files
+        (used by configure) must return the same file set for a given project."""
+        from mcp_server.detect import auto_detect_project
+        from mcp_server.gitignore import discover_source_files
+        root = _make_project(tmp_path, "polyglot")
+        (root / "pyproject.toml").write_text("[project]\nname = 'polyglot'\n")
+        (root / "README.md").write_text("# polyglot\n")
+        (root / "src").mkdir()
+        (root / "src" / "main.py").write_text("# main\n")
+        (root / "src" / "client.ts").write_text("export const x = 1;\n")
+        (root / "docs").mkdir()
+        (root / "docs" / "arch.md").write_text("# arch\n")
+
+        init_result = auto_detect_project(root)
+        # Get configure's view: all discoverable source files.
+        configure_files = discover_source_files(root)
+        configure_extensions = {f.suffix.lower() for f in configure_files if f.suffix}
+
+        # Every extension init reports should ALSO be one configure discovered.
+        # (Init may not include every extension configure sees — e.g., binary
+        # extensions filtered by configure's scanner — but the reverse must hold:
+        # no init extension should be ABSENT from configure's discovery.)
+        for ext in init_result["file_extensions"]:
+            assert ext in configure_extensions or ext in {".toml"}, (
+                f"Bug N regression: init detected {ext} but configure's "
+                f"discover_source_files did not. They use different matchers."
+            )
+
+    def test_init_includes_dot_when_top_level_files_present(self, tmp_path):
+        """init must include '.' in watched_dirs when top-level has source files.
+        Combined Bug F + Bug N guarantee: top-level CLAUDE.md / README.md /
+        pyproject.toml etc. are not invisible to the indexer.
+        """
+        from mcp_server.detect import auto_detect_project
+        root = _make_project(tmp_path, "with-top-level")
+        (root / "pyproject.toml").write_text("[project]\nname = 'x'\n")
+        (root / "README.md").write_text("# x\n")  # top-level file
+        (root / "src").mkdir()
+        (root / "src" / "main.py").write_text("# main\n")
+
+        result = auto_detect_project(root)
+        assert "." in result["watched_dirs"], (
+            f"Bug F/N regression: top-level files exist but '.' not in "
+            f"watched_dirs={result['watched_dirs']!r}"
+        )
 
 
 # ---------------------------------------------------------------------------

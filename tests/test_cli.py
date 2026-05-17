@@ -153,8 +153,9 @@ class TestMainDispatch:
             mocks[name] = p.start()
         try:
             self._run_main(["index", "--full"], mocks)
+            # 2026-05-17 Bug H: --verbose added as opt-in (default False).
             mocks["mcp_server.cli.cmd_index"].assert_called_once_with(
-                full=True, quiet=False
+                full=True, quiet=False, verbose=False
             )
         finally:
             for p in patchers.values():
@@ -249,8 +250,9 @@ class TestMainDispatch:
             mocks[name] = p.start()
         try:
             self._run_main(["index"], mocks)
+            # 2026-05-17 Bug H: --verbose added as opt-in (default False).
             mocks["mcp_server.cli.cmd_index"].assert_called_once_with(
-                full=False, quiet=False
+                full=False, quiet=False, verbose=False
             )
         finally:
             for p in patchers.values():
@@ -643,7 +645,8 @@ class TestCmdIndex:
              patch("indexer.index_codebase.cmd_incremental") as mock_incremental:
             from mcp_server.cli import cmd_index
             cmd_index(full=False)
-        mock_incremental.assert_called_once_with(quiet=False)
+        # 2026-05-17 Bug H: cmd_incremental now also receives verbose.
+        mock_incremental.assert_called_once_with(quiet=False, verbose=False)
         mock_rebuild.assert_not_called()
 
     def test_cmd_index_quiet(self):
@@ -652,7 +655,8 @@ class TestCmdIndex:
              patch("indexer.index_codebase.cmd_incremental") as mock_incremental:
             from mcp_server.cli import cmd_index
             cmd_index(full=False, quiet=True)
-        mock_incremental.assert_called_once_with(quiet=True)
+        # 2026-05-17 Bug H: cmd_incremental now also receives verbose.
+        mock_incremental.assert_called_once_with(quiet=True, verbose=False)
 
     # v1.8.1 hardening — cmd_index refuses $HOME / system dirs
     def test_cmd_index_refuses_home(self, tmp_path, monkeypatch, capsys):

@@ -1,0 +1,54 @@
+# Release gate — prevents PR merges to release/* branches without G1-G2 evidence.
+#
+# This is the CI half of the hard wall. The local half is the
+# PreToolUse hook (.claude/hooks/pre-release-block.sh). Together
+# they make it impossible to ship a release that hasn't passed
+# the gauntlet.
+#
+# WHY this matters: v2.0.0 shipped to PyPI with 23 silent-failure
+# bugs because nothing forced gauntlet evidence at any point in the
+# release flow. Now CI refuses the merge and the local hook refuses
+# the publish.
+
+name: Release Gate
+
+on:
+  pull_request:
+    branches:
+      - 'release/*'
+      - main
+    types: [opened, synchronize, reopened, ready_for_review]
+
+jobs:
+  gauntlet:
+    name: Release gauntlet (G1 + G2)
+    runs-on: ubuntu-latest
+    if: |
+      contains(github.event.pull_request.head.ref, 'release/') ||
+      contains(github.event.pull_request.head.ref, 'Release/') ||
+      startsWith(github.event.pull_request.title, 'release:') ||
+      startsWith(github.event.pull_request.title, 'Release:')
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dev dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run release gauntlet (G1 + G2 only — G3-G5 require local hardware)
+        run: make release-gauntlet
+
+      - name: Surface evidence file
+        run: |
+          echo "Generated evidence:"
+          cat .release-evidence/*.json
+          echo ""
+          echo "G3 (real-IDE smoke), G4 (crash-log clean), G5 (human"
+          echo "confirmation) cannot run in CI. The PreToolUse hook"
+          echo "blocks twine publish until G5 is set true by hand."

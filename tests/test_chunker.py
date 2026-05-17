@@ -884,3 +884,95 @@ class TestChunkFilePythonOSError:
             result = _chunk_file_python(str(py_file), str(tmp_path))
 
         assert result == []
+
+
+class TestChunkFileMarkdownBugE:
+    """2026-05-17 Bug E fix (P1 no silent failures): docs-only repos
+    used to fall through to the Python AST parser, which returned [] for
+    every .md file. That meant lh-interface-style projects (markdown +
+    JSON only) produced 0 chunks silently. Now markdown gets heading-based
+    chunks; generic text gets paragraph chunks.
+    """
+
+    def test_markdown_with_headings_yields_per_section(self, tmp_path):
+        from indexer.chunker import chunk_file
+        f = tmp_path / "doc.md"
+        f.write_text(
+            "# Top\n"
+            "Intro paragraph.\n"
+            "\n"
+            "## Sub one\n"
+            "Body of sub one.\n"
+            "\n"
+            "## Sub two\n"
+            "Body of sub two.\n"
+        )
+        chunks = chunk_file(str(f), str(tmp_path))
+        assert len(chunks) == 3, f"expected 3 sections, got {len(chunks)}"
+        # All chunks should be markdown_section type.
+        assert all(c.chunk_type == "markdown_section" for c in chunks)
+        # Section names should reflect headings.
+        names = {c.name for c in chunks}
+        assert "Top" in names
+        assert "Sub one" in names
+        assert "Sub two" in names
+
+    def test_markdown_with_no_headings_yields_whole_file(self, tmp_path):
+        """No-heading markdown still produces 1 chunk (not 0). Bug E core."""
+        from indexer.chunker import chunk_file
+        f = tmp_path / "plain.md"
+        f.write_text("Just some paragraph text.\nNo headings at all.\n")
+        chunks = chunk_file(str(f), str(tmp_path))
+        assert len(chunks) == 1, (
+            f"Bug E regression: no-heading markdown should still produce "
+            f"1 whole-file chunk, got {len(chunks)}"
+        )
+
+    def test_markdown_empty_file_yields_zero(self, tmp_path):
+        """Empty file → 0 chunks, but not a crash."""
+        from indexer.chunker import chunk_file
+        f = tmp_path / "empty.md"
+        f.write_text("")
+        chunks = chunk_file(str(f), str(tmp_path))
+        assert chunks == []
+
+    def test_json_yields_paragraph_chunks(self, tmp_path):
+        """JSON files now produce chunks instead of falling through to Python AST."""
+        from indexer.chunker import chunk_file
+        f = tmp_path / "config.json"
+        f.write_text('{\n  "name": "test",\n  "version": "1.0"\n}\n')
+        chunks = chunk_file(str(f), str(tmp_path))
+        assert len(chunks) >= 1, (
+            f"Bug E regression: JSON should produce ≥1 chunk, got {len(chunks)}"
+        )
+        assert all(c.chunk_type == "text_paragraph" for c in chunks)
+
+    def test_yaml_yields_paragraph_chunks(self, tmp_path):
+        from indexer.chunker import chunk_file
+        f = tmp_path / "config.yaml"
+        f.write_text("app:\n  name: foo\n\nlogging:\n  level: info\n")
+        chunks = chunk_file(str(f), str(tmp_path))
+        assert len(chunks) >= 1
+        assert all(c.chunk_type == "text_paragraph" for c in chunks)
+
+    def test_lh_interface_shaped_fixture_produces_nonzero_chunks(self, tmp_path):
+        """End-to-end: a docs-only repo (the lh-interface shape that
+        triggered Bug E) must produce > 0 chunks across all files."""
+        from indexer.chunker import chunk_file
+        files = {
+            "README.md": "# Project\nIntro.\n",
+            "CLAUDE.md": "# Instructions\nHow to work here.\n",
+            "package.json": '{"name": "lh-interface"}\n',
+            "docs/architecture.md": "# Architecture\n## Components\n- A\n- B\n",
+        }
+        for rel, content in files.items():
+            p = tmp_path / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(content)
+        total_chunks = 0
+        for rel in files:
+            total_chunks += len(chunk_file(str(tmp_path / rel), str(tmp_path)))
+        assert total_chunks > 0, (
+            f"Bug E regression: lh-interface-shaped docs-only repo "
+            f"produced {total_chunks} chunks (expected > 0)"
+        )

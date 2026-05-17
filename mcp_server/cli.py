@@ -363,8 +363,15 @@ def cmd_init() -> None:
     print()
 
 
-def cmd_index(full: bool = False, quiet: bool = False) -> None:
-    """Run the indexer (incremental by default, or --full for complete rebuild)."""
+def cmd_index(full: bool = False, quiet: bool = False, verbose: bool = False) -> None:
+    """Run the indexer (incremental by default, or --full for complete rebuild).
+
+    Args:
+        full: rebuild from scratch instead of incremental.
+        quiet: suppress all output (used by post-commit git hook).
+        verbose: emit per-file decisions for debugging silent 0-chunk results
+                 (Bug H fix, 2026-05-17). Cannot be combined with quiet.
+    """
     from indexer.index_codebase import cmd_full_rebuild, cmd_incremental
     from mcp_server.paths import get_project_root, is_invalid_project_root
 
@@ -384,10 +391,15 @@ def cmd_index(full: bool = False, quiet: bool = False) -> None:
         )
         sys.exit(1)
 
+    # P1 (helpful errors): refuse combination of --quiet + --verbose explicitly.
+    if quiet and verbose:
+        print("Error: --quiet and --verbose are mutually exclusive.", file=sys.stderr)
+        sys.exit(1)
+
     if full:
-        cmd_full_rebuild()
+        cmd_full_rebuild(verbose=verbose)
     else:
-        cmd_incremental(quiet=quiet)
+        cmd_incremental(quiet=quiet, verbose=verbose)
 
 
 def cmd_status(check_stale: bool = False, show_global: bool = False) -> None:
@@ -699,6 +711,13 @@ def main() -> None:
     )
     index_parser.add_argument("--full", action="store_true", help="Full rebuild from scratch")
     index_parser.add_argument("--quiet", action="store_true", help="Suppress output (used by git hook)")
+    # 2026-05-17 Bug H fix (P10 observability): users hitting silent
+    # 0-chunks had no way to see WHICH files were rejected and WHY.
+    # --verbose emits per-file decisions (matched / skipped <reason>).
+    index_parser.add_argument(
+        "--verbose", "-v", action="store_true",
+        help="Emit per-file decisions (matched, skipped + reason). Use to diagnose silent 0-chunks.",
+    )
 
     # status (P2-1 rc.5: added description)
     status_parser = subparsers.add_parser(
@@ -942,6 +961,15 @@ def main() -> None:
         "--ghosts-only", action="store_true",
         help="Show only project dirs that are missing config / metadata / global.db row",
     )
+    # 2026-05-17 Bug G partial fix: project keys on disk are long hashes
+    # (`Users_sachin_..._6d2f5d4d`) which users can't trivially navigate
+    # to. `--paths` prints `<project_path>  →  <data_dir>` per line so
+    # users can `cd $(codevira projects --paths | grep myproj | ...)`.
+    # A full rename to short keys requires a migration we defer to v3.0.
+    projects_parser.add_argument(
+        "--paths", action="store_true",
+        help="Show each project's source path + data dir path (pairs project basename with the ~/.codevira/projects/<key>/ dir)",
+    )
 
     # agents (v2.0 Pillar 2.2 — universal nudge generator)
     agents_parser = subparsers.add_parser(
@@ -1161,6 +1189,45 @@ def main() -> None:
     # engine — internal subcommand invoked by Claude Code lifecycle hook
     # scripts. Not user-facing; surfaces here so `codevira engine handle
     # PreToolUse` works from data/hooks/*.sh. (P2-1 rc.5: added description)
+    # 2026-05-17: codevira heal — self-service recovery (P7 reversible
+    # operations). Pairs with the HNSW self-heal detection in
+    # _check_chroma_health. Users hitting corrupted Chroma stores no
+    # longer need to `rm -rf` by hand and remember the data dir path.
+    heal_parser = subparsers.add_parser(
+        "heal",
+        help="Self-service recovery: wipe + rebuild corrupted state",
+        description=(
+            "Diagnose and fix common corruption issues without manual "
+            "intervention. Pairs with the startup self-diagnose layer — "
+            "when codevira detects a corrupted Chroma store, stale graph, "
+            "or split config, this command provides the recovery path. "
+            "Each --target is scoped: --vectors wipes the Chroma collection "
+            "for the current project; --graph wipes graph.db; --all wipes "
+            "everything for this project (preserves global.db + other "
+            "projects' data)."
+        ),
+    )
+    heal_parser.add_argument(
+        "--vectors", action="store_true",
+        help="Wipe + rebuild this project's Chroma vector store (fixes HNSW corruption)",
+    )
+    heal_parser.add_argument(
+        "--graph", action="store_true",
+        help="Wipe + rebuild this project's graph.db (fixes graph corruption)",
+    )
+    heal_parser.add_argument(
+        "--all", action="store_true",
+        help="Wipe ALL of this project's data (codeindex + graph + sessions)",
+    )
+    heal_parser.add_argument(
+        "--dry-run", action="store_true",
+        help="Show what would be done without making changes",
+    )
+    heal_parser.add_argument(
+        "--yes", "-y", action="store_true",
+        help="Skip confirmation prompt",
+    )
+
     engine_parser = subparsers.add_parser(
         "engine",
         help="Internal: lifecycle-hook engine entry (called by hook scripts)",
@@ -1224,7 +1291,7 @@ def main() -> None:
         cmd_init._single_language = getattr(args, "single_language", False)
         cmd_init()
     elif args.command == "index":
-        cmd_index(full=args.full, quiet=args.quiet)
+        cmd_index(full=args.full, quiet=args.quiet, verbose=args.verbose)
     elif args.command == "status":
         cmd_status(
             check_stale=getattr(args, "check_stale", False),
@@ -1317,6 +1384,7 @@ def main() -> None:
         rc = cmd_projects(
             output_json=getattr(args, "output_json", False),
             ghosts_only=getattr(args, "ghosts_only", False),
+            show_paths=getattr(args, "paths", False),  # 2026-05-17 Bug G
         )
         sys.exit(rc)
     elif args.command == "agents":
@@ -1395,6 +1463,15 @@ def main() -> None:
             orphans_only=getattr(args, "orphans", False),
             ghosts_only=getattr(args, "ghosts", False),
         )
+    elif args.command == "heal":
+        rc = cmd_heal(
+            vectors=getattr(args, "vectors", False),
+            graph=getattr(args, "graph", False),
+            heal_all=getattr(args, "all", False),
+            dry_run=getattr(args, "dry_run", False),
+            yes=getattr(args, "yes", False),
+        )
+        sys.exit(rc)
     elif args.command == "engine":
         # Internal — Claude Code hook scripts call us with `engine handle <event>`.
         if getattr(args, "engine_action", None) == "handle":
@@ -1445,6 +1522,156 @@ def main() -> None:
 # ---------------------------------------------------------------------------
 # cmd_clean
 # ---------------------------------------------------------------------------
+
+def cmd_heal(
+    vectors: bool = False,
+    graph: bool = False,
+    heal_all: bool = False,
+    dry_run: bool = False,
+    yes: bool = False,
+) -> int:
+    """Self-service recovery for corrupted state (P7 reversible operations).
+
+    Pairs with the HNSW self-heal detection in
+    ``indexer.index_codebase._check_chroma_health``: when a user hits the
+    Chroma corruption pattern, they no longer need to look up the data dir
+    path and run ``rm -rf`` by hand — this command does it cleanly and
+    rebuilds.
+
+    Args:
+        vectors: wipe the project's Chroma vector store
+        graph: wipe the project's graph.db
+        heal_all: wipe everything (vectors + graph + sessions) for this project
+        dry_run: print what would be done, don't touch anything
+        yes: skip the confirmation prompt
+
+    Returns:
+        Exit code: 0 success, 1 error, 2 nothing to do.
+
+    P-principles satisfied:
+      P1: emit reason + remediation if no target specified
+      P3: rename-style atomic deletion (rename-then-delete) where possible
+      P7: scoped recovery — never touches OTHER projects or global.db
+      P8: every output line says WHAT + WHY + (next) FIX
+    """
+    import shutil
+    from mcp_server.paths import get_data_dir, get_project_root, is_invalid_project_root
+
+    # P1 (helpful errors): require at least one target.
+    if not (vectors or graph or heal_all):
+        print(
+            "Error: nothing to heal. Pass one of:\n"
+            "  --vectors   wipe + rebuild the Chroma vector store (HNSW corruption)\n"
+            "  --graph     wipe + rebuild graph.db\n"
+            "  --all       wipe ALL local state for this project\n"
+            "Run `codevira doctor` to see what needs healing.",
+            file=sys.stderr,
+        )
+        return 1
+
+    # Guard against running from $HOME / system dirs (same protection as cmd_index).
+    rejection = is_invalid_project_root(get_project_root())
+    if rejection:
+        print(f"Error: {rejection}", file=sys.stderr)
+        return 1
+
+    try:
+        data_dir = get_data_dir()
+    except Exception as e:
+        print(f"Error: cannot resolve data dir for current project: {e}", file=sys.stderr)
+        return 1
+
+    project_root = get_project_root()
+    print()
+    print(f"  Codevira — Heal")
+    print(f"  Project:    {project_root}")
+    print(f"  Data dir:   {data_dir}")
+    print(f"  " + "─" * 50)
+    print()
+
+    targets: list[tuple[str, Path]] = []
+    if vectors or heal_all:
+        codeindex = data_dir / "codeindex"
+        if codeindex.exists():
+            try:
+                size_mb = sum(f.stat().st_size for f in codeindex.rglob("*") if f.is_file()) / 1024 / 1024
+                targets.append((f"vector store (Chroma) — {size_mb:.1f} MB", codeindex))
+            except Exception:
+                targets.append(("vector store (Chroma) — size unknown", codeindex))
+        else:
+            print(f"    · vector store: nothing to do (codeindex/ doesn't exist)")
+    if graph or heal_all:
+        graph_db = data_dir / "graph"
+        if graph_db.exists():
+            targets.append(("graph database (graph.db)", graph_db))
+        else:
+            print(f"    · graph: nothing to do (graph/ doesn't exist)")
+    if heal_all:
+        sessions = data_dir / "sessions"
+        if sessions.exists():
+            targets.append(("session logs", sessions))
+
+    if not targets:
+        print("\n  Nothing to heal — no corrupted state found.")
+        print("  If the issue persists, run `codevira doctor` to diagnose.")
+        return 2
+
+    print(f"  Will remove:")
+    for label, _ in targets:
+        print(f"    • {label}")
+    print()
+
+    if dry_run:
+        print("  [dry-run] no changes made.")
+        return 0
+
+    if not yes:
+        # Bug 22 (rc.4): use shared confirm() helper.
+        try:
+            from mcp_server._prompts import confirm
+            if not confirm("Proceed with heal?", default=False):
+                print("  Aborted.")
+                return 0
+        except Exception:
+            # P9 (graceful): if the prompt helper isn't available, fall
+            # back to a basic confirmation rather than failing the heal.
+            response = input("  Proceed? [y/N]: ").strip().lower()
+            if response not in ("y", "yes"):
+                print("  Aborted.")
+                return 0
+
+    # P3 (atomic-ish): rename-then-delete pattern so a Ctrl-C mid-heal
+    # doesn't leave a half-deleted directory that confuses subsequent
+    # operations. Rename → then shutil.rmtree the renamed copy.
+    print()
+    failures = 0
+    for label, path in targets:
+        try:
+            backup = path.with_name(path.name + ".healing")
+            if backup.exists():
+                shutil.rmtree(backup, ignore_errors=True)
+            path.rename(backup)
+            shutil.rmtree(backup, ignore_errors=True)
+            print(f"    ✓ Removed {label}")
+        except Exception as e:
+            print(f"    ✗ Failed to remove {label}: {e}")
+            failures += 1
+
+    print()
+    if failures:
+        print(f"  ⚠ {failures} target(s) failed. Check permissions and retry.")
+        return 1
+
+    print(f"  ✓ Heal complete.")
+    print()
+    print(f"  Next steps:")
+    if vectors or heal_all:
+        print(f"    • Run `codevira index --full` to rebuild the vector store")
+    elif graph or heal_all:
+        print(f"    • Run `codevira index --full` to rebuild the graph")
+    print()
+    return 0
+
 
 def cmd_clean(clean_all: bool = False, dry_run: bool = False, yes: bool = False,
               legacy_only: bool = False, orphans_only: bool = False,
@@ -1557,6 +1784,33 @@ def cmd_clean(clean_all: bool = False, dry_run: bool = False, yes: bool = False,
         print(f"    • ~/Library/Logs/codevira.log")
         actions.append(("Removed server log", lambda: log_path.unlink(missing_ok=True)))
 
+    # 4b. Claude Code lifecycle hooks
+    # 2026-05-17 Bug A (P7 reversible operations): `codevira clean` was
+    # leaving orphaned `~/.claude/hooks/codevira-*.sh` scripts behind
+    # AND stale entries in `~/.claude/settings.json` hooks block.
+    # `setup` installs them; `clean` now removes them. Single complete
+    # uninstall path.
+    hooks_dir = Path.home() / ".claude" / "hooks"
+    if hooks_dir.is_dir():
+        codevira_hooks = sorted(hooks_dir.glob("codevira-*.sh"))
+        if codevira_hooks:
+            print(f"    • ~/.claude/hooks/codevira-*.sh ({len(codevira_hooks)} script(s))")
+            def _remove_hooks():
+                # Delegate to the canonical uninstaller — it removes the
+                # scripts AND drops the codevira entries from
+                # ~/.claude/settings.json's hooks block (which raw rm
+                # would leave stale).
+                try:
+                    from mcp_server.cli_hooks_admin import cmd_hooks_uninstall
+                    cmd_hooks_uninstall(dry_run=False, yes=True)
+                except Exception as e:
+                    # P9 graceful: if the canonical path fails, fall back
+                    # to raw rm so the user isn't blocked.
+                    logger.warning("cmd_hooks_uninstall failed (%s) — falling back to rm", e)
+                    for h in codevira_hooks:
+                        h.unlink(missing_ok=True)
+            actions.append(("Removed Claude Code hooks + settings entries", _remove_hooks))
+
     # 5. Per-project artifacts (only with --all)
     if clean_all and global_home.exists():
         projects_dir = global_home / "projects"
@@ -1602,7 +1856,10 @@ def cmd_clean(clean_all: bool = False, dry_run: bool = False, yes: bool = False,
 
     print()
     print("  ✓ Codevira fully removed.")
-    print("    To reinstall: pipx install codevira && codevira register")
+    # 2026-05-17 Bug B: post-clean text said "codevira register" which is
+    # the deprecated v1.x command. v2.0+ uses `codevira setup` as the
+    # one-shot install/configure entry point.
+    print("    To reinstall: pipx install codevira && codevira setup")
     print()
 
 

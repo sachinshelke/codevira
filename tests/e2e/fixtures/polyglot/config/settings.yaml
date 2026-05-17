@@ -1,0 +1,6 @@
+app:
+  name: polyglot-fixture
+  port: 8080
+
+logging:
+  level: info

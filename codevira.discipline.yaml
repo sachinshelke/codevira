@@ -1,0 +1,105 @@
+# Codevira Discipline Scaffold — project-specific configuration
+#
+# Generic skills + hooks + Makefile read this file. Customize per project;
+# the scaffold itself is generic.
+#
+# This is also the **reference implementation** of codevira's Pillar 3
+# (AI development discipline), eaten as dog food on the codevira repo.
+#
+# When `codevira discipline install` ships in v2.2, this file becomes
+# the template `codevira.discipline.yaml` written into any project that
+# opts in. Today it's hand-authored; tomorrow it's auto-generated from
+# language detection.
+
+# ─── Project metadata ────────────────────────────────────────────────────────
+project:
+  name: codevira
+  language: python
+  type: mcp-server  # one of: app, library, mcp-server, cli, monorepo
+
+# ─── Release gates (G1–G5) ───────────────────────────────────────────────────
+# These are the bypass-proof checks that must pass before a release.
+# Hooks, Makefile, and CI all reference this section.
+release_gates:
+  G1:
+    name: Unit tests
+    command: pytest tests/ -q --ignore=tests/e2e
+    pass_criterion: exit_code == 0
+
+  G2:
+    name: First-contact e2e + product invariants
+    command: pytest tests/e2e/test_first_contact.py tests/e2e/test_product_invariants.py -v
+    pass_criterion: exit_code == 0
+    description: |
+      Two suites:
+      (a) test_first_contact.py — full init → configure → index →
+          status flow against 4 fixtures (docs-only, code-only,
+          polyglot, monorepo). Catches bugs A–O from the v2.0
+          reliability audit.
+      (b) test_product_invariants.py — machine-checks the 10 foolproof-
+          product principles (P1 no silent failures, P2 self-diagnose,
+          P3 atomic, P4 defensive parsing, P5 bounded, P6 predictable,
+          P7 reversible, P8 helpful errors, P9 graceful, P10
+          observability). Prevents the *next* class of bugs.
+
+  G3:
+    name: Real-IDE smoke
+    command: scripts/check_real_ide_smoke.sh
+    pass_criterion: exit_code == 0
+    description: |
+      Verifies codevira appears connected in Claude Code, Claude
+      Desktop, and at least one other IDE; tools/list returns < 1s.
+    optional: true  # script does not exist yet — coming in next iteration
+
+  G4:
+    name: Crash-log clean
+    command: bash -c 'test "$(codevira report 2>/dev/null | grep -c CRASH)" = "0"'
+    pass_criterion: exit_code == 0
+    description: |
+      Zero crashes after the e2e gauntlet. Catches the Chroma HNSW
+      writer corruption pattern from the UDAP install.
+    optional: true  # only meaningful after G2 has run
+
+  G5:
+    name: Human-in-the-loop confirmation
+    command: human_required
+    pass_criterion: |
+      Maintainer must run the install on a real machine against real
+      projects and explicitly write "G5 confirmed" in the evidence
+      file. No automation can satisfy this gate.
+
+# ─── Commands the PreToolUse hook blocks unless evidence shows G1–G5 pass ───
+block_commands:
+  - twine upload
+  - twine upload --repository
+  - python -m twine upload
+  - gh release edit --draft=false
+  - gh release create  # only blocked when --draft=false is also passed
+  - pipx publish
+  - pip publish
+
+# ─── Where evidence lives (gitignored, per-version) ──────────────────────────
+evidence:
+  dir: .release-evidence/
+  format: json  # files like .release-evidence/2.1.0.json
+  schema_version: 1
+
+# ─── Code style enforcement ──────────────────────────────────────────────────
+style:
+  language: python
+  linters:
+    - ruff check
+  formatters:
+    - ruff format
+  type_checker: mypy
+  type_check_paths:
+    - mcp_server
+    - indexer
+  pre_commit: true  # run on every commit
+
+# ─── Skill enablement (referenced by .claude/settings.json) ──────────────────
+discipline_skills_enabled:
+  - development-discipline
+  - open-source-quality
+  - release-readiness
+  - epistemic-honesty

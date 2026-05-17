@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "codevira"
-version = "2.0.0"
+version = "2.1.0"
 description = "Stop re-explaining your project to AI agents every session. Codevira gives Claude Code, Cursor, Windsurf, and Antigravity shared persistent memory of your codebase — locally, no signup, MIT-licensed. One install configures every AI tool."
 readme = "README.md"
 license = { text = "MIT" }
@@ -65,6 +65,18 @@ dependencies = [
 # Semantic search deps are now part of the base install.
 search = []
 all = []
+# Dev dependencies for contributors. Installed via: pip install -e ".[dev]"
+# Or use the Makefile target: make dev
+# These power the discipline scaffold (Pillar 3): pre-commit, lint, type-check, e2e tests.
+dev = [
+  "pytest>=7.0",
+  "pytest-asyncio>=0.21",
+  "pytest-timeout>=2.1",
+  "ruff>=0.6.0",
+  "mypy>=1.10",
+  "types-PyYAML",
+  "pre-commit>=3.5",
+]
 
 [project.scripts]
 codevira = "mcp_server.cli:main"

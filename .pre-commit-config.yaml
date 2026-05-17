@@ -1,0 +1,48 @@
+# Pre-commit hooks for codevira.
+#
+# Auto-runs every commit so style/type/format issues never reach a PR.
+# Install once with: pre-commit install
+#
+# The discipline-scaffold reference implementation. Other projects that
+# adopt codevira's discipline get a copy of this file, language-tuned.
+#
+# Bypassing requires --no-verify on git commit. The PreToolUse hook
+# (see .claude/hooks/pre-release-block.sh) does NOT trust --no-verify
+# for release-relevant commits.
+
+repos:
+  # ─── Standard hygiene (any language) ──────────────────────────────────────
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+      - id: check-toml
+      - id: check-added-large-files
+        args: [--maxkb=500]
+      - id: check-merge-conflict
+      - id: detect-private-key
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  # ─── Python: ruff (lint + format, replaces black/isort/flake8) ────────────
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+      - id: ruff-format
+
+  # ─── Python: mypy (type-check the public API surface) ─────────────────────
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.11.2
+    hooks:
+      - id: mypy
+        files: ^(mcp_server|indexer)/
+        args:
+          - --ignore-missing-imports
+          - --no-strict-optional  # tighten gradually
+        additional_dependencies:
+          - types-PyYAML

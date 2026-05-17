@@ -206,11 +206,64 @@ def _read_json_safe(path: Path) -> dict:
 
 
 def _write_json_safe(path: Path, data: dict) -> None:
-    """Atomic write: write to .tmp then rename."""
+    """Atomic write with verify-after-write.
+
+    Why this matters (P3 atomic state mutations, 2026-05-17 hardening):
+    1. **Unique tmp name** — was ``path.with_suffix(".tmp")`` which two
+       concurrent processes (e.g. two codevira sessions running
+       ``setup`` simultaneously) would collide on, producing a torn
+       write and losing one process's intent.
+    2. **fsync before rename** — without fsync, a power loss between
+       rename and kernel buffer flush could leave the file pointing
+       at unflushed pages with arbitrary contents. Sachin's earlier
+       report of "Claude Desktop config got cleared once" matched
+       exactly this race — rare but real.
+    3. **Verify-after-write** — re-read the file post-rename and
+       assert content matches; if mismatch, raise. Better to fail
+       loudly than to leave the user with a silently corrupted config.
+    """
+    import os
+    import tempfile
+
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-    tmp.replace(path)  # Atomic on POSIX, best-effort on Windows
+    payload = json.dumps(data, indent=2) + "\n"
+
+    # Unique tempfile in the same directory as the target (so rename is
+    # cross-device-safe — same filesystem).
+    fd, tmp_path = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=str(path.parent),
+    )
+    tmp = Path(tmp_path)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(payload)
+            f.flush()
+            os.fsync(f.fileno())  # force kernel pages to disk before rename
+        tmp.replace(path)  # atomic on POSIX
+        # Verify-after-write: re-read and assert. If something else clobbered
+        # the file between our rename and now, this catches it.
+        try:
+            roundtrip = json.loads(path.read_text(encoding="utf-8"))
+            if roundtrip != data:
+                raise RuntimeError(
+                    f"_write_json_safe: post-write verify failed for {path} — "
+                    f"on-disk content differs from intended payload (concurrent writer?)"
+                )
+        except (OSError, json.JSONDecodeError) as e:
+            raise RuntimeError(
+                f"_write_json_safe: post-write read failed for {path}: {e}"
+            )
+    except Exception:
+        # P9 (graceful degradation): clean up tmp on any failure so we don't
+        # litter the user's IDE config directory with .tmp orphans.
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
+        raise
 
 
 def _merge_mcp_config(existing: dict, server_name: str, server_config: dict) -> dict:

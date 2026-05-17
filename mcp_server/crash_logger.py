@@ -14,10 +14,79 @@ import logging
 import re
 import sys
 import threading
+import time
 import traceback
+from collections import deque
 from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# Crash rate-limiting (P5 bounded resources + P10 observability).
+#
+# 2026-05-17 fix for the 41-crash UDAP spam pattern: ChromaDB's HNSW
+# writer failed once, and the watcher retried every file in sequence,
+# producing 41 identical entries in crashes.log. The log grew unbounded;
+# the user had to wade through 41 stack traces to find the one root cause.
+#
+# Fix: dedupe by (exception type, first line of message) within a time
+# window. After RATE_LIMIT_MAX entries with the same signature, suppress
+# further writes for RATE_LIMIT_WINDOW seconds and replace with a single
+# "(N more duplicates suppressed)" summary at window expiry.
+# ---------------------------------------------------------------------------
+
+_RATE_LIMIT_MAX = 3          # entries per signature before suppression kicks in
+_RATE_LIMIT_WINDOW = 60.0    # seconds — duplicates within this window are coalesced
+
+# In-memory state — thread-safe via _RATE_LIMIT_LOCK below.
+# Maps signature → (first_seen_ts, count_since_first_seen, suppressed_count)
+_recent_crashes: dict[str, list[float]] = {}
+_RATE_LIMIT_LOCK = threading.Lock()
+
+
+def _crash_signature(error: BaseException) -> str:
+    """Build a stable signature for rate-limiting. Same root cause → same key.
+
+    Uses (exception class) + (first line of str(error)) — robust against
+    tracebacks varying due to threading / async wrappers.
+    """
+    msg = str(error)
+    first_line = msg.split("\n", 1)[0][:200]  # cap at 200 chars
+    return f"{type(error).__name__}:{first_line}"
+
+
+def _should_rate_limit(error: BaseException) -> tuple[bool, int]:
+    """Decide whether to suppress this crash log.
+
+    Returns:
+        (suppress, suppressed_count)
+          suppress: True → don't write; False → write
+          suppressed_count: if write, how many duplicates were coalesced
+                            (0 unless this is the unsuppression-summary write)
+    """
+    sig = _crash_signature(error)
+    now = time.time()
+    with _RATE_LIMIT_LOCK:
+        # Drop signatures whose window has expired.
+        for key in list(_recent_crashes.keys()):
+            timestamps = _recent_crashes[key]
+            cutoff = now - _RATE_LIMIT_WINDOW
+            _recent_crashes[key] = [t for t in timestamps if t > cutoff]
+            if not _recent_crashes[key]:
+                del _recent_crashes[key]
+        # Record this hit.
+        timestamps = _recent_crashes.setdefault(sig, [])
+        timestamps.append(now)
+        count = len(timestamps)
+        if count <= _RATE_LIMIT_MAX:
+            return (False, 0)  # write normally
+        # We're over the limit. Suppress, unless this is exactly the
+        # MAX+1th hit (in which case we write a one-time "rate-limit
+        # engaged" notice). Subsequent hits silently increment count.
+        if count == _RATE_LIMIT_MAX + 1:
+            # Write a notice that further entries are being suppressed.
+            return (False, -1)  # sentinel: write rate-limit notice
+        return (True, 0)
 
 # ---------------------------------------------------------------------------
 # Secret patterns — matched and replaced BEFORE writing to disk.
@@ -136,6 +205,12 @@ def log_crash(
         project_path: Project directory, if known.
     """
     try:
+        # P5 (bounded resources): rate-limit identical crashes so a stuck
+        # watcher can't fill the log with 41 copies of the same error.
+        suppress, sentinel = _should_rate_limit(error)
+        if suppress:
+            return  # silently drop — log already has _RATE_LIMIT_MAX copies
+
         logger = _get_logger()
         tb = traceback.format_exception(type(error), error, error.__traceback__)
         tb_text = "".join(tb)
@@ -146,6 +221,12 @@ def log_crash(
             f"CRASH: {type(error).__name__}: {error}",
             f"TIME:  {datetime.now(timezone.utc).isoformat()}",
         ]
+        if sentinel == -1:
+            # This is the "further duplicates suppressed" notice.
+            lines.append(
+                f"NOTE:  rate-limit engaged for this signature — further "
+                f"identical crashes within {_RATE_LIMIT_WINDOW:.0f}s will be silently dropped"
+            )
         if context:
             lines.append(f"WHERE: {context}")
         if tool_name:

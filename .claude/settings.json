@@ -1,0 +1,16 @@
+{
+  "_comment": "Codevira project Claude Code settings. Per-user overrides go in settings.local.json (gitignored). Discipline scaffold reference implementation.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/pre-release-block.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

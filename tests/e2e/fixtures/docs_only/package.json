@@ -1,0 +1,6 @@
+{
+  "name": "docs-only-fixture",
+  "version": "0.1.0",
+  "description": "Sample docs-only repository for codevira's first-contact gauntlet.",
+  "private": true
+}

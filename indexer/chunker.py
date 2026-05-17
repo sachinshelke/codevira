@@ -253,19 +253,153 @@ def _extract_imports_python(file_path: str, project_root: str) -> list[str]:
     return results
 
 
+# 2026-05-17 Bug E fix (P1): docs-only repos (lh-interface, README-heavy
+# projects, schema-doc repos) silently produced 0 chunks because every
+# non-code file fell through to the Python AST parser which returns [].
+# Add explicit handling for markdown + generic text formats so the chunker
+# always produces SOMETHING usable when files are present.
+
+_MARKDOWN_EXTENSIONS = {".md", ".mdx", ".rst", ".adoc", ".markdown"}
+_GENERIC_TEXT_EXTENSIONS = {
+    ".txt", ".json", ".jsonl", ".yaml", ".yml", ".toml", ".ini",
+    ".env", ".env.example", ".cfg", ".conf",
+}
+
+
 def chunk_file(file_path: str, project_root: str) -> list[CodeChunk]:
     """
     Parse a source file and return all meaningful code chunks.
-    Dispatches to Python ast or tree-sitter based on file extension.
+    Dispatches by extension: tree-sitter, Python AST, markdown, or generic text.
+
+    2026-05-17 Bug E fix: previously, any file that wasn't Python or in the
+    tree-sitter extension map silently produced [] because `_chunk_file_python`
+    can't parse non-Python text. Docs-only repos hit this and went silent.
+    Now markdown gets heading-based chunks; generic text gets paragraph chunks.
     """
     ext = Path(file_path).suffix.lower()
 
-    # Non-Python files: dispatch to tree-sitter chunker
+    # Tree-sitter supported (TS/Go/Rust/Java/etc.)
     if ext in _TS_SUPPORTED_EXTENSIONS:
         return _chunk_file_treesitter(file_path, project_root)
 
-    # Python files: existing ast-based chunking
+    # Markdown / prose
+    if ext in _MARKDOWN_EXTENSIONS:
+        return _chunk_file_markdown(file_path, project_root)
+
+    # Generic text (JSON, YAML, INI, plain text) — paragraph chunks
+    if ext in _GENERIC_TEXT_EXTENSIONS:
+        return _chunk_file_text(file_path, project_root)
+
+    # Python files: existing ast-based chunking (default fallback for unknown extensions
+    # remains the Python parser — preserves prior behavior for .py-adjacent files like .pyi).
     return _chunk_file_python(file_path, project_root)
+
+
+def _chunk_file_markdown(file_path: str, project_root: str) -> list[CodeChunk]:
+    """Split a markdown file into chunks by H1/H2/H3 headings.
+
+    Each section from one heading to the next becomes one chunk. Files with
+    no headings get one chunk for the whole document.
+
+    P4 (defensive parsing): any read error → returns []. Empty file → [].
+    P9 (graceful): even a malformed-markdown file still yields the
+                   whole-file fallback chunk so the indexer never silently
+                   loses prose content.
+    """
+    rel_path = os.path.relpath(file_path, project_root)
+    layer = _infer_layer(rel_path)
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            text = f.read()
+    except (OSError, UnicodeDecodeError):
+        return []
+    if not text.strip():
+        return []
+
+    chunks: list[CodeChunk] = []
+    lines = text.splitlines(keepends=True)
+    sections: list[tuple[str, int, int]] = []  # (heading, start_line, end_line)
+    current_heading = Path(file_path).stem
+    current_start = 1
+    for i, line in enumerate(lines, start=1):
+        # Match H1/H2/H3 headings (#, ##, ###). Conservative — avoids matching
+        # lines that look like headings but aren't (no #-only matches inside code blocks).
+        stripped = line.lstrip()
+        if stripped.startswith("# ") or stripped.startswith("## ") or stripped.startswith("### "):
+            if i > current_start:
+                sections.append((current_heading, current_start, i - 1))
+            current_heading = stripped.lstrip("#").strip()[:80] or current_heading
+            current_start = i
+    # Final section.
+    if current_start <= len(lines):
+        sections.append((current_heading, current_start, len(lines)))
+
+    # If we found no sections at all, emit the whole file as one chunk.
+    if not sections:
+        sections = [(Path(file_path).stem, 1, len(lines))]
+
+    for heading, start, end in sections:
+        section_text = "".join(lines[start - 1:end])
+        if not section_text.strip():
+            continue
+        chunks.append(CodeChunk(
+            file_path=rel_path,
+            chunk_type="markdown_section",
+            name=heading,
+            source_text=section_text[:2000],  # cap so embeddings stay tractable
+            start_line=start,
+            end_line=end,
+            docstring="",
+            layer=layer,
+        ))
+    return chunks
+
+
+def _chunk_file_text(file_path: str, project_root: str) -> list[CodeChunk]:
+    """Split a generic text/config file into paragraph chunks.
+
+    Heuristic: split on blank-line boundaries; cap each chunk at ~800 chars
+    so a 50KB JSON schema doesn't become one mega-chunk. Returns at least one
+    chunk for any non-empty file (P1: never silently produce 0 results).
+
+    P4 (defensive): read errors → []. Empty file → [].
+    """
+    rel_path = os.path.relpath(file_path, project_root)
+    layer = _infer_layer(rel_path)
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            text = f.read()
+    except (OSError, UnicodeDecodeError):
+        return []
+    if not text.strip():
+        return []
+
+    # Split on blank-line boundaries; for files with no blank lines (e.g.
+    # one-line JSON), fall through to the whole-file chunk.
+    paragraphs = [p for p in text.split("\n\n") if p.strip()]
+    if not paragraphs:
+        paragraphs = [text]
+
+    chunks: list[CodeChunk] = []
+    line_cursor = 1
+    for idx, para in enumerate(paragraphs):
+        line_count = para.count("\n") + 1
+        # Cap chunk size — anything bigger than ~800 chars gets truncated
+        # with a "(truncated)" marker. The full file is still on disk for
+        # the agent to Read directly.
+        body = para if len(para) <= 800 else para[:800] + "\n... (truncated for embedding)"
+        chunks.append(CodeChunk(
+            file_path=rel_path,
+            chunk_type="text_paragraph",
+            name=f"{Path(file_path).stem}#{idx + 1}",
+            source_text=body,
+            start_line=line_cursor,
+            end_line=line_cursor + line_count - 1,
+            docstring="",
+            layer=layer,
+        ))
+        line_cursor += line_count + 1  # +1 for the blank-line separator
+    return chunks
 
 
 def _chunk_file_treesitter(file_path: str, project_root: str) -> list[CodeChunk]:

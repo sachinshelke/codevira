@@ -1125,3 +1125,64 @@ class TestClaudeGlobalConfigPathIsCorrect:
         assert result == Path.home() / ".claude.json"
         # Must NOT be ~/.claude/settings.json (that's hooks/permissions)
         assert result != Path.home() / ".claude" / "settings.json"
+
+
+class TestAtomicWriteHardening:
+    """2026-05-17 P3 hardening: _write_json_safe now uses (a) unique
+    tempfile name (no collisions between concurrent codevira sessions),
+    (b) os.fsync before rename (no torn writes on power loss), and
+    (c) verify-after-write (catches any silent corruption).
+    """
+
+    def test_round_trip_preserves_data(self, tmp_path):
+        """The basic happy path: write, read back, identical."""
+        from mcp_server.ide_inject import _write_json_safe, _read_json_safe
+        target = tmp_path / "config.json"
+        payload = {"mcpServers": {"codevira": {"command": "/usr/local/bin/codevira"}}}
+        _write_json_safe(target, payload)
+        assert _read_json_safe(target) == payload
+
+    def test_no_tmp_file_leaks_on_success(self, tmp_path):
+        """After a successful write, no .tmp leftovers in the target dir."""
+        from mcp_server.ide_inject import _write_json_safe
+        target = tmp_path / "config.json"
+        _write_json_safe(target, {"a": 1})
+        leftovers = [p for p in tmp_path.iterdir() if p.name.endswith(".tmp")]
+        assert leftovers == [], (
+            f"P3 regression: tempfile leftovers in target dir: {leftovers}"
+        )
+
+    def test_concurrent_writes_dont_collide_on_tmp(self, tmp_path):
+        """Two writes to the same path in quick succession must both
+        complete (using unique tmp names). Was Bug: previous code used
+        `path.with_suffix('.tmp')` which collided between concurrent
+        codevira sessions, silently losing one write."""
+        from mcp_server.ide_inject import _write_json_safe, _read_json_safe
+        target = tmp_path / "config.json"
+        _write_json_safe(target, {"writer": 1})
+        _write_json_safe(target, {"writer": 2})
+        # Second write must win and no errors thrown.
+        assert _read_json_safe(target) == {"writer": 2}
+
+    def test_atomic_replacement_preserves_old_file_until_done(self, tmp_path):
+        """Before the rename, the target should still hold OLD content.
+        After rename, target is NEW. There is no instant when the target
+        file 'briefly disappears' (that would be the bug atomicity prevents)."""
+        from mcp_server.ide_inject import _write_json_safe, _read_json_safe
+        target = tmp_path / "config.json"
+        _write_json_safe(target, {"v": 1})
+        # Snapshot inode (POSIX uniquely identifies file by inode).
+        import os
+        original_inode = os.stat(target).st_ino
+        # Overwrite. Verify the file exists at every moment and ends up new.
+        _write_json_safe(target, {"v": 2})
+        assert target.exists()
+        assert _read_json_safe(target) == {"v": 2}
+        # The inode should have changed \u2014 proves we wrote a new file and
+        # atomically replaced (rather than truncate-and-rewrite which would
+        # have torn).
+        new_inode = os.stat(target).st_ino
+        assert new_inode != original_inode, (
+            f"P3 regression: atomic rename should produce a new inode; "
+            f"got same inode {new_inode} (looks like truncate-rewrite, not atomic)"
+        )

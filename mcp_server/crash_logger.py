@@ -8,6 +8,7 @@ credentials before writing to disk.
 Log location: ~/.codevira/logs/crashes.log
 Max size: 5 MB, rotated with 3 backups (20 MB total)
 """
+
 from __future__ import annotations
 
 import logging
@@ -16,7 +17,6 @@ import sys
 import threading
 import time
 import traceback
-from collections import deque
 from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -35,8 +35,8 @@ from pathlib import Path
 # "(N more duplicates suppressed)" summary at window expiry.
 # ---------------------------------------------------------------------------
 
-_RATE_LIMIT_MAX = 3          # entries per signature before suppression kicks in
-_RATE_LIMIT_WINDOW = 60.0    # seconds — duplicates within this window are coalesced
+_RATE_LIMIT_MAX = 3  # entries per signature before suppression kicks in
+_RATE_LIMIT_WINDOW = 60.0  # seconds — duplicates within this window are coalesced
 
 # In-memory state — thread-safe via _RATE_LIMIT_LOCK below.
 # Maps signature → (first_seen_ts, count_since_first_seen, suppressed_count)
@@ -88,6 +88,7 @@ def _should_rate_limit(error: BaseException) -> tuple[bool, int]:
             return (False, -1)  # sentinel: write rate-limit notice
         return (True, 0)
 
+
 # ---------------------------------------------------------------------------
 # Secret patterns — matched and replaced BEFORE writing to disk.
 #
@@ -98,20 +99,43 @@ def _should_rate_limit(error: BaseException) -> tuple[bool, int]:
 # ---------------------------------------------------------------------------
 _SECRET_PATTERNS: list[tuple[re.Pattern, str]] = [
     # Private key PEM blocks
-    (re.compile(r'-----BEGIN\s+\w+\s+PRIVATE\s+KEY-----[\s\S]*?-----END\s+\w+\s+PRIVATE\s+KEY-----'), '***PRIVATE_KEY***'),
+    (
+        re.compile(
+            r"-----BEGIN\s+\w+\s+PRIVATE\s+KEY-----[\s\S]*?-----END\s+\w+\s+PRIVATE\s+KEY-----"
+        ),
+        "***PRIVATE_KEY***",
+    ),
     # Connection strings with embedded passwords (postgres://, mongodb://, redis://, amqp://, etc.)
-    (re.compile(r'(?i)(://[^:]*:)[^@]+(@)'), r'\1***@'),
+    (re.compile(r"(?i)(://[^:]*:)[^@]+(@)"), r"\1***@"),
     # Private/internal IP addresses (RFC 1918)
-    (re.compile(r'\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3})\b'), '***INTERNAL_IP***'),
-
+    (
+        re.compile(
+            r"\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3})\b"
+        ),
+        "***INTERNAL_IP***",
+    ),
     # ---- Generic keyword-value patterns (catch-all) ----
-
     # key=value / key: value / key = value (in text and logs)
-    (re.compile(r'(?i)(api[_-]?key|token|secret|password|authorization|bearer|credential)\s*[:=]\s*\S+'), r'\1=***REDACTED***'),
+    (
+        re.compile(
+            r"(?i)(api[_-]?key|token|secret|password|authorization|bearer|credential)\s*[:=]\s*\S+"
+        ),
+        r"\1=***REDACTED***",
+    ),
     # JSON-style: "password": "value" or 'password': 'value'
-    (re.compile(r"""(?i)(["'](?:password|secret|token|api_key|api-key|auth|credential)["'])\s*:\s*["'][^"']+["']"""), r'\1: "***REDACTED***"'),
+    (
+        re.compile(
+            r"""(?i)(["'](?:password|secret|token|api_key|api-key|auth|credential)["'])\s*:\s*["'][^"']+["']"""
+        ),
+        r'\1: "***REDACTED***"',
+    ),
     # .env file values for known secret variable names
-    (re.compile(r'(?i)((?:DATABASE_URL|REDIS_URL|MONGO_URL|SECRET_KEY|PRIVATE_KEY|ACCESS_TOKEN|REFRESH_TOKEN|API_KEY|AUTH_TOKEN|ENCRYPTION_KEY)\s*=\s*)\S+'), r'\1***REDACTED***'),
+    (
+        re.compile(
+            r"(?i)((?:DATABASE_URL|REDIS_URL|MONGO_URL|SECRET_KEY|PRIVATE_KEY|ACCESS_TOKEN|REFRESH_TOKEN|API_KEY|AUTH_TOKEN|ENCRYPTION_KEY)\s*=\s*)\S+"
+        ),
+        r"\1***REDACTED***",
+    ),
 ]
 
 # Home directory — replaced with ~ in all paths
@@ -127,8 +151,8 @@ def _sanitize(text: str) -> str:
         text = pattern.sub(replacement, text)
     # Strip environment variable dumps that might contain secrets
     text = re.sub(
-        r'(?i)environ\s*\{[^}]{200,}\}',
-        'environ{***REDACTED_ENV***}',
+        r"(?i)environ\s*\{[^}]{200,}\}",
+        "environ{***REDACTED_ENV***}",
         text,
     )
     return text
@@ -141,6 +165,7 @@ def _get_log_dir() -> Path:
     pollute the real ~/.codevira/logs/crashes.log file.
     """
     from mcp_server.paths import get_global_home
+
     log_dir = get_global_home() / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     return log_dir
@@ -171,7 +196,7 @@ def _get_logger() -> logging.Logger:
         handler = RotatingFileHandler(
             log_path,
             maxBytes=5 * 1024 * 1024,  # 5 MB
-            backupCount=3,             # 20 MB total history
+            backupCount=3,  # 20 MB total history
             encoding="utf-8",
         )
         handler.setLevel(logging.ERROR)
@@ -185,6 +210,7 @@ def _get_logger() -> logging.Logger:
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def log_crash(
     error: BaseException,
@@ -238,6 +264,7 @@ def log_crash(
         lines.append(f"PYTHON: {sys.version.split()[0]}")
         try:
             from importlib.metadata import version as pkg_version
+
             lines.append(f"CODEVIRA: {pkg_version('codevira')}")
         except Exception:
             pass

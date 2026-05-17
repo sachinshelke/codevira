@@ -11,6 +11,7 @@ Covers:
   - get_indexing_status(): returns current background status dict
   - start_background_full_index(): starts daemon thread
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -39,6 +40,7 @@ from indexer.index_codebase import (
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(autouse=True)
 def _reset_bg_globals():
@@ -72,6 +74,7 @@ class FakeChunk:
 # _load_config
 # ---------------------------------------------------------------------------
 
+
 class TestLoadConfig:
     """Load .codevira/config.yaml and return the project sub-dict."""
 
@@ -104,6 +107,7 @@ class TestLoadConfig:
 # _check_search_deps
 # ---------------------------------------------------------------------------
 
+
 class TestCheckSearchDeps:
     """Return True/False based on chromadb availability."""
 
@@ -111,10 +115,13 @@ class TestCheckSearchDeps:
         """When both chromadb and sentence_transformers can be imported."""
         mock_chromadb = MagicMock()
         mock_st = MagicMock()
-        with patch.dict("sys.modules", {
-            "chromadb": mock_chromadb,
-            "sentence_transformers": mock_st,
-        }):
+        with patch.dict(
+            "sys.modules",
+            {
+                "chromadb": mock_chromadb,
+                "sentence_transformers": mock_st,
+            },
+        ):
             assert _check_search_deps() is True
 
     def test_returns_false_when_missing(self):
@@ -126,6 +133,7 @@ class TestCheckSearchDeps:
 # ---------------------------------------------------------------------------
 # _compute_hash
 # ---------------------------------------------------------------------------
+
 
 class TestComputeHash:
     """SHA256 hash of file contents."""
@@ -165,6 +173,7 @@ class TestComputeHash:
 # ---------------------------------------------------------------------------
 # _get_changed_files
 # ---------------------------------------------------------------------------
+
 
 class TestGetChangedFiles:
     """Compare on-disk file hashes against stored hashes in SQLiteGraph."""
@@ -276,6 +285,7 @@ class TestGetChangedFiles:
         produces results. Models the parallel-thread isolation pattern from
         log analysis (microsecond-spaced parallel-thread crashes)."""
         import yaml
+
         project, data_dir, db = project_env
         # Reconfigure watched_dirs to include both 'src' and 'lib'
         cfg = yaml.safe_load((data_dir / "config.yaml").read_text())
@@ -303,6 +313,7 @@ class TestGetChangedFiles:
 # ---------------------------------------------------------------------------
 # _get_requested_files
 # ---------------------------------------------------------------------------
+
 
 class TestGetRequestedFiles:
     """Validate requested file paths, filter by extension, compute hashes."""
@@ -364,6 +375,7 @@ class TestGetRequestedFiles:
 # ---------------------------------------------------------------------------
 # _chunk_to_document
 # ---------------------------------------------------------------------------
+
 
 class TestChunkToDocument:
     """Format a CodeChunk into (doc_id, document, metadata)."""
@@ -433,6 +445,7 @@ class TestChunkToDocument:
 # get_indexing_status
 # ---------------------------------------------------------------------------
 
+
 class TestGetIndexingStatus:
     """Return current background indexing progress dict."""
 
@@ -458,6 +471,7 @@ class TestGetIndexingStatus:
 # start_background_full_index
 # ---------------------------------------------------------------------------
 
+
 class TestStartBackgroundFullIndex:
     """Start a full index rebuild in a background daemon thread."""
 
@@ -470,7 +484,6 @@ class TestStartBackgroundFullIndex:
         mock never gets called → ``assert_called_once`` fails after 5s
         join timeout. Force-release here so this test is robust to
         upstream pollution."""
-        import threading
         if idx_mod._chroma_write_lock.locked():
             try:
                 idx_mod._chroma_write_lock.release()
@@ -533,17 +546,21 @@ class TestStartBackgroundFullIndex:
 # cmd_full_rebuild
 # ---------------------------------------------------------------------------
 
+
 class TestCmdFullRebuild:
     def test_no_search_deps_builds_graph_only(self, project_env):
         """When chromadb not installed, cmd_full_rebuild still builds graph."""
         _project, data_dir, _db = project_env
         mock_result = {"nodes_added": 5, "edges_added": 3}
-        with patch("indexer.index_codebase._check_search_deps", return_value=False), \
-             patch("indexer.graph_generator.generate_graph_sqlite", return_value=mock_result) as mock_graph, \
-             patch("indexer.index_codebase.SQLiteGraph") as mock_db_cls:
+        with patch(
+            "indexer.index_codebase._check_search_deps", return_value=False
+        ), patch(
+            "indexer.graph_generator.generate_graph_sqlite", return_value=mock_result
+        ) as mock_graph, patch("indexer.index_codebase.SQLiteGraph") as mock_db_cls:
             mock_db = MagicMock()
             mock_db_cls.return_value = mock_db
             from indexer.index_codebase import cmd_full_rebuild
+
             cmd_full_rebuild()
         mock_graph.assert_called_once()
         mock_db.close.assert_called_once()
@@ -571,15 +588,20 @@ class TestCmdFullRebuild:
         mock_client.create_collection.return_value = mock_collection
 
         # chunk_project is imported locally inside cmd_full_rebuild, so patch at source
-        with patch("indexer.index_codebase._check_search_deps", return_value=True), \
-             patch("indexer.index_codebase._get_chroma_client", return_value=mock_client), \
-             patch("indexer.index_codebase._get_embedding_fn", return_value=MagicMock()), \
-             patch("indexer.chunker.chunk_project", return_value=[mock_chunk]), \
-             patch("indexer.graph_generator.generate_graph_sqlite", return_value={"nodes_added": 1}), \
-             patch("indexer.index_codebase.SQLiteGraph") as mock_db_cls:
+        with patch(
+            "indexer.index_codebase._check_search_deps", return_value=True
+        ), patch(
+            "indexer.index_codebase._get_chroma_client", return_value=mock_client
+        ), patch(
+            "indexer.index_codebase._get_embedding_fn", return_value=MagicMock()
+        ), patch("indexer.chunker.chunk_project", return_value=[mock_chunk]), patch(
+            "indexer.graph_generator.generate_graph_sqlite",
+            return_value={"nodes_added": 1},
+        ), patch("indexer.index_codebase.SQLiteGraph") as mock_db_cls:
             mock_db = MagicMock()
             mock_db_cls.return_value = mock_db
             from indexer.index_codebase import cmd_full_rebuild
+
             cmd_full_rebuild()
         mock_collection.add.assert_called()
 
@@ -588,12 +610,15 @@ class TestCmdFullRebuild:
 # cmd_incremental
 # ---------------------------------------------------------------------------
 
+
 class TestCmdIncremental:
     def test_no_changed_files_returns_zero(self, project_env):
         _project, data_dir, db = project_env
-        with patch("indexer.index_codebase._get_changed_files", return_value=[]), \
-             patch("indexer.index_codebase.SQLiteGraph", return_value=db):
+        with patch("indexer.index_codebase._get_changed_files", return_value=[]), patch(
+            "indexer.index_codebase.SQLiteGraph", return_value=db
+        ):
             from indexer.index_codebase import cmd_incremental
+
             result = cmd_incremental()
         assert result == 0
 
@@ -602,21 +627,28 @@ class TestCmdIncremental:
         _project, data_dir, db = project_env
         mock_client = MagicMock()
         mock_client.get_collection.side_effect = Exception("collection missing")
-        with patch("indexer.index_codebase._get_changed_files", return_value=[("src/main.py", "abc123")]), \
-             patch("indexer.index_codebase._get_chroma_client", return_value=mock_client), \
-             patch("indexer.index_codebase._get_embedding_fn", return_value=MagicMock()), \
-             patch("indexer.index_codebase.SQLiteGraph", return_value=db), \
-             patch("indexer.index_codebase._check_search_deps", return_value=True), \
-             patch("indexer.graph_generator.generate_graph_sqlite", return_value={}):
+        with patch(
+            "indexer.index_codebase._get_changed_files",
+            return_value=[("src/main.py", "abc123")],
+        ), patch(
+            "indexer.index_codebase._get_chroma_client", return_value=mock_client
+        ), patch(
+            "indexer.index_codebase._get_embedding_fn", return_value=MagicMock()
+        ), patch("indexer.index_codebase.SQLiteGraph", return_value=db), patch(
+            "indexer.index_codebase._check_search_deps", return_value=True
+        ), patch("indexer.graph_generator.generate_graph_sqlite", return_value={}):
             from indexer.index_codebase import cmd_incremental
+
             cmd_incremental()  # Should not raise — falls back to graph-only
 
     def test_explicit_files_no_match_returns_zero(self, project_env):
         _project, data_dir, db = project_env
         # file_paths given but no actual matching files exist
-        with patch("indexer.index_codebase._get_requested_files", return_value=[]), \
-             patch("indexer.index_codebase.SQLiteGraph", return_value=db):
+        with patch(
+            "indexer.index_codebase._get_requested_files", return_value=[]
+        ), patch("indexer.index_codebase.SQLiteGraph", return_value=db):
             from indexer.index_codebase import cmd_incremental
+
             result = cmd_incremental(file_paths=["nonexistent.py"])
         assert result == 0
 
@@ -625,6 +657,7 @@ class TestCmdIncremental:
 # _get_chroma_client / _get_embedding_fn
 # ---------------------------------------------------------------------------
 
+
 class TestGetChromaClientAndEmbedFn:
     def test_get_chroma_client_returns_client(self, project_env):
         mock_chromadb = MagicMock()
@@ -632,16 +665,19 @@ class TestGetChromaClientAndEmbedFn:
         mock_chromadb.PersistentClient.return_value = mock_client
         with patch.dict("sys.modules", {"chromadb": mock_chromadb}):
             from indexer.index_codebase import _get_chroma_client
+
             result = _get_chroma_client()
         assert result is mock_client
 
     def test_get_chroma_client_raises_import_error_if_no_chromadb(self, project_env):
         import sys
+
         # Simulate chromadb being unimportable by removing it from sys.modules
         saved = sys.modules.pop("chromadb", None)
         try:
             with patch.dict("sys.modules", {"chromadb": None}):
                 from indexer.index_codebase import _get_chroma_client
+
                 with pytest.raises(ImportError, match="codevira"):
                     _get_chroma_client()
         finally:
@@ -653,6 +689,7 @@ class TestGetChromaClientAndEmbedFn:
 # cmd_status
 # ---------------------------------------------------------------------------
 
+
 class TestCmdStatusIndexCb:
     def test_cmd_status_shows_panel(self, project_env, capsys):
         _project, data_dir, db = project_env
@@ -660,19 +697,23 @@ class TestCmdStatusIndexCb:
         mock_collection = MagicMock()
         mock_collection.count.return_value = 42
         mock_client.get_collection.return_value = mock_collection
-        with patch("indexer.index_codebase.SQLiteGraph", return_value=db), \
-             patch("indexer.index_codebase._get_chroma_client", return_value=mock_client), \
-             patch("indexer.index_codebase._get_embedding_fn", return_value=MagicMock()), \
-             patch("indexer.index_codebase._get_changed_files", return_value=[]):
+        with patch("indexer.index_codebase.SQLiteGraph", return_value=db), patch(
+            "indexer.index_codebase._get_chroma_client", return_value=mock_client
+        ), patch(
+            "indexer.index_codebase._get_embedding_fn", return_value=MagicMock()
+        ), patch("indexer.index_codebase._get_changed_files", return_value=[]):
             from indexer.index_codebase import cmd_status
+
             cmd_status()  # Should not raise
 
     def test_cmd_status_no_chromadb(self, project_env):
         _project, data_dir, db = project_env
-        with patch("indexer.index_codebase.SQLiteGraph", return_value=db), \
-             patch("indexer.index_codebase._get_chroma_client", side_effect=ImportError("chromadb")), \
-             patch("indexer.index_codebase._get_changed_files", return_value=[]):
+        with patch("indexer.index_codebase.SQLiteGraph", return_value=db), patch(
+            "indexer.index_codebase._get_chroma_client",
+            side_effect=ImportError("chromadb"),
+        ), patch("indexer.index_codebase._get_changed_files", return_value=[]):
             from indexer.index_codebase import cmd_status
+
             cmd_status()  # Should not raise
 
 
@@ -686,6 +727,7 @@ class TestChromaCorruptionSignatureP6:
 
     def test_hnsw_segment_writer_matches(self):
         from indexer.index_codebase import _looks_like_chroma_corruption
+
         # Exact strings from the 2026-05-14 and 2026-05-16 production crashes.
         for msg in (
             "Error in compaction: Failed to apply logs to the hnsw segment writer",
@@ -700,6 +742,7 @@ class TestChromaCorruptionSignatureP6:
 
     def test_unrelated_errors_dont_match(self):
         from indexer.index_codebase import _looks_like_chroma_corruption
+
         for msg in (
             "Connection refused",
             "Permission denied",
@@ -730,7 +773,6 @@ class TestIncrementalCircuitBreakerP5:
         mode (no more crash logs for that batch)."""
         from unittest.mock import MagicMock, patch
         import yaml as _yaml
-        from indexer.sqlite_graph import SQLiteGraph
         from indexer.index_codebase import cmd_incremental
 
         # Build a minimal project + data dir.
@@ -738,13 +780,17 @@ class TestIncrementalCircuitBreakerP5:
         data_dir = project / ".codevira"
         data_dir.mkdir(parents=True)
         (data_dir / "graph").mkdir()
-        (data_dir / "config.yaml").write_text(_yaml.safe_dump({
-            "project": {
-                "watched_dirs": ["src"],
-                "file_extensions": [".py"],
-                "skip_dirs": [],
-            }
-        }))
+        (data_dir / "config.yaml").write_text(
+            _yaml.safe_dump(
+                {
+                    "project": {
+                        "watched_dirs": ["src"],
+                        "file_extensions": [".py"],
+                        "skip_dirs": [],
+                    }
+                }
+            )
+        )
         src = project / "src"
         src.mkdir()
         # 10 files so we can observe the breaker kicking in at file 5.
@@ -754,6 +800,7 @@ class TestIncrementalCircuitBreakerP5:
         monkeypatch.setattr("indexer.index_codebase._project_root", lambda: project)
         monkeypatch.setattr("indexer.index_codebase.get_data_dir", lambda: data_dir)
         from mcp_server import paths as _paths
+
         _paths._data_dir_cache.clear()
 
         # Mock Chroma client + collection: every delete raises the corruption
@@ -768,13 +815,20 @@ class TestIncrementalCircuitBreakerP5:
 
         # Force changed_items to include all 10 files (mimics first incremental).
         from indexer.index_codebase import _compute_hash
-        changed = [(f"src/file_{i}.py", _compute_hash(src / f"file_{i}.py")) for i in range(10)]
 
-        with patch("indexer.index_codebase._check_search_deps", return_value=True), \
-             patch("indexer.index_codebase._get_chroma_client", return_value=fake_client), \
-             patch("indexer.index_codebase._get_embedding_fn", return_value=MagicMock()), \
-             patch("indexer.index_codebase._get_changed_files", return_value=changed), \
-             patch("indexer.graph_generator.generate_graph_sqlite"):
+        changed = [
+            (f"src/file_{i}.py", _compute_hash(src / f"file_{i}.py")) for i in range(10)
+        ]
+
+        with patch(
+            "indexer.index_codebase._check_search_deps", return_value=True
+        ), patch(
+            "indexer.index_codebase._get_chroma_client", return_value=fake_client
+        ), patch(
+            "indexer.index_codebase._get_embedding_fn", return_value=MagicMock()
+        ), patch(
+            "indexer.index_codebase._get_changed_files", return_value=changed
+        ), patch("indexer.graph_generator.generate_graph_sqlite"):
             cmd_incremental(quiet=True)
 
         # Circuit-breaker invariant: collection.delete called AT MOST 5 times
@@ -785,6 +839,7 @@ class TestIncrementalCircuitBreakerP5:
             f"collection.delete was called {actual_calls} times — should be ≤5 "
             f"before halting the loop and falling back to graph-only mode."
         )
+
     """2026-05-17 Bug J/K fix (P9 graceful degradation): _check_search_deps
     must NOT import sentence_transformers (which triggers ~5s of PyTorch
     tensor init). list_tools() in server.py calls _check_search_deps on
@@ -794,8 +849,8 @@ class TestIncrementalCircuitBreakerP5:
 
     def test_check_search_deps_is_fast(self):
         """Sanity check: 100 calls complete in well under 1 second."""
-        import time
         from indexer.index_codebase import _check_search_deps
+
         start = time.time()
         for _ in range(100):
             _check_search_deps()
@@ -817,7 +872,6 @@ class TestIncrementalCircuitBreakerP5:
         source checks are brittle against well-meaning refactors that
         keep the contract but rephrase the implementation.
         """
-        import time
         import sys
         from indexer.index_codebase import _check_search_deps
 
@@ -921,6 +975,7 @@ class TestCmdIndexVerboseBugH:
         """cmd_full_rebuild + cmd_incremental must accept verbose kwarg."""
         from indexer.index_codebase import cmd_full_rebuild, cmd_incremental
         import inspect
+
         full_sig = inspect.signature(cmd_full_rebuild)
         inc_sig = inspect.signature(cmd_incremental)
         assert "verbose" in full_sig.parameters, "cmd_full_rebuild needs verbose"
@@ -956,12 +1011,15 @@ class TestCmdStatusBugC:
         index_dir.mkdir()
         (index_dir / "chroma.sqlite3").write_text("")
 
-        with patch("indexer.index_codebase.SQLiteGraph", return_value=db), \
-             patch("indexer.index_codebase._get_chroma_client", return_value=mock_client), \
-             patch("indexer.index_codebase._get_embedding_fn", return_value=MagicMock()), \
-             patch("indexer.index_codebase._index_dir", return_value=index_dir), \
-             patch("indexer.index_codebase._get_changed_files", return_value=[]):
+        with patch("indexer.index_codebase.SQLiteGraph", return_value=db), patch(
+            "indexer.index_codebase._get_chroma_client", return_value=mock_client
+        ), patch(
+            "indexer.index_codebase._get_embedding_fn", return_value=MagicMock()
+        ), patch("indexer.index_codebase._index_dir", return_value=index_dir), patch(
+            "indexer.index_codebase._get_changed_files", return_value=[]
+        ):
             from indexer.index_codebase import cmd_status
+
             cmd_status()
 
         out = capsys.readouterr().out
@@ -973,9 +1031,9 @@ class TestCmdStatusBugC:
             f"must suggest `index --full`. Got:\n{out}"
         )
         # And NOT the misconfiguration hint — config IS fine.
-        assert "matches NO files" not in out, (
-            f"State 2 must NOT fire the misconfig hint. Got:\n{out}"
-        )
+        assert (
+            "matches NO files" not in out
+        ), f"State 2 must NOT fire the misconfig hint. Got:\n{out}"
 
     def test_state3_graph_empty_config_matches_nothing_warns_configure(
         self, project_env, capsys
@@ -994,12 +1052,15 @@ class TestCmdStatusBugC:
         index_dir.mkdir()
         (index_dir / "chroma.sqlite3").write_text("")
 
-        with patch("indexer.index_codebase.SQLiteGraph", return_value=db), \
-             patch("indexer.index_codebase._get_chroma_client", return_value=mock_client), \
-             patch("indexer.index_codebase._get_embedding_fn", return_value=MagicMock()), \
-             patch("indexer.index_codebase._index_dir", return_value=index_dir), \
-             patch("indexer.index_codebase._get_changed_files", return_value=[]):
+        with patch("indexer.index_codebase.SQLiteGraph", return_value=db), patch(
+            "indexer.index_codebase._get_chroma_client", return_value=mock_client
+        ), patch(
+            "indexer.index_codebase._get_embedding_fn", return_value=MagicMock()
+        ), patch("indexer.index_codebase._index_dir", return_value=index_dir), patch(
+            "indexer.index_codebase._get_changed_files", return_value=[]
+        ):
             from indexer.index_codebase import cmd_status
+
             cmd_status()
 
         out = capsys.readouterr().out
@@ -1010,9 +1071,7 @@ class TestCmdStatusBugC:
             f"must suggest `codevira configure`. Got:\n{out}"
         )
 
-    def test_state1_graph_populated_no_warning(
-        self, populated_db, capsys
-    ):
+    def test_state1_graph_populated_no_warning(self, populated_db, capsys):
         """State 1: graph has nodes — no warning, just show the table.
         Verifies my fix doesn't add false warnings on healthy projects."""
         project, data_dir, db = populated_db
@@ -1025,22 +1084,25 @@ class TestCmdStatusBugC:
         index_dir.mkdir()
         (index_dir / "chroma.sqlite3").write_text("")
 
-        with patch("indexer.index_codebase.SQLiteGraph", return_value=db), \
-             patch("indexer.index_codebase._get_chroma_client", return_value=mock_client), \
-             patch("indexer.index_codebase._get_embedding_fn", return_value=MagicMock()), \
-             patch("indexer.index_codebase._index_dir", return_value=index_dir), \
-             patch("indexer.index_codebase._get_changed_files", return_value=[]):
+        with patch("indexer.index_codebase.SQLiteGraph", return_value=db), patch(
+            "indexer.index_codebase._get_chroma_client", return_value=mock_client
+        ), patch(
+            "indexer.index_codebase._get_embedding_fn", return_value=MagicMock()
+        ), patch("indexer.index_codebase._index_dir", return_value=index_dir), patch(
+            "indexer.index_codebase._get_changed_files", return_value=[]
+        ):
             from indexer.index_codebase import cmd_status
+
             cmd_status()
 
         out = capsys.readouterr().out
         # State 1 must NOT emit either of the warnings.
-        assert "index --full" not in out, (
-            f"State 1 (graph populated) must NOT suggest --full. Got:\n{out}"
-        )
-        assert "matches NO files" not in out, (
-            f"State 1 must NOT fire misconfig hint. Got:\n{out}"
-        )
+        assert (
+            "index --full" not in out
+        ), f"State 1 (graph populated) must NOT suggest --full. Got:\n{out}"
+        assert (
+            "matches NO files" not in out
+        ), f"State 1 must NOT fire misconfig hint. Got:\n{out}"
 
 
 class TestGlobalStatusRendersRealNumbers:
@@ -1071,31 +1133,34 @@ class TestGlobalStatusRendersRealNumbers:
         mock_collection = MagicMock()
         mock_collection.count.return_value = 0
         mock_client.get_collection.return_value = mock_collection
-        with patch("indexer.index_codebase.SQLiteGraph", return_value=db), \
-             patch("indexer.index_codebase._get_chroma_client", return_value=mock_client), \
-             patch("indexer.index_codebase._get_embedding_fn", return_value=MagicMock()), \
-             patch("indexer.index_codebase._get_changed_files", return_value=[]), \
-             patch("mcp_server.global_sync.get_global_stats", return_value=stats), \
-             patch("mcp_server._project_inventory.enumerate_projects", return_value=[]), \
-             patch("mcp_server._project_inventory.summarize", return_value=inv_summary):
+        with patch("indexer.index_codebase.SQLiteGraph", return_value=db), patch(
+            "indexer.index_codebase._get_chroma_client", return_value=mock_client
+        ), patch(
+            "indexer.index_codebase._get_embedding_fn", return_value=MagicMock()
+        ), patch("indexer.index_codebase._get_changed_files", return_value=[]), patch(
+            "mcp_server.global_sync.get_global_stats", return_value=stats
+        ), patch(
+            "mcp_server._project_inventory.enumerate_projects", return_value=[]
+        ), patch("mcp_server._project_inventory.summarize", return_value=inv_summary):
             from indexer.index_codebase import cmd_status
+
             cmd_status(show_global=True)
         out = capsys.readouterr().out
         # P0-3: Projects Tracked reads from inventory, NOT from stats.
         # Even though stats says 99, the rendered value should be 7 (inventory).
-        assert "Projects Tracked" in out and " 7 " in out, (
-            f"Expected 'Projects Tracked: 7 tracked' in rendered output, got:\n{out}"
-        )
+        assert (
+            "Projects Tracked" in out and " 7 " in out
+        ), f"Expected 'Projects Tracked: 7 tracked' in rendered output, got:\n{out}"
         assert " 99" not in out, (
             "Should NOT use stats['project_count'] as source — P0-3 fix means "
             "Projects Tracked is sourced from the project inventory helper."
         )
-        assert "Global Preferences" in out and " 13" in out, (
-            f"Expected 'Global Preferences: 13' in rendered output, got:\n{out}"
-        )
-        assert "Global Rules" in out and " 22" in out, (
-            f"Expected 'Global Rules: 22' in rendered output, got:\n{out}"
-        )
+        assert (
+            "Global Preferences" in out and " 13" in out
+        ), f"Expected 'Global Preferences: 13' in rendered output, got:\n{out}"
+        assert (
+            "Global Rules" in out and " 22" in out
+        ), f"Expected 'Global Rules: 22' in rendered output, got:\n{out}"
 
     def test_global_status_shows_zero_when_stats_missing(self, project_env, capsys):
         """When get_global_stats() returns None (no global.db yet), numbers default to 0."""
@@ -1104,12 +1169,15 @@ class TestGlobalStatusRendersRealNumbers:
         mock_collection = MagicMock()
         mock_collection.count.return_value = 0
         mock_client.get_collection.return_value = mock_collection
-        with patch("indexer.index_codebase.SQLiteGraph", return_value=db), \
-             patch("indexer.index_codebase._get_chroma_client", return_value=mock_client), \
-             patch("indexer.index_codebase._get_embedding_fn", return_value=MagicMock()), \
-             patch("indexer.index_codebase._get_changed_files", return_value=[]), \
-             patch("mcp_server.global_sync.get_global_stats", return_value=None):
+        with patch("indexer.index_codebase.SQLiteGraph", return_value=db), patch(
+            "indexer.index_codebase._get_chroma_client", return_value=mock_client
+        ), patch(
+            "indexer.index_codebase._get_embedding_fn", return_value=MagicMock()
+        ), patch("indexer.index_codebase._get_changed_files", return_value=[]), patch(
+            "mcp_server.global_sync.get_global_stats", return_value=None
+        ):
             from indexer.index_codebase import cmd_status
+
             cmd_status(show_global=True)
         out = capsys.readouterr().out
         # All three numbers should default to 0 when stats absent.
@@ -1122,15 +1190,19 @@ class TestGlobalStatusRendersRealNumbers:
 # cmd_generate_graph
 # ---------------------------------------------------------------------------
 
+
 class TestCmdGenerateGraph:
     def test_generates_graph(self, project_env):
         _project, data_dir, _db = project_env
         mock_result = {"files_processed": 5, "nodes_added": 10, "nodes_skipped": 2}
         # generate_graph_sqlite is imported locally inside cmd_generate_graph
-        with patch("indexer.graph_generator.generate_graph_sqlite", return_value=mock_result) as mock_gen, \
-             patch("indexer.index_codebase.get_data_dir", return_value=data_dir), \
-             patch("indexer.index_codebase.get_project_root", return_value=_project):
+        with patch(
+            "indexer.graph_generator.generate_graph_sqlite", return_value=mock_result
+        ) as mock_gen, patch(
+            "indexer.index_codebase.get_data_dir", return_value=data_dir
+        ), patch("indexer.index_codebase.get_project_root", return_value=_project):
             from indexer.index_codebase import cmd_generate_graph
+
             cmd_generate_graph()  # Should not raise
         mock_gen.assert_called_once()
 
@@ -1139,14 +1211,16 @@ class TestCmdGenerateGraph:
 # cmd_bootstrap_roadmap
 # ---------------------------------------------------------------------------
 
+
 class TestCmdBootstrapRoadmap:
     def test_creates_roadmap_if_not_exists(self, project_env):
         _project, data_dir, _db = project_env
         # generate_roadmap_stub is imported locally inside cmd_bootstrap_roadmap
-        with patch("indexer.graph_generator.generate_roadmap_stub") as mock_stub, \
-             patch("indexer.index_codebase.get_data_dir", return_value=data_dir), \
-             patch("indexer.index_codebase.get_project_root", return_value=_project):
+        with patch("indexer.graph_generator.generate_roadmap_stub") as mock_stub, patch(
+            "indexer.index_codebase.get_data_dir", return_value=data_dir
+        ), patch("indexer.index_codebase.get_project_root", return_value=_project):
             from indexer.index_codebase import cmd_bootstrap_roadmap
+
             cmd_bootstrap_roadmap()
         mock_stub.assert_called_once()
 
@@ -1154,9 +1228,11 @@ class TestCmdBootstrapRoadmap:
         _project, data_dir, _db = project_env
         roadmap_file = data_dir / "roadmap.yaml"
         roadmap_file.write_text("phases: []")
-        with patch("indexer.graph_generator.generate_roadmap_stub") as mock_stub, \
-             patch("indexer.index_codebase.get_data_dir", return_value=data_dir):
+        with patch("indexer.graph_generator.generate_roadmap_stub") as mock_stub, patch(
+            "indexer.index_codebase.get_data_dir", return_value=data_dir
+        ):
             from indexer.index_codebase import cmd_bootstrap_roadmap
+
             cmd_bootstrap_roadmap()
         mock_stub.assert_not_called()
 
@@ -1165,30 +1241,37 @@ class TestCmdBootstrapRoadmap:
 # start_background_watcher
 # ---------------------------------------------------------------------------
 
+
 class TestStartBackgroundWatcher:
     def test_watcher_starts_with_valid_dirs(self, project_env):
         _project, data_dir, _db = project_env
         src_dir = _project / "src"
         src_dir.mkdir(exist_ok=True)
         config = {"watched_dirs": ["src"], "file_extensions": [".py"], "skip_dirs": []}
-        with patch("indexer.index_codebase._load_config", return_value=config), \
-             patch("indexer.index_codebase.get_project_root", return_value=_project), \
-             patch("watchdog.observers.Observer") as mock_observer_cls:
+        with patch("indexer.index_codebase._load_config", return_value=config), patch(
+            "indexer.index_codebase.get_project_root", return_value=_project
+        ), patch("watchdog.observers.Observer") as mock_observer_cls:
             mock_observer = MagicMock()
             mock_observer_cls.return_value = mock_observer
             from indexer.index_codebase import start_background_watcher
+
             result = start_background_watcher(quiet=True)
         mock_observer.start.assert_called_once()
 
     def test_watcher_does_not_start_for_missing_dirs(self, project_env):
         _project, _data_dir, _db = project_env
-        config = {"watched_dirs": ["nonexistent"], "file_extensions": [".py"], "skip_dirs": []}
-        with patch("indexer.index_codebase._load_config", return_value=config), \
-             patch("indexer.index_codebase.get_project_root", return_value=_project), \
-             patch("watchdog.observers.Observer") as mock_observer_cls:
+        config = {
+            "watched_dirs": ["nonexistent"],
+            "file_extensions": [".py"],
+            "skip_dirs": [],
+        }
+        with patch("indexer.index_codebase._load_config", return_value=config), patch(
+            "indexer.index_codebase.get_project_root", return_value=_project
+        ), patch("watchdog.observers.Observer") as mock_observer_cls:
             mock_observer = MagicMock()
             mock_observer_cls.return_value = mock_observer
             from indexer.index_codebase import start_background_watcher
+
             start_background_watcher(quiet=True)
         mock_observer.start.assert_not_called()
 
@@ -1202,11 +1285,13 @@ class TestStartBackgroundWatcher:
         fake_home = tmp_path / "fake-home"
         fake_home.mkdir()
         monkeypatch.setattr("pathlib.Path.home", lambda: fake_home)
-        monkeypatch.setattr("indexer.index_codebase.get_project_root",
-                            lambda: fake_home)
+        monkeypatch.setattr(
+            "indexer.index_codebase.get_project_root", lambda: fake_home
+        )
 
         with patch("watchdog.observers.Observer") as mock_observer_cls:
             from indexer.index_codebase import start_background_watcher
+
             result = start_background_watcher(quiet=True)
 
         assert result is None
@@ -1215,11 +1300,14 @@ class TestStartBackgroundWatcher:
 
     def test_watcher_refuses_root_slash(self, monkeypatch):
         from pathlib import Path
-        monkeypatch.setattr("indexer.index_codebase.get_project_root",
-                            lambda: Path("/"))
+
+        monkeypatch.setattr(
+            "indexer.index_codebase.get_project_root", lambda: Path("/")
+        )
 
         with patch("watchdog.observers.Observer") as mock_observer_cls:
             from indexer.index_codebase import start_background_watcher
+
             result = start_background_watcher(quiet=True)
 
         assert result is None
@@ -1229,6 +1317,7 @@ class TestStartBackgroundWatcher:
 # ===================================================================
 # v1.8.1 round-4 hardening: `python -m indexer.index_codebase` __main__
 # ===================================================================
+
 
 class TestIndexerMainEntry:
     """Direct module invocation (`python -m indexer.index_codebase --full`)
@@ -1244,6 +1333,7 @@ class TestIndexerMainEntry:
         The subprocess inherits PYTHONPATH so it can find the module."""
         import subprocess
         import sys
+
         fake_home = tmp_path / "fake-home"
         fake_home.mkdir()
         env = dict(os.environ)
@@ -1271,6 +1361,7 @@ class TestIndexerMainEntry:
         prints 'Not initialized' and exits 0."""
         import subprocess
         import sys
+
         fake_home = tmp_path / "fake-home-status"
         fake_home.mkdir()
         env = dict(os.environ)
@@ -1296,10 +1387,12 @@ class TestIndexerMainEntry:
 # _get_embedding_fn exit path
 # ---------------------------------------------------------------------------
 
+
 class TestGetEmbeddingFnExit:
     def test_import_error_when_chromadb_utils_missing(self, project_env):
         """_get_embedding_fn raises ImportError if chromadb.utils unavailable."""
         import sys
+
         original_mods = {
             "chromadb.utils": sys.modules.pop("chromadb.utils", None),
             "chromadb.utils.embedding_functions": sys.modules.pop(
@@ -1310,6 +1403,7 @@ class TestGetEmbeddingFnExit:
             sys.modules["chromadb.utils"] = None  # type: ignore[assignment]
             sys.modules["chromadb.utils.embedding_functions"] = None  # type: ignore[assignment]
             from indexer.index_codebase import _get_embedding_fn
+
             with pytest.raises(ImportError, match="codevira"):
                 _get_embedding_fn()
         finally:
@@ -1324,6 +1418,7 @@ class TestGetEmbeddingFnExit:
 # cmd_incremental — actual indexing loop (changed files, non-empty collection)
 # ---------------------------------------------------------------------------
 
+
 class TestCmdIncrementalLoop:
     """cmd_incremental — actual indexing loop (lines 283-323)."""
 
@@ -1332,9 +1427,15 @@ class TestCmdIncrementalLoop:
         """Return fake rich sub-modules so cmd_incremental doesn't fail on import."""
         import types
         import sys
+
         mods = {}
-        for name in ("rich", "rich.console", "rich.table", "rich.panel",
-                     "rich.progress"):
+        for name in (
+            "rich",
+            "rich.console",
+            "rich.table",
+            "rich.panel",
+            "rich.progress",
+        ):
             if name not in sys.modules:
                 mods[name] = types.ModuleType(name)
         # Console must be callable and return something with .print()
@@ -1345,6 +1446,7 @@ class TestCmdIncrementalLoop:
     def test_indexes_changed_file_successfully(self, project_env):
         """cmd_incremental processes changed files and updates the hash."""
         import sys
+
         _project, data_dir, db = project_env
 
         src = _project / "src"
@@ -1365,15 +1467,20 @@ class TestCmdIncrementalLoop:
         mock_chunk.source_text = "def hello(): pass"
         mock_chunk.layer = "api"
 
-        with patch.dict(sys.modules, self._rich_mods()), \
-             patch("indexer.index_codebase._check_search_deps", return_value=True), \
-             patch("indexer.index_codebase._get_changed_files", return_value=[("src/api.py", "newhash123")]), \
-             patch("indexer.index_codebase._get_chroma_client", return_value=mock_client), \
-             patch("indexer.index_codebase._get_embedding_fn", return_value=MagicMock()), \
-             patch("indexer.chunker.chunk_file", return_value=[mock_chunk]), \
-             patch("indexer.graph_generator.generate_graph_sqlite", return_value={}), \
-             patch("indexer.index_codebase.SQLiteGraph", return_value=db):
+        with patch.dict(sys.modules, self._rich_mods()), patch(
+            "indexer.index_codebase._check_search_deps", return_value=True
+        ), patch(
+            "indexer.index_codebase._get_changed_files",
+            return_value=[("src/api.py", "newhash123")],
+        ), patch(
+            "indexer.index_codebase._get_chroma_client", return_value=mock_client
+        ), patch(
+            "indexer.index_codebase._get_embedding_fn", return_value=MagicMock()
+        ), patch("indexer.chunker.chunk_file", return_value=[mock_chunk]), patch(
+            "indexer.graph_generator.generate_graph_sqlite", return_value={}
+        ), patch("indexer.index_codebase.SQLiteGraph", return_value=db):
             from indexer.index_codebase import cmd_incremental
+
             result = cmd_incremental()
         assert result == 0
         mock_collection.delete.assert_called()
@@ -1382,21 +1489,27 @@ class TestCmdIncrementalLoop:
     def test_chunk_error_continues_to_next_file(self, project_env):
         """When chunk_file raises, cmd_incremental continues to the next file."""
         import sys
+
         _project, data_dir, db = project_env
 
         mock_collection = MagicMock()
         mock_client = MagicMock()
         mock_client.get_collection.return_value = mock_collection
 
-        with patch.dict(sys.modules, self._rich_mods()), \
-             patch("indexer.index_codebase._get_changed_files",
-                   return_value=[("src/api.py", "hash1"), ("src/db.py", "hash2")]), \
-             patch("indexer.index_codebase._get_chroma_client", return_value=mock_client), \
-             patch("indexer.index_codebase._get_embedding_fn", return_value=MagicMock()), \
-             patch("indexer.chunker.chunk_file", side_effect=Exception("chunk failed")), \
-             patch("indexer.graph_generator.generate_graph_sqlite", return_value={}), \
-             patch("indexer.index_codebase.SQLiteGraph", return_value=db):
+        with patch.dict(sys.modules, self._rich_mods()), patch(
+            "indexer.index_codebase._get_changed_files",
+            return_value=[("src/api.py", "hash1"), ("src/db.py", "hash2")],
+        ), patch(
+            "indexer.index_codebase._get_chroma_client", return_value=mock_client
+        ), patch(
+            "indexer.index_codebase._get_embedding_fn", return_value=MagicMock()
+        ), patch(
+            "indexer.chunker.chunk_file", side_effect=Exception("chunk failed")
+        ), patch(
+            "indexer.graph_generator.generate_graph_sqlite", return_value={}
+        ), patch("indexer.index_codebase.SQLiteGraph", return_value=db):
             from indexer.index_codebase import cmd_incremental
+
             result = cmd_incremental()
         # Returns 0 even when all files fail to chunk (indexed_any=False path)
         assert result == 0
@@ -1405,6 +1518,7 @@ class TestCmdIncrementalLoop:
 # ---------------------------------------------------------------------------
 # DebouncedHandler event methods (via start_background_watcher)
 # ---------------------------------------------------------------------------
+
 
 class TestDebouncedHandlerEvents:
     """DebouncedHandler event methods (lines 358-396, 406-411).
@@ -1418,27 +1532,40 @@ class TestDebouncedHandlerEvents:
     @staticmethod
     def _fake_watchdog_mods():
         """Return a dict of fake watchdog sub-modules for patch.dict."""
-        import sys, types
+        import sys
+        import types
+
         mods = {}
         for name in ("watchdog", "watchdog.observers", "watchdog.events"):
             if name not in sys.modules:
                 mods[name] = types.ModuleType(name)
         # Observer must be a class
         mock_observer_cls = MagicMock()
-        mods.get("watchdog.observers", sys.modules.get("watchdog.observers")).Observer = mock_observer_cls
+        mods.get(
+            "watchdog.observers", sys.modules.get("watchdog.observers")
+        ).Observer = mock_observer_cls
+
         # FileSystemEventHandler must be a real class (DebouncedHandler inherits it)
         class _FakeHandler:
             pass
-        mods.get("watchdog.events", sys.modules.get("watchdog.events")).FileSystemEventHandler = _FakeHandler
+
+        mods.get(
+            "watchdog.events", sys.modules.get("watchdog.events")
+        ).FileSystemEventHandler = _FakeHandler
         return mods
 
     def _start_watcher_and_get_handler(self, project_env):
         """Inject watchdog stubs, start watcher, return (src_dir, handler, timer_cls)."""
         import sys
+
         _project, _data_dir, _db = project_env
         src_dir = _project / "src"
         src_dir.mkdir(exist_ok=True)
-        config = {"watched_dirs": ["src"], "file_extensions": [".py"], "skip_dirs": ["__pycache__"]}
+        config = {
+            "watched_dirs": ["src"],
+            "file_extensions": [".py"],
+            "skip_dirs": ["__pycache__"],
+        }
 
         fake_mods = self._fake_watchdog_mods()
         mock_obs = MagicMock()
@@ -1447,37 +1574,49 @@ class TestDebouncedHandlerEvents:
         # Patch watchdog modules into sys.modules so the local import inside
         # start_background_watcher succeeds, then patch the Observer class
         # and threading.Timer to intercept calls.
-        with patch.dict(sys.modules, fake_mods), \
-             patch("indexer.index_codebase._load_config", return_value=config), \
-             patch("indexer.index_codebase.get_project_root", return_value=_project), \
-             patch("threading.Timer", return_value=MagicMock()) as mock_timer_cls:
-
+        with patch.dict(sys.modules, fake_mods), patch(
+            "indexer.index_codebase._load_config", return_value=config
+        ), patch(
+            "indexer.index_codebase.get_project_root", return_value=_project
+        ), patch("threading.Timer", return_value=MagicMock()) as mock_timer_cls:
             # Override the Observer class inside the fake watchdog.observers mod
             fake_obs_mod = sys.modules["watchdog.observers"]
             fake_obs_mod.Observer = MagicMock(return_value=mock_obs)
 
             from indexer.index_codebase import start_background_watcher
+
             start_background_watcher(quiet=True)
 
-            handler = mock_obs.schedule.call_args[0][0] if mock_obs.schedule.called else None
+            handler = (
+                mock_obs.schedule.call_args[0][0] if mock_obs.schedule.called else None
+            )
             return src_dir, handler, mock_timer_cls, mock_obs
 
     def test_on_modified_triggers_schedule(self, project_env):
         """DebouncedHandler.on_modified calls _schedule_reindex for .py files."""
         import sys
+
         _project, _data_dir, _db = project_env
         src_dir = _project / "src"
         src_dir.mkdir(exist_ok=True)
-        config = {"watched_dirs": ["src"], "file_extensions": [".py"], "skip_dirs": ["__pycache__"]}
+        config = {
+            "watched_dirs": ["src"],
+            "file_extensions": [".py"],
+            "skip_dirs": ["__pycache__"],
+        }
         fake_mods = self._fake_watchdog_mods()
         mock_obs = MagicMock()
 
-        with patch.dict(sys.modules, fake_mods), \
-             patch("indexer.index_codebase._load_config", return_value=config), \
-             patch("indexer.index_codebase.get_project_root", return_value=_project), \
-             patch("threading.Timer", return_value=MagicMock()) as mock_timer_cls:
-            sys.modules["watchdog.observers"].Observer = MagicMock(return_value=mock_obs)
+        with patch.dict(sys.modules, fake_mods), patch(
+            "indexer.index_codebase._load_config", return_value=config
+        ), patch(
+            "indexer.index_codebase.get_project_root", return_value=_project
+        ), patch("threading.Timer", return_value=MagicMock()) as mock_timer_cls:
+            sys.modules["watchdog.observers"].Observer = MagicMock(
+                return_value=mock_obs
+            )
             from indexer.index_codebase import start_background_watcher
+
             start_background_watcher(quiet=True)
 
             assert mock_obs.schedule.called
@@ -1492,19 +1631,28 @@ class TestDebouncedHandlerEvents:
     def test_on_created_triggers_schedule(self, project_env):
         """DebouncedHandler.on_created calls _schedule_reindex for .py files."""
         import sys
+
         _project, _data_dir, _db = project_env
         src_dir = _project / "src"
         src_dir.mkdir(exist_ok=True)
-        config = {"watched_dirs": ["src"], "file_extensions": [".py"], "skip_dirs": ["__pycache__"]}
+        config = {
+            "watched_dirs": ["src"],
+            "file_extensions": [".py"],
+            "skip_dirs": ["__pycache__"],
+        }
         fake_mods = self._fake_watchdog_mods()
         mock_obs = MagicMock()
 
-        with patch.dict(sys.modules, fake_mods), \
-             patch("indexer.index_codebase._load_config", return_value=config), \
-             patch("indexer.index_codebase.get_project_root", return_value=_project), \
-             patch("threading.Timer", return_value=MagicMock()) as mock_timer_cls:
-            sys.modules["watchdog.observers"].Observer = MagicMock(return_value=mock_obs)
+        with patch.dict(sys.modules, fake_mods), patch(
+            "indexer.index_codebase._load_config", return_value=config
+        ), patch(
+            "indexer.index_codebase.get_project_root", return_value=_project
+        ), patch("threading.Timer", return_value=MagicMock()) as mock_timer_cls:
+            sys.modules["watchdog.observers"].Observer = MagicMock(
+                return_value=mock_obs
+            )
             from indexer.index_codebase import start_background_watcher
+
             start_background_watcher(quiet=True)
 
             assert mock_obs.schedule.called
@@ -1519,19 +1667,28 @@ class TestDebouncedHandlerEvents:
     def test_on_deleted_triggers_schedule(self, project_env):
         """DebouncedHandler.on_deleted calls _schedule_reindex for .py files."""
         import sys
+
         _project, _data_dir, _db = project_env
         src_dir = _project / "src"
         src_dir.mkdir(exist_ok=True)
-        config = {"watched_dirs": ["src"], "file_extensions": [".py"], "skip_dirs": ["__pycache__"]}
+        config = {
+            "watched_dirs": ["src"],
+            "file_extensions": [".py"],
+            "skip_dirs": ["__pycache__"],
+        }
         fake_mods = self._fake_watchdog_mods()
         mock_obs = MagicMock()
 
-        with patch.dict(sys.modules, fake_mods), \
-             patch("indexer.index_codebase._load_config", return_value=config), \
-             patch("indexer.index_codebase.get_project_root", return_value=_project), \
-             patch("threading.Timer", return_value=MagicMock()) as mock_timer_cls:
-            sys.modules["watchdog.observers"].Observer = MagicMock(return_value=mock_obs)
+        with patch.dict(sys.modules, fake_mods), patch(
+            "indexer.index_codebase._load_config", return_value=config
+        ), patch(
+            "indexer.index_codebase.get_project_root", return_value=_project
+        ), patch("threading.Timer", return_value=MagicMock()) as mock_timer_cls:
+            sys.modules["watchdog.observers"].Observer = MagicMock(
+                return_value=mock_obs
+            )
             from indexer.index_codebase import start_background_watcher
+
             start_background_watcher(quiet=True)
 
             assert mock_obs.schedule.called
@@ -1546,19 +1703,28 @@ class TestDebouncedHandlerEvents:
     def test_directory_event_ignored(self, project_env):
         """Directory events should not trigger reindex."""
         import sys
+
         _project, _data_dir, _db = project_env
         src_dir = _project / "src"
         src_dir.mkdir(exist_ok=True)
-        config = {"watched_dirs": ["src"], "file_extensions": [".py"], "skip_dirs": ["__pycache__"]}
+        config = {
+            "watched_dirs": ["src"],
+            "file_extensions": [".py"],
+            "skip_dirs": ["__pycache__"],
+        }
         fake_mods = self._fake_watchdog_mods()
         mock_obs = MagicMock()
 
-        with patch.dict(sys.modules, fake_mods), \
-             patch("indexer.index_codebase._load_config", return_value=config), \
-             patch("indexer.index_codebase.get_project_root", return_value=_project), \
-             patch("threading.Timer", return_value=MagicMock()) as mock_timer_cls:
-            sys.modules["watchdog.observers"].Observer = MagicMock(return_value=mock_obs)
+        with patch.dict(sys.modules, fake_mods), patch(
+            "indexer.index_codebase._load_config", return_value=config
+        ), patch(
+            "indexer.index_codebase.get_project_root", return_value=_project
+        ), patch("threading.Timer", return_value=MagicMock()) as mock_timer_cls:
+            sys.modules["watchdog.observers"].Observer = MagicMock(
+                return_value=mock_obs
+            )
             from indexer.index_codebase import start_background_watcher
+
             start_background_watcher(quiet=True)
 
             assert mock_obs.schedule.called
@@ -1575,19 +1741,28 @@ class TestDebouncedHandlerEvents:
     def test_wrong_extension_not_scheduled(self, project_env):
         """Files with non-matching extension don't trigger reindex."""
         import sys
+
         _project, _data_dir, _db = project_env
         src_dir = _project / "src"
         src_dir.mkdir(exist_ok=True)
-        config = {"watched_dirs": ["src"], "file_extensions": [".py"], "skip_dirs": ["__pycache__"]}
+        config = {
+            "watched_dirs": ["src"],
+            "file_extensions": [".py"],
+            "skip_dirs": ["__pycache__"],
+        }
         fake_mods = self._fake_watchdog_mods()
         mock_obs = MagicMock()
 
-        with patch.dict(sys.modules, fake_mods), \
-             patch("indexer.index_codebase._load_config", return_value=config), \
-             patch("indexer.index_codebase.get_project_root", return_value=_project), \
-             patch("threading.Timer", return_value=MagicMock()) as mock_timer_cls:
-            sys.modules["watchdog.observers"].Observer = MagicMock(return_value=mock_obs)
+        with patch.dict(sys.modules, fake_mods), patch(
+            "indexer.index_codebase._load_config", return_value=config
+        ), patch(
+            "indexer.index_codebase.get_project_root", return_value=_project
+        ), patch("threading.Timer", return_value=MagicMock()) as mock_timer_cls:
+            sys.modules["watchdog.observers"].Observer = MagicMock(
+                return_value=mock_obs
+            )
             from indexer.index_codebase import start_background_watcher
+
             start_background_watcher(quiet=True)
 
             assert mock_obs.schedule.called
@@ -1606,6 +1781,7 @@ class TestDebouncedHandlerEvents:
 # start_background_full_index — callback behaviour (lines 481-488)
 # ---------------------------------------------------------------------------
 
+
 class TestBackgroundFullIndexCallback:
     def test_callback_called_on_success(self, project_env):
         """start_background_full_index calls callback with 'done' on success."""
@@ -1613,6 +1789,7 @@ class TestBackgroundFullIndexCallback:
 
         with patch("indexer.index_codebase.cmd_full_rebuild"):
             from indexer.index_codebase import start_background_full_index
+
             t = start_background_full_index(callback=callback_results.append)
             t.join(timeout=5.0)
 
@@ -1622,9 +1799,12 @@ class TestBackgroundFullIndexCallback:
         """start_background_full_index calls callback with 'error' on exception."""
         callback_results = []
 
-        with patch("indexer.index_codebase.cmd_full_rebuild",
-                   side_effect=RuntimeError("rebuild failed")):
+        with patch(
+            "indexer.index_codebase.cmd_full_rebuild",
+            side_effect=RuntimeError("rebuild failed"),
+        ):
             from indexer.index_codebase import start_background_full_index
+
             t = start_background_full_index(callback=callback_results.append)
             t.join(timeout=5.0)
 
@@ -1632,11 +1812,13 @@ class TestBackgroundFullIndexCallback:
 
     def test_callback_exception_does_not_crash(self, project_env):
         """If the callback itself raises, the background thread still completes."""
+
         def bad_callback(status):
             raise RuntimeError("callback crashed")
 
         with patch("indexer.index_codebase.cmd_full_rebuild"):
             from indexer.index_codebase import start_background_full_index
+
             t = start_background_full_index(callback=bad_callback)
             t.join(timeout=5.0)
         # No unhandled exception — thread finished cleanly
@@ -1645,6 +1827,7 @@ class TestBackgroundFullIndexCallback:
 # ---------------------------------------------------------------------------
 # cmd_status — stale file display (lines 530-535)
 # ---------------------------------------------------------------------------
+
 
 class TestCmdStatusStaleFiles:
     """cmd_status stale file display (lines 530-535).
@@ -1656,24 +1839,37 @@ class TestCmdStatusStaleFiles:
     @staticmethod
     def _fake_rich_mods():
         """Return fake rich sub-modules for patch.dict injection."""
-        import sys, types
+        import sys
+        import types
+
         mods = {}
-        for name in ("rich", "rich.console", "rich.table", "rich.panel",
-                     "rich.progress"):
+        for name in (
+            "rich",
+            "rich.console",
+            "rich.table",
+            "rich.panel",
+            "rich.progress",
+        ):
             if name not in sys.modules:
                 mod = types.ModuleType(name)
                 mods[name] = mod
 
         # Provide minimal classes that cmd_status and cmd_incremental use
-        console_mod = mods.get("rich.console") or sys.modules.get("rich.console", types.ModuleType("rich.console"))
+        console_mod = mods.get("rich.console") or sys.modules.get(
+            "rich.console", types.ModuleType("rich.console")
+        )
         console_mod.Console = MagicMock(return_value=MagicMock())
         mods["rich.console"] = console_mod
 
-        table_mod = mods.get("rich.table") or sys.modules.get("rich.table", types.ModuleType("rich.table"))
+        table_mod = mods.get("rich.table") or sys.modules.get(
+            "rich.table", types.ModuleType("rich.table")
+        )
         table_mod.Table = MagicMock(return_value=MagicMock())
         mods["rich.table"] = table_mod
 
-        panel_mod = mods.get("rich.panel") or sys.modules.get("rich.panel", types.ModuleType("rich.panel"))
+        panel_mod = mods.get("rich.panel") or sys.modules.get(
+            "rich.panel", types.ModuleType("rich.panel")
+        )
         panel_mod.Panel = MagicMock(return_value=MagicMock())
         mods["rich.panel"] = panel_mod
 
@@ -1682,6 +1878,7 @@ class TestCmdStatusStaleFiles:
     def test_cmd_status_shows_stale_files(self, project_env):
         """cmd_status prints stale file list when files need reindexing."""
         import sys
+
         _project, data_dir, db = project_env
         stale = [(f"src/file_{i}.py", f"hash{i}") for i in range(3)]
 
@@ -1690,17 +1887,21 @@ class TestCmdStatusStaleFiles:
         mock_collection.count.return_value = 0
         mock_client.get_collection.return_value = mock_collection
 
-        with patch.dict(sys.modules, self._fake_rich_mods()), \
-             patch("indexer.index_codebase.SQLiteGraph", return_value=db), \
-             patch("indexer.index_codebase._get_chroma_client", return_value=mock_client), \
-             patch("indexer.index_codebase._get_embedding_fn", return_value=MagicMock()), \
-             patch("indexer.index_codebase._get_changed_files", return_value=stale):
+        with patch.dict(sys.modules, self._fake_rich_mods()), patch(
+            "indexer.index_codebase.SQLiteGraph", return_value=db
+        ), patch(
+            "indexer.index_codebase._get_chroma_client", return_value=mock_client
+        ), patch(
+            "indexer.index_codebase._get_embedding_fn", return_value=MagicMock()
+        ), patch("indexer.index_codebase._get_changed_files", return_value=stale):
             from indexer.index_codebase import cmd_status
+
             cmd_status(check_stale=True)  # opt-in to stale check
 
     def test_cmd_status_many_stale_files_truncated(self, project_env):
         """cmd_status truncates stale file list after 10 items."""
         import sys
+
         _project, data_dir, db = project_env
         # 15 stale files — display first 10 then "and N more"
         stale = [(f"src/file_{i}.py", f"hash{i}") for i in range(15)]
@@ -1710,14 +1911,16 @@ class TestCmdStatusStaleFiles:
         mock_collection.count.return_value = 0
         mock_client.get_collection.return_value = mock_collection
 
-        with patch.dict(sys.modules, self._fake_rich_mods()), \
-             patch("indexer.index_codebase.SQLiteGraph", return_value=db), \
-             patch("indexer.index_codebase._get_chroma_client", return_value=mock_client), \
-             patch("indexer.index_codebase._get_embedding_fn", return_value=MagicMock()), \
-             patch("indexer.index_codebase._get_changed_files", return_value=stale):
+        with patch.dict(sys.modules, self._fake_rich_mods()), patch(
+            "indexer.index_codebase.SQLiteGraph", return_value=db
+        ), patch(
+            "indexer.index_codebase._get_chroma_client", return_value=mock_client
+        ), patch(
+            "indexer.index_codebase._get_embedding_fn", return_value=MagicMock()
+        ), patch("indexer.index_codebase._get_changed_files", return_value=stale):
             from indexer.index_codebase import cmd_status
-            cmd_status(check_stale=True)  # opt-in to stale check
 
+            cmd_status(check_stale=True)  # opt-in to stale check
 
 
 # ============================================================================
@@ -1739,6 +1942,7 @@ def _restore_real_rich():
     """
     import importlib
     import rich.console as _rc
+
     importlib.reload(_rc)
     yield
     importlib.reload(_rc)
@@ -1754,6 +1958,7 @@ class TestWarnZeroChunks:
     def test_fires_on_stderr_when_not_quiet(self, capsys):
         """Hint must go to STDERR, never stdout — stdout is the MCP wire."""
         from indexer.index_codebase import _warn_zero_chunks
+
         _warn_zero_chunks(["src"], [".py"], quiet=False)
         captured = capsys.readouterr()
         assert captured.out == "", "stdout must stay empty to protect MCP stdio"
@@ -1764,6 +1969,7 @@ class TestWarnZeroChunks:
 
     def test_silent_on_stderr_when_quiet(self, capsys):
         from indexer.index_codebase import _warn_zero_chunks
+
         _warn_zero_chunks(["src"], [".py"], quiet=True)
         captured = capsys.readouterr()
         assert captured.out == ""
@@ -1772,6 +1978,7 @@ class TestWarnZeroChunks:
     def test_also_logged_regardless_of_quiet(self, caplog):
         from indexer.index_codebase import _warn_zero_chunks
         import logging as _logging
+
         with caplog.at_level(_logging.WARNING, logger="indexer.index_codebase"):
             _warn_zero_chunks(["src"], [".py"], quiet=True)
         messages = [r.getMessage() for r in caplog.records]
@@ -1788,6 +1995,7 @@ class TestAnyFilesMatch:
         (project / "src" / "a.py").write_text("x=1")
         monkeypatch.setattr("indexer.index_codebase._project_root", lambda: project)
         from indexer.index_codebase import _any_files_match
+
         assert _any_files_match(["src"], [".py"], ["node_modules"]) is True
 
     def test_returns_false_when_no_matches(self, tmp_path, monkeypatch):
@@ -1796,6 +2004,7 @@ class TestAnyFilesMatch:
         (project / "src" / "a.txt").write_text("x=1")  # wrong extension
         monkeypatch.setattr("indexer.index_codebase._project_root", lambda: project)
         from indexer.index_codebase import _any_files_match
+
         assert _any_files_match(["src"], [".py"], ["node_modules"]) is False
 
     def test_returns_false_when_dir_missing(self, tmp_path, monkeypatch):
@@ -1803,6 +2012,7 @@ class TestAnyFilesMatch:
         project.mkdir()
         monkeypatch.setattr("indexer.index_codebase._project_root", lambda: project)
         from indexer.index_codebase import _any_files_match
+
         assert _any_files_match(["src"], [".py"], ["node_modules"]) is False
 
     def test_skip_dirs_suppresses_match(self, tmp_path, monkeypatch):
@@ -1811,8 +2021,8 @@ class TestAnyFilesMatch:
         (project / "src" / "vendor" / "lib.py").write_text("x=1")
         monkeypatch.setattr("indexer.index_codebase._project_root", lambda: project)
         from indexer.index_codebase import _any_files_match
-        assert _any_files_match(["src"], [".py"], ["vendor"]) is False
 
+        assert _any_files_match(["src"], [".py"], ["vendor"]) is False
 
 
 class TestCmdIncrementalHint:
@@ -1824,9 +2034,19 @@ class TestCmdIncrementalHint:
     def _rich(self, _restore_real_rich):
         pass
 
-    def _run(self, tmp_path, monkeypatch, capsys, files, config, file_paths=None,
-             quiet=False, patch_changed=None):
+    def _run(
+        self,
+        tmp_path,
+        monkeypatch,
+        capsys,
+        files,
+        config,
+        file_paths=None,
+        quiet=False,
+        patch_changed=None,
+    ):
         import yaml as _yaml
+
         project = tmp_path / "proj"
         (project / ".codevira" / "graph").mkdir(parents=True)
         (project / ".codevira" / "config.yaml").write_text(
@@ -1842,6 +2062,7 @@ class TestCmdIncrementalHint:
             lambda: project / ".codevira",
         )
         from mcp_server import paths as _paths
+
         _paths._data_dir_cache.clear()
 
         patches = [
@@ -1849,42 +2070,71 @@ class TestCmdIncrementalHint:
             patch("indexer.graph_generator.generate_graph_sqlite"),
         ]
         if patch_changed is not None:
-            patches.append(patch("indexer.index_codebase._get_changed_files", return_value=patch_changed))
+            patches.append(
+                patch(
+                    "indexer.index_codebase._get_changed_files",
+                    return_value=patch_changed,
+                )
+            )
 
         from contextlib import ExitStack
+
         with ExitStack() as stack:
             for p in patches:
                 stack.enter_context(p)
             from indexer.index_codebase import cmd_incremental
+
             cmd_incremental(quiet=quiet, file_paths=file_paths)
         return capsys.readouterr()
 
-    def test_hint_fires_on_project_wide_zero_matches(self, tmp_path, monkeypatch, capsys, caplog):
+    def test_hint_fires_on_project_wide_zero_matches(
+        self, tmp_path, monkeypatch, capsys, caplog
+    ):
         import logging as _logging
+
         with caplog.at_level(_logging.WARNING, logger="indexer.index_codebase"):
             captured = self._run(
-                tmp_path, monkeypatch, capsys,
+                tmp_path,
+                monkeypatch,
+                capsys,
                 files={"README.md": "hi"},  # no .py files in src/
-                config={"watched_dirs": ["src"], "file_extensions": [".py"], "skip_dirs": []},
+                config={
+                    "watched_dirs": ["src"],
+                    "file_extensions": [".py"],
+                    "skip_dirs": [],
+                },
                 file_paths=None,
             )
         log_msgs = [r.getMessage() for r in caplog.records]
-        assert any("No files matched" in m for m in log_msgs), f"expected warning log; got {log_msgs}"
+        assert any(
+            "No files matched" in m for m in log_msgs
+        ), f"expected warning log; got {log_msgs}"
         # Hint goes to stderr (NOT stdout — stdout is the MCP wire in stdio mode).
         assert "codevira configure" in captured.err
         assert "codevira configure" not in captured.out, "hint must not leak to stdout"
 
-    def test_hint_NOT_fired_when_file_paths_given(self, tmp_path, monkeypatch, capsys, caplog):
+    def test_hint_NOT_fired_when_file_paths_given(
+        self, tmp_path, monkeypatch, capsys, caplog
+    ):
         import logging as _logging
+
         with caplog.at_level(_logging.WARNING, logger="indexer.index_codebase"):
             captured = self._run(
-                tmp_path, monkeypatch, capsys,
+                tmp_path,
+                monkeypatch,
+                capsys,
                 files={"src/a.py": "x=1"},
-                config={"watched_dirs": ["src"], "file_extensions": [".py"], "skip_dirs": []},
+                config={
+                    "watched_dirs": ["src"],
+                    "file_extensions": [".py"],
+                    "skip_dirs": [],
+                },
                 file_paths=["nonexistent.py"],  # caller-scoped, empty result
             )
         log_msgs = [r.getMessage() for r in caplog.records]
-        assert not any("No files matched" in m for m in log_msgs), f"hint should not fire; got {log_msgs}"
+        assert not any(
+            "No files matched" in m for m in log_msgs
+        ), f"hint should not fire; got {log_msgs}"
         assert "codevira configure" not in captured.out
         assert "codevira configure" not in captured.err
 
@@ -1898,19 +2148,26 @@ class TestCmdIncrementalHint:
         user to run --full.
         """
         import logging as _logging
+
         with caplog.at_level(_logging.WARNING, logger="indexer.index_codebase"):
             captured = self._run(
-                tmp_path, monkeypatch, capsys,
+                tmp_path,
+                monkeypatch,
+                capsys,
                 files={"src/a.py": "x=1"},
-                config={"watched_dirs": ["src"], "file_extensions": [".py"], "skip_dirs": []},
+                config={
+                    "watched_dirs": ["src"],
+                    "file_extensions": [".py"],
+                    "skip_dirs": [],
+                },
                 file_paths=None,
                 patch_changed=[],  # force changed=[] — files exist but nothing stale
             )
         log_msgs = [r.getMessage() for r in caplog.records]
         # Config IS fine — no misconfiguration warning should fire.
-        assert not any("No files matched" in m for m in log_msgs), (
-            f"misconfig hint should not fire — config matches files; got {log_msgs}"
-        )
+        assert not any(
+            "No files matched" in m for m in log_msgs
+        ), f"misconfig hint should not fire — config matches files; got {log_msgs}"
         # But the graph is empty (no add_node calls), so the truthful
         # message is "graph has 0 nodes" + remediation, NOT "up to date".
         out = captured.out
@@ -1928,28 +2185,37 @@ class TestCmdIncrementalHint:
         the message when it's actually correct.
         """
         import logging as _logging
+
         # Monkeypatch count_nodes to return >0, simulating a populated graph.
         from indexer import sqlite_graph
+
         original_count = sqlite_graph.SQLiteGraph.count_nodes
         monkeypatch.setattr(
-            sqlite_graph.SQLiteGraph, "count_nodes",
+            sqlite_graph.SQLiteGraph,
+            "count_nodes",
             lambda self, kind=None: 42,  # pretend we have 42 indexed nodes
         )
         try:
             with caplog.at_level(_logging.WARNING, logger="indexer.index_codebase"):
                 captured = self._run(
-                    tmp_path, monkeypatch, capsys,
+                    tmp_path,
+                    monkeypatch,
+                    capsys,
                     files={"src/a.py": "x=1"},
-                    config={"watched_dirs": ["src"], "file_extensions": [".py"], "skip_dirs": []},
+                    config={
+                        "watched_dirs": ["src"],
+                        "file_extensions": [".py"],
+                        "skip_dirs": [],
+                    },
                     file_paths=None,
                     patch_changed=[],
                 )
         finally:
             monkeypatch.setattr(sqlite_graph.SQLiteGraph, "count_nodes", original_count)
         log_msgs = [r.getMessage() for r in caplog.records]
-        assert not any("No files matched" in m for m in log_msgs), (
-            f"misconfig hint should not fire when config matches; got {log_msgs}"
-        )
+        assert not any(
+            "No files matched" in m for m in log_msgs
+        ), f"misconfig hint should not fire when config matches; got {log_msgs}"
         assert "Index is up to date" in captured.out, (
             f"Expected truthful 'up to date' message when graph is populated. "
             f"Got: {captured.out!r}"

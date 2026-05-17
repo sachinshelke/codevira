@@ -10,11 +10,11 @@ Subcommands:
   * ``codevira projects --json`` — machine-readable.
   * ``codevira projects --ghosts-only`` — pair with ``codevira clean --ghosts``.
 """
+
 from __future__ import annotations
 
 import dataclasses
 import json
-import sys
 
 
 def cmd_projects(
@@ -53,6 +53,7 @@ def cmd_projects(
         # 2026-05-17 Bug G: always include data_dir in JSON output (was absent).
         # Now `jq` consumers can locate the on-disk path without re-deriving.
         from mcp_server.paths import get_global_home
+
         for p in out["projects"]:
             if p.get("slug"):
                 p["data_dir"] = str(get_global_home() / "projects" / p["slug"])
@@ -77,6 +78,7 @@ def _print_paths(entries) -> None:
     and see the data dir absolute path for that project.
     """
     from mcp_server.paths import get_global_home
+
     projects_root = get_global_home() / "projects"
     if not entries:
         print("  (no projects tracked)")
@@ -134,21 +136,21 @@ def _print_table(entries: list, summary: dict, *, ghosts_only: bool = False) -> 
     # P2-2 (rc.5): cap project column width and use ellipsis instead of
     # character-by-character wrapping for long slug names.
     table = Table(title="Codevira projects", show_lines=False)
-    table.add_column("status",      justify="center", no_wrap=True)
-    table.add_column("project",     overflow="ellipsis", max_width=44)
-    table.add_column("last sync",   justify="center", no_wrap=True)  # P2-3
-    table.add_column("config",      justify="center", no_wrap=True)
-    table.add_column("metadata",    justify="center", no_wrap=True)
-    table.add_column("graph",       justify="center", no_wrap=True)
-    table.add_column("index",       justify="center", no_wrap=True)
-    table.add_column("global.db",   justify="center", no_wrap=True)
-    table.add_column("size",        justify="right",  no_wrap=True)
+    table.add_column("status", justify="center", no_wrap=True)
+    table.add_column("project", overflow="ellipsis", max_width=44)
+    table.add_column("last sync", justify="center", no_wrap=True)  # P2-3
+    table.add_column("config", justify="center", no_wrap=True)
+    table.add_column("metadata", justify="center", no_wrap=True)
+    table.add_column("graph", justify="center", no_wrap=True)
+    table.add_column("index", justify="center", no_wrap=True)
+    table.add_column("global.db", justify="center", no_wrap=True)
+    table.add_column("size", justify="right", no_wrap=True)
 
     status_marker = {
         "tracked": "[green]✓[/green]",
-        "ghost":   "[yellow]⚠[/yellow]",
-        "orphan":  "[red]✗[/red]",
-        "stale":   "[dim]·[/dim]",
+        "ghost": "[yellow]⚠[/yellow]",
+        "orphan": "[red]✗[/red]",
+        "stale": "[dim]·[/dim]",
     }
     check = lambda b: ("[green]✓[/green]" if b else "[dim]·[/dim]")  # noqa: E731
 

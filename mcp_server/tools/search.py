@@ -319,10 +319,20 @@ def search_decisions(
 ) -> dict[str, Any]:
     """Search past decisions across sessions, changesets, and roadmap phases.
 
+    2026-05-17 v2.1: now uses HYBRID retrieval — BM25 keyword (SQL LIKE)
+    AND semantic embedding (ChromaDB), merged with Reciprocal Rank Fusion.
+    Natural-language queries like "DDD architecture layer" or "codevira
+    backfill" — which produced 0 hits in v2.0's BM25-only search — now
+    surface the right decisions.
+
     Default: returns up to 5 matches with truncated context (150 chars each)
     to keep the response token-efficient (~500 tokens total).
 
     Pass full=True to get untruncated decision + context + summary text.
+
+    The response includes ``retrieval`` indicating which retrieval path(s)
+    contributed: "hybrid" (both), "keyword" (semantic unavailable), or
+    "semantic" (BM25 returned nothing).
     """
     if limit < 1:
         limit = 1
@@ -330,8 +340,55 @@ def search_decisions(
         limit = 20
 
     db = _get_db()
-    results = db.search_decisions(query, limit, session_id)
-    db.close()
+    try:
+        # ─── BM25 / SQL LIKE pass (existing behavior, kept as ranked source) ──
+        # Over-fetch up to 3× limit so RRF has more candidates to fuse.
+        bm25_results = db.search_decisions(query, limit * 3, session_id)
+        bm25_ids = [r["id"] for r in bm25_results if r.get("id") is not None]
+
+        # ─── Semantic / ChromaDB pass (new in v2.1) ───────────────────────────
+        # P9 graceful: returns [] on any chromadb failure → falls back to
+        # BM25-only ranking below.
+        semantic_ids: list[int] = []
+        try:
+            from mcp_server.tools._decision_embeddings import (
+                semantic_search_decisions, rrf_merge,
+            )
+            semantic_ids = semantic_search_decisions(query, limit * 3, session_id)
+        except Exception:
+            semantic_ids = []
+
+        # ─── Merge ────────────────────────────────────────────────────────────
+        if semantic_ids:
+            # Reciprocal Rank Fusion of the two ranked lists.
+            try:
+                merged_ids = rrf_merge(bm25_ids, semantic_ids, limit=limit)
+            except Exception:
+                # If RRF itself fails, fall back to BM25-only.
+                merged_ids = bm25_ids[:limit]
+                semantic_ids = []
+            # Resolve IDs back to full decision rows. SQLite is canonical.
+            id_to_row = {r["id"]: r for r in bm25_results}
+            missing_ids = [i for i in merged_ids if i not in id_to_row]
+            if missing_ids:
+                # Fetch missing rows (decisions that ONLY semantic found).
+                placeholders = ",".join("?" * len(missing_ids))
+                cur = db.conn.execute(
+                    f"SELECT d.id, d.decision, d.context, d.file_path, "
+                    f"d.do_not_revert, s.summary, s.phase, d.created_at "
+                    f"FROM decisions d JOIN sessions s "
+                    f"ON d.session_id = s.session_id WHERE d.id IN ({placeholders})",
+                    missing_ids,
+                )
+                for row in cur.fetchall():
+                    id_to_row[row["id"]] = dict(row)
+            results = [id_to_row[i] for i in merged_ids if i in id_to_row]
+            retrieval = "hybrid" if bm25_ids else "semantic"
+        else:
+            results = bm25_results[:limit]
+            retrieval = "keyword"
+    finally:
+        db.close()
 
     if not full:
         # Truncate verbose text fields
@@ -346,6 +403,7 @@ def search_decisions(
     return {
         "query": query,
         "count": len(results),
+        "retrieval": retrieval,
         "results": results,
         "hint": "Pass full=True for untruncated decision text. Increase limit up to 20."
                 if not full else "Showing full untruncated decisions.",

@@ -4,12 +4,11 @@ Tests for mcp_server/detect.py — Zero-config project auto-detection.
 Creates real project structures in tmp_path with marker files
 (pyproject.toml, package.json, etc.) to test detection logic.
 """
+
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
-import pytest
 
 from mcp_server.detect import (
     LANGUAGE_EXTENSIONS,
@@ -26,6 +25,7 @@ from mcp_server.detect import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_project(tmp_path: Path, name: str = "my-project") -> Path:
     """Create a bare project directory and return its path."""
     root = tmp_path / name
@@ -36,6 +36,7 @@ def _make_project(tmp_path: Path, name: str = "my-project") -> Path:
 # ---------------------------------------------------------------------------
 # detect_language — marker-based detection
 # ---------------------------------------------------------------------------
+
 
 class TestDetectLanguage:
     """Language detection from project markers."""
@@ -131,6 +132,7 @@ class TestDetectLanguage:
 # _disambiguate_js_ts
 # ---------------------------------------------------------------------------
 
+
 class TestDisambiguateJsTs:
     """package.json disambiguation between JavaScript and TypeScript."""
 
@@ -138,7 +140,7 @@ class TestDisambiguateJsTs:
         """package.json + tsconfig.json -> typescript."""
         root = _make_project(tmp_path)
         (root / "package.json").write_text('{"name": "test"}')
-        (root / "tsconfig.json").write_text('{}')
+        (root / "tsconfig.json").write_text("{}")
         assert _disambiguate_js_ts(root) == "typescript"
 
     def test_ts_files_present(self, tmp_path):
@@ -172,7 +174,7 @@ class TestDisambiguateJsTs:
         """detect_language with package.json should call _disambiguate_js_ts."""
         root = _make_project(tmp_path)
         (root / "package.json").write_text('{"name": "test"}')
-        (root / "tsconfig.json").write_text('{}')
+        (root / "tsconfig.json").write_text("{}")
         # tsconfig.json marker is checked BEFORE package.json in the list
         # so this actually returns "typescript" from the tsconfig marker itself
         assert detect_language(root) == "typescript"
@@ -181,6 +183,7 @@ class TestDisambiguateJsTs:
 # ---------------------------------------------------------------------------
 # _scan_dominant_language
 # ---------------------------------------------------------------------------
+
 
 class TestScanDominantLanguage:
     """Extension-based language scanning fallback."""
@@ -222,6 +225,7 @@ class TestScanDominantLanguage:
 # ---------------------------------------------------------------------------
 # detect_watched_dirs
 # ---------------------------------------------------------------------------
+
 
 class TestDetectWatchedDirs:
     """Source directory detection."""
@@ -315,6 +319,7 @@ class TestDetectWatchedDirs:
 # language_extensions
 # ---------------------------------------------------------------------------
 
+
 class TestLanguageExtensions:
     """Extension lookup for known languages."""
 
@@ -350,6 +355,7 @@ class TestLanguageExtensions:
 # auto_detect_project
 # ---------------------------------------------------------------------------
 
+
 class TestAutoDetectProject:
     """Full auto-detection pipeline."""
 
@@ -378,10 +384,12 @@ class TestAutoDetectProject:
         assert ".md" in result["file_extensions"]
         assert ".toml" in result["file_extensions"]
         # And ONLY what's on disk — no false positives:
-        assert ".swift" not in result["file_extensions"], \
-            "Bug M regression: .swift detected when none on disk"
-        assert ".elm" not in result["file_extensions"], \
-            "Bug M regression: .elm detected when none on disk"
+        assert (
+            ".swift" not in result["file_extensions"]
+        ), "Bug M regression: .swift detected when none on disk"
+        assert (
+            ".elm" not in result["file_extensions"]
+        ), "Bug M regression: .elm detected when none on disk"
 
         # Legacy single-language mode
         narrow = auto_detect_project(root, single_language=True)
@@ -395,7 +403,9 @@ class TestAutoDetectProject:
         src = root / "src"
         src.mkdir()
         (src / "index.ts").write_text("export const x = 1;\n")
-        (src / "App.tsx").write_text("export const App = () => null;\n")  # ensures .tsx on disk
+        (src / "App.tsx").write_text(
+            "export const App = () => null;\n"
+        )  # ensures .tsx on disk
 
         result = auto_detect_project(root)
 
@@ -405,8 +415,9 @@ class TestAutoDetectProject:
         assert ".tsx" in result["file_extensions"]
         assert ".json" in result["file_extensions"]  # tsconfig.json
         # Not on disk → not detected:
-        assert ".py" not in result["file_extensions"], \
-            "Bug M regression: .py detected for TS project with no .py files"
+        assert (
+            ".py" not in result["file_extensions"]
+        ), "Bug M regression: .py detected for TS project with no .py files"
 
     def test_go_project(self, tmp_path):
         """rc.5: file_extensions defaults to the union, narrows with single_language=True."""
@@ -499,6 +510,7 @@ class TestInitConfigureAgreementBugN:
         (used by configure) must return the same file set for a given project."""
         from mcp_server.detect import auto_detect_project
         from mcp_server.gitignore import discover_source_files
+
         root = _make_project(tmp_path, "polyglot")
         (root / "pyproject.toml").write_text("[project]\nname = 'polyglot'\n")
         (root / "README.md").write_text("# polyglot\n")
@@ -529,6 +541,7 @@ class TestInitConfigureAgreementBugN:
         pyproject.toml etc. are not invisible to the indexer.
         """
         from mcp_server.detect import auto_detect_project
+
         root = _make_project(tmp_path, "with-top-level")
         (root / "pyproject.toml").write_text("[project]\nname = 'x'\n")
         (root / "README.md").write_text("# x\n")  # top-level file
@@ -546,10 +559,12 @@ class TestInitConfigureAgreementBugN:
 # _scan_dominant_language — with files (covering lines 138-150)
 # ---------------------------------------------------------------------------
 
+
 class TestScanDominantLanguageWithFiles:
     def test_finds_dominant_python(self, tmp_path):
         """When .py files exist in tree, returns python."""
         from mcp_server.detect import _scan_dominant_language
+
         src = tmp_path / "src"
         src.mkdir()
         (src / "main.py").write_text("pass")
@@ -560,6 +575,7 @@ class TestScanDominantLanguageWithFiles:
     def test_returns_python_fallback_when_no_files(self, tmp_path):
         """With no source files at all, falls back to 'python'."""
         from mcp_server.detect import _scan_dominant_language
+
         # Empty directory (no source files)
         result = _scan_dominant_language(tmp_path, max_depth=3)
         assert result == "python"
@@ -568,11 +584,15 @@ class TestScanDominantLanguageWithFiles:
         """When gitignore discovery raises, falls back to depth-limited walk."""
         from unittest.mock import patch
         from mcp_server.detect import _scan_dominant_language
+
         src = tmp_path / "app"
         src.mkdir()
         (src / "server.go").write_text("package main")
         # _scan_dominant_language imports discover_source_files locally from mcp_server.gitignore
-        with patch("mcp_server.gitignore.discover_source_files", side_effect=Exception("pathspec error")):
+        with patch(
+            "mcp_server.gitignore.discover_source_files",
+            side_effect=Exception("pathspec error"),
+        ):
             result = _scan_dominant_language(tmp_path, max_depth=3)
         # Should find .go via legacy walk, or python if gitignore succeeded before raise
         assert result in ("go", "python")
@@ -582,10 +602,12 @@ class TestScanDominantLanguageWithFiles:
 # detect_watched_dirs — edge cases (covering lines 194-205, 219-221)
 # ---------------------------------------------------------------------------
 
+
 class TestDetectWatchedDirsEdgeCases:
     def test_gitignore_empty_lang_files_falls_back_to_all_files(self, tmp_path):
         """When no language-specific files found, uses all discovered files."""
         from mcp_server.detect import detect_watched_dirs
+
         (tmp_path / "docs").mkdir()
         (tmp_path / "docs" / "README.md").write_text("# Docs")
         # No .py files, but discover_source_files finds .md files
@@ -598,9 +620,12 @@ class TestDetectWatchedDirsEdgeCases:
         """PermissionError on iterdir() is caught gracefully."""
         from unittest.mock import patch
         from mcp_server.detect import detect_watched_dirs
+
         # discover_source_files is imported locally inside detect_watched_dirs
-        with patch("mcp_server.gitignore.discover_source_files", side_effect=Exception("no pathspec")), \
-             patch("pathlib.Path.iterdir", side_effect=PermissionError("access denied")):
+        with patch(
+            "mcp_server.gitignore.discover_source_files",
+            side_effect=Exception("no pathspec"),
+        ), patch("pathlib.Path.iterdir", side_effect=PermissionError("access denied")):
             result = detect_watched_dirs(tmp_path, "python")
         assert isinstance(result, list)
 
@@ -608,11 +633,15 @@ class TestDetectWatchedDirsEdgeCases:
         """Legacy scan returns dirs containing source files."""
         from unittest.mock import patch
         from mcp_server.detect import detect_watched_dirs
+
         src = tmp_path / "src"
         src.mkdir()
         (src / "app.py").write_text("pass")
         # discover_source_files is imported locally inside detect_watched_dirs
-        with patch("mcp_server.gitignore.discover_source_files", side_effect=Exception("no pathspec")):
+        with patch(
+            "mcp_server.gitignore.discover_source_files",
+            side_effect=Exception("no pathspec"),
+        ):
             result = detect_watched_dirs(tmp_path, "python")
         assert "src" in result
 
@@ -621,10 +650,12 @@ class TestDetectWatchedDirsEdgeCases:
 # _dir_has_sources — edge cases (covering lines 238, 241-247)
 # ---------------------------------------------------------------------------
 
+
 class TestDirHasSources:
     def test_finds_source_in_subdir(self, tmp_path):
         """_dir_has_sources recurses into subdirectories."""
         from mcp_server.detect import _dir_has_sources
+
         nested = tmp_path / "deep" / "nested"
         nested.mkdir(parents=True)
         (nested / "module.py").write_text("pass")
@@ -634,6 +665,7 @@ class TestDirHasSources:
     def test_max_depth_zero_returns_false(self, tmp_path):
         """_dir_has_sources returns False when max_depth=0."""
         from mcp_server.detect import _dir_has_sources
+
         (tmp_path / "module.py").write_text("pass")
         result = _dir_has_sources(tmp_path, {".py"}, max_depth=0)
         assert result is False
@@ -642,6 +674,7 @@ class TestDirHasSources:
         """PermissionError inside _dir_has_sources is caught, returns False."""
         from unittest.mock import patch
         from mcp_server.detect import _dir_has_sources
+
         with patch("pathlib.Path.iterdir", side_effect=PermissionError("denied")):
             result = _dir_has_sources(tmp_path, {".py"}, max_depth=3)
         assert result is False
@@ -649,6 +682,7 @@ class TestDirHasSources:
     def test_no_matching_extension_returns_false(self, tmp_path):
         """Files with wrong extension do not trigger True."""
         from mcp_server.detect import _dir_has_sources
+
         (tmp_path / "main.ts").write_text("const x = 1")
         result = _dir_has_sources(tmp_path, {".py"}, max_depth=3)
         assert result is False
@@ -658,6 +692,7 @@ class TestDirHasSources:
 # v1.8.1 — _SKIP_DIRS denylist defense-in-depth
 # ===================================================================
 
+
 class TestSkipDirsDenylistV181:
     """Even if is_invalid_project_root() somehow misses (e.g. user passes
     --project-dir to a $HOME-shaped tree), auto-detect must never include
@@ -665,27 +700,40 @@ class TestSkipDirsDenylistV181:
 
     def test_skip_dirs_includes_macos_user_data(self):
         from mcp_server.detect import _SKIP_DIRS
-        for d in ("Library", "Downloads", "Music", "Movies", "Pictures",
-                  "Desktop", "Public", "Applications"):
+
+        for d in (
+            "Library",
+            "Downloads",
+            "Music",
+            "Movies",
+            "Pictures",
+            "Desktop",
+            "Public",
+            "Applications",
+        ):
             assert d in _SKIP_DIRS, f"{d} should be in _SKIP_DIRS"
 
     def test_skip_dirs_includes_linux_user_data(self):
         from mcp_server.detect import _SKIP_DIRS
+
         for d in ("Videos", "Templates"):
             assert d in _SKIP_DIRS, f"{d} should be in _SKIP_DIRS"
 
     def test_skip_dirs_includes_cloud_sync_dirs(self):
         from mcp_server.detect import _SKIP_DIRS
+
         for d in ("Dropbox", "iCloud Drive", "OneDrive", "Google Drive", "Box"):
             assert d in _SKIP_DIRS, f"{d} should be in _SKIP_DIRS"
 
     def test_detect_watched_dirs_excludes_user_data_when_layout_is_home_shaped(
-        self, tmp_path,
+        self,
+        tmp_path,
     ):
         """Synthetic project with user-data subdirs alongside a real `src/`:
         only `src` should make it into watched_dirs. Models the rogue $HOME
         bootstrap scenario."""
         from mcp_server.detect import detect_watched_dirs
+
         for d in ("Library", "Downloads", "Documents"):
             (tmp_path / d).mkdir()
             (tmp_path / d / "junk.py").write_text("x=1")

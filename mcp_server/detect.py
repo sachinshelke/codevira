@@ -5,6 +5,7 @@ Detects language, source directories, file extensions, and project name
 from project markers (package.json, go.mod, Cargo.toml, etc.) with zero
 interactive prompts. Supports 15+ languages.
 """
+
 from __future__ import annotations
 
 import logging
@@ -85,6 +86,7 @@ for _lang, _exts in LANGUAGE_EXTENSIONS.items():
 # Detection functions
 # ---------------------------------------------------------------------------
 
+
 def detect_language(root: Path) -> str:
     """Detect primary language from project markers. Falls back to file extension scan."""
     root = root.resolve()
@@ -119,7 +121,11 @@ def _scan_dominant_language(root: Path, max_depth: int = 2) -> str:
     to a simple depth-limited walk otherwise.
     """
     try:
-        from mcp_server.gitignore import discover_source_files, infer_language_from_files
+        from mcp_server.gitignore import (
+            discover_source_files,
+            infer_language_from_files,
+        )
+
         files = discover_source_files(root)
         lang = infer_language_from_files(files)
         if lang != "unknown":
@@ -131,8 +137,20 @@ def _scan_dominant_language(root: Path, max_depth: int = 2) -> str:
     from collections import Counter
 
     counts: Counter[str] = Counter()
-    skip_dirs = {".git", ".codevira", "node_modules", "__pycache__", ".venv",
-                 "venv", ".tox", "dist", "build", "target", ".next", ".nuxt"}
+    skip_dirs = {
+        ".git",
+        ".codevira",
+        "node_modules",
+        "__pycache__",
+        ".venv",
+        "venv",
+        ".tox",
+        "dist",
+        "build",
+        "target",
+        ".next",
+        ".nuxt",
+    }
 
     for path in root.rglob("*"):
         try:
@@ -152,15 +170,43 @@ def _scan_dominant_language(root: Path, max_depth: int = 2) -> str:
     return "python"  # ultimate fallback
 
 
-
 # Top-level directories that never contain user code
 _SKIP_DIRS: set[str] = {
-    "node_modules", ".git", ".codevira", "__pycache__", ".venv", "venv",
-    "env", ".env", ".tox", "dist", "build", "target", ".next", ".nuxt",
-    ".turbo", ".cache", "coverage", ".nyc_output", "htmlcov", ".pytest_cache",
-    ".mypy_cache", ".ruff_cache", ".eggs", "*.egg-info", "vendor",
-    ".idea", ".vscode", "__snapshots__", ".storybook", "storybook-static",
-    "public", "static", "assets", "migrations", "fixtures",
+    "node_modules",
+    ".git",
+    ".codevira",
+    "__pycache__",
+    ".venv",
+    "venv",
+    "env",
+    ".env",
+    ".tox",
+    "dist",
+    "build",
+    "target",
+    ".next",
+    ".nuxt",
+    ".turbo",
+    ".cache",
+    "coverage",
+    ".nyc_output",
+    "htmlcov",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".eggs",
+    "*.egg-info",
+    "vendor",
+    ".idea",
+    ".vscode",
+    "__snapshots__",
+    ".storybook",
+    "storybook-static",
+    "public",
+    "static",
+    "assets",
+    "migrations",
+    "fixtures",
     # v1.8.1 — refuse macOS/Linux user-data dirs and cloud-sync top-levels.
     # These show up as "subdirs" if a user accidentally bootstraps a
     # project at $HOME (see crash-log analysis 2026-04-24). Even with
@@ -168,12 +214,23 @@ _SKIP_DIRS: set[str] = {
     # this denylist is defense-in-depth: it stops auto-detect from ever
     # putting user-data trees under watch even on edge-case layouts.
     # macOS user-data dirs (typical ~ subdirs)
-    "Library", "Downloads", "Music", "Movies", "Pictures",
-    "Desktop", "Public", "Applications",
+    "Library",
+    "Downloads",
+    "Music",
+    "Movies",
+    "Pictures",
+    "Desktop",
+    "Public",
+    "Applications",
     # Linux user-data dirs (typical ~ subdirs)
-    "Videos", "Templates",
+    "Videos",
+    "Templates",
     # Cloud-sync top-levels (often ~ subdirs; spaces preserved as in macOS UI)
-    "Dropbox", "iCloud Drive", "OneDrive", "Google Drive", "Box",
+    "Dropbox",
+    "iCloud Drive",
+    "OneDrive",
+    "Google Drive",
+    "Box",
 }
 
 
@@ -206,6 +263,7 @@ def detect_watched_dirs(root: Path, language: str) -> list[str]:
     # Try gitignore-aware discovery first.
     try:
         from mcp_server.gitignore import discover_source_files
+
         files = discover_source_files(root)
         # Filter to BROAD-extension files (was: single-language only).
         # Bug L+F: previously a Python project with only docs/ would
@@ -232,7 +290,8 @@ def detect_watched_dirs(root: Path, language: str) -> list[str]:
 
         # Filter out noise dirs.
         found = sorted(
-            d for d in top_dirs
+            d
+            for d in top_dirs
             if not d.startswith(".") and d not in _SKIP_DIRS and not d.endswith("-info")
         )
         # Prepend "." if top-level has matching files. (Bug F fix.)
@@ -243,7 +302,11 @@ def detect_watched_dirs(root: Path, language: str) -> list[str]:
     except Exception as exc:
         # P4 (defensive parsing): log but don't crash. Fall through to
         # the manual scan below.
-        logger.warning("discover_source_files failed for %s: %s — falling back to manual scan", root, exc)
+        logger.warning(
+            "discover_source_files failed for %s: %s — falling back to manual scan",
+            root,
+            exc,
+        )
 
     # Legacy fallback: scan top-level dirs manually using broad extensions
     # (was: single-language only — same Bug F/L surface).
@@ -286,7 +349,11 @@ def _dir_has_sources(path: Path, extensions: set[str], max_depth: int) -> bool:
         for entry in path.iterdir():
             if entry.is_file() and entry.suffix in extensions:
                 return True
-            if entry.is_dir() and not entry.name.startswith(".") and entry.name not in _SKIP_DIRS:
+            if (
+                entry.is_dir()
+                and not entry.name.startswith(".")
+                and entry.name not in _SKIP_DIRS
+            ):
                 if _dir_has_sources(entry, extensions, max_depth - 1):
                     return True
     except PermissionError:
@@ -304,27 +371,92 @@ def language_extensions(language: str) -> list[str]:
 # is what `auto_detect_project` returns by default now — narrowing to one
 # language's extensions was the cause of polyglot codebases having .yaml,
 # .md, .html, .css, .go etc. silently dropped from the index.
-_ALL_SOURCE_EXTENSIONS: list[str] = sorted({
-    # Code
-    ".py", ".pyi", ".ipynb",
-    ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs",
-    ".go", ".rs", ".rb", ".php", ".java", ".kt", ".scala", ".swift",
-    ".c", ".cc", ".cpp", ".h", ".hpp", ".cs", ".m", ".mm",
-    ".sh", ".bash", ".zsh", ".fish", ".ps1",
-    ".lua", ".pl", ".r", ".jl", ".dart", ".ex", ".exs", ".erl",
-    ".clj", ".cljs", ".elm", ".hs", ".ml", ".mli", ".v",
-    # Config / data — often where the architecture lives
-    ".yaml", ".yml", ".toml", ".json", ".jsonl", ".xml", ".ini",
-    ".env",
-    # Schemas / IDL
-    ".proto", ".graphql", ".prisma", ".sql", ".thrift", ".cap",
-    # Docs
-    ".md", ".mdx", ".rst", ".adoc", ".txt",
-    # Web
-    ".html", ".htm", ".css", ".scss", ".sass", ".less", ".vue", ".svelte", ".astro",
-    # Build
-    ".dockerfile", ".gradle", ".bazel",
-})
+_ALL_SOURCE_EXTENSIONS: list[str] = sorted(
+    {
+        # Code
+        ".py",
+        ".pyi",
+        ".ipynb",
+        ".js",
+        ".jsx",
+        ".ts",
+        ".tsx",
+        ".mjs",
+        ".cjs",
+        ".go",
+        ".rs",
+        ".rb",
+        ".php",
+        ".java",
+        ".kt",
+        ".scala",
+        ".swift",
+        ".c",
+        ".cc",
+        ".cpp",
+        ".h",
+        ".hpp",
+        ".cs",
+        ".m",
+        ".mm",
+        ".sh",
+        ".bash",
+        ".zsh",
+        ".fish",
+        ".ps1",
+        ".lua",
+        ".pl",
+        ".r",
+        ".jl",
+        ".dart",
+        ".ex",
+        ".exs",
+        ".erl",
+        ".clj",
+        ".cljs",
+        ".elm",
+        ".hs",
+        ".ml",
+        ".mli",
+        ".v",
+        # Config / data — often where the architecture lives
+        ".yaml",
+        ".yml",
+        ".toml",
+        ".json",
+        ".jsonl",
+        ".xml",
+        ".ini",
+        ".env",
+        # Schemas / IDL
+        ".proto",
+        ".graphql",
+        ".prisma",
+        ".sql",
+        ".thrift",
+        ".cap",
+        # Docs
+        ".md",
+        ".mdx",
+        ".rst",
+        ".adoc",
+        ".txt",
+        # Web
+        ".html",
+        ".htm",
+        ".css",
+        ".scss",
+        ".sass",
+        ".less",
+        ".vue",
+        ".svelte",
+        ".astro",
+        # Build
+        ".dockerfile",
+        ".gradle",
+        ".bazel",
+    }
+)
 
 
 def all_source_extensions() -> list[str]:
@@ -379,12 +511,15 @@ def auto_detect_project(root: Path, *, single_language: bool = False) -> dict:
         seen_on_disk: set[str] = set()
         try:
             from mcp_server.gitignore import discover_source_files
+
             for f in discover_source_files(root):
                 if f.suffix:
                     seen_on_disk.add(f.suffix.lower())
         except Exception as exc:
             # P4 (defensive parsing): log but never crash detection.
-            logger.warning("discover_source_files failed in auto_detect_project: %s", exc)
+            logger.warning(
+                "discover_source_files failed in auto_detect_project: %s", exc
+            )
 
         known_set = set(_ALL_SOURCE_EXTENSIONS)
         # Intersection of known + on-disk gives us the curated extensions
@@ -399,11 +534,17 @@ def auto_detect_project(root: Path, *, single_language: bool = False) -> dict:
             extensions = sorted(in_both | unknown_but_seen)
         else:
             extensions = sorted(known_set)
-            logger.info("auto_detect_project: no files seen on disk — defaulting to broad extension set")
+            logger.info(
+                "auto_detect_project: no files seen on disk — defaulting to broad extension set"
+            )
     collection_name = name.lower().replace("-", "_").replace(" ", "_").replace(".", "_")
 
-    logger.info("Auto-detected: language=%s, dirs=%s, exts=%d files",
-                language, watched_dirs, len(extensions))
+    logger.info(
+        "Auto-detected: language=%s, dirs=%s, exts=%d files",
+        language,
+        watched_dirs,
+        len(extensions),
+    )
 
     return {
         "name": name,

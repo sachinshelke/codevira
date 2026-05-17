@@ -4,16 +4,14 @@ Tests for indexer.chunker — Python AST-based code chunking.
 Mocks treesitter_parser at the sys.modules level before importing chunker,
 since chunker has a module-level `from indexer.treesitter_parser import ...`.
 """
+
 from __future__ import annotations
 
 import ast
 import sys
 import types
-from dataclasses import dataclass
-from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 
 # ---------------------------------------------------------------------------
 # Install a fake treesitter_parser module before importing chunker.
@@ -224,9 +222,7 @@ class TestExtractImports:
         src.mkdir(parents=True, exist_ok=True)
         (src / "utils.py").write_text("x = 1\n")
         py_file = src / "app.py"
-        py_file.write_text(
-            "from src.utils import x\nfrom src.utils import x\n"
-        )
+        py_file.write_text("from src.utils import x\nfrom src.utils import x\n")
 
         result = extract_imports(str(py_file), str(project))
         # Should be at most 1 entry for src/utils
@@ -508,26 +504,33 @@ class TestChunkFileTreesitter:
     def test_treesitter_dispatch_with_parse_error(self, tmp_path):
         """When ts_parse_file raises for a .ts file, returns empty list."""
         from indexer.chunker import _chunk_file_treesitter
+
         ts_file = tmp_path / "app.ts"
         ts_file.write_text("export function hello() {}")
 
-        with patch("indexer.chunker.ts_parse_file", side_effect=ValueError("parse failed")):
+        with patch(
+            "indexer.chunker.ts_parse_file", side_effect=ValueError("parse failed")
+        ):
             result = _chunk_file_treesitter(str(ts_file), str(tmp_path))
         assert result == []
 
     def test_treesitter_dispatch_filenotfound(self, tmp_path):
         """When ts_parse_file raises FileNotFoundError, returns empty list."""
         from indexer.chunker import _chunk_file_treesitter
+
         ts_file = tmp_path / "missing.go"
         ts_file.write_text("package main")
 
-        with patch("indexer.chunker.ts_parse_file", side_effect=FileNotFoundError("missing")):
+        with patch(
+            "indexer.chunker.ts_parse_file", side_effect=FileNotFoundError("missing")
+        ):
             result = _chunk_file_treesitter(str(ts_file), str(tmp_path))
         assert result == []
 
     def test_treesitter_chunks_with_module_docstring(self, tmp_path):
         """When parsed.module_docstring is set, a module chunk is created."""
         from indexer.chunker import _chunk_file_treesitter
+
         ts_file = tmp_path / "service.ts"
         ts_file.write_text("// Service module\nexport function hello() {}")
 
@@ -553,6 +556,7 @@ class TestChunkFileTreesitter:
     def test_treesitter_skips_short_symbols(self, tmp_path):
         """Symbols with end_line - start_line < 3 are skipped."""
         from indexer.chunker import _chunk_file_treesitter
+
         ts_file = tmp_path / "small.ts"
         ts_file.write_text("const x = 1;")
 
@@ -573,8 +577,13 @@ class TestChunkFileTreesitter:
     def test_treesitter_class_limits_to_15_lines(self, tmp_path):
         """Class symbols are limited to first 15 lines."""
         from indexer.chunker import _chunk_file_treesitter
+
         ts_file = tmp_path / "large_class.ts"
-        content = "class BigClass {\n" + "\n".join(f"  method{i}() {{}}" for i in range(25)) + "\n}"
+        content = (
+            "class BigClass {\n"
+            + "\n".join(f"  method{i}() {{}}" for i in range(25))
+            + "\n}"
+        )
         ts_file.write_text(content)
 
         mock_sym = MagicMock()
@@ -596,6 +605,7 @@ class TestChunkFileTreesitter:
     def test_unicode_decode_error_returns_empty(self, tmp_path):
         """When source file has encoding issues, returns empty list."""
         from indexer.chunker import _chunk_file_treesitter
+
         ts_file = tmp_path / "binary.ts"
         ts_file.write_bytes(b"\xff\xfe non-utf8 content")
 
@@ -624,25 +634,32 @@ class TestExtractImportsTreesitter:
     def test_treesitter_parse_error_returns_empty(self, tmp_path):
         """When ts_parse_file raises, extract_imports returns empty list."""
         from indexer.chunker import _extract_imports_treesitter
+
         ts_file = tmp_path / "broken.ts"
         ts_file.write_text("broken content")
 
-        with patch("indexer.chunker.ts_parse_file", side_effect=FileNotFoundError("missing")):
+        with patch(
+            "indexer.chunker.ts_parse_file", side_effect=FileNotFoundError("missing")
+        ):
             result = _extract_imports_treesitter(str(ts_file), str(tmp_path))
         assert result == []
 
     def test_treesitter_value_error_returns_empty(self, tmp_path):
         from indexer.chunker import _extract_imports_treesitter
+
         ts_file = tmp_path / "bad.go"
         ts_file.write_text("package main")
 
-        with patch("indexer.chunker.ts_parse_file", side_effect=ValueError("unsupported")):
+        with patch(
+            "indexer.chunker.ts_parse_file", side_effect=ValueError("unsupported")
+        ):
             result = _extract_imports_treesitter(str(ts_file), str(tmp_path))
         assert result == []
 
     def test_extracts_resolved_import(self, tmp_path):
         """When an import resolves to a project file, it's included."""
         from indexer.chunker import _extract_imports_treesitter
+
         # Create a real project file that can be found
         target = tmp_path / "utils.ts"
         target.write_text("export const x = 1;")
@@ -664,6 +681,7 @@ class TestExtractImportsTreesitter:
     def test_unresolvable_import_excluded(self, tmp_path):
         """When an import cannot be resolved to a file, it's excluded."""
         from indexer.chunker import _extract_imports_treesitter
+
         ts_file = tmp_path / "app.ts"
         ts_file.write_text("import React from 'react';")
 
@@ -687,6 +705,7 @@ class TestLoadConfigCorrupt:
     def test_corrupt_yaml_returns_empty_dict(self, project_env, monkeypatch):
         """When config.yaml has corrupt YAML, _load_config returns {}."""
         from indexer.chunker import _load_config
+
         project, data_dir, db = project_env
         corrupt_config = data_dir / "config.yaml"
         corrupt_config.write_text("{{invalid yaml: [missing close")
@@ -696,6 +715,7 @@ class TestLoadConfigCorrupt:
     def test_nonexistent_config_returns_empty_dict(self, project_env):
         """When config.yaml doesn't exist, _load_config returns {}."""
         from indexer.chunker import _load_config
+
         project, data_dir, db = project_env
         config_file = data_dir / "config.yaml"
         if config_file.exists():
@@ -715,9 +735,9 @@ class TestExtractImportsDispatch:
         ts_file = tmp_path / "app.ts"
         ts_file.write_text("import { x } from './util';")
 
-        with patch("indexer.chunker._TS_SUPPORTED_EXTENSIONS", {".ts"}), \
-             patch("indexer.chunker._extract_imports_treesitter",
-                   return_value=["src/util.ts"]) as mock_ts:
+        with patch("indexer.chunker._TS_SUPPORTED_EXTENSIONS", {".ts"}), patch(
+            "indexer.chunker._extract_imports_treesitter", return_value=["src/util.ts"]
+        ) as mock_ts:
             result = extract_imports(str(ts_file), str(tmp_path))
 
         mock_ts.assert_called_once()
@@ -742,9 +762,9 @@ class TestChunkFileDispatch:
         ts_file = tmp_path / "app.ts"
         ts_file.write_text("export function hello() {}")
 
-        with patch("indexer.chunker._TS_SUPPORTED_EXTENSIONS", {".ts"}), \
-             patch("indexer.chunker._chunk_file_treesitter",
-                   return_value=[]) as mock_ts:
+        with patch("indexer.chunker._TS_SUPPORTED_EXTENSIONS", {".ts"}), patch(
+            "indexer.chunker._chunk_file_treesitter", return_value=[]
+        ) as mock_ts:
             result = chunk_file(str(ts_file), str(tmp_path))
 
         mock_ts.assert_called_once()
@@ -771,6 +791,7 @@ class TestResolveTsImport:
     def test_relative_import_no_candidates_returns_none(self, tmp_path):
         """_resolve_ts_import returns None when no candidate files exist (line 163)."""
         from indexer.chunker import _resolve_ts_import
+
         file_dir = tmp_path / "src"
         file_dir.mkdir()
         result = _resolve_ts_import("./nonexistent", file_dir, tmp_path)
@@ -779,6 +800,7 @@ class TestResolveTsImport:
     def test_relative_import_resolves_to_ts_file(self, tmp_path):
         """_resolve_ts_import resolves a relative import to an existing .ts file."""
         from indexer.chunker import _resolve_ts_import
+
         src = tmp_path / "src"
         src.mkdir()
         util = src / "util.ts"
@@ -790,6 +812,7 @@ class TestResolveTsImport:
     def test_non_relative_resolves_with_ts_extension(self, tmp_path):
         """_resolve_ts_import finds a .ts file for a non-relative import (lines 167-170)."""
         from indexer.chunker import _resolve_ts_import
+
         target = tmp_path / "utils.ts"
         target.write_text("export const x = 1;")
         result = _resolve_ts_import("utils", tmp_path, tmp_path)
@@ -800,6 +823,7 @@ class TestResolveTsImport:
         """_resolve_ts_import finds a .go file from a Go package directory
         (lines 180-184)."""
         from indexer.chunker import _resolve_ts_import
+
         pkg_dir = tmp_path / "internal" / "services"
         pkg_dir.mkdir(parents=True)
         go_file = pkg_dir / "service.go"
@@ -811,6 +835,7 @@ class TestResolveTsImport:
     def test_non_relative_unresolvable_returns_none(self, tmp_path):
         """_resolve_ts_import returns None when no file can be found."""
         from indexer.chunker import _resolve_ts_import
+
         result = _resolve_ts_import("completely/unknown/pkg", tmp_path, tmp_path)
         assert result is None
 
@@ -877,6 +902,7 @@ class TestChunkFilePythonOSError:
     def test_oserror_on_read_returns_empty(self, tmp_path):
         """_chunk_file_python returns [] when the file cannot be read (lines 339-340)."""
         from indexer.chunker import _chunk_file_python
+
         py_file = tmp_path / "inaccessible.py"
         py_file.write_text("def foo(): pass\n")
 
@@ -896,6 +922,7 @@ class TestChunkFileMarkdownBugE:
 
     def test_markdown_with_headings_yields_per_section(self, tmp_path):
         from indexer.chunker import chunk_file
+
         f = tmp_path / "doc.md"
         f.write_text(
             "# Top\n"
@@ -920,6 +947,7 @@ class TestChunkFileMarkdownBugE:
     def test_markdown_with_no_headings_yields_whole_file(self, tmp_path):
         """No-heading markdown still produces 1 chunk (not 0). Bug E core."""
         from indexer.chunker import chunk_file
+
         f = tmp_path / "plain.md"
         f.write_text("Just some paragraph text.\nNo headings at all.\n")
         chunks = chunk_file(str(f), str(tmp_path))
@@ -931,6 +959,7 @@ class TestChunkFileMarkdownBugE:
     def test_markdown_empty_file_yields_zero(self, tmp_path):
         """Empty file → 0 chunks, but not a crash."""
         from indexer.chunker import chunk_file
+
         f = tmp_path / "empty.md"
         f.write_text("")
         chunks = chunk_file(str(f), str(tmp_path))
@@ -939,16 +968,18 @@ class TestChunkFileMarkdownBugE:
     def test_json_yields_paragraph_chunks(self, tmp_path):
         """JSON files now produce chunks instead of falling through to Python AST."""
         from indexer.chunker import chunk_file
+
         f = tmp_path / "config.json"
         f.write_text('{\n  "name": "test",\n  "version": "1.0"\n}\n')
         chunks = chunk_file(str(f), str(tmp_path))
-        assert len(chunks) >= 1, (
-            f"Bug E regression: JSON should produce ≥1 chunk, got {len(chunks)}"
-        )
+        assert (
+            len(chunks) >= 1
+        ), f"Bug E regression: JSON should produce ≥1 chunk, got {len(chunks)}"
         assert all(c.chunk_type == "text_paragraph" for c in chunks)
 
     def test_yaml_yields_paragraph_chunks(self, tmp_path):
         from indexer.chunker import chunk_file
+
         f = tmp_path / "config.yaml"
         f.write_text("app:\n  name: foo\n\nlogging:\n  level: info\n")
         chunks = chunk_file(str(f), str(tmp_path))
@@ -959,6 +990,7 @@ class TestChunkFileMarkdownBugE:
         """End-to-end: a docs-only repo (the lh-interface shape that
         triggered Bug E) must produce > 0 chunks across all files."""
         from indexer.chunker import chunk_file
+
         files = {
             "README.md": "# Project\nIntro.\n",
             "CLAUDE.md": "# Instructions\nHow to work here.\n",

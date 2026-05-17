@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import os
 import logging
 from pathlib import Path
 from contextlib import contextmanager
@@ -10,7 +9,9 @@ from contextlib import contextmanager
 logger = logging.getLogger(__name__)
 
 
-def _is_duplicate(new_decision: str, existing_decisions: list[str], threshold: float = 0.8) -> bool:
+def _is_duplicate(
+    new_decision: str, existing_decisions: list[str], threshold: float = 0.8
+) -> bool:
     """True when ``new_decision`` overlaps any entry in ``existing_decisions`` at ``threshold``.
 
     v1.8 dedup signal for :meth:`SQLiteGraph.log_session` — iterative agent runs
@@ -35,7 +36,9 @@ def _is_duplicate(new_decision: str, existing_decisions: list[str], threshold: f
         existing_tokens = set(existing.lower().split())
         if not existing_tokens:
             continue
-        overlap = len(new_tokens & existing_tokens) / max(len(new_tokens), len(existing_tokens))
+        overlap = len(new_tokens & existing_tokens) / max(
+            len(new_tokens), len(existing_tokens)
+        )
         if overlap >= threshold:
             return True
     return False
@@ -60,7 +63,9 @@ class SQLiteGraph:
         self.conn.execute("PRAGMA busy_timeout=30000")
         self._init_db()
 
-    def _enable_wal_with_retry(self, attempts: int = 10, initial_delay: float = 0.02) -> None:
+    def _enable_wal_with_retry(
+        self, attempts: int = 10, initial_delay: float = 0.02
+    ) -> None:
         """Best-effort enable of WAL journal mode.
 
         Pillar 3.3 (v2.0-rc.1): the implementation moved to the shared
@@ -70,9 +75,12 @@ class SQLiteGraph:
         code should call the shared helper directly.
         """
         from indexer._sqlite_util import enable_wal_with_retry
+
         enable_wal_with_retry(
-            self.conn, self.db_path,
-            attempts=attempts, initial_delay=initial_delay,
+            self.conn,
+            self.db_path,
+            attempts=attempts,
+            initial_delay=initial_delay,
         )
 
     @contextmanager
@@ -82,7 +90,7 @@ class SQLiteGraph:
 
     def _init_db(self):
         with self.transaction() as conn:
-            conn.executescript('''
+            conn.executescript("""
                 CREATE TABLE IF NOT EXISTS nodes (
                     id TEXT PRIMARY KEY,
                     kind TEXT NOT NULL,
@@ -92,7 +100,7 @@ class SQLiteGraph:
                     line_end INTEGER,
                     docstring TEXT,
                     is_public BOOLEAN,
-                    
+
                     -- User/Agent Metadata
                     role TEXT,
                     type TEXT,
@@ -103,7 +111,7 @@ class SQLiteGraph:
                     do_not_revert BOOLEAN DEFAULT 0,
                     layer TEXT
                 );
-                
+
                 CREATE INDEX IF NOT EXISTS idx_nodes_file_path ON nodes(file_path);
                 CREATE INDEX IF NOT EXISTS idx_nodes_name ON nodes(name);
 
@@ -116,7 +124,7 @@ class SQLiteGraph:
                     FOREIGN KEY (source_id) REFERENCES nodes(id) ON DELETE CASCADE,
                     FOREIGN KEY (target_id) REFERENCES nodes(id) ON DELETE CASCADE
                 );
-                
+
                 CREATE INDEX IF NOT EXISTS idx_edges_target ON edges(target_id);
                 CREATE INDEX IF NOT EXISTS idx_edges_source ON edges(source_id);
 
@@ -148,7 +156,7 @@ class SQLiteGraph:
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
                 );
-                
+
                 CREATE INDEX IF NOT EXISTS idx_decisions_session ON decisions(session_id);
                 CREATE INDEX IF NOT EXISTS idx_decisions_file ON decisions(file_path);
 
@@ -233,16 +241,20 @@ class SQLiteGraph:
 
                 CREATE INDEX IF NOT EXISTS idx_call_edges_callee ON call_edges(callee_id);
                 CREATE INDEX IF NOT EXISTS idx_call_edges_caller ON call_edges(caller_id);
-            ''')
+            """)
             conn.execute("PRAGMA foreign_keys = ON;")
 
             # v1.5 migrations: add source column for global sync tracking
             try:
-                conn.execute("ALTER TABLE preferences ADD COLUMN source TEXT DEFAULT 'local'")
+                conn.execute(
+                    "ALTER TABLE preferences ADD COLUMN source TEXT DEFAULT 'local'"
+                )
             except sqlite3.OperationalError:
                 pass  # Column already exists
             try:
-                conn.execute("ALTER TABLE learned_rules ADD COLUMN source TEXT DEFAULT 'local'")
+                conn.execute(
+                    "ALTER TABLE learned_rules ADD COLUMN source TEXT DEFAULT 'local'"
+                )
             except sqlite3.OperationalError:
                 pass  # Column already exists
             # v2.0-rc.3 (Bug 3): retire stale learned rules from MCP.
@@ -280,11 +292,22 @@ class SQLiteGraph:
         existing = self.get_node(node_id)
         fields = ["id", "kind", "name", "file_path"]
         values = [node_id, kind, name, file_path]
-        
-        metadata_fields = ["line_start", "line_end", "docstring", "is_public", 
-                           "role", "type", "rules", "key_functions", "dependencies", 
-                           "stability", "do_not_revert", "layer"]
-                           
+
+        metadata_fields = [
+            "line_start",
+            "line_end",
+            "docstring",
+            "is_public",
+            "role",
+            "type",
+            "rules",
+            "key_functions",
+            "dependencies",
+            "stability",
+            "do_not_revert",
+            "layer",
+        ]
+
         for k in metadata_fields:
             if k in kwargs:
                 fields.append(k)
@@ -292,51 +315,70 @@ class SQLiteGraph:
             elif existing and existing.get(k) is not None:
                 fields.append(k)
                 values.append(existing[k])
-                
+
         placeholders = ",".join(["?"] * len(fields))
-        query = f"INSERT OR REPLACE INTO nodes ({','.join(fields)}) VALUES ({placeholders})"
-        
+        query = (
+            f"INSERT OR REPLACE INTO nodes ({','.join(fields)}) VALUES ({placeholders})"
+        )
+
         with self.transaction() as conn:
             conn.execute(query, values)
 
     def update_node_metadata(self, node_id: str, **kwargs):
-        valid_fields = ["role", "type", "rules", "key_functions", "dependencies", 
-                        "stability", "do_not_revert", "layer"]
+        valid_fields = [
+            "role",
+            "type",
+            "rules",
+            "key_functions",
+            "dependencies",
+            "stability",
+            "do_not_revert",
+            "layer",
+        ]
         updates, values = [], []
         for k, v in kwargs.items():
             if k in valid_fields:
                 updates.append(f"{k} = ?")
                 values.append(v)
-        if not updates: return
-            
+        if not updates:
+            return
+
         values.append(node_id)
         query = f"UPDATE nodes SET {', '.join(updates)} WHERE id = ?"
         with self.transaction() as conn:
             conn.execute(query, values)
 
     def get_node(self, node_id: str) -> dict | None:
-        cur = self.conn.execute('SELECT * FROM nodes WHERE id = ?', (node_id,))
-        row = cur.fetchone()
-        return dict(row) if row else None
-        
-    def get_node_by_path(self, file_path: str) -> dict | None:
-        cur = self.conn.execute('SELECT * FROM nodes WHERE file_path = ? AND kind = "file" LIMIT 1', (file_path,))
+        cur = self.conn.execute("SELECT * FROM nodes WHERE id = ?", (node_id,))
         row = cur.fetchone()
         return dict(row) if row else None
 
-    def list_file_nodes(self, layer: str | None = None, stability: str | None = None, do_not_revert: bool | None = None) -> list[dict]:
+    def get_node_by_path(self, file_path: str) -> dict | None:
+        cur = self.conn.execute(
+            'SELECT * FROM nodes WHERE file_path = ? AND kind = "file" LIMIT 1',
+            (file_path,),
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+    def list_file_nodes(
+        self,
+        layer: str | None = None,
+        stability: str | None = None,
+        do_not_revert: bool | None = None,
+    ) -> list[dict]:
         query = 'SELECT * FROM nodes WHERE kind = "file"'
         params = []
         if layer:
-            query += ' AND layer = ?'
+            query += " AND layer = ?"
             params.append(layer)
         if stability:
-            query += ' AND stability = ?'
+            query += " AND stability = ?"
             params.append(stability)
         if do_not_revert is not None:
-            query += ' AND do_not_revert = ?'
+            query += " AND do_not_revert = ?"
             params.append(1 if do_not_revert else 0)
-            
+
         cur = self.conn.execute(query, params)
         return [dict(r) for r in cur.fetchall()]
 
@@ -359,7 +401,9 @@ class SQLiteGraph:
             if kind is None:
                 cur = self.conn.execute("SELECT COUNT(*) FROM nodes")
             else:
-                cur = self.conn.execute("SELECT COUNT(*) FROM nodes WHERE kind = ?", (kind,))
+                cur = self.conn.execute(
+                    "SELECT COUNT(*) FROM nodes WHERE kind = ?", (kind,)
+                )
             row = cur.fetchone()
             return int(row[0]) if row else 0
         except Exception:
@@ -369,7 +413,7 @@ class SQLiteGraph:
             return 0
 
     def get_blast_radius(self, node_id: str, max_depth: int = 3) -> list[dict]:
-        query = '''
+        query = """
             WITH RECURSIVE
             dependents(id, path, depth) AS (
                 SELECT id, id, 0 FROM nodes WHERE id = ?
@@ -379,12 +423,12 @@ class SQLiteGraph:
                 JOIN dependents d ON e.target_id = d.id
                 WHERE d.depth < ? AND instr(d.path, e.source_id) = 0
             )
-            SELECT DISTINCT n.*, d.depth 
+            SELECT DISTINCT n.*, d.depth
             FROM dependents d
             JOIN nodes n ON d.id = n.id
             WHERE d.id != ?
             ORDER BY d.depth ASC;
-        '''
+        """
         with self.transaction() as conn:
             cur = conn.execute(query, (node_id, max_depth, node_id))
             return [dict(r) for r in cur.fetchall()]
@@ -393,7 +437,13 @@ class SQLiteGraph:
     # Edge management
     # ------------------------------------------------------------------
 
-    def add_edge(self, source_id: str, target_id: str, kind: str = "imports", line: int | None = None):
+    def add_edge(
+        self,
+        source_id: str,
+        target_id: str,
+        kind: str = "imports",
+        line: int | None = None,
+    ):
         """Insert / replace an edge between two nodes.
 
         v2.0-rc.5 (Bug 13): same FK-race shape as ``add_call_edge``
@@ -407,35 +457,41 @@ class SQLiteGraph:
         """
         with self.transaction() as conn:
             conn.execute(
-                'INSERT OR REPLACE INTO edges (source_id, target_id, kind, line) '
-                'SELECT ?, ?, ?, ? '
-                'WHERE EXISTS (SELECT 1 FROM nodes WHERE id = ?) '
-                '  AND EXISTS (SELECT 1 FROM nodes WHERE id = ?)',
+                "INSERT OR REPLACE INTO edges (source_id, target_id, kind, line) "
+                "SELECT ?, ?, ?, ? "
+                "WHERE EXISTS (SELECT 1 FROM nodes WHERE id = ?) "
+                "  AND EXISTS (SELECT 1 FROM nodes WHERE id = ?)",
                 (source_id, target_id, kind, line, source_id, target_id),
             )
 
     def remove_edges_for_node(self, node_id: str):
         with self.transaction() as conn:
-            conn.execute('DELETE FROM edges WHERE source_id = ?', (node_id,))
+            conn.execute("DELETE FROM edges WHERE source_id = ?", (node_id,))
 
     def get_edges_from(self, node_id: str) -> list[dict]:
-        cur = self.conn.execute('SELECT * FROM edges WHERE source_id = ?', (node_id,))
+        cur = self.conn.execute("SELECT * FROM edges WHERE source_id = ?", (node_id,))
         return [dict(r) for r in cur.fetchall()]
 
     def get_edges_to(self, node_id: str) -> list[dict]:
-        cur = self.conn.execute('SELECT * FROM edges WHERE target_id = ?', (node_id,))
+        cur = self.conn.execute("SELECT * FROM edges WHERE target_id = ?", (node_id,))
         return [dict(r) for r in cur.fetchall()]
 
     def get_all_edges(self) -> list[dict]:
-        cur = self.conn.execute('SELECT * FROM edges')
+        cur = self.conn.execute("SELECT * FROM edges")
         return [dict(r) for r in cur.fetchall()]
 
     # ------------------------------------------------------------------
     # Outcome tracking (feedback loop)
     # ------------------------------------------------------------------
 
-    def record_outcome(self, session_id: str, file_path: str, outcome_type: str,
-                       decision_id: int | None = None, delta_summary: str | None = None):
+    def record_outcome(
+        self,
+        session_id: str,
+        file_path: str,
+        outcome_type: str,
+        decision_id: int | None = None,
+        delta_summary: str | None = None,
+    ):
         """Record an outcome (kept / modified / reverted) for a session.
 
         v2.0-rc.5 (Bug 15): outcomes.session_id has FK → sessions, and
@@ -446,43 +502,64 @@ class SQLiteGraph:
         to break the policy engine's read path.
         """
         with self.transaction() as conn:
-            conn.execute('''
+            conn.execute(
+                """
                 INSERT INTO outcomes (session_id, file_path, decision_id, outcome_type, delta_summary)
                 SELECT ?, ?, ?, ?, ?
                 WHERE EXISTS (SELECT 1 FROM sessions WHERE session_id = ?)
-            ''', (session_id, file_path, decision_id, outcome_type, delta_summary, session_id))
+            """,
+                (
+                    session_id,
+                    file_path,
+                    decision_id,
+                    outcome_type,
+                    delta_summary,
+                    session_id,
+                ),
+            )
 
     def get_outcomes_for_file(self, file_path: str, limit: int = 20) -> list[dict]:
-        cur = self.conn.execute('''
+        cur = self.conn.execute(
+            """
             SELECT o.*, d.decision FROM outcomes o
             LEFT JOIN decisions d ON o.decision_id = d.id
             WHERE o.file_path = ?
             ORDER BY o.detected_at DESC LIMIT ?
-        ''', (file_path, limit))
+        """,
+            (file_path, limit),
+        )
         return [dict(r) for r in cur.fetchall()]
 
-    def get_decision_confidence(self, file_path: str | None = None, pattern: str | None = None) -> dict:
+    def get_decision_confidence(
+        self, file_path: str | None = None, pattern: str | None = None
+    ) -> dict:
         """Calculate confidence scores based on outcome history."""
         if file_path:
-            cur = self.conn.execute('''
+            cur = self.conn.execute(
+                """
                 SELECT outcome_type, COUNT(*) as cnt FROM outcomes
                 WHERE file_path = ? GROUP BY outcome_type
-            ''', (file_path,))
+            """,
+                (file_path,),
+            )
         elif pattern:
-            cur = self.conn.execute('''
+            cur = self.conn.execute(
+                """
                 SELECT outcome_type, COUNT(*) as cnt FROM outcomes
                 WHERE file_path LIKE ? GROUP BY outcome_type
-            ''', (f'%{pattern}%',))
+            """,
+                (f"%{pattern}%",),
+            )
         else:
             cur = self.conn.execute(
-                'SELECT outcome_type, COUNT(*) as cnt FROM outcomes GROUP BY outcome_type'
+                "SELECT outcome_type, COUNT(*) as cnt FROM outcomes GROUP BY outcome_type"
             )
 
-        counts = {row['outcome_type']: row['cnt'] for row in cur.fetchall()}
+        counts = {row["outcome_type"]: row["cnt"] for row in cur.fetchall()}
         total = sum(counts.values())
-        kept = counts.get('kept', 0)
-        modified = counts.get('modified', 0)
-        reverted = counts.get('reverted', 0)
+        kept = counts.get("kept", 0)
+        modified = counts.get("modified", 0)
+        reverted = counts.get("reverted", 0)
 
         confidence = (kept + modified * 0.5) / total if total > 0 else 0.0
         return {
@@ -497,51 +574,89 @@ class SQLiteGraph:
     # Developer preferences
     # ------------------------------------------------------------------
 
-    def record_preference(self, category: str, signal: str, example: str | None = None,
-                          source: str = "local"):
+    def record_preference(
+        self,
+        category: str,
+        signal: str,
+        example: str | None = None,
+        source: str = "local",
+    ):
         existing = self.conn.execute(
-            'SELECT id, frequency FROM preferences WHERE category = ? AND signal = ?',
+            "SELECT id, frequency FROM preferences WHERE category = ? AND signal = ?",
             (category, signal),
         ).fetchone()
 
         if existing:
             with self.transaction() as conn:
-                conn.execute('''
+                conn.execute(
+                    """
                     UPDATE preferences SET frequency = frequency + 1, last_seen = CURRENT_TIMESTAMP, example = COALESCE(?, example)
                     WHERE id = ?
-                ''', (example, existing['id']))
+                """,
+                    (example, existing["id"]),
+                )
         else:
             with self.transaction() as conn:
-                conn.execute('''
+                conn.execute(
+                    """
                     INSERT INTO preferences (category, signal, example, source) VALUES (?, ?, ?, ?)
-                ''', (category, signal, example, source))
+                """,
+                    (category, signal, example, source),
+                )
 
-    def get_preferences(self, category: str | None = None, min_frequency: int = 1) -> list[dict]:
+    def get_preferences(
+        self, category: str | None = None, min_frequency: int = 1
+    ) -> list[dict]:
         if category:
-            cur = self.conn.execute('''
+            cur = self.conn.execute(
+                """
                 SELECT * FROM preferences WHERE category = ? AND frequency >= ?
                 ORDER BY frequency DESC
-            ''', (category, min_frequency))
+            """,
+                (category, min_frequency),
+            )
         else:
-            cur = self.conn.execute('''
+            cur = self.conn.execute(
+                """
                 SELECT * FROM preferences WHERE frequency >= ? ORDER BY frequency DESC
-            ''', (min_frequency,))
+            """,
+                (min_frequency,),
+            )
         return [dict(r) for r in cur.fetchall()]
 
     # ------------------------------------------------------------------
     # Learned rules
     # ------------------------------------------------------------------
 
-    def add_learned_rule(self, rule_text: str, confidence: float, source_sessions: list[str],
-                         category: str | None = None, file_pattern: str | None = None):
+    def add_learned_rule(
+        self,
+        rule_text: str,
+        confidence: float,
+        source_sessions: list[str],
+        category: str | None = None,
+        file_pattern: str | None = None,
+    ):
         with self.transaction() as conn:
-            conn.execute('''
+            conn.execute(
+                """
                 INSERT INTO learned_rules (rule_text, confidence, source_sessions, category, file_pattern)
                 VALUES (?, ?, ?, ?, ?)
-            ''', (rule_text, confidence, json.dumps(source_sessions), category, file_pattern))
+            """,
+                (
+                    rule_text,
+                    confidence,
+                    json.dumps(source_sessions),
+                    category,
+                    file_pattern,
+                ),
+            )
 
-    def update_learned_rule(self, rule_id: int, confidence: float | None = None,
-                            source_sessions: list[str] | None = None):
+    def update_learned_rule(
+        self,
+        rule_id: int,
+        confidence: float | None = None,
+        source_sessions: list[str] | None = None,
+    ):
         updates, values = [], []
         if confidence is not None:
             updates.append("confidence = ?")
@@ -553,27 +668,34 @@ class SQLiteGraph:
             updates.append("updated_at = CURRENT_TIMESTAMP")
             values.append(rule_id)
             with self.transaction() as conn:
-                conn.execute(f'UPDATE learned_rules SET {", ".join(updates)} WHERE id = ?', values)
+                conn.execute(
+                    f'UPDATE learned_rules SET {", ".join(updates)} WHERE id = ?',
+                    values,
+                )
 
-    def get_learned_rules(self, category: str | None = None, file_pattern: str | None = None,
-                          min_confidence: float = 0.0,
-                          include_retired: bool = False) -> list[dict]:
+    def get_learned_rules(
+        self,
+        category: str | None = None,
+        file_pattern: str | None = None,
+        min_confidence: float = 0.0,
+        include_retired: bool = False,
+    ) -> list[dict]:
         """List active (non-retired) learned rules by default.
 
         v2.0-rc.3 (Bug 3): retired rules are excluded from the default
         result set. Pass ``include_retired=True`` for audit/admin views.
         """
-        query = 'SELECT * FROM learned_rules WHERE confidence >= ?'
+        query = "SELECT * FROM learned_rules WHERE confidence >= ?"
         params: list = [min_confidence]
         if not include_retired:
-            query += ' AND retired_at IS NULL'
+            query += " AND retired_at IS NULL"
         if category:
-            query += ' AND category = ?'
+            query += " AND category = ?"
             params.append(category)
         if file_pattern:
-            query += ' AND (file_pattern IS NULL OR ? LIKE file_pattern)'
+            query += " AND (file_pattern IS NULL OR ? LIKE file_pattern)"
             params.append(file_pattern)
-        query += ' ORDER BY confidence DESC'
+        query += " ORDER BY confidence DESC"
         cur = self.conn.execute(query, params)
         return [dict(r) for r in cur.fetchall()]
 
@@ -590,9 +712,9 @@ class SQLiteGraph:
         """
         with self.transaction() as conn:
             cur = conn.execute(
-                'UPDATE learned_rules '
-                'SET retired_at = CURRENT_TIMESTAMP, retired_reason = ? '
-                'WHERE id = ? AND retired_at IS NULL',
+                "UPDATE learned_rules "
+                "SET retired_at = CURRENT_TIMESTAMP, retired_reason = ? "
+                "WHERE id = ? AND retired_at IS NULL",
                 (reason, rule_id),
             )
             return cur.rowcount > 0
@@ -601,9 +723,9 @@ class SQLiteGraph:
         """Reverse a retire_learned_rule. Returns True if a row was updated."""
         with self.transaction() as conn:
             cur = conn.execute(
-                'UPDATE learned_rules '
-                'SET retired_at = NULL, retired_reason = NULL '
-                'WHERE id = ? AND retired_at IS NOT NULL',
+                "UPDATE learned_rules "
+                "SET retired_at = NULL, retired_reason = NULL "
+                "WHERE id = ? AND retired_at IS NOT NULL",
                 (rule_id,),
             )
             return cur.rowcount > 0
@@ -618,19 +740,27 @@ class SQLiteGraph:
         confidence = self.get_decision_confidence()
 
         # File coverage: files with at least one session decision
-        total_files = self.conn.execute('SELECT COUNT(*) as c FROM nodes WHERE kind = "file"').fetchone()['c']
+        total_files = self.conn.execute(
+            'SELECT COUNT(*) as c FROM nodes WHERE kind = "file"'
+        ).fetchone()["c"]
         covered_files = self.conn.execute(
-            'SELECT COUNT(DISTINCT file_path) as c FROM decisions WHERE file_path IS NOT NULL'
-        ).fetchone()['c']
+            "SELECT COUNT(DISTINCT file_path) as c FROM decisions WHERE file_path IS NOT NULL"
+        ).fetchone()["c"]
 
         # Learned rules count
-        rule_count = self.conn.execute('SELECT COUNT(*) as c FROM learned_rules WHERE confidence >= 0.5').fetchone()['c']
+        rule_count = self.conn.execute(
+            "SELECT COUNT(*) as c FROM learned_rules WHERE confidence >= 0.5"
+        ).fetchone()["c"]
 
         # Preference signals count
-        pref_count = self.conn.execute('SELECT COUNT(*) as c FROM preferences WHERE frequency >= 2').fetchone()['c']
+        pref_count = self.conn.execute(
+            "SELECT COUNT(*) as c FROM preferences WHERE frequency >= 2"
+        ).fetchone()["c"]
 
         # Session count
-        session_count = self.conn.execute('SELECT COUNT(*) as c FROM sessions').fetchone()['c']
+        session_count = self.conn.execute(
+            "SELECT COUNT(*) as c FROM sessions"
+        ).fetchone()["c"]
 
         coverage = round(covered_files / total_files, 3) if total_files > 0 else 0.0
 
@@ -650,17 +780,23 @@ class SQLiteGraph:
     # ------------------------------------------------------------------
 
     def get_recent_sessions(self, limit: int = 5) -> list[dict]:
-        cur = self.conn.execute('''
+        cur = self.conn.execute(
+            """
             SELECT * FROM sessions ORDER BY created_at DESC LIMIT ?
-        ''', (limit,))
+        """,
+            (limit,),
+        )
         return [dict(r) for r in cur.fetchall()]
 
     def get_recent_decisions(self, limit: int = 10) -> list[dict]:
-        cur = self.conn.execute('''
+        cur = self.conn.execute(
+            """
             SELECT d.*, s.summary, s.phase FROM decisions d
             JOIN sessions s ON d.session_id = s.session_id
             ORDER BY d.created_at DESC LIMIT ?
-        ''', (limit,))
+        """,
+            (limit,),
+        )
         return [dict(r) for r in cur.fetchall()]
 
     def record_decision(
@@ -686,18 +822,19 @@ class SQLiteGraph:
         passes. Returns ``{decision_id, session_id}``.
         """
         import uuid
+
         sid = session_id or f"rec_{uuid.uuid4().hex[:8]}"
         with self.transaction() as conn:
             # Ensure parent session exists (FK constraint).
             conn.execute(
-                'INSERT OR IGNORE INTO sessions (session_id, summary, phase) '
-                'VALUES (?, ?, ?)',
+                "INSERT OR IGNORE INTO sessions (session_id, summary, phase) "
+                "VALUES (?, ?, ?)",
                 (sid, summary or "ad-hoc record_decision", phase),
             )
             cur = conn.execute(
-                'INSERT INTO decisions '
-                '(session_id, file_path, decision, context, do_not_revert) '
-                'VALUES (?, ?, ?, ?, ?)',
+                "INSERT INTO decisions "
+                "(session_id, file_path, decision, context, do_not_revert) "
+                "VALUES (?, ?, ?, ?, ?)",
                 (sid, file_path, decision, context, 1 if do_not_revert else 0),
             )
             decision_id = cur.lastrowid
@@ -710,24 +847,31 @@ class SQLiteGraph:
         """
         with self.transaction() as conn:
             cur = conn.execute(
-                'UPDATE decisions SET do_not_revert = ? WHERE id = ?',
+                "UPDATE decisions SET do_not_revert = ? WHERE id = ?",
                 (1 if do_not_revert else 0, decision_id),
             )
             return cur.rowcount > 0
 
     def get_file_hash(self, file_path: str) -> str | None:
-        cur = self.conn.execute('SELECT sha256 FROM file_hashes WHERE file_path = ?', (file_path,))
+        cur = self.conn.execute(
+            "SELECT sha256 FROM file_hashes WHERE file_path = ?", (file_path,)
+        )
         row = cur.fetchone()
-        return row['sha256'] if row else None
+        return row["sha256"] if row else None
 
     def update_file_hash(self, file_path: str, sha256: str):
         with self.transaction() as conn:
-            conn.execute('''
+            conn.execute(
+                """
                 INSERT OR REPLACE INTO file_hashes (file_path, sha256, last_indexed_at)
                 VALUES (?, ?, CURRENT_TIMESTAMP)
-            ''', (file_path, sha256))
+            """,
+                (file_path, sha256),
+            )
 
-    def log_session(self, session_id: str, summary: str, phase: str, decisions: list[dict]):
+    def log_session(
+        self, session_id: str, summary: str, phase: str, decisions: list[dict]
+    ):
         """Insert a session row plus its decisions, skipping duplicates.
 
         v1.8: A decision is skipped when it has a ``file_path`` and overlaps
@@ -737,10 +881,13 @@ class SQLiteGraph:
         inserted (no scope to compare against).
         """
         with self.transaction() as conn:
-            conn.execute('''
+            conn.execute(
+                """
                 INSERT OR REPLACE INTO sessions (session_id, summary, phase)
                 VALUES (?, ?, ?)
-            ''', (session_id, summary, phase))
+            """,
+                (session_id, summary, phase),
+            )
 
             for d in decisions:
                 fp = d.get("file_path")
@@ -749,19 +896,24 @@ class SQLiteGraph:
                     existing = [
                         row["decision"]
                         for row in conn.execute(
-                            'SELECT decision FROM decisions WHERE file_path = ? '
-                            'ORDER BY created_at DESC LIMIT 5',
+                            "SELECT decision FROM decisions WHERE file_path = ? "
+                            "ORDER BY created_at DESC LIMIT 5",
                             (fp,),
                         ).fetchall()
                     ]
                     if _is_duplicate(dtext, existing):
                         continue
-                conn.execute('''
+                conn.execute(
+                    """
                     INSERT INTO decisions (session_id, file_path, decision, context)
                     VALUES (?, ?, ?, ?)
-                ''', (session_id, fp, dtext, d.get("context")))
+                """,
+                    (session_id, fp, dtext, d.get("context")),
+                )
 
-    def search_decisions(self, query: str, limit: int = 10, session_id: str | None = None) -> list[dict]:
+    def search_decisions(
+        self, query: str, limit: int = 10, session_id: str | None = None
+    ) -> list[dict]:
         """Search decisions with relevance-tiered ranking.
 
         v1.8: Results are ordered by match location (file_path > decision text >
@@ -774,23 +926,23 @@ class SQLiteGraph:
         variable feeds the WHERE clause (4 places) and the ORDER BY CASE
         (3 places — summary is the implicit ELSE tier).
         """
-        pat = f'%{query}%'
+        pat = f"%{query}%"
         # v2.0-rc.3 (Bug 2): include d.id + d.do_not_revert so AI sees
         # the protection flag and can mark_decision_protected by id.
-        sql = '''
+        sql = """
             SELECT d.id, d.decision, d.context, d.file_path,
                    d.do_not_revert, s.summary, s.phase, d.created_at
             FROM decisions d
             JOIN sessions s ON d.session_id = s.session_id
             WHERE (d.file_path LIKE ? OR d.decision LIKE ? OR d.context LIKE ? OR s.summary LIKE ?)
-        '''
+        """
         params: list = [pat, pat, pat, pat]
 
         if session_id:
-            sql += ' AND d.session_id = ?'
+            sql += " AND d.session_id = ?"
             params.append(session_id)
 
-        sql += '''
+        sql += """
             ORDER BY
               CASE
                 WHEN d.file_path LIKE ? THEN 0
@@ -800,7 +952,7 @@ class SQLiteGraph:
               END,
               d.created_at DESC
             LIMIT ?
-        '''
+        """
         params.extend([pat, pat, pat, limit])
 
         cur = self.conn.execute(sql, params)
@@ -810,11 +962,21 @@ class SQLiteGraph:
     # v1.5: Function-level symbols and call graph
     # ------------------------------------------------------------------
 
-    def add_symbol(self, symbol_id: str, file_node_id: str, name: str, kind: str,
-                   signature: str | None = None, parameters: str | None = None,
-                   return_type: str | None = None, start_line: int | None = None,
-                   end_line: int | None = None, docstring: str | None = None,
-                   is_public: bool = True, calls: str | None = None):
+    def add_symbol(
+        self,
+        symbol_id: str,
+        file_node_id: str,
+        name: str,
+        kind: str,
+        signature: str | None = None,
+        parameters: str | None = None,
+        return_type: str | None = None,
+        start_line: int | None = None,
+        end_line: int | None = None,
+        docstring: str | None = None,
+        is_public: bool = True,
+        calls: str | None = None,
+    ):
         """Insert or replace a function/class symbol.
 
         v2.0-rc.5 (Bug 14): symbols.file_node_id has FK → nodes(id). If
@@ -824,15 +986,30 @@ class SQLiteGraph:
         gone — the symbol re-adds on the next reindex.
         """
         with self.transaction() as conn:
-            conn.execute('''
+            conn.execute(
+                """
                 INSERT OR REPLACE INTO symbols
                     (id, file_node_id, name, kind, signature, parameters, return_type,
                      start_line, end_line, docstring, is_public, calls)
                 SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 WHERE EXISTS (SELECT 1 FROM nodes WHERE id = ?)
-            ''', (symbol_id, file_node_id, name, kind, signature, parameters,
-                  return_type, start_line, end_line, docstring, is_public, calls,
-                  file_node_id))
+            """,
+                (
+                    symbol_id,
+                    file_node_id,
+                    name,
+                    kind,
+                    signature,
+                    parameters,
+                    return_type,
+                    start_line,
+                    end_line,
+                    docstring,
+                    is_public,
+                    calls,
+                    file_node_id,
+                ),
+            )
 
     def remove_symbols_for_file(self, file_node_id: str):
         """Remove all symbols (and their call_edges) for a file node."""
@@ -856,40 +1033,52 @@ class SQLiteGraph:
         the row beats crashing the watcher.
         """
         with self.transaction() as conn:
-            conn.execute('''
+            conn.execute(
+                """
                 INSERT OR REPLACE INTO call_edges (caller_id, callee_id, line)
                 SELECT ?, ?, ?
                 WHERE EXISTS (SELECT 1 FROM symbols WHERE id = ?)
                   AND EXISTS (SELECT 1 FROM symbols WHERE id = ?)
-            ''', (caller_id, callee_id, line, caller_id, callee_id))
+            """,
+                (caller_id, callee_id, line, caller_id, callee_id),
+            )
 
     def get_callers(self, symbol_id: str) -> list[dict]:
         """Get all functions that call this symbol."""
-        cur = self.conn.execute('''
+        cur = self.conn.execute(
+            """
             SELECT s.id, s.name, s.kind, s.file_node_id, ce.line
             FROM call_edges ce
             JOIN symbols s ON ce.caller_id = s.id
             WHERE ce.callee_id = ?
             ORDER BY s.name
-        ''', (symbol_id,))
+        """,
+            (symbol_id,),
+        )
         return [dict(r) for r in cur.fetchall()]
 
     def get_callees(self, symbol_id: str) -> list[dict]:
         """Get all functions called by this symbol."""
-        cur = self.conn.execute('''
+        cur = self.conn.execute(
+            """
             SELECT s.id, s.name, s.kind, s.file_node_id, ce.line
             FROM call_edges ce
             JOIN symbols s ON ce.callee_id = s.id
             WHERE ce.caller_id = ?
             ORDER BY s.name
-        ''', (symbol_id,))
+        """,
+            (symbol_id,),
+        )
         return [dict(r) for r in cur.fetchall()]
 
     def get_symbols_for_file(self, file_node_id: str) -> list[dict]:
         """Get all symbols in a file."""
-        cur = self.conn.execute('''
+        cur = self.conn.execute(
+            """
             SELECT * FROM symbols WHERE file_node_id = ? ORDER BY start_line
-        ''', (file_node_id,))
+        """,
+            (file_node_id,),
+        )
         return [dict(r) for r in cur.fetchall()]
 
     def find_symbol(self, name: str, file_path: str | None = None) -> dict | None:
@@ -902,7 +1091,8 @@ class SQLiteGraph:
             )
         else:
             cur = self.conn.execute(
-                "SELECT * FROM symbols WHERE name = ? LIMIT 1", (name,),
+                "SELECT * FROM symbols WHERE name = ? LIMIT 1",
+                (name,),
             )
         row = cur.fetchone()
         return dict(row) if row else None
@@ -915,28 +1105,33 @@ class SQLiteGraph:
 
     def find_hotspot_functions(self, min_lines: int = 50) -> list[dict]:
         """Find large functions exceeding line threshold."""
-        cur = self.conn.execute('''
+        cur = self.conn.execute(
+            """
             SELECT s.*, (s.end_line - s.start_line) as line_count,
                    n.file_path as full_path
             FROM symbols s
             JOIN nodes n ON s.file_node_id = n.id
             WHERE (s.end_line - s.start_line) >= ?
             ORDER BY (s.end_line - s.start_line) DESC
-        ''', (min_lines,))
+        """,
+            (min_lines,),
+        )
         return [dict(r) for r in cur.fetchall()]
 
     def find_high_fan_in(self, min_callers: int = 5) -> list[dict]:
         """Find symbols with many callers (high fan-in = high risk)."""
-        cur = self.conn.execute('''
+        cur = self.conn.execute(
+            """
             SELECT s.id, s.name, s.kind, s.file_node_id, COUNT(ce.caller_id) as caller_count
             FROM symbols s
             JOIN call_edges ce ON ce.callee_id = s.id
             GROUP BY s.id
             HAVING caller_count >= ?
             ORDER BY caller_count DESC
-        ''', (min_callers,))
+        """,
+            (min_callers,),
+        )
         return [dict(r) for r in cur.fetchall()]
 
     def close(self):
         self.conn.close()
-

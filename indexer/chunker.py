@@ -6,6 +6,7 @@ Language support:
   - Python: stdlib ast module (full support)
   - TypeScript, Go, Rust: tree-sitter grammars via treesitter_parser
 """
+
 from __future__ import annotations
 
 import ast
@@ -23,10 +24,12 @@ from indexer.treesitter_parser import (
 
 def _load_config() -> dict:
     from mcp_server.paths import get_data_dir
+
     config_path = get_data_dir() / "config.yaml"
     if config_path.exists():
         try:
             import yaml
+
             with open(config_path) as f:
                 return yaml.safe_load(f) or {}
         except Exception:
@@ -51,32 +54,49 @@ def _get_project_config() -> tuple[frozenset[str], tuple[str, ...]]:
     cfg = _load_config()
     project_cfg = cfg.get("project", cfg)
     target_dirs: frozenset[str] = frozenset(project_cfg.get("watched_dirs", ["src"]))
-    file_extensions: tuple[str, ...] = tuple(project_cfg.get("file_extensions", [".py"]))
+    file_extensions: tuple[str, ...] = tuple(
+        project_cfg.get("file_extensions", [".py"])
+    )
     return target_dirs, file_extensions
 
 
 @dataclass
 class CodeChunk:
-    file_path: str        # relative to project root
-    chunk_type: str       # "function" | "class" | "module"
-    name: str             # function/class name or filename for module chunks
-    source_text: str      # the actual source code
+    file_path: str  # relative to project root
+    chunk_type: str  # "function" | "class" | "module"
+    name: str  # function/class name or filename for module chunks
+    source_text: str  # the actual source code
     start_line: int
     end_line: int
-    docstring: str        # first docstring if present, else ""
-    layer: str            # inferred from file path
+    docstring: str  # first docstring if present, else ""
+    layer: str  # inferred from file path
 
 
 def _infer_layer(file_path: str) -> str:
     parts = Path(file_path).parts
     for i, part in enumerate(parts):
-        if part in {"generator", "assembler", "indexer", "scanner", "drift", "graph", "context"}:
+        if part in {
+            "generator",
+            "assembler",
+            "indexer",
+            "scanner",
+            "drift",
+            "graph",
+            "context",
+        }:
             return part
         if part in {"api", "routes"}:
             return "api"
         if part in {"core", "datastore", "schemas"}:
             return part
-        if part in {"contexts", "application", "providers", "control", "services", "handlers"}:
+        if part in {
+            "contexts",
+            "application",
+            "providers",
+            "control",
+            "services",
+            "handlers",
+        }:
             return part
     return "unknown"
 
@@ -89,7 +109,7 @@ def _get_docstring(node: ast.AST) -> str:
 
 
 def _extract_source_lines(source_lines: list[str], start: int, end: int) -> str:
-    return "".join(source_lines[start - 1:end])
+    return "".join(source_lines[start - 1 : end])
 
 
 def extract_imports(file_path: str, project_root: str) -> list[str]:
@@ -135,13 +155,15 @@ def _extract_imports_treesitter(file_path: str, project_root: str) -> list[str]:
     return results
 
 
-def _resolve_ts_import(raw_module: str, file_dir: Path, project_root: Path) -> str | None:
+def _resolve_ts_import(
+    raw_module: str, file_dir: Path, project_root: Path
+) -> str | None:
     """
     Try to resolve a tree-sitter import string to a relative file path.
     Handles TypeScript/JS relative imports, Go package imports, and Rust use paths.
     """
     # TypeScript/JS: relative imports like './foo' or '../bar'
-    if raw_module.startswith('.'):
+    if raw_module.startswith("."):
         # Resolve relative to the importing file's directory
         candidates = [
             file_dir / f"{raw_module}.ts",
@@ -163,13 +185,13 @@ def _resolve_ts_import(raw_module: str, file_dir: Path, project_root: Path) -> s
 
     # Non-relative: try as a project-local path (e.g. 'src/utils/foo')
     # Check common extensions
-    for ext in ['.ts', '.tsx', '.js', '.go', '.rs']:
+    for ext in [".ts", ".tsx", ".js", ".go", ".rs"]:
         candidate = project_root / f"{raw_module}{ext}"
         if candidate.exists():
             return str(candidate.relative_to(project_root))
 
     # Try as directory with index file
-    for index in ['index.ts', 'index.tsx', 'index.js', 'mod.rs']:
+    for index in ["index.ts", "index.tsx", "index.js", "mod.rs"]:
         candidate = project_root / raw_module / index
         if candidate.exists():
             return str(candidate.relative_to(project_root))
@@ -178,7 +200,7 @@ def _resolve_ts_import(raw_module: str, file_dir: Path, project_root: Path) -> s
     # Try mapping to directory with .go files
     candidate_dir = project_root / raw_module
     if candidate_dir.is_dir():
-        go_files = list(candidate_dir.glob('*.go'))
+        go_files = list(candidate_dir.glob("*.go"))
         if go_files:
             return str(go_files[0].relative_to(project_root))
 
@@ -236,7 +258,11 @@ def _extract_imports_python(file_path: str, project_root: str) -> list[str]:
             if node.level and node.level > 0:
                 file_rel = os.path.relpath(file_path, project_root)
                 file_parts = Path(file_rel).parts
-                base_parts = list(file_parts[:-node.level]) if node.level < len(file_parts) else []
+                base_parts = (
+                    list(file_parts[: -node.level])
+                    if node.level < len(file_parts)
+                    else []
+                )
                 if node.module:
                     module_parts = base_parts + str(node.module).split(".")
                 else:
@@ -261,8 +287,17 @@ def _extract_imports_python(file_path: str, project_root: str) -> list[str]:
 
 _MARKDOWN_EXTENSIONS = {".md", ".mdx", ".rst", ".adoc", ".markdown"}
 _GENERIC_TEXT_EXTENSIONS = {
-    ".txt", ".json", ".jsonl", ".yaml", ".yml", ".toml", ".ini",
-    ".env", ".env.example", ".cfg", ".conf",
+    ".txt",
+    ".json",
+    ".jsonl",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".ini",
+    ".env",
+    ".env.example",
+    ".cfg",
+    ".conf",
 }
 
 
@@ -325,7 +360,11 @@ def _chunk_file_markdown(file_path: str, project_root: str) -> list[CodeChunk]:
         # Match H1/H2/H3 headings (#, ##, ###). Conservative — avoids matching
         # lines that look like headings but aren't (no #-only matches inside code blocks).
         stripped = line.lstrip()
-        if stripped.startswith("# ") or stripped.startswith("## ") or stripped.startswith("### "):
+        if (
+            stripped.startswith("# ")
+            or stripped.startswith("## ")
+            or stripped.startswith("### ")
+        ):
             if i > current_start:
                 sections.append((current_heading, current_start, i - 1))
             current_heading = stripped.lstrip("#").strip()[:80] or current_heading
@@ -339,19 +378,21 @@ def _chunk_file_markdown(file_path: str, project_root: str) -> list[CodeChunk]:
         sections = [(Path(file_path).stem, 1, len(lines))]
 
     for heading, start, end in sections:
-        section_text = "".join(lines[start - 1:end])
+        section_text = "".join(lines[start - 1 : end])
         if not section_text.strip():
             continue
-        chunks.append(CodeChunk(
-            file_path=rel_path,
-            chunk_type="markdown_section",
-            name=heading,
-            source_text=section_text[:2000],  # cap so embeddings stay tractable
-            start_line=start,
-            end_line=end,
-            docstring="",
-            layer=layer,
-        ))
+        chunks.append(
+            CodeChunk(
+                file_path=rel_path,
+                chunk_type="markdown_section",
+                name=heading,
+                source_text=section_text[:2000],  # cap so embeddings stay tractable
+                start_line=start,
+                end_line=end,
+                docstring="",
+                layer=layer,
+            )
+        )
     return chunks
 
 
@@ -387,17 +428,21 @@ def _chunk_file_text(file_path: str, project_root: str) -> list[CodeChunk]:
         # Cap chunk size — anything bigger than ~800 chars gets truncated
         # with a "(truncated)" marker. The full file is still on disk for
         # the agent to Read directly.
-        body = para if len(para) <= 800 else para[:800] + "\n... (truncated for embedding)"
-        chunks.append(CodeChunk(
-            file_path=rel_path,
-            chunk_type="text_paragraph",
-            name=f"{Path(file_path).stem}#{idx + 1}",
-            source_text=body,
-            start_line=line_cursor,
-            end_line=line_cursor + line_count - 1,
-            docstring="",
-            layer=layer,
-        ))
+        body = (
+            para if len(para) <= 800 else para[:800] + "\n... (truncated for embedding)"
+        )
+        chunks.append(
+            CodeChunk(
+                file_path=rel_path,
+                chunk_type="text_paragraph",
+                name=f"{Path(file_path).stem}#{idx + 1}",
+                source_text=body,
+                start_line=line_cursor,
+                end_line=line_cursor + line_count - 1,
+                docstring="",
+                layer=layer,
+            )
+        )
         line_cursor += line_count + 1  # +1 for the blank-line separator
     return chunks
 
@@ -422,16 +467,18 @@ def _chunk_file_treesitter(file_path: str, project_root: str) -> list[CodeChunk]
 
     # Module-level docstring chunk
     if parsed.module_docstring:
-        chunks.append(CodeChunk(
-            file_path=rel_path,
-            chunk_type="module",
-            name=Path(file_path).stem,
-            source_text=parsed.module_docstring,
-            start_line=1,
-            end_line=1,
-            docstring=parsed.module_docstring,
-            layer=layer,
-        ))
+        chunks.append(
+            CodeChunk(
+                file_path=rel_path,
+                chunk_type="module",
+                name=Path(file_path).stem,
+                source_text=parsed.module_docstring,
+                start_line=1,
+                end_line=1,
+                docstring=parsed.module_docstring,
+                layer=layer,
+            )
+        )
 
     for sym in parsed.symbols:
         # Skip very short symbols (< 3 lines) like Python chunker does
@@ -446,16 +493,18 @@ def _chunk_file_treesitter(file_path: str, project_root: str) -> list[CodeChunk]
             sig_end = min(sym.start_line + 15, sym.end_line)
             source_text = _extract_source_lines(source_lines, sym.start_line, sig_end)
 
-        chunks.append(CodeChunk(
-            file_path=rel_path,
-            chunk_type=chunk_type,
-            name=sym.name,
-            source_text=source_text,
-            start_line=sym.start_line,
-            end_line=sym.end_line,
-            docstring=sym.docstring or "",
-            layer=layer,
-        ))
+        chunks.append(
+            CodeChunk(
+                file_path=rel_path,
+                chunk_type=chunk_type,
+                name=sym.name,
+                source_text=source_text,
+                start_line=sym.start_line,
+                end_line=sym.end_line,
+                docstring=sym.docstring or "",
+                layer=layer,
+            )
+        )
 
     return chunks
 
@@ -482,16 +531,18 @@ def _chunk_file_python(file_path: str, project_root: str) -> list[CodeChunk]:
     # Module-level docstring chunk
     module_doc = _get_docstring(tree)
     if module_doc:
-        chunks.append(CodeChunk(
-            file_path=rel_path,
-            chunk_type="module",
-            name=Path(file_path).stem,
-            source_text=module_doc,
-            start_line=1,
-            end_line=1,
-            docstring=module_doc,
-            layer=layer,
-        ))
+        chunks.append(
+            CodeChunk(
+                file_path=rel_path,
+                chunk_type="module",
+                name=Path(file_path).stem,
+                source_text=module_doc,
+                start_line=1,
+                end_line=1,
+                docstring=module_doc,
+                layer=layer,
+            )
+        )
 
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -501,31 +552,35 @@ def _chunk_file_python(file_path: str, project_root: str) -> list[CodeChunk]:
             source_text = _extract_source_lines(source_lines, node.lineno, end_line)
             if end_line - node.lineno < 3:
                 continue
-            chunks.append(CodeChunk(
-                file_path=rel_path,
-                chunk_type="function",
-                name=node.name,
-                source_text=source_text,
-                start_line=node.lineno,
-                end_line=end_line,
-                docstring=_get_docstring(node),
-                layer=layer,
-            ))
+            chunks.append(
+                CodeChunk(
+                    file_path=rel_path,
+                    chunk_type="function",
+                    name=node.name,
+                    source_text=source_text,
+                    start_line=node.lineno,
+                    end_line=end_line,
+                    docstring=_get_docstring(node),
+                    layer=layer,
+                )
+            )
 
         elif isinstance(node, ast.ClassDef):
             end_line = getattr(node, "end_lineno", node.lineno)
             sig_end = min(node.lineno + 15, end_line)
             source_text = _extract_source_lines(source_lines, node.lineno, sig_end)
-            chunks.append(CodeChunk(
-                file_path=rel_path,
-                chunk_type="class",
-                name=node.name,
-                source_text=source_text,
-                start_line=node.lineno,
-                end_line=end_line,
-                docstring=_get_docstring(node),
-                layer=layer,
-            ))
+            chunks.append(
+                CodeChunk(
+                    file_path=rel_path,
+                    chunk_type="class",
+                    name=node.name,
+                    source_text=source_text,
+                    start_line=node.lineno,
+                    end_line=end_line,
+                    docstring=_get_docstring(node),
+                    layer=layer,
+                )
+            )
 
     return chunks
 
@@ -540,11 +595,11 @@ def iter_source_files(project_root: str) -> Iterator[str]:
         target_path = os.path.join(project_root, target_dir)
         if not os.path.exists(target_path):
             continue
-            
+
         for root, dirs, files in os.walk(target_path):
             # Prune skipped dirs
             dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
-            
+
             for fname in files:
                 if fname.endswith(extensions) and fname not in SKIP_FILES:
                     full_path = os.path.abspath(os.path.join(root, fname))

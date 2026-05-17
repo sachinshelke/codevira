@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import os
 import sys
 import time
 import hashlib
@@ -24,7 +23,7 @@ _chroma_write_lock = threading.Lock()
 # Atomic counters for background indexing progress
 _bg_files_indexed: int = 0
 _bg_total_files: int = 0
-_bg_status: str = "idle"   # idle | running | done | error
+_bg_status: str = "idle"  # idle | running | done | error
 _bg_lock = threading.Lock()
 
 
@@ -41,9 +40,9 @@ _bg_lock = threading.Lock()
 # back off exponentially before letting another reindex through. Closed
 # circuit + successful reindex resets the counter.
 
-_CIRCUIT_OPEN_THRESHOLD = 3      # consecutive failures before opening
+_CIRCUIT_OPEN_THRESHOLD = 3  # consecutive failures before opening
 _CIRCUIT_BACKOFF_INITIAL = 60.0  # 1 minute
-_CIRCUIT_BACKOFF_CAP = 1800.0    # 30 minutes
+_CIRCUIT_BACKOFF_CAP = 1800.0  # 30 minutes
 
 # Module-level state — bounded; never grows.
 _watcher_circuit_lock = threading.Lock()
@@ -65,8 +64,11 @@ def watcher_circuit_status() -> dict:
             "open": is_open,
             "consecutive_failures": _watcher_circuit_failures,
             "seconds_until_retry": max(
-                0.0, _watcher_circuit_next_retry_at - now,
-            ) if is_open else 0.0,
+                0.0,
+                _watcher_circuit_next_retry_at - now,
+            )
+            if is_open
+            else 0.0,
             "last_error": _watcher_circuit_last_error,
         }
 
@@ -81,7 +83,10 @@ def _watcher_circuit_should_run() -> bool:
 
 def _watcher_circuit_record_success() -> None:
     """A successful reindex resets the circuit."""
-    global _watcher_circuit_failures, _watcher_circuit_next_retry_at, _watcher_circuit_last_error
+    global \
+        _watcher_circuit_failures, \
+        _watcher_circuit_next_retry_at, \
+        _watcher_circuit_last_error
     with _watcher_circuit_lock:
         _watcher_circuit_failures = 0
         _watcher_circuit_next_retry_at = 0.0
@@ -90,7 +95,10 @@ def _watcher_circuit_record_success() -> None:
 
 def _watcher_circuit_record_failure(err: BaseException) -> None:
     """Increment failure count + compute backoff."""
-    global _watcher_circuit_failures, _watcher_circuit_next_retry_at, _watcher_circuit_last_error
+    global \
+        _watcher_circuit_failures, \
+        _watcher_circuit_next_retry_at, \
+        _watcher_circuit_last_error
     with _watcher_circuit_lock:
         _watcher_circuit_failures += 1
         _watcher_circuit_last_error = f"{type(err).__name__}: {err}"
@@ -98,7 +106,7 @@ def _watcher_circuit_record_failure(err: BaseException) -> None:
             # Geometric backoff: 60s, 120s, 240s, … capped at 30 min.
             extra = _watcher_circuit_failures - _CIRCUIT_OPEN_THRESHOLD
             backoff = min(
-                _CIRCUIT_BACKOFF_INITIAL * (2 ** extra),
+                _CIRCUIT_BACKOFF_INITIAL * (2**extra),
                 _CIRCUIT_BACKOFF_CAP,
             )
             _watcher_circuit_next_retry_at = time.time() + backoff
@@ -117,12 +125,14 @@ def _index_dir() -> Path:
     # get_data_dir() is cached in paths.py (_data_dir_cache), so this is fast.
     return get_data_dir() / "codeindex"
 
+
 def _load_config() -> dict:
     """Load .codevira/config.yaml and return the 'project' sub-dict."""
     config_path = get_data_dir() / "config.yaml"
     if config_path.exists():
         try:
             import yaml
+
             with open(config_path) as f:
                 raw = yaml.safe_load(f) or {}
             # config.yaml nests settings under 'project' key
@@ -130,6 +140,7 @@ def _load_config() -> dict:
         except Exception:
             pass
     return {}
+
 
 def _check_search_deps() -> bool:
     """Return True if chromadb + sentence-transformers are available.
@@ -152,6 +163,7 @@ def _check_search_deps() -> bool:
     """
     import importlib.util
     import sys
+
     for module_name in ("chromadb", "sentence_transformers"):
         # Value-based check: handles both real loads (value is the module)
         # AND the test pattern ``sys.modules[name] = None`` to simulate
@@ -165,6 +177,7 @@ def _check_search_deps() -> bool:
         except (ValueError, ImportError):
             return False
     return True
+
 
 # 2026-05-17 P2 self-heal: ChromaCorrupted is raised by _get_chroma_client
 # (when probe=True) if the on-disk store fails health check. Callers can
@@ -258,18 +271,23 @@ def _get_chroma_client(*, probe: bool = False):
         _check_chroma_health(client)
     return client
 
+
 def _get_embedding_fn():
     # chromadb's SentenceTransformerEmbeddingFunction raises ValueError
     # (not ImportError) when sentence_transformers isn't installed.
     # We catch both and re-raise as ImportError for consistent handling.
     try:
         from chromadb.utils import embedding_functions
-        return embedding_functions.SentenceTransformerEmbeddingFunction(model_name="all-MiniLM-L6-v2")
+
+        return embedding_functions.SentenceTransformerEmbeddingFunction(
+            model_name="all-MiniLM-L6-v2"
+        )
     except (ImportError, ValueError) as e:
         raise ImportError(
             f"Semantic search requires sentence-transformers. "
             f"Reinstall codevira: pip install --upgrade codevira. Details: {e}"
         )
+
 
 def _compute_hash(file_path: Path) -> str:
     hasher = hashlib.sha256()
@@ -308,11 +326,14 @@ def _warn_zero_chunks(
     if quiet:
         return
     from rich.console import Console
+
     c = Console(stderr=True)
     c.print("[yellow]⚠[/yellow]  No files matched your watched_dirs/file_extensions.")
     c.print(f"  watched_dirs:    {list(watched_dirs)}")
     c.print(f"  file_extensions: {list(file_extensions)}")
-    c.print("  Run [bold]codevira configure[/bold] to scan your project and pick the right folders.")
+    c.print(
+        "  Run [bold]codevira configure[/bold] to scan your project and pick the right folders."
+    )
 
 
 def _any_files_match(
@@ -333,6 +354,7 @@ def _any_files_match(
     """
     try:
         from mcp_server.gitignore import discover_source_files
+
         files = discover_source_files(
             _project_root(),
             config_overrides={
@@ -406,16 +428,21 @@ def _get_changed_files(db: SQLiteGraph) -> list[tuple[str, str]]:
                         changed.append((rel_path, current_hash))
                 except Exception as e:
                     from mcp_server._safe_crash import safe_log_crash
+
                     safe_log_crash(e, context="get_changed_files: hash check")
         except (OSError, RuntimeError) as e:
             # OSError covers InterruptedError (EINTR), PermissionError, etc.
             # RuntimeError covers "directory changed during iteration".
             logger.warning(
                 "Skipping watch_dir %s due to filesystem error: %s",
-                watch_dir, e,
+                watch_dir,
+                e,
             )
             from mcp_server._safe_crash import safe_log_crash
-            safe_log_crash(e, context=f"_get_changed_files: walk of {watch_dir} aborted")
+
+            safe_log_crash(
+                e, context=f"_get_changed_files: walk of {watch_dir} aborted"
+            )
             continue
 
     return changed
@@ -451,9 +478,12 @@ def _get_requested_files(file_paths: list[str]) -> list[tuple[str, str]]:
 
     return requested
 
+
 def _chunk_to_document(chunk) -> tuple[str, str, dict]:
     doc_id = f"{chunk.file_path}::{chunk.chunk_type}::{chunk.name}::{chunk.start_line}"
-    document = f"{chunk.file_path} — {chunk.name}\n{chunk.docstring}\n\n{chunk.source_text}"
+    document = (
+        f"{chunk.file_path} — {chunk.name}\n{chunk.docstring}\n\n{chunk.source_text}"
+    )
     metadata = {
         "file_path": chunk.file_path,
         "name": chunk.name,
@@ -463,6 +493,7 @@ def _chunk_to_document(chunk) -> tuple[str, str, dict]:
         "layer": chunk.layer,
     }
     return doc_id, document, metadata
+
 
 def cmd_full_rebuild(verbose: bool = False):
     """Full rebuild from scratch.
@@ -474,18 +505,31 @@ def cmd_full_rebuild(verbose: bool = False):
     from indexer.chunker import chunk_project
     from indexer.graph_generator import generate_graph_sqlite
     from rich.console import Console
-    from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
+    from rich.progress import (
+        Progress,
+        SpinnerColumn,
+        TextColumn,
+        BarColumn,
+        TaskProgressColumn,
+    )
 
     console = Console()
     _index_dir().mkdir(parents=True, exist_ok=True)
     db = SQLiteGraph(get_data_dir() / "graph" / "graph.db")
 
     if not _check_search_deps():
-        console.print("[yellow]⚠[/yellow]  Semantic search unavailable — reinstall codevira: [bold]pip install --upgrade codevira[/bold]")
+        console.print(
+            "[yellow]⚠[/yellow]  Semantic search unavailable — reinstall codevira: [bold]pip install --upgrade codevira[/bold]"
+        )
         # Still build the graph even without search deps
         from indexer.graph_generator import generate_graph_sqlite
-        result = generate_graph_sqlite(str(_project_root()), str(get_data_dir() / "graph" / "graph.db"))
-        console.print(f"[green]✓[/green] Graph built: {result.get('nodes_added', 0)} nodes, {result.get('edges_added', 0)} edges.")
+
+        result = generate_graph_sqlite(
+            str(_project_root()), str(get_data_dir() / "graph" / "graph.db")
+        )
+        console.print(
+            f"[green]✓[/green] Graph built: {result.get('nodes_added', 0)} nodes, {result.get('edges_added', 0)} edges."
+        )
         db.close()
         return
 
@@ -501,7 +545,10 @@ def cmd_full_rebuild(verbose: bool = False):
         # P9 (graceful degradation): graph indexing still works without
         # Chroma — fall through to the graph-only path that already exists.
         from indexer.graph_generator import generate_graph_sqlite
-        result = generate_graph_sqlite(str(_project_root()), str(get_data_dir() / "graph" / "graph.db"))
+
+        result = generate_graph_sqlite(
+            str(_project_root()), str(get_data_dir() / "graph" / "graph.db")
+        )
         console.print(
             f"[yellow]⚠[/yellow] Skipped semantic index (corrupted). "
             f"Graph built: {result.get('nodes_added', 0)} nodes, "
@@ -515,7 +562,9 @@ def cmd_full_rebuild(verbose: bool = False):
         pass
 
     embed_fn = _get_embedding_fn()
-    collection = client.create_collection(name=COLLECTION_NAME, embedding_function=embed_fn)
+    collection = client.create_collection(
+        name=COLLECTION_NAME, embedding_function=embed_fn
+    )
 
     config = _load_config()
     watched_dirs = config.get("watched_dirs", ["src"])
@@ -525,7 +574,7 @@ def cmd_full_rebuild(verbose: bool = False):
     all_chunks = []
     file_hashes = {}
     seen_chunk_ids = set()
-    
+
     # 2026-05-17 Bug H fix (P10 observability): track per-file decisions
     # when verbose is on. Counters here surface as a summary even when
     # 0 chunks were matched — which is the failure mode the user hits
@@ -539,8 +588,16 @@ def cmd_full_rebuild(verbose: bool = False):
         console.print(f"[dim cyan][verbose][/dim cyan] file_extensions={extensions}")
         console.print(f"[dim cyan][verbose][/dim cyan] skip_dirs={skip_dirs}")
 
-    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), BarColumn(), TaskProgressColumn(), console=console) as progress:
-        task1 = progress.add_task("[cyan]Parsing and chunking source files...", total=None)
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        console=console,
+    ) as progress:
+        task1 = progress.add_task(
+            "[cyan]Parsing and chunking source files...", total=None
+        )
 
         # Chunk the entire project once (not per watched_dir)
         all_project_chunks = chunk_project(str(_project_root()))
@@ -562,7 +619,9 @@ def cmd_full_rebuild(verbose: bool = False):
             wd_str = str(watch_dir)
             for c in all_project_chunks:
                 if c.file_path.startswith(wd_str) or wd_str == ".":
-                    chunk_id = f"{c.file_path}::{c.chunk_type}::{c.name}::{c.start_line}"
+                    chunk_id = (
+                        f"{c.file_path}::{c.chunk_type}::{c.name}::{c.start_line}"
+                    )
                     if chunk_id not in seen_chunk_ids:
                         seen_chunk_ids.add(chunk_id)
                         all_chunks.append(c)
@@ -597,21 +656,26 @@ def cmd_full_rebuild(verbose: bool = False):
                     file_hashes[rel] = _compute_hash(p)
                     v_matched += 1
                     if verbose:
-                        console.print(
-                            f"[dim cyan][verbose][/dim cyan] match {rel}"
-                        )
+                        console.print(f"[dim cyan][verbose][/dim cyan] match {rel}")
             except (OSError, RuntimeError) as e:
                 v_skipped_other += 1
                 logger.warning(
                     "cmd_full_rebuild: skipping watch_dir %s due to filesystem error: %s",
-                    watch_dir, e,
+                    watch_dir,
+                    e,
                 )
                 from mcp_server._safe_crash import safe_log_crash
-                safe_log_crash(e, context=f"cmd_full_rebuild: walk of {watch_dir} aborted")
+
+                safe_log_crash(
+                    e, context=f"cmd_full_rebuild: walk of {watch_dir} aborted"
+                )
                 continue
-                        
+
         progress.update(task1, completed=100)
-        task2 = progress.add_task(f"[cyan]Embedding {len(all_chunks)} chunks into ChromaDB...", total=len(all_chunks))
+        task2 = progress.add_task(
+            f"[cyan]Embedding {len(all_chunks)} chunks into ChromaDB...",
+            total=len(all_chunks),
+        )
 
         ids, docs, metadatas = [], [], []
         for i, chunk in enumerate(all_chunks):
@@ -641,16 +705,21 @@ def cmd_full_rebuild(verbose: bool = False):
     if not all_chunks:
         _warn_zero_chunks(watched_dirs, extensions)
 
-    console.print(f"[green]✓[/green] Full rebuild complete: {len(all_chunks)} chunks indexed.")
-    
+    console.print(
+        f"[green]✓[/green] Full rebuild complete: {len(all_chunks)} chunks indexed."
+    )
+
     for path, f_hash in file_hashes.items():
         db.update_file_hash(path, f_hash)
-        
-    console.print(f"[cyan]Generating auto-graph stubs...[/cyan]")
+
+    console.print("[cyan]Generating auto-graph stubs...[/cyan]")
     generate_graph_sqlite(str(_project_root()), str(db.db_path))
     db.close()
 
-def cmd_incremental(quiet: bool = False, file_paths: list[str] | None = None, verbose: bool = False):
+
+def cmd_incremental(
+    quiet: bool = False, file_paths: list[str] | None = None, verbose: bool = False
+):
     """Incremental update.
 
     Args:
@@ -663,11 +732,16 @@ def cmd_incremental(quiet: bool = False, file_paths: list[str] | None = None, ve
     from indexer.chunker import chunk_file
     from indexer.graph_generator import generate_graph_sqlite
     from rich.console import Console
+
     console = Console(quiet=quiet)
 
     db = SQLiteGraph(get_data_dir() / "graph" / "graph.db")
     explicit_files = file_paths or []
-    changed_items = _get_requested_files(explicit_files) if explicit_files else _get_changed_files(db)
+    changed_items = (
+        _get_requested_files(explicit_files)
+        if explicit_files
+        else _get_changed_files(db)
+    )
 
     if not changed_items:
         if explicit_files:
@@ -694,7 +768,9 @@ def cmd_incremental(quiet: bool = False, file_paths: list[str] | None = None, ve
             config_matches = _any_files_match(wd, exts, skip)
             # Cheap graph-empty probe: count nodes via the graph DB.
             try:
-                graph_node_count = db.count_nodes() if hasattr(db, "count_nodes") else None
+                graph_node_count = (
+                    db.count_nodes() if hasattr(db, "count_nodes") else None
+                )
             except Exception:
                 graph_node_count = None
             if graph_node_count == 0:
@@ -722,7 +798,9 @@ def cmd_incremental(quiet: bool = False, file_paths: list[str] | None = None, ve
         return 0
 
     file_label = "requested file(s)" if explicit_files else "changed file(s)"
-    console.print(f"[bold cyan]Incremental update:[/bold cyan] {len(changed_items)} {file_label}")
+    console.print(
+        f"[bold cyan]Incremental update:[/bold cyan] {len(changed_items)} {file_label}"
+    )
 
     # Check if semantic search deps are available
     has_search = _check_search_deps()
@@ -737,19 +815,26 @@ def cmd_incremental(quiet: bool = False, file_paths: list[str] | None = None, ve
             # the 41-crash-per-file pattern that motivated the rate-limiter.
             client = _get_chroma_client(probe=True)
             embed_fn = _get_embedding_fn()
-            collection = client.get_collection(COLLECTION_NAME, embedding_function=embed_fn)
+            collection = client.get_collection(
+                COLLECTION_NAME, embedding_function=embed_fn
+            )
         except ChromaCorrupted as exc:
             collection = None
             if not quiet:
                 console.print(f"[red]✗[/red] {exc}")
-                console.print("[yellow]⚠[/yellow]  Falling back to graph-only update for this incremental.")
+                console.print(
+                    "[yellow]⚠[/yellow]  Falling back to graph-only update for this incremental."
+                )
             from mcp_server._safe_crash import safe_log_crash
+
             safe_log_crash(exc, context="incremental index: ChromaCorrupted at startup")
         except Exception:
             # No existing collection — skip semantic indexing, still update graph
             collection = None
             if not quiet:
-                console.print("[yellow]⚠[/yellow]  No semantic index found — updating graph only.")
+                console.print(
+                    "[yellow]⚠[/yellow]  No semantic index found — updating graph only."
+                )
 
     indexed_any = False
 
@@ -789,7 +874,10 @@ def cmd_incremental(quiet: bool = False, file_paths: list[str] | None = None, ve
                     collection.delete(where={"file_path": fpath})
                 except Exception as e:
                     from mcp_server._safe_crash import safe_log_crash
-                    safe_log_crash(e, context=f"incremental index: delete old chunks for {fpath}")
+
+                    safe_log_crash(
+                        e, context=f"incremental index: delete old chunks for {fpath}"
+                    )
                     if _looks_like_chroma_corruption(e):
                         consecutive_chroma_failures += 1
                         iter_had_chroma_error = True
@@ -804,7 +892,9 @@ def cmd_incremental(quiet: bool = False, file_paths: list[str] | None = None, ve
                             continue
 
                 try:
-                    chunks = chunk_file(str(_project_root() / fpath), str(_project_root()))
+                    chunks = chunk_file(
+                        str(_project_root() / fpath), str(_project_root())
+                    )
                     if chunks:
                         ids, docs, metas = [], [], []
                         for chunk in chunks:
@@ -816,7 +906,9 @@ def cmd_incremental(quiet: bool = False, file_paths: list[str] | None = None, ve
 
                     db.update_file_hash(fpath, fhash)
                     indexed_any = True
-                    console.print(f"  [green]+[/green] Re-indexed {len(chunks)} chunks for {fpath}")
+                    console.print(
+                        f"  [green]+[/green] Re-indexed {len(chunks)} chunks for {fpath}"
+                    )
                     # Only reset the breaker if THIS iteration had no Chroma
                     # error at all (neither delete nor add). Without this
                     # tighter check, a per-file delete that consistently
@@ -828,6 +920,7 @@ def cmd_incremental(quiet: bool = False, file_paths: list[str] | None = None, ve
                 except Exception as e:
                     console.print(f"[red]Error indexing {fpath}: {e}[/red]")
                     from mcp_server._safe_crash import safe_log_crash
+
                     safe_log_crash(e, context=f"incremental index: indexing {fpath}")
                     if _looks_like_chroma_corruption(e):
                         consecutive_chroma_failures += 1
@@ -851,6 +944,7 @@ def cmd_incremental(quiet: bool = False, file_paths: list[str] | None = None, ve
 
     db.close()
     return 0
+
 
 _watcher_logger = logging.getLogger("codevira.watcher")
 
@@ -884,7 +978,8 @@ def start_background_watcher(quiet: bool = True):
     rejection = is_invalid_project_root(_project_root())
     if rejection:
         _watcher_logger.warning(
-            "Background watcher refusing to start: %s", rejection,
+            "Background watcher refusing to start: %s",
+            rejection,
         )
         # Return None — callers that store the observer for later .stop()
         # must handle None (server.main does: `if watcher is not None`).
@@ -929,7 +1024,9 @@ def start_background_watcher(quiet: bool = True):
                 )
                 return
             try:
-                _watcher_logger.debug("File change detected — running incremental reindex")
+                _watcher_logger.debug(
+                    "File change detected — running incremental reindex"
+                )
                 # Note: cmd_incremental acquires _chroma_write_lock internally,
                 # so we don't need to acquire it here.
                 cmd_incremental(quiet=quiet)
@@ -942,15 +1039,18 @@ def start_background_watcher(quiet: bool = True):
                     _watcher_logger.warning(
                         "Background reindex failed (failure #%d): %s — "
                         "circuit OPEN; backing off %.0fs",
-                        status["consecutive_failures"], e,
+                        status["consecutive_failures"],
+                        e,
                         status["seconds_until_retry"],
                     )
                 else:
                     _watcher_logger.warning(
                         "Background reindex failed (failure #%d): %s",
-                        status["consecutive_failures"], e,
+                        status["consecutive_failures"],
+                        e,
                     )
                 from mcp_server._safe_crash import safe_log_crash
+
                 safe_log_crash(e, context="background watcher: incremental reindex")
 
         def on_modified(self, event):
@@ -980,7 +1080,8 @@ def start_background_watcher(quiet: bool = True):
         observer.start()
         _watcher_logger.info(
             "Background watcher started — monitoring %d dir(s): %s",
-            scheduled, ", ".join(watched_dirs),
+            scheduled,
+            ", ".join(watched_dirs),
         )
     else:
         _watcher_logger.warning("No valid watched_dirs found — watcher not started")
@@ -1000,8 +1101,11 @@ def cmd_watch():
         # v1.8.1: start_background_watcher refused (project_root invalid).
         # The warning has already been logged; print a parallel CLI message
         # and exit cleanly so the user sees something on the terminal.
-        print("Watcher refused to start: project root is invalid. "
-              "cd into a real project and re-run.", file=sys.stderr)
+        print(
+            "Watcher refused to start: project root is invalid. "
+            "cd into a real project and re-run.",
+            file=sys.stderr,
+        )
         sys.exit(1)
     try:
         while True:
@@ -1009,6 +1113,7 @@ def cmd_watch():
     except KeyboardInterrupt:
         observer.stop()
     observer.join()
+
 
 def get_indexing_status() -> dict:
     """Return the current background indexing progress. Thread-safe."""
@@ -1053,6 +1158,7 @@ def start_background_full_index(callback=None) -> "threading.Thread":
                 _bg_status = "error"
             _watcher_logger.error("Background full-index failed: %s", e)
             from mcp_server._safe_crash import safe_log_crash
+
             safe_log_crash(e, context="background full-index")
         finally:
             if callback is not None:
@@ -1092,6 +1198,7 @@ def cmd_status(check_stale: bool = False, show_global: bool = False):
         try:
             from mcp_server.paths import get_project_root, get_global_db_path
             import sqlite3 as _sqlite3
+
             project_root = get_project_root()
             db_path = get_global_db_path()
             if db_path.is_file():
@@ -1127,6 +1234,7 @@ def cmd_status(check_stale: bool = False, show_global: bool = False):
             from rich.console import Console
             from rich.table import Table
             from rich.panel import Panel
+
             _print_global_status(Console(), Table, Panel)
         return
 
@@ -1166,6 +1274,7 @@ def cmd_status(check_stale: bool = False, show_global: bool = False):
         # for package metadata, no real import). If not, show "not installed".
         try:
             import importlib.util
+
             if importlib.util.find_spec("chromadb") is None:
                 search_available = False
         except Exception:
@@ -1183,7 +1292,9 @@ def cmd_status(check_stale: bool = False, show_global: bool = False):
         stale_files = _get_changed_files(db)
         table.add_row("[cyan]Outdated Files:[/cyan]", str(len(stale_files)))
     else:
-        table.add_row("[cyan]Outdated Files:[/cyan]", "[dim]run with --check-stale[/dim]")
+        table.add_row(
+            "[cyan]Outdated Files:[/cyan]", "[dim]run with --check-stale[/dim]"
+        )
 
     panel = Panel(
         table,
@@ -1262,7 +1373,9 @@ def cmd_status(check_stale: bool = False, show_global: bool = False):
             )
             console.print(f"  watched_dirs:    {list(wd)}")
             console.print(f"  file_extensions: {list(exts)}")
-            console.print("  Fix: run [bold]codevira configure[/bold] to pick the right folders")
+            console.print(
+                "  Fix: run [bold]codevira configure[/bold] to pick the right folders"
+            )
         else:
             # Generic fallback if we couldn't load config.
             console.print()
@@ -1272,7 +1385,9 @@ def cmd_status(check_stale: bool = False, show_global: bool = False):
             )
 
     if not search_available:
-        console.print("\n[dim]  Tip: reinstall with [bold]pip install --upgrade codevira[/bold] to enable semantic search[/dim]")
+        console.print(
+            "\n[dim]  Tip: reinstall with [bold]pip install --upgrade codevira[/bold] to enable semantic search[/dim]"
+        )
 
     if check_stale and stale_files:
         console.print("\n[yellow]Files requiring re-indexing:[/yellow]")
@@ -1299,6 +1414,7 @@ def _print_global_status(console, Table, Panel):
     try:
         from mcp_server.global_sync import get_global_stats
         from mcp_server._project_inventory import enumerate_projects, summarize
+
         stats = get_global_stats() or {}
         inventory = summarize(enumerate_projects())
     except Exception as e:
@@ -1307,24 +1423,37 @@ def _print_global_status(console, Table, Panel):
 
     g_table = Table(show_header=False, box=None)
     if "error" in stats:
-        g_table.add_row("[cyan]Cross-Project Memory:[/cyan]", f"[dim]error: {stats['error']}[/dim]")
+        g_table.add_row(
+            "[cyan]Cross-Project Memory:[/cyan]", f"[dim]error: {stats['error']}[/dim]"
+        )
     else:
         # Project counts come from the canonical inventory (disk + global.db
         # joined). "tracked" = registered AND project_root still valid.
         # Ghost / orphan numbers shown alongside so the user has full picture.
         proj_summary = (
             f"{inventory['tracked']} tracked"
-            + (f" · [yellow]{inventory['ghost']} ghost[/yellow]" if inventory['ghost'] else "")
-            + (f" · [red]{inventory['orphan']} orphan[/red]" if inventory['orphan'] else "")
+            + (
+                f" · [yellow]{inventory['ghost']} ghost[/yellow]"
+                if inventory["ghost"]
+                else ""
+            )
+            + (
+                f" · [red]{inventory['orphan']} orphan[/red]"
+                if inventory["orphan"]
+                else ""
+            )
         )
         g_table.add_row("[cyan]Projects Tracked:[/cyan]", proj_summary)
         # Cross-project shared memory (preferences + rules learned across all projects).
-        g_table.add_row("[cyan]Global Preferences:[/cyan]", str(stats.get("total_preferences", 0)))
+        g_table.add_row(
+            "[cyan]Global Preferences:[/cyan]", str(stats.get("total_preferences", 0))
+        )
         g_table.add_row("[cyan]Global Rules:[/cyan]", str(stats.get("total_rules", 0)))
 
     # Launchd service status (macOS only)
     try:
         from mcp_server.launchd import launchd_status
+
         ls = launchd_status()
         if ls.get("platform") == "not_macos":
             g_table.add_row("[cyan]Launchd Service:[/cyan]", "[dim]macOS only[/dim]")
@@ -1333,19 +1462,26 @@ def _print_global_status(console, Table, Panel):
         elif ls.get("running"):
             g_table.add_row("[cyan]Launchd Service:[/cyan]", "[green]running[/green]")
         else:
-            g_table.add_row("[cyan]Launchd Service:[/cyan]", "[yellow]installed (not running)[/yellow]")
+            g_table.add_row(
+                "[cyan]Launchd Service:[/cyan]",
+                "[yellow]installed (not running)[/yellow]",
+            )
     except Exception:
         pass
 
-    console.print(Panel(
-        g_table,
-        title="[bold blue]Global Status[/bold blue]",
-        expand=False,
-        border_style="blue",
-    ))
+    console.print(
+        Panel(
+            g_table,
+            title="[bold blue]Global Status[/bold blue]",
+            expand=False,
+            border_style="blue",
+        )
+    )
+
 
 def cmd_generate_graph():
     from indexer.graph_generator import generate_graph_sqlite
+
     db_path = str(get_data_dir() / "graph" / "graph.db")
     print(f"Generating context graph nodes from {_project_root()} into SQLite")
     result = generate_graph_sqlite(str(_project_root()), db_path)
@@ -1354,22 +1490,45 @@ def cmd_generate_graph():
     print(f"  Nodes added:   {result['nodes_added']}")
     print(f"  Nodes skipped: {result['nodes_skipped']}")
 
+
 def cmd_bootstrap_roadmap():
     from indexer.graph_generator import generate_roadmap_stub
+
     roadmap_file = get_data_dir() / "roadmap.yaml"
     if roadmap_file.exists():
         print(f"Roadmap already exists at {roadmap_file}")
         return
     generate_roadmap_stub(str(_project_root()), str(roadmap_file))
 
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Codevira Codebase Indexer (SQLite + ChromaDB + SHA256)")
-    parser.add_argument("--full", action="store_true", help="Perform a full rebuild of the index.")
-    parser.add_argument("--status", action="store_true", help="Show index status and outdated files.")
-    parser.add_argument("--watch", action="store_true", help="Watch for file changes and update incrementally.")
-    parser.add_argument("--generate-graph", action="store_true", help="Auto-generate SQLite graph stubs.")
-    parser.add_argument("--bootstrap-roadmap", action="store_true", help="Create initial roadmap.yaml stub.")
-    parser.add_argument("-q", "--quiet", action="store_true", help="Suppress non-error output.")
+    parser = argparse.ArgumentParser(
+        description="Codevira Codebase Indexer (SQLite + ChromaDB + SHA256)"
+    )
+    parser.add_argument(
+        "--full", action="store_true", help="Perform a full rebuild of the index."
+    )
+    parser.add_argument(
+        "--status", action="store_true", help="Show index status and outdated files."
+    )
+    parser.add_argument(
+        "--watch",
+        action="store_true",
+        help="Watch for file changes and update incrementally.",
+    )
+    parser.add_argument(
+        "--generate-graph",
+        action="store_true",
+        help="Auto-generate SQLite graph stubs.",
+    )
+    parser.add_argument(
+        "--bootstrap-roadmap",
+        action="store_true",
+        help="Create initial roadmap.yaml stub.",
+    )
+    parser.add_argument(
+        "-q", "--quiet", action="store_true", help="Suppress non-error output."
+    )
     args = parser.parse_args()
 
     # v1.8.1 round-4 hardening: refuse $HOME / system root for the
@@ -1379,6 +1538,7 @@ if __name__ == "__main__":
     # graph.db without creating any state.
     if not args.status:
         from mcp_server.paths import get_project_root, is_invalid_project_root
+
         _rejection = is_invalid_project_root(get_project_root())
         if _rejection:
             print(f"Error: {_rejection}", file=sys.stderr)

@@ -6,6 +6,7 @@ Covers:
   - _detect_project_root_markers(): check for project root markers
   - main(): argument parsing and subcommand dispatch
 """
+
 from __future__ import annotations
 
 import sys
@@ -15,6 +16,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from mcp_server.cli import _set_project_dir_early, _detect_project_root_markers
+
 # Import these submodules at test-collection time so unittest.mock.patch's
 # string-based lookup ("mcp_server.http_server.run_http_server", etc.) works
 # regardless of which other test files were loaded first. Without these
@@ -27,6 +29,7 @@ import mcp_server.launchd  # noqa: F401
 # ---------------------------------------------------------------------------
 # _set_project_dir_early
 # ---------------------------------------------------------------------------
+
 
 class TestSetProjectDirEarly:
     """Parse --project-dir from a raw args list."""
@@ -67,6 +70,7 @@ class TestSetProjectDirEarly:
 # ---------------------------------------------------------------------------
 # _detect_project_root_markers
 # ---------------------------------------------------------------------------
+
 
 class TestDetectProjectRootMarkers:
     """Check whether a directory contains project root markers."""
@@ -195,7 +199,8 @@ class TestMainDispatch:
         try:
             self._run_main(["register"], mocks)
             mocks["mcp_server.cli.cmd_register"].assert_called_once_with(
-                claude_desktop=False, http_url=None,
+                claude_desktop=False,
+                http_url=None,
             )
         finally:
             for p in patchers.values():
@@ -211,7 +216,8 @@ class TestMainDispatch:
                 ["register", "--http-url", "https://localhost:7443/mcp"], mocks
             )
             mocks["mcp_server.cli.cmd_register"].assert_called_once_with(
-                claude_desktop=False, http_url="https://localhost:7443/mcp",
+                claude_desktop=False,
+                http_url="https://localhost:7443/mcp",
             )
         finally:
             for p in patchers.values():
@@ -226,7 +232,10 @@ class TestMainDispatch:
             self._run_main(["serve", "--port", "8080", "--https"], mocks)
             call_kwargs = mocks["mcp_server.cli.cmd_serve"].call_args
             assert call_kwargs[1]["port"] == 8080 or call_kwargs.kwargs["port"] == 8080
-            assert call_kwargs[1].get("use_https") is True or call_kwargs.kwargs.get("use_https") is True
+            assert (
+                call_kwargs[1].get("use_https") is True
+                or call_kwargs.kwargs.get("use_https") is True
+            )
         finally:
             for p in patchers.values():
                 p.stop()
@@ -277,6 +286,7 @@ class TestMainDispatch:
 # cmd_init
 # ---------------------------------------------------------------------------
 
+
 class TestCmdInit:
     """Tests for the 10-step cmd_init() initialization workflow."""
 
@@ -301,22 +311,30 @@ class TestCmdInit:
         mock_gdb = MagicMock()
         mock_gdb.get_project_count.return_value = 1
 
-        with patch("mcp_server.paths.get_project_root", return_value=tmp_path), \
-             patch("mcp_server.paths.get_data_dir", return_value=data_dir), \
-             patch("mcp_server.paths.get_package_data_dir", return_value=tmp_path), \
-             patch("mcp_server.cli._detect_project_root_markers", return_value=True), \
-             patch("mcp_server.migrate.detect_migration_needed", return_value=False), \
-             patch("mcp_server.detect.auto_detect_project", return_value=detected), \
-             patch("indexer.index_codebase.cmd_full_rebuild") as mock_rebuild, \
-             patch("indexer.index_codebase.cmd_generate_graph") as mock_graph, \
-             patch("indexer.index_codebase.cmd_bootstrap_roadmap") as mock_roadmap, \
-             patch("mcp_server.ide_inject.inject_ide_config", return_value={"Claude Code": "/some/path"}) as mock_inject, \
-             patch("indexer.global_db.GlobalDB", return_value=mock_gdb), \
-             patch("mcp_server.auto_init._write_metadata") as mock_write_meta, \
-             patch("mcp_server.paths._get_git_remote_url", return_value=None), \
-             patch("mcp_server.paths.get_global_db_path", return_value=global_db_path), \
-             patch("mcp_server.global_sync.import_global_to_project"):
+        with patch("mcp_server.paths.get_project_root", return_value=tmp_path), patch(
+            "mcp_server.paths.get_data_dir", return_value=data_dir
+        ), patch("mcp_server.paths.get_package_data_dir", return_value=tmp_path), patch(
+            "mcp_server.cli._detect_project_root_markers", return_value=True
+        ), patch(
+            "mcp_server.migrate.detect_migration_needed", return_value=False
+        ), patch("mcp_server.detect.auto_detect_project", return_value=detected), patch(
+            "indexer.index_codebase.cmd_full_rebuild"
+        ) as mock_rebuild, patch(
+            "indexer.index_codebase.cmd_generate_graph"
+        ) as mock_graph, patch(
+            "indexer.index_codebase.cmd_bootstrap_roadmap"
+        ) as mock_roadmap, patch(
+            "mcp_server.ide_inject.inject_ide_config",
+            return_value={"Claude Code": "/some/path"},
+        ) as mock_inject, patch(
+            "indexer.global_db.GlobalDB", return_value=mock_gdb
+        ), patch("mcp_server.auto_init._write_metadata") as mock_write_meta, patch(
+            "mcp_server.paths._get_git_remote_url", return_value=None
+        ), patch(
+            "mcp_server.paths.get_global_db_path", return_value=global_db_path
+        ), patch("mcp_server.global_sync.import_global_to_project"):
             from mcp_server.cli import cmd_init
+
             cmd_init._overrides = {}
             cmd_init._no_inject = False
             cmd_init()
@@ -337,23 +355,28 @@ class TestCmdInit:
                 return False
             return True
 
-        with patch("mcp_server.paths.get_project_root", return_value=tmp_path), \
-             patch("mcp_server.paths.get_data_dir", return_value=data_dir), \
-             patch("mcp_server.paths.get_package_data_dir", return_value=tmp_path), \
-             patch("mcp_server.cli._detect_project_root_markers", side_effect=detect_markers_side_effect), \
-             patch("mcp_server.migrate.detect_migration_needed", return_value=False), \
-             patch("mcp_server.detect.auto_detect_project", return_value=detected), \
-             patch("indexer.index_codebase.cmd_full_rebuild"), \
-             patch("indexer.index_codebase.cmd_generate_graph"), \
-             patch("indexer.index_codebase.cmd_bootstrap_roadmap"), \
-             patch("mcp_server.ide_inject.inject_ide_config", return_value={}), \
-             patch("indexer.global_db.GlobalDB", return_value=MagicMock()), \
-             patch("mcp_server.auto_init._write_metadata"), \
-             patch("mcp_server.paths._get_git_remote_url", return_value=None), \
-             patch("mcp_server.paths.get_global_db_path", return_value=global_db_path), \
-             patch("mcp_server.global_sync.import_global_to_project"), \
-             patch("builtins.input", return_value="n"):
+        with patch("mcp_server.paths.get_project_root", return_value=tmp_path), patch(
+            "mcp_server.paths.get_data_dir", return_value=data_dir
+        ), patch("mcp_server.paths.get_package_data_dir", return_value=tmp_path), patch(
+            "mcp_server.cli._detect_project_root_markers",
+            side_effect=detect_markers_side_effect,
+        ), patch(
+            "mcp_server.migrate.detect_migration_needed", return_value=False
+        ), patch("mcp_server.detect.auto_detect_project", return_value=detected), patch(
+            "indexer.index_codebase.cmd_full_rebuild"
+        ), patch("indexer.index_codebase.cmd_generate_graph"), patch(
+            "indexer.index_codebase.cmd_bootstrap_roadmap"
+        ), patch("mcp_server.ide_inject.inject_ide_config", return_value={}), patch(
+            "indexer.global_db.GlobalDB", return_value=MagicMock()
+        ), patch("mcp_server.auto_init._write_metadata"), patch(
+            "mcp_server.paths._get_git_remote_url", return_value=None
+        ), patch(
+            "mcp_server.paths.get_global_db_path", return_value=global_db_path
+        ), patch("mcp_server.global_sync.import_global_to_project"), patch(
+            "builtins.input", return_value="n"
+        ):
             from mcp_server.cli import cmd_init
+
             cmd_init._overrides = {}
             cmd_init._no_inject = False
             with pytest.raises(SystemExit) as exc_info:
@@ -375,23 +398,28 @@ class TestCmdInit:
                 return False
             return True
 
-        with patch("mcp_server.paths.get_project_root", return_value=tmp_path), \
-             patch("mcp_server.paths.get_data_dir", return_value=data_dir), \
-             patch("mcp_server.paths.get_package_data_dir", return_value=tmp_path), \
-             patch("mcp_server.cli._detect_project_root_markers", side_effect=detect_markers_side_effect), \
-             patch("mcp_server.migrate.detect_migration_needed", return_value=False), \
-             patch("mcp_server.detect.auto_detect_project", return_value=detected), \
-             patch("indexer.index_codebase.cmd_full_rebuild"), \
-             patch("indexer.index_codebase.cmd_generate_graph"), \
-             patch("indexer.index_codebase.cmd_bootstrap_roadmap"), \
-             patch("mcp_server.ide_inject.inject_ide_config", return_value={}), \
-             patch("indexer.global_db.GlobalDB", return_value=mock_gdb), \
-             patch("mcp_server.auto_init._write_metadata"), \
-             patch("mcp_server.paths._get_git_remote_url", return_value=None), \
-             patch("mcp_server.paths.get_global_db_path", return_value=global_db_path), \
-             patch("mcp_server.global_sync.import_global_to_project"), \
-             patch("builtins.input", return_value="y"):
+        with patch("mcp_server.paths.get_project_root", return_value=tmp_path), patch(
+            "mcp_server.paths.get_data_dir", return_value=data_dir
+        ), patch("mcp_server.paths.get_package_data_dir", return_value=tmp_path), patch(
+            "mcp_server.cli._detect_project_root_markers",
+            side_effect=detect_markers_side_effect,
+        ), patch(
+            "mcp_server.migrate.detect_migration_needed", return_value=False
+        ), patch("mcp_server.detect.auto_detect_project", return_value=detected), patch(
+            "indexer.index_codebase.cmd_full_rebuild"
+        ), patch("indexer.index_codebase.cmd_generate_graph"), patch(
+            "indexer.index_codebase.cmd_bootstrap_roadmap"
+        ), patch("mcp_server.ide_inject.inject_ide_config", return_value={}), patch(
+            "indexer.global_db.GlobalDB", return_value=mock_gdb
+        ), patch("mcp_server.auto_init._write_metadata"), patch(
+            "mcp_server.paths._get_git_remote_url", return_value=None
+        ), patch(
+            "mcp_server.paths.get_global_db_path", return_value=global_db_path
+        ), patch("mcp_server.global_sync.import_global_to_project"), patch(
+            "builtins.input", return_value="y"
+        ):
             from mcp_server.cli import cmd_init
+
             cmd_init._overrides = {}
             cmd_init._no_inject = False
             cmd_init()  # must NOT raise
@@ -406,25 +434,33 @@ class TestCmdInit:
         mock_gdb = MagicMock()
         mock_gdb.get_project_count.return_value = 1
 
-        migration_result = {"migrated": True, "files_copied": 5, "new_path": str(data_dir)}
+        migration_result = {
+            "migrated": True,
+            "files_copied": 5,
+            "new_path": str(data_dir),
+        }
 
-        with patch("mcp_server.paths.get_project_root", return_value=tmp_path), \
-             patch("mcp_server.paths.get_data_dir", return_value=data_dir), \
-             patch("mcp_server.paths.get_package_data_dir", return_value=tmp_path), \
-             patch("mcp_server.cli._detect_project_root_markers", return_value=True), \
-             patch("mcp_server.migrate.detect_migration_needed", return_value=True), \
-             patch("mcp_server.migrate.migrate_to_centralized", return_value=migration_result) as mock_migrate, \
-             patch("mcp_server.detect.auto_detect_project", return_value=detected), \
-             patch("indexer.index_codebase.cmd_full_rebuild"), \
-             patch("indexer.index_codebase.cmd_generate_graph"), \
-             patch("indexer.index_codebase.cmd_bootstrap_roadmap"), \
-             patch("mcp_server.ide_inject.inject_ide_config", return_value={}), \
-             patch("indexer.global_db.GlobalDB", return_value=mock_gdb), \
-             patch("mcp_server.auto_init._write_metadata"), \
-             patch("mcp_server.paths._get_git_remote_url", return_value=None), \
-             patch("mcp_server.paths.get_global_db_path", return_value=global_db_path), \
-             patch("mcp_server.global_sync.import_global_to_project"):
+        with patch("mcp_server.paths.get_project_root", return_value=tmp_path), patch(
+            "mcp_server.paths.get_data_dir", return_value=data_dir
+        ), patch("mcp_server.paths.get_package_data_dir", return_value=tmp_path), patch(
+            "mcp_server.cli._detect_project_root_markers", return_value=True
+        ), patch(
+            "mcp_server.migrate.detect_migration_needed", return_value=True
+        ), patch(
+            "mcp_server.migrate.migrate_to_centralized", return_value=migration_result
+        ) as mock_migrate, patch(
+            "mcp_server.detect.auto_detect_project", return_value=detected
+        ), patch("indexer.index_codebase.cmd_full_rebuild"), patch(
+            "indexer.index_codebase.cmd_generate_graph"
+        ), patch("indexer.index_codebase.cmd_bootstrap_roadmap"), patch(
+            "mcp_server.ide_inject.inject_ide_config", return_value={}
+        ), patch("indexer.global_db.GlobalDB", return_value=mock_gdb), patch(
+            "mcp_server.auto_init._write_metadata"
+        ), patch("mcp_server.paths._get_git_remote_url", return_value=None), patch(
+            "mcp_server.paths.get_global_db_path", return_value=global_db_path
+        ), patch("mcp_server.global_sync.import_global_to_project"):
             from mcp_server.cli import cmd_init
+
             cmd_init._overrides = {}
             cmd_init._no_inject = False
             cmd_init()
@@ -440,23 +476,28 @@ class TestCmdInit:
         mock_gdb = MagicMock()
         mock_gdb.get_project_count.return_value = 1
 
-        with patch("mcp_server.paths.get_project_root", return_value=tmp_path), \
-             patch("mcp_server.paths.get_data_dir", return_value=data_dir), \
-             patch("mcp_server.paths.get_package_data_dir", return_value=tmp_path), \
-             patch("mcp_server.cli._detect_project_root_markers", return_value=True), \
-             patch("mcp_server.migrate.detect_migration_needed", return_value=True), \
-             patch("mcp_server.migrate.migrate_to_centralized", side_effect=RuntimeError("disk full")), \
-             patch("mcp_server.detect.auto_detect_project", return_value=detected), \
-             patch("indexer.index_codebase.cmd_full_rebuild"), \
-             patch("indexer.index_codebase.cmd_generate_graph"), \
-             patch("indexer.index_codebase.cmd_bootstrap_roadmap"), \
-             patch("mcp_server.ide_inject.inject_ide_config", return_value={}), \
-             patch("indexer.global_db.GlobalDB", return_value=mock_gdb), \
-             patch("mcp_server.auto_init._write_metadata"), \
-             patch("mcp_server.paths._get_git_remote_url", return_value=None), \
-             patch("mcp_server.paths.get_global_db_path", return_value=global_db_path), \
-             patch("mcp_server.global_sync.import_global_to_project"):
+        with patch("mcp_server.paths.get_project_root", return_value=tmp_path), patch(
+            "mcp_server.paths.get_data_dir", return_value=data_dir
+        ), patch("mcp_server.paths.get_package_data_dir", return_value=tmp_path), patch(
+            "mcp_server.cli._detect_project_root_markers", return_value=True
+        ), patch(
+            "mcp_server.migrate.detect_migration_needed", return_value=True
+        ), patch(
+            "mcp_server.migrate.migrate_to_centralized",
+            side_effect=RuntimeError("disk full"),
+        ), patch("mcp_server.detect.auto_detect_project", return_value=detected), patch(
+            "indexer.index_codebase.cmd_full_rebuild"
+        ), patch("indexer.index_codebase.cmd_generate_graph"), patch(
+            "indexer.index_codebase.cmd_bootstrap_roadmap"
+        ), patch("mcp_server.ide_inject.inject_ide_config", return_value={}), patch(
+            "indexer.global_db.GlobalDB", return_value=mock_gdb
+        ), patch("mcp_server.auto_init._write_metadata"), patch(
+            "mcp_server.paths._get_git_remote_url", return_value=None
+        ), patch(
+            "mcp_server.paths.get_global_db_path", return_value=global_db_path
+        ), patch("mcp_server.global_sync.import_global_to_project"):
             from mcp_server.cli import cmd_init
+
             cmd_init._overrides = {}
             cmd_init._no_inject = False
             cmd_init()  # must NOT raise
@@ -471,22 +512,25 @@ class TestCmdInit:
         mock_gdb = MagicMock()
         mock_gdb.get_project_count.return_value = 1
 
-        with patch("mcp_server.paths.get_project_root", return_value=tmp_path), \
-             patch("mcp_server.paths.get_data_dir", return_value=data_dir), \
-             patch("mcp_server.paths.get_package_data_dir", return_value=tmp_path), \
-             patch("mcp_server.cli._detect_project_root_markers", return_value=True), \
-             patch("mcp_server.migrate.detect_migration_needed", return_value=False), \
-             patch("mcp_server.detect.auto_detect_project", return_value=detected), \
-             patch("indexer.index_codebase.cmd_full_rebuild"), \
-             patch("indexer.index_codebase.cmd_generate_graph"), \
-             patch("indexer.index_codebase.cmd_bootstrap_roadmap"), \
-             patch("mcp_server.ide_inject.inject_ide_config") as mock_inject, \
-             patch("indexer.global_db.GlobalDB", return_value=mock_gdb), \
-             patch("mcp_server.auto_init._write_metadata"), \
-             patch("mcp_server.paths._get_git_remote_url", return_value=None), \
-             patch("mcp_server.paths.get_global_db_path", return_value=global_db_path), \
-             patch("mcp_server.global_sync.import_global_to_project"):
+        with patch("mcp_server.paths.get_project_root", return_value=tmp_path), patch(
+            "mcp_server.paths.get_data_dir", return_value=data_dir
+        ), patch("mcp_server.paths.get_package_data_dir", return_value=tmp_path), patch(
+            "mcp_server.cli._detect_project_root_markers", return_value=True
+        ), patch(
+            "mcp_server.migrate.detect_migration_needed", return_value=False
+        ), patch("mcp_server.detect.auto_detect_project", return_value=detected), patch(
+            "indexer.index_codebase.cmd_full_rebuild"
+        ), patch("indexer.index_codebase.cmd_generate_graph"), patch(
+            "indexer.index_codebase.cmd_bootstrap_roadmap"
+        ), patch("mcp_server.ide_inject.inject_ide_config") as mock_inject, patch(
+            "indexer.global_db.GlobalDB", return_value=mock_gdb
+        ), patch("mcp_server.auto_init._write_metadata"), patch(
+            "mcp_server.paths._get_git_remote_url", return_value=None
+        ), patch(
+            "mcp_server.paths.get_global_db_path", return_value=global_db_path
+        ), patch("mcp_server.global_sync.import_global_to_project"):
             from mcp_server.cli import cmd_init
+
             cmd_init._overrides = {}
             cmd_init._no_inject = True
             cmd_init()
@@ -498,22 +542,25 @@ class TestCmdInit:
         data_dir, detected = self._base_patches(tmp_path)
         global_db_path = tmp_path / "global.db"
 
-        with patch("mcp_server.paths.get_project_root", return_value=tmp_path), \
-             patch("mcp_server.paths.get_data_dir", return_value=data_dir), \
-             patch("mcp_server.paths.get_package_data_dir", return_value=tmp_path), \
-             patch("mcp_server.cli._detect_project_root_markers", return_value=True), \
-             patch("mcp_server.migrate.detect_migration_needed", return_value=False), \
-             patch("mcp_server.detect.auto_detect_project", return_value=detected), \
-             patch("indexer.index_codebase.cmd_full_rebuild"), \
-             patch("indexer.index_codebase.cmd_generate_graph"), \
-             patch("indexer.index_codebase.cmd_bootstrap_roadmap"), \
-             patch("mcp_server.ide_inject.inject_ide_config", return_value={}), \
-             patch("indexer.global_db.GlobalDB", side_effect=Exception("db locked")), \
-             patch("mcp_server.auto_init._write_metadata"), \
-             patch("mcp_server.paths._get_git_remote_url", return_value=None), \
-             patch("mcp_server.paths.get_global_db_path", return_value=global_db_path), \
-             patch("mcp_server.global_sync.import_global_to_project"):
+        with patch("mcp_server.paths.get_project_root", return_value=tmp_path), patch(
+            "mcp_server.paths.get_data_dir", return_value=data_dir
+        ), patch("mcp_server.paths.get_package_data_dir", return_value=tmp_path), patch(
+            "mcp_server.cli._detect_project_root_markers", return_value=True
+        ), patch(
+            "mcp_server.migrate.detect_migration_needed", return_value=False
+        ), patch("mcp_server.detect.auto_detect_project", return_value=detected), patch(
+            "indexer.index_codebase.cmd_full_rebuild"
+        ), patch("indexer.index_codebase.cmd_generate_graph"), patch(
+            "indexer.index_codebase.cmd_bootstrap_roadmap"
+        ), patch("mcp_server.ide_inject.inject_ide_config", return_value={}), patch(
+            "indexer.global_db.GlobalDB", side_effect=Exception("db locked")
+        ), patch("mcp_server.auto_init._write_metadata"), patch(
+            "mcp_server.paths._get_git_remote_url", return_value=None
+        ), patch(
+            "mcp_server.paths.get_global_db_path", return_value=global_db_path
+        ), patch("mcp_server.global_sync.import_global_to_project"):
             from mcp_server.cli import cmd_init
+
             cmd_init._overrides = {}
             cmd_init._no_inject = False
             cmd_init()  # must NOT raise
@@ -538,22 +585,25 @@ class TestCmdInit:
         mock_gdb = MagicMock()
         mock_gdb.get_project_count.return_value = 1
 
-        with patch("mcp_server.paths.get_project_root", return_value=tmp_path), \
-             patch("mcp_server.paths.get_data_dir", return_value=data_dir), \
-             patch("mcp_server.paths.get_package_data_dir", return_value=tmp_path), \
-             patch("mcp_server.cli._detect_project_root_markers", return_value=True), \
-             patch("mcp_server.migrate.detect_migration_needed", return_value=False), \
-             patch("mcp_server.detect.auto_detect_project", return_value=detected), \
-             patch("indexer.index_codebase.cmd_full_rebuild"), \
-             patch("indexer.index_codebase.cmd_generate_graph"), \
-             patch("indexer.index_codebase.cmd_bootstrap_roadmap"), \
-             patch("mcp_server.ide_inject.inject_ide_config", return_value={}), \
-             patch("indexer.global_db.GlobalDB", return_value=mock_gdb), \
-             patch("mcp_server.auto_init._write_metadata"), \
-             patch("mcp_server.paths._get_git_remote_url", return_value=None), \
-             patch("mcp_server.paths.get_global_db_path", return_value=global_db_path), \
-             patch("mcp_server.global_sync.import_global_to_project"):
+        with patch("mcp_server.paths.get_project_root", return_value=tmp_path), patch(
+            "mcp_server.paths.get_data_dir", return_value=data_dir
+        ), patch("mcp_server.paths.get_package_data_dir", return_value=tmp_path), patch(
+            "mcp_server.cli._detect_project_root_markers", return_value=True
+        ), patch(
+            "mcp_server.migrate.detect_migration_needed", return_value=False
+        ), patch("mcp_server.detect.auto_detect_project", return_value=detected), patch(
+            "indexer.index_codebase.cmd_full_rebuild"
+        ), patch("indexer.index_codebase.cmd_generate_graph"), patch(
+            "indexer.index_codebase.cmd_bootstrap_roadmap"
+        ), patch("mcp_server.ide_inject.inject_ide_config", return_value={}), patch(
+            "indexer.global_db.GlobalDB", return_value=mock_gdb
+        ), patch("mcp_server.auto_init._write_metadata"), patch(
+            "mcp_server.paths._get_git_remote_url", return_value=None
+        ), patch(
+            "mcp_server.paths.get_global_db_path", return_value=global_db_path
+        ), patch("mcp_server.global_sync.import_global_to_project"):
             from mcp_server.cli import cmd_init
+
             cmd_init._overrides = {}
             cmd_init._no_inject = False
             cmd_init()
@@ -569,22 +619,26 @@ class TestCmdInit:
         mock_gdb = MagicMock()
         mock_gdb.get_project_count.return_value = 1
 
-        with patch("mcp_server.paths.get_project_root", return_value=tmp_path), \
-             patch("mcp_server.paths.get_data_dir", return_value=data_dir), \
-             patch("mcp_server.paths.get_package_data_dir", return_value=tmp_path), \
-             patch("mcp_server.cli._detect_project_root_markers", return_value=True), \
-             patch("mcp_server.migrate.detect_migration_needed", return_value=False), \
-             patch("mcp_server.detect.auto_detect_project", return_value=detected), \
-             patch("indexer.index_codebase.cmd_full_rebuild", side_effect=RuntimeError("chroma unavailable")), \
-             patch("indexer.index_codebase.cmd_generate_graph"), \
-             patch("indexer.index_codebase.cmd_bootstrap_roadmap"), \
-             patch("mcp_server.ide_inject.inject_ide_config", return_value={}), \
-             patch("indexer.global_db.GlobalDB", return_value=mock_gdb), \
-             patch("mcp_server.auto_init._write_metadata"), \
-             patch("mcp_server.paths._get_git_remote_url", return_value=None), \
-             patch("mcp_server.paths.get_global_db_path", return_value=global_db_path), \
-             patch("mcp_server.global_sync.import_global_to_project"):
+        with patch("mcp_server.paths.get_project_root", return_value=tmp_path), patch(
+            "mcp_server.paths.get_data_dir", return_value=data_dir
+        ), patch("mcp_server.paths.get_package_data_dir", return_value=tmp_path), patch(
+            "mcp_server.cli._detect_project_root_markers", return_value=True
+        ), patch(
+            "mcp_server.migrate.detect_migration_needed", return_value=False
+        ), patch("mcp_server.detect.auto_detect_project", return_value=detected), patch(
+            "indexer.index_codebase.cmd_full_rebuild",
+            side_effect=RuntimeError("chroma unavailable"),
+        ), patch("indexer.index_codebase.cmd_generate_graph"), patch(
+            "indexer.index_codebase.cmd_bootstrap_roadmap"
+        ), patch("mcp_server.ide_inject.inject_ide_config", return_value={}), patch(
+            "indexer.global_db.GlobalDB", return_value=mock_gdb
+        ), patch("mcp_server.auto_init._write_metadata"), patch(
+            "mcp_server.paths._get_git_remote_url", return_value=None
+        ), patch(
+            "mcp_server.paths.get_global_db_path", return_value=global_db_path
+        ), patch("mcp_server.global_sync.import_global_to_project"):
             from mcp_server.cli import cmd_init
+
             cmd_init._overrides = {}
             cmd_init._no_inject = False
             cmd_init()  # must NOT raise
@@ -599,22 +653,26 @@ class TestCmdInit:
         mock_gdb = MagicMock()
         mock_gdb.get_project_count.return_value = 1
 
-        with patch("mcp_server.paths.get_project_root", return_value=tmp_path), \
-             patch("mcp_server.paths.get_data_dir", return_value=data_dir), \
-             patch("mcp_server.paths.get_package_data_dir", return_value=tmp_path), \
-             patch("mcp_server.cli._detect_project_root_markers", return_value=True), \
-             patch("mcp_server.migrate.detect_migration_needed", return_value=False), \
-             patch("mcp_server.detect.auto_detect_project", return_value=detected), \
-             patch("indexer.index_codebase.cmd_full_rebuild"), \
-             patch("indexer.index_codebase.cmd_generate_graph", side_effect=RuntimeError("graph db error")), \
-             patch("indexer.index_codebase.cmd_bootstrap_roadmap"), \
-             patch("mcp_server.ide_inject.inject_ide_config", return_value={}), \
-             patch("indexer.global_db.GlobalDB", return_value=mock_gdb), \
-             patch("mcp_server.auto_init._write_metadata"), \
-             patch("mcp_server.paths._get_git_remote_url", return_value=None), \
-             patch("mcp_server.paths.get_global_db_path", return_value=global_db_path), \
-             patch("mcp_server.global_sync.import_global_to_project"):
+        with patch("mcp_server.paths.get_project_root", return_value=tmp_path), patch(
+            "mcp_server.paths.get_data_dir", return_value=data_dir
+        ), patch("mcp_server.paths.get_package_data_dir", return_value=tmp_path), patch(
+            "mcp_server.cli._detect_project_root_markers", return_value=True
+        ), patch(
+            "mcp_server.migrate.detect_migration_needed", return_value=False
+        ), patch("mcp_server.detect.auto_detect_project", return_value=detected), patch(
+            "indexer.index_codebase.cmd_full_rebuild"
+        ), patch(
+            "indexer.index_codebase.cmd_generate_graph",
+            side_effect=RuntimeError("graph db error"),
+        ), patch("indexer.index_codebase.cmd_bootstrap_roadmap"), patch(
+            "mcp_server.ide_inject.inject_ide_config", return_value={}
+        ), patch("indexer.global_db.GlobalDB", return_value=mock_gdb), patch(
+            "mcp_server.auto_init._write_metadata"
+        ), patch("mcp_server.paths._get_git_remote_url", return_value=None), patch(
+            "mcp_server.paths.get_global_db_path", return_value=global_db_path
+        ), patch("mcp_server.global_sync.import_global_to_project"):
             from mcp_server.cli import cmd_init
+
             cmd_init._overrides = {}
             cmd_init._no_inject = False
             cmd_init()  # must NOT raise
@@ -627,23 +685,28 @@ class TestCmdInit:
 # cmd_index
 # ---------------------------------------------------------------------------
 
+
 class TestCmdIndex:
     """Tests for cmd_index()."""
 
     def test_cmd_index_full(self):
         """cmd_index(full=True) delegates to cmd_full_rebuild."""
-        with patch("indexer.index_codebase.cmd_full_rebuild") as mock_rebuild, \
-             patch("indexer.index_codebase.cmd_incremental") as mock_incremental:
+        with patch("indexer.index_codebase.cmd_full_rebuild") as mock_rebuild, patch(
+            "indexer.index_codebase.cmd_incremental"
+        ) as mock_incremental:
             from mcp_server.cli import cmd_index
+
             cmd_index(full=True)
         mock_rebuild.assert_called_once()
         mock_incremental.assert_not_called()
 
     def test_cmd_index_incremental(self):
         """cmd_index(full=False) delegates to cmd_incremental."""
-        with patch("indexer.index_codebase.cmd_full_rebuild") as mock_rebuild, \
-             patch("indexer.index_codebase.cmd_incremental") as mock_incremental:
+        with patch("indexer.index_codebase.cmd_full_rebuild") as mock_rebuild, patch(
+            "indexer.index_codebase.cmd_incremental"
+        ) as mock_incremental:
             from mcp_server.cli import cmd_index
+
             cmd_index(full=False)
         # 2026-05-17 Bug H: cmd_incremental now also receives verbose.
         mock_incremental.assert_called_once_with(quiet=False, verbose=False)
@@ -651,9 +714,11 @@ class TestCmdIndex:
 
     def test_cmd_index_quiet(self):
         """cmd_index(full=False, quiet=True) passes quiet=True to cmd_incremental."""
-        with patch("indexer.index_codebase.cmd_full_rebuild"), \
-             patch("indexer.index_codebase.cmd_incremental") as mock_incremental:
+        with patch("indexer.index_codebase.cmd_full_rebuild"), patch(
+            "indexer.index_codebase.cmd_incremental"
+        ) as mock_incremental:
             from mcp_server.cli import cmd_index
+
             cmd_index(full=False, quiet=True)
         # 2026-05-17 Bug H: cmd_incremental now also receives verbose.
         mock_incremental.assert_called_once_with(quiet=True, verbose=False)
@@ -669,9 +734,10 @@ class TestCmdIndex:
         monkeypatch.setattr("mcp_server.paths.get_project_root", lambda: fake_home)
 
         from mcp_server.cli import cmd_index
-        with patch("indexer.index_codebase.cmd_full_rebuild") as mock_rebuild, \
-             patch("indexer.index_codebase.cmd_incremental") as mock_incremental, \
-             pytest.raises(SystemExit) as exc_info:
+
+        with patch("indexer.index_codebase.cmd_full_rebuild") as mock_rebuild, patch(
+            "indexer.index_codebase.cmd_incremental"
+        ) as mock_incremental, pytest.raises(SystemExit) as exc_info:
             cmd_index(full=True)
         assert exc_info.value.code == 1
         # Indexer was never invoked.
@@ -682,12 +748,14 @@ class TestCmdIndex:
 
     def test_cmd_index_refuses_system_dir(self, tmp_path, monkeypatch, capsys):
         from pathlib import Path
+
         monkeypatch.setattr("mcp_server.paths.get_project_root", lambda: Path("/"))
 
         from mcp_server.cli import cmd_index
-        with patch("indexer.index_codebase.cmd_full_rebuild") as mock_rebuild, \
-             patch("indexer.index_codebase.cmd_incremental"), \
-             pytest.raises(SystemExit) as exc_info:
+
+        with patch("indexer.index_codebase.cmd_full_rebuild") as mock_rebuild, patch(
+            "indexer.index_codebase.cmd_incremental"
+        ), pytest.raises(SystemExit) as exc_info:
             cmd_index(full=True)
         assert exc_info.value.code == 1
         mock_rebuild.assert_not_called()
@@ -697,6 +765,7 @@ class TestCmdIndex:
 # cmd_status
 # ---------------------------------------------------------------------------
 
+
 class TestCmdStatus:
     """Tests for cmd_status()."""
 
@@ -704,6 +773,7 @@ class TestCmdStatus:
         """cmd_status() calls the _cmd_status function from index_codebase."""
         with patch("indexer.index_codebase.cmd_status") as mock_status:
             from mcp_server.cli import cmd_status
+
             cmd_status()
         mock_status.assert_called_once()
 
@@ -712,14 +782,18 @@ class TestCmdStatus:
 # cmd_report
 # ---------------------------------------------------------------------------
 
+
 class TestCmdReport:
     """Tests for cmd_report()."""
 
     def test_cmd_report_shows_crashes(self, capsys):
         """cmd_report() without clear flag prints crash log content."""
-        with patch("mcp_server.crash_logger.read_recent_crashes", return_value="Error: boom\n  at foo.py:10") as mock_read, \
-             patch("mcp_server.crash_logger.get_crash_log_path"):
+        with patch(
+            "mcp_server.crash_logger.read_recent_crashes",
+            return_value="Error: boom\n  at foo.py:10",
+        ) as mock_read, patch("mcp_server.crash_logger.get_crash_log_path"):
             from mcp_server.cli import cmd_report
+
             cmd_report(limit=5, clear=False)
 
         mock_read.assert_called_once_with(limit=5)
@@ -732,9 +806,11 @@ class TestCmdReport:
         log_path = tmp_path / "crash.log"
         log_path.write_text("some crash data")
 
-        with patch("mcp_server.crash_logger.get_crash_log_path", return_value=log_path), \
-             patch("mcp_server.crash_logger.read_recent_crashes"):
+        with patch(
+            "mcp_server.crash_logger.get_crash_log_path", return_value=log_path
+        ), patch("mcp_server.crash_logger.read_recent_crashes"):
             from mcp_server.cli import cmd_report
+
             cmd_report(limit=20, clear=True)
 
         assert not log_path.exists()
@@ -745,9 +821,11 @@ class TestCmdReport:
         """cmd_report(clear=True) prints 'No crash log' when file does not exist."""
         missing_path = tmp_path / "nonexistent_crash.log"
 
-        with patch("mcp_server.crash_logger.get_crash_log_path", return_value=missing_path), \
-             patch("mcp_server.crash_logger.read_recent_crashes"):
+        with patch(
+            "mcp_server.crash_logger.get_crash_log_path", return_value=missing_path
+        ), patch("mcp_server.crash_logger.read_recent_crashes"):
             from mcp_server.cli import cmd_report
+
             cmd_report(limit=20, clear=True)
 
         captured = capsys.readouterr()
@@ -758,6 +836,7 @@ class TestCmdReport:
 # cmd_server
 # ---------------------------------------------------------------------------
 
+
 class TestCmdServer:
     """Tests for cmd_server()."""
 
@@ -765,6 +844,7 @@ class TestCmdServer:
         """cmd_server() invokes server_main from mcp_server.server."""
         with patch("mcp_server.server.main") as mock_server_main:
             from mcp_server.cli import cmd_server
+
             cmd_server()
         mock_server_main.assert_called_once()
 
@@ -773,28 +853,41 @@ class TestCmdServer:
 # cmd_serve
 # ---------------------------------------------------------------------------
 
+
 class TestCmdServe:
     """Tests for cmd_serve() including service install/uninstall and regular serve."""
 
     def test_install_service_success(self, capsys):
         """install_service=True calls install_launchd and prints result plist path."""
-        with patch("mcp_server.launchd.install_launchd", return_value="/Library/LaunchAgents/com.codevira.plist") as mock_install, \
-             patch("mcp_server.http_server.run_http_server"):
+        with patch(
+            "mcp_server.launchd.install_launchd",
+            return_value="/Library/LaunchAgents/com.codevira.plist",
+        ) as mock_install, patch("mcp_server.http_server.run_http_server"):
             from mcp_server.cli import cmd_serve
-            cmd_serve(port=7007, use_https=False, host="127.0.0.1", install_service=True)
 
-        mock_install.assert_called_once_with(port=7007, use_https=False, host="127.0.0.1", project_dir=None)
+            cmd_serve(
+                port=7007, use_https=False, host="127.0.0.1", install_service=True
+            )
+
+        mock_install.assert_called_once_with(
+            port=7007, use_https=False, host="127.0.0.1", project_dir=None
+        )
         captured = capsys.readouterr()
         assert "Launchd service installed" in captured.out
         assert "com.codevira.plist" in captured.out
 
     def test_install_service_failure(self, capsys):
         """install_launchd raising RuntimeError causes sys.exit(1)."""
-        with patch("mcp_server.launchd.install_launchd", side_effect=RuntimeError("permission denied")), \
-             patch("mcp_server.http_server.run_http_server"):
+        with patch(
+            "mcp_server.launchd.install_launchd",
+            side_effect=RuntimeError("permission denied"),
+        ), patch("mcp_server.http_server.run_http_server"):
             from mcp_server.cli import cmd_serve
+
             with pytest.raises(SystemExit) as exc_info:
-                cmd_serve(port=7007, use_https=False, host="127.0.0.1", install_service=True)
+                cmd_serve(
+                    port=7007, use_https=False, host="127.0.0.1", install_service=True
+                )
 
         assert exc_info.value.code == 1
         captured = capsys.readouterr()
@@ -802,9 +895,11 @@ class TestCmdServe:
 
     def test_uninstall_service_removed(self, capsys):
         """uninstall_service=True with removed=True prints 'Launchd service removed'."""
-        with patch("mcp_server.launchd.uninstall_launchd", return_value=True) as mock_uninstall, \
-             patch("mcp_server.http_server.run_http_server"):
+        with patch(
+            "mcp_server.launchd.uninstall_launchd", return_value=True
+        ) as mock_uninstall, patch("mcp_server.http_server.run_http_server"):
             from mcp_server.cli import cmd_serve
+
             cmd_serve(uninstall_service=True)
 
         mock_uninstall.assert_called_once()
@@ -813,9 +908,11 @@ class TestCmdServe:
 
     def test_uninstall_service_not_found(self, capsys):
         """uninstall_service=True with removed=False prints 'No launchd service'."""
-        with patch("mcp_server.launchd.uninstall_launchd", return_value=False), \
-             patch("mcp_server.http_server.run_http_server"):
+        with patch("mcp_server.launchd.uninstall_launchd", return_value=False), patch(
+            "mcp_server.http_server.run_http_server"
+        ):
             from mcp_server.cli import cmd_serve
+
             cmd_serve(uninstall_service=True)
 
         captured = capsys.readouterr()
@@ -823,9 +920,12 @@ class TestCmdServe:
 
     def test_uninstall_service_failure(self, capsys):
         """uninstall_launchd raising RuntimeError causes sys.exit(1)."""
-        with patch("mcp_server.launchd.uninstall_launchd", side_effect=RuntimeError("not found")), \
-             patch("mcp_server.http_server.run_http_server"):
+        with patch(
+            "mcp_server.launchd.uninstall_launchd",
+            side_effect=RuntimeError("not found"),
+        ), patch("mcp_server.http_server.run_http_server"):
             from mcp_server.cli import cmd_serve
+
             with pytest.raises(SystemExit) as exc_info:
                 cmd_serve(uninstall_service=True)
 
@@ -835,6 +935,7 @@ class TestCmdServe:
         """No flags → calls run_http_server with correct args."""
         with patch("mcp_server.http_server.run_http_server") as mock_http:
             from mcp_server.cli import cmd_serve
+
             cmd_serve(host="0.0.0.0", port=8080, use_https=True, project_dir=None)
 
         mock_http.assert_called_once_with(
@@ -856,6 +957,7 @@ class TestCmdServe:
         monkeypatch.setattr("mcp_server.paths.get_project_root", lambda: fake_home)
 
         from mcp_server.cli import cmd_serve
+
         with pytest.raises(SystemExit) as exc:
             cmd_serve()
         assert exc.value.code == 1
@@ -873,8 +975,10 @@ class TestCmdServe:
         monkeypatch.setattr("mcp_server.paths.get_project_root", lambda: fake_home)
 
         from mcp_server.cli import cmd_serve
-        with patch("mcp_server.launchd.install_launchd") as mock_install, \
-             pytest.raises(SystemExit) as exc:
+
+        with patch("mcp_server.launchd.install_launchd") as mock_install, pytest.raises(
+            SystemExit
+        ) as exc:
             cmd_serve(install_service=True)
         assert exc.value.code == 1
         # CRITICAL: install_launchd was NEVER called — no plist persisted.
@@ -882,15 +986,19 @@ class TestCmdServe:
         err = capsys.readouterr().err
         assert "$HOME" in err
 
-    def test_install_service_refuses_home_via_project_dir(self, tmp_path, monkeypatch, capsys):
+    def test_install_service_refuses_home_via_project_dir(
+        self, tmp_path, monkeypatch, capsys
+    ):
         """Even with --project-dir explicitly pointing at $HOME, refuse."""
         fake_home = tmp_path / "fake-home"
         fake_home.mkdir()
         monkeypatch.setattr("pathlib.Path.home", lambda: fake_home)
 
         from mcp_server.cli import cmd_serve
-        with patch("mcp_server.launchd.install_launchd") as mock_install, \
-             pytest.raises(SystemExit) as exc:
+
+        with patch("mcp_server.launchd.install_launchd") as mock_install, pytest.raises(
+            SystemExit
+        ) as exc:
             cmd_serve(install_service=True, project_dir=fake_home)
         assert exc.value.code == 1
         mock_install.assert_not_called()
@@ -905,7 +1013,10 @@ class TestCmdServe:
         monkeypatch.setattr("mcp_server.paths.get_project_root", lambda: fake_home)
 
         from mcp_server.cli import cmd_serve
-        with patch("mcp_server.launchd.uninstall_launchd", return_value=True) as mock_uninstall:
+
+        with patch(
+            "mcp_server.launchd.uninstall_launchd", return_value=True
+        ) as mock_uninstall:
             # Should NOT raise SystemExit — uninstall is allowed from $HOME.
             cmd_serve(uninstall_service=True)
         mock_uninstall.assert_called_once()
@@ -915,20 +1026,43 @@ class TestCmdServe:
 # cmd_register
 # ---------------------------------------------------------------------------
 
+
 class TestCmdRegister:
     """Tests for cmd_register() covering all three dispatch paths."""
 
     def _base_patches(self):
         """Common patches needed for cmd_register's import block."""
         return {
-            "mcp_server.paths.get_project_root": patch("mcp_server.paths.get_project_root", return_value=Path("/tmp/proj")),
-            "mcp_server.ide_inject._resolve_command": patch("mcp_server.ide_inject._resolve_command", return_value=("codevira", "/usr/bin/python3")),
-            "mcp_server.ide_inject.detect_installed_ides": patch("mcp_server.ide_inject.detect_installed_ides", return_value=[]),
-            "mcp_server.ide_inject.inject_global_claude_code": patch("mcp_server.ide_inject.inject_global_claude_code", return_value="/path/to/claude"),
-            "mcp_server.ide_inject.inject_global_cursor": patch("mcp_server.ide_inject.inject_global_cursor", return_value="/path/to/cursor"),
-            "mcp_server.ide_inject.inject_global_windsurf": patch("mcp_server.ide_inject.inject_global_windsurf", return_value="/path/to/windsurf"),
-            "mcp_server.ide_inject._inject_claude_desktop": patch("mcp_server.ide_inject._inject_claude_desktop", return_value="/path/to/desktop"),
-            "mcp_server.ide_inject.inject_claude_http_url": patch("mcp_server.ide_inject.inject_claude_http_url", return_value="/path/to/http"),
+            "mcp_server.paths.get_project_root": patch(
+                "mcp_server.paths.get_project_root", return_value=Path("/tmp/proj")
+            ),
+            "mcp_server.ide_inject._resolve_command": patch(
+                "mcp_server.ide_inject._resolve_command",
+                return_value=("codevira", "/usr/bin/python3"),
+            ),
+            "mcp_server.ide_inject.detect_installed_ides": patch(
+                "mcp_server.ide_inject.detect_installed_ides", return_value=[]
+            ),
+            "mcp_server.ide_inject.inject_global_claude_code": patch(
+                "mcp_server.ide_inject.inject_global_claude_code",
+                return_value="/path/to/claude",
+            ),
+            "mcp_server.ide_inject.inject_global_cursor": patch(
+                "mcp_server.ide_inject.inject_global_cursor",
+                return_value="/path/to/cursor",
+            ),
+            "mcp_server.ide_inject.inject_global_windsurf": patch(
+                "mcp_server.ide_inject.inject_global_windsurf",
+                return_value="/path/to/windsurf",
+            ),
+            "mcp_server.ide_inject._inject_claude_desktop": patch(
+                "mcp_server.ide_inject._inject_claude_desktop",
+                return_value="/path/to/desktop",
+            ),
+            "mcp_server.ide_inject.inject_claude_http_url": patch(
+                "mcp_server.ide_inject.inject_claude_http_url",
+                return_value="/path/to/http",
+            ),
         }
 
     def test_http_url_path(self, capsys):
@@ -937,12 +1071,15 @@ class TestCmdRegister:
         started = {k: p.start() for k, p in patches.items()}
         try:
             from mcp_server.cli import cmd_register
+
             cmd_register(http_url="https://example.com/mcp")
         finally:
             for p in patches.values():
                 p.stop()
 
-        started["mcp_server.ide_inject.inject_claude_http_url"].assert_called_once_with("https://example.com/mcp")
+        started["mcp_server.ide_inject.inject_claude_http_url"].assert_called_once_with(
+            "https://example.com/mcp"
+        )
         captured = capsys.readouterr()
         assert "Claude Code (HTTP URL)" in captured.out
 
@@ -952,6 +1089,7 @@ class TestCmdRegister:
         started = {k: p.start() for k, p in patches.items()}
         try:
             from mcp_server.cli import cmd_register
+
             cmd_register(claude_desktop=True)
         finally:
             for p in patches.values():
@@ -972,6 +1110,7 @@ class TestCmdRegister:
         started = {k: p.start() for k, p in patches.items()}
         try:
             from mcp_server.cli import cmd_register
+
             cmd_register()
         finally:
             for p in patches.values():
@@ -980,7 +1119,9 @@ class TestCmdRegister:
         started["mcp_server.ide_inject.inject_global_claude_code"].assert_called_once()
         started["mcp_server.ide_inject.inject_global_cursor"].assert_called_once()
         captured = capsys.readouterr()
-        assert "Claude Code (global)" in captured.out or "Cursor (global)" in captured.out
+        assert (
+            "Claude Code (global)" in captured.out or "Cursor (global)" in captured.out
+        )
 
     def test_global_mode_banner_contains_configure_tip(self, capsys):
         """v1.8.0: register success banner nudges toward `codevira configure`."""
@@ -992,6 +1133,7 @@ class TestCmdRegister:
         started = {k: p.start() for k, p in patches.items()}
         try:
             from mcp_server.cli import cmd_register
+
             cmd_register()
         finally:
             for p in patches.values():
@@ -1008,6 +1150,7 @@ class TestCmdRegister:
         started = {k: p.start() for k, p in patches.items()}
         try:
             from mcp_server.cli import cmd_register
+
             cmd_register()
         finally:
             for p in patches.values():
@@ -1030,6 +1173,7 @@ class TestCmdRegister:
         started = {k: p.start() for k, p in patches.items()}
         try:
             from mcp_server.cli import cmd_register
+
             cmd_register()  # must NOT raise
         finally:
             for p in patches.values():
@@ -1049,8 +1193,10 @@ class TestCmdRegister:
         monkeypatch.setattr("mcp_server.paths.get_project_root", lambda: fake_home)
 
         from mcp_server.cli import cmd_register
-        with patch("mcp_server.ide_inject.inject_global_claude_code") as mock_claude, \
-             pytest.raises(SystemExit) as exc_info:
+
+        with patch(
+            "mcp_server.ide_inject.inject_global_claude_code"
+        ) as mock_claude, pytest.raises(SystemExit) as exc_info:
             cmd_register()
         assert exc_info.value.code == 1
         # No IDE injection happened.
@@ -1062,6 +1208,7 @@ class TestCmdRegister:
 # ---------------------------------------------------------------------------
 # main() — serve sub-project-dir path (lines 596-602)
 # ---------------------------------------------------------------------------
+
 
 class TestMainServeWithProjectDir:
     """Tests for main() when serve subcommand includes --project-dir."""
@@ -1087,7 +1234,10 @@ class TestMainServeWithProjectDir:
             p.start()
         try:
             from mcp_server.cli import main
-            with patch.object(sys, "argv", ["codevira", "serve", "--project-dir", project_path]):
+
+            with patch.object(
+                sys, "argv", ["codevira", "serve", "--project-dir", project_path]
+            ):
                 main()
         finally:
             for p in patchers:
@@ -1105,6 +1255,7 @@ class TestMainServeWithProjectDir:
 # v1.8.1 — `codevira clean --orphans`
 # ===================================================================
 
+
 class TestCleanOrphans:
     """Recovery path for v1.8.0 users who accidentally bootstrapped at $HOME.
 
@@ -1117,24 +1268,31 @@ class TestCleanOrphans:
       - --dry-run shows what would happen without changing anything.
     """
 
-    def _setup_project_entry(self, fake_home: Path, slug: str,
-                              original_path: str) -> Path:
+    def _setup_project_entry(
+        self, fake_home: Path, slug: str, original_path: str
+    ) -> Path:
         """Create a fake centralized project dir with metadata.json."""
         import json
+
         proj = fake_home / "projects" / slug
         proj.mkdir(parents=True)
-        (proj / "metadata.json").write_text(json.dumps({
-            "path_key": slug,
-            "original_path": original_path,
-            "created_at": "2026-04-24T00:00:00+00:00",
-            "version": "1.8.0",
-            "auto_initialized": True,
-        }))
+        (proj / "metadata.json").write_text(
+            json.dumps(
+                {
+                    "path_key": slug,
+                    "original_path": original_path,
+                    "created_at": "2026-04-24T00:00:00+00:00",
+                    "version": "1.8.0",
+                    "auto_initialized": True,
+                }
+            )
+        )
         return proj
 
     def _seed_global_db(self, fake_home: Path, paths: list[str]) -> Path:
         """Create a minimal global.db with the schema we DELETE FROM."""
         import sqlite3
+
         db_path = fake_home / "global.db"
         conn = sqlite3.connect(str(db_path))
         try:
@@ -1157,6 +1315,7 @@ class TestCleanOrphans:
     def test_removes_home_rooted_project(self, tmp_path, monkeypatch):
         """A project with original_path = $HOME is identified and removed."""
         from mcp_server.cli import _cmd_clean_orphans
+
         fake_home = tmp_path / "fake-home"
         fake_home.mkdir()
         monkeypatch.setattr("pathlib.Path.home", lambda: fake_home)
@@ -1165,9 +1324,9 @@ class TestCleanOrphans:
         global_home = fake_home / ".codevira"
         global_home.mkdir()
         from mcp_server import paths as paths_mod
+
         monkeypatch.setattr(paths_mod, "get_global_home", lambda: global_home)
-        proj = self._setup_project_entry(global_home, "rogue_abcd1234",
-                                          str(fake_home))
+        proj = self._setup_project_entry(global_home, "rogue_abcd1234", str(fake_home))
         self._seed_global_db(global_home, [str(proj)])
 
         _cmd_clean_orphans(dry_run=False, yes=True)
@@ -1175,6 +1334,7 @@ class TestCleanOrphans:
         assert not proj.exists(), "rogue project dir should be removed"
         # Row deleted from global.db
         import sqlite3
+
         conn = sqlite3.connect(str(global_home / "global.db"))
         try:
             count = conn.execute(
@@ -1190,6 +1350,7 @@ class TestCleanOrphans:
         identified and removed."""
         from mcp_server.cli import _cmd_clean_orphans
         from mcp_server import paths as paths_mod
+
         global_home = tmp_path / "global"
         global_home.mkdir()
         monkeypatch.setattr(paths_mod, "get_global_home", lambda: global_home)
@@ -1205,14 +1366,14 @@ class TestCleanOrphans:
     def test_dry_run_makes_no_changes(self, tmp_path, monkeypatch, capsys):
         from mcp_server.cli import _cmd_clean_orphans
         from mcp_server import paths as paths_mod
+
         fake_home = tmp_path / "fake-home"
         fake_home.mkdir()
         monkeypatch.setattr("pathlib.Path.home", lambda: fake_home)
         global_home = fake_home / ".codevira"
         global_home.mkdir()
         monkeypatch.setattr(paths_mod, "get_global_home", lambda: global_home)
-        proj = self._setup_project_entry(global_home, "rogue_abcd1234",
-                                          str(fake_home))
+        proj = self._setup_project_entry(global_home, "rogue_abcd1234", str(fake_home))
         self._seed_global_db(global_home, [str(proj)])
 
         _cmd_clean_orphans(dry_run=True, yes=True)
@@ -1227,6 +1388,7 @@ class TestCleanOrphans:
         $HOME is left alone."""
         from mcp_server.cli import _cmd_clean_orphans
         from mcp_server import paths as paths_mod
+
         fake_home = tmp_path / "fake-home"
         fake_home.mkdir()
         monkeypatch.setattr("pathlib.Path.home", lambda: fake_home)
@@ -1236,8 +1398,9 @@ class TestCleanOrphans:
         # A real project path
         real_proj = fake_home / "Documents" / "MyProject"
         real_proj.mkdir(parents=True)
-        proj = self._setup_project_entry(global_home, "valid_proj_aaaa1111",
-                                          str(real_proj))
+        proj = self._setup_project_entry(
+            global_home, "valid_proj_aaaa1111", str(real_proj)
+        )
         self._seed_global_db(global_home, [str(proj)])
 
         _cmd_clean_orphans(dry_run=False, yes=True)
@@ -1249,6 +1412,7 @@ class TestCleanOrphans:
         """When no orphans exist, prints 'No orphan...' and exits cleanly."""
         from mcp_server.cli import _cmd_clean_orphans
         from mcp_server import paths as paths_mod
+
         global_home = tmp_path / "global"
         global_home.mkdir()
         (global_home / "projects").mkdir()

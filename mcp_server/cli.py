@@ -18,6 +18,7 @@ Global flags:
   --project-dir <path>          → override project directory (for Google Antigravity,
                                    which doesn't support `cwd` in its MCP config)
 """
+
 from __future__ import annotations
 
 # IMPORTANT: fork-safety must run BEFORE any code path can transitively
@@ -47,9 +48,16 @@ def _set_project_dir_early(args: list[str]) -> Path | None:
 def _detect_project_root_markers(path: Path) -> bool:
     """Return True if the given path looks like a project root."""
     markers = [
-        ".git", "pyproject.toml", "setup.py", "setup.cfg",
-        "package.json", "Cargo.toml", "go.mod", "Makefile",
-        "pom.xml", "build.gradle",
+        ".git",
+        "pyproject.toml",
+        "setup.py",
+        "setup.cfg",
+        "package.json",
+        "Cargo.toml",
+        "go.mod",
+        "Makefile",
+        "pom.xml",
+        "build.gradle",
     ]
     return any((path / m).exists() for m in markers)
 
@@ -57,7 +65,9 @@ def _detect_project_root_markers(path: Path) -> bool:
 def cmd_init() -> None:
     """Initialize Codevira in the current project."""
     from mcp_server.paths import (
-        get_project_root, get_data_dir, get_package_data_dir,
+        get_project_root,
+        get_data_dir,
+        get_package_data_dir,
         is_invalid_project_root,
     )
     import shutil
@@ -89,12 +99,13 @@ def cmd_init() -> None:
     if not _detect_project_root_markers(cwd):
         parent = cwd.parent
         if _detect_project_root_markers(parent):
-            print(f"  Warning: It looks like you may be in a subdirectory.")
+            print("  Warning: It looks like you may be in a subdirectory.")
             print(f"  Project markers found in: {parent}")
             print(f"  Current directory:        {cwd}")
             print()
             # Bug 22 (rc.4): use shared confirm() helper for retry-on-bad-input + flush.
             from mcp_server._prompts import confirm
+
             if not confirm("Continue initializing here anyway?", default=False):
                 print("  Aborted. Run `codevira init` from your project root.")
                 sys.exit(0)
@@ -103,12 +114,19 @@ def cmd_init() -> None:
     # Step 2a: Auto-migrate legacy .codevira/ if present
     git_dir = cwd / ".git"
     from mcp_server.migrate import detect_migration_needed, migrate_to_centralized
+
     if detect_migration_needed(cwd):
-        print(f"  Migrating legacy .codevira/ to centralized storage ...", end="", flush=True)
+        print(
+            "  Migrating legacy .codevira/ to centralized storage ...",
+            end="",
+            flush=True,
+        )
         try:
             result = migrate_to_centralized(cwd)
             if result.get("migrated"):
-                print(f" done ({result.get('files_copied', 0)} files → {result.get('new_path', '')})")
+                print(
+                    f" done ({result.get('files_copied', 0)} files → {result.get('new_path', '')})"
+                )
                 # Re-evaluate data_dir after migration — now points to centralized path
                 data_dir = get_data_dir()
             else:
@@ -117,15 +135,17 @@ def cmd_init() -> None:
             print(f" failed ({e})")
 
     # Step 2b: Create centralized directory structure
-    is_centralized = str(data_dir).startswith(str(Path.home() / ".codevira" / "projects"))
+    is_centralized = str(data_dir).startswith(
+        str(Path.home() / ".codevira" / "projects")
+    )
     if is_centralized:
-        print(f"  Creating centralized data dir ...")
+        print("  Creating centralized data dir ...")
         print(f"    {data_dir}")
     else:
         print(f"  Creating .codevira/ in {cwd} ...")
     for subdir in ["graph/changesets", "codeindex", "logs"]:
         (data_dir / subdir).mkdir(parents=True, exist_ok=True)
-    print(f"  Data directory ready ...                      done")
+    print("  Data directory ready ...                      done")
 
     # Step 3: For new centralized projects, no .gitignore entry needed.
     # For legacy mode (in-project), add .codevira/ to .gitignore.
@@ -138,7 +158,7 @@ def cmd_init() -> None:
             if ".codevira" in content:
                 needs_add = False
         if needs_add:
-            print(f"  Adding .codevira/ to .gitignore ...          ", end="", flush=True)
+            print("  Adding .codevira/ to .gitignore ...          ", end="", flush=True)
             with open(gitignore, "a") as f:
                 if gitignore.exists() and gitignore.stat().st_size > 0:
                     existing = gitignore.read_text()
@@ -150,6 +170,7 @@ def cmd_init() -> None:
     # Step 4: Zero-config auto-detection (no interactive prompts)
     print()
     from mcp_server.detect import auto_detect_project
+
     # rc.5 (P1-2): default is the union of all known source extensions so
     # polyglot projects don't lose .yaml / .md / .html silently. Pass
     # --single-language on the CLI to restore legacy narrowing.
@@ -157,14 +178,20 @@ def cmd_init() -> None:
     detected = auto_detect_project(cwd, single_language=single_lang)
 
     # Apply CLI overrides if provided (parsed from args later)
-    if hasattr(cmd_init, '_overrides'):
+    if hasattr(cmd_init, "_overrides"):
         overrides = cmd_init._overrides
-        if overrides.get("name"): detected["name"] = overrides["name"]
-        if overrides.get("language"): detected["language"] = overrides["language"]
-        if overrides.get("dirs"): detected["watched_dirs"] = [d.strip() for d in overrides["dirs"].split(",")]
-        if overrides.get("ext"): detected["file_extensions"] = [e.strip() for e in overrides["ext"].split(",")]
+        if overrides.get("name"):
+            detected["name"] = overrides["name"]
+        if overrides.get("language"):
+            detected["language"] = overrides["language"]
+        if overrides.get("dirs"):
+            detected["watched_dirs"] = [d.strip() for d in overrides["dirs"].split(",")]
+        if overrides.get("ext"):
+            detected["file_extensions"] = [
+                e.strip() for e in overrides["ext"].split(",")
+            ]
 
-    print(f"  Auto-detected:")
+    print("  Auto-detected:")
     print(f"    Project:     {detected['name']}")
     print(f"    Language:    {detected['language']}")
     print(f"    Source dirs: {', '.join(detected['watched_dirs'])}")
@@ -201,10 +228,13 @@ def cmd_init() -> None:
     # Step 5: Run full index build — let rich progress bars render directly.
     # Suppress noisy HuggingFace/transformers output via env vars.
     import os as _os
-    import contextlib, io
+    import contextlib
+    import io
+
     print("  Building code index ...")
     try:
         from indexer.index_codebase import cmd_full_rebuild
+
         _os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
         _os.environ.setdefault("HF_HUB_VERBOSITY", "error")
         # Suppress stderr noise (BertModel LOAD REPORT, HF_TOKEN warnings)
@@ -213,12 +243,14 @@ def cmd_init() -> None:
     except Exception as e:
         print(f"  skipped ({e})")
         from mcp_server._safe_crash import safe_log_crash
+
         safe_log_crash(e, context="codevira init: index build", project_path=str(cwd))
 
     # Step 6: Generate graph stubs
     print("  Generating graph stubs ...            ", end="", flush=True)
     try:
         from indexer.index_codebase import cmd_generate_graph
+
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             cmd_generate_graph()
@@ -232,6 +264,7 @@ def cmd_init() -> None:
     except Exception as e:
         print(f"skipped ({e})")
         from mcp_server._safe_crash import safe_log_crash
+
         safe_log_crash(e, context="codevira init: graph stubs", project_path=str(cwd))
 
     # Step 7: Bootstrap roadmap
@@ -248,7 +281,10 @@ def cmd_init() -> None:
     except Exception as e:
         print(f"skipped ({e})")
         from mcp_server._safe_crash import safe_log_crash
-        safe_log_crash(e, context="codevira init: roadmap bootstrap", project_path=str(cwd))
+
+        safe_log_crash(
+            e, context="codevira init: roadmap bootstrap", project_path=str(cwd)
+        )
 
     # Step 8: Install git hook
     if git_dir.exists():
@@ -260,6 +296,7 @@ def cmd_init() -> None:
 
             # Find codevira executable path using full resolution chain
             from mcp_server.ide_inject import _resolve_command
+
             resolved_cmd, _py = _resolve_command()
             # For git hooks, use the resolved binary if found; otherwise bare name
             # (git hooks inherit the user's shell PATH)
@@ -283,6 +320,7 @@ def cmd_init() -> None:
         except Exception as e:
             print(f"skipped ({e})")
             from mcp_server._safe_crash import safe_log_crash
+
             safe_log_crash(e, context="codevira init: git hook", project_path=str(cwd))
 
     # Step 9: Auto-inject IDE configurations
@@ -291,11 +329,12 @@ def cmd_init() -> None:
     print(f"  ✓  Codevira initialized in {data_dir}")
     print()
 
-    no_inject = getattr(cmd_init, '_no_inject', False)
+    no_inject = getattr(cmd_init, "_no_inject", False)
     if not no_inject:
         print("  Configuring AI tools ...              ", end="", flush=True)
         try:
             from mcp_server.ide_inject import inject_ide_config
+
             results = inject_ide_config(cwd, project_name=detected["name"])
             if results:
                 print("done")
@@ -306,11 +345,13 @@ def cmd_init() -> None:
         except Exception as e:
             print(f"skipped ({e})")
             from mcp_server._safe_crash import safe_log_crash
-            safe_log_crash(e, context="codevira init: IDE inject", project_path=str(cwd))
+
+            safe_log_crash(
+                e, context="codevira init: IDE inject", project_path=str(cwd)
+            )
 
     # Step 10: Register in global memory (with git_remote for rename-resilient lookup)
     try:
-        from mcp_server.global_sync import import_global_to_project
         from mcp_server.paths import get_global_db_path, _get_git_remote_url
         from indexer.global_db import GlobalDB
         from mcp_server.auto_init import _write_metadata
@@ -323,7 +364,9 @@ def cmd_init() -> None:
         # by data_dir (from cli.py + auto_init.py) and another keyed by
         # project_root (from global_sync.py). Downstream lookups by canonical
         # project path missed half the projects.
-        gdb.register_project(str(cwd), detected["name"], detected["language"], git_remote=git_remote)
+        gdb.register_project(
+            str(cwd), detected["name"], detected["language"], git_remote=git_remote
+        )
         proj_count = gdb.get_project_count()
         gdb.close()
         if proj_count > 1:
@@ -334,30 +377,36 @@ def cmd_init() -> None:
     except Exception as e:
         print(f"  Global memory registration skipped ({e})")
         from mcp_server._safe_crash import safe_log_crash
-        safe_log_crash(e, context="codevira init: global memory register", project_path=str(cwd))
+
+        safe_log_crash(
+            e, context="codevira init: global memory register", project_path=str(cwd)
+        )
 
     # Print config for undetected tools — use the resolved binary path,
     # not the Python interpreter, so users get a clean command.
     from mcp_server.ide_inject import _resolve_command
+
     cmd_path, python_exe = _resolve_command()
     project_path = str(cwd)
 
-    is_python_fallback = (cmd_path == python_exe)
+    is_python_fallback = cmd_path == python_exe
     print()
     print("  For other AI tools, add this to their MCP config:")
     print()
-    print('  {')
+    print("  {")
     print('    "mcpServers": {')
     print('      "codevira": {')
     if is_python_fallback:
         print(f'        "command": "{python_exe}",')
-        print(f'        "args": ["-m", "mcp_server", "--project-dir", "{project_path}"]')
+        print(
+            f'        "args": ["-m", "mcp_server", "--project-dir", "{project_path}"]'
+        )
     else:
         print(f'        "command": "{cmd_path}",')
         print(f'        "args": ["--project-dir", "{project_path}"]')
-    print('      }')
-    print('    }')
-    print('  }')
+    print("      }")
+    print("    }")
+    print("  }")
     print()
     print("  Verify: ask your agent to call get_roadmap()")
     print()
@@ -405,6 +454,7 @@ def cmd_index(full: bool = False, quiet: bool = False, verbose: bool = False) ->
 def cmd_status(check_stale: bool = False, show_global: bool = False) -> None:
     """Show index health and statistics."""
     from indexer.index_codebase import cmd_status as _cmd_status
+
     _cmd_status(check_stale=check_stale, show_global=show_global)
 
 
@@ -432,6 +482,7 @@ def cmd_report(limit: int = 20, clear: bool = False) -> None:
 def cmd_server(project_dir: Path | None = None) -> None:
     """Start the MCP server (stdio transport)."""
     from mcp_server.server import main as server_main
+
     server_main()
 
 
@@ -470,9 +521,12 @@ def cmd_serve(
     # succeed regardless of where the user runs it from.
     if not uninstall_service:
         from mcp_server.paths import get_project_root, is_invalid_project_root
+
         # If --project-dir was passed explicitly, that's the candidate root;
         # otherwise fall back to cwd via get_project_root.
-        candidate_root = Path(project_dir).resolve() if project_dir else get_project_root()
+        candidate_root = (
+            Path(project_dir).resolve() if project_dir else get_project_root()
+        )
         rejection = is_invalid_project_root(candidate_root)
         if rejection:
             print(f"Error: {rejection}", file=sys.stderr)
@@ -485,8 +539,11 @@ def cmd_serve(
 
     if install_service:
         from mcp_server.launchd import install_launchd
+
         try:
-            plist = install_launchd(port=port, use_https=use_https, host=host, project_dir=project_dir)
+            plist = install_launchd(
+                port=port, use_https=use_https, host=host, project_dir=project_dir
+            )
             print(f"  Launchd service installed: {plist}")
             print("  Codevira MCP server will start automatically on login.")
         except RuntimeError as e:
@@ -496,6 +553,7 @@ def cmd_serve(
 
     if uninstall_service:
         from mcp_server.launchd import uninstall_launchd
+
         try:
             removed = uninstall_launchd()
             if removed:
@@ -508,6 +566,7 @@ def cmd_serve(
         return
 
     from mcp_server.http_server import run_http_server
+
     run_http_server(host=host, port=port, use_https=use_https, project_dir=project_dir)
 
 
@@ -527,9 +586,13 @@ def cmd_register(
     """
     from mcp_server.paths import get_project_root, is_invalid_project_root
     from mcp_server.ide_inject import (
-        _resolve_command, detect_installed_ides,
-        inject_global_claude_code, inject_global_cursor, inject_global_windsurf,
-        _inject_claude_desktop, inject_claude_http_url,
+        _resolve_command,
+        detect_installed_ides,
+        inject_global_claude_code,
+        inject_global_cursor,
+        inject_global_windsurf,
+        _inject_claude_desktop,
+        inject_claude_http_url,
     )
 
     project_root = get_project_root()
@@ -553,6 +616,7 @@ def cmd_register(
     cmd_path, python_exe = _resolve_command()
 
     from mcp_server import __version__
+
     print()
     print(f"  Codevira — Global IDE Registration (v{__version__})")
     print("  " + "─" * 44)
@@ -562,7 +626,9 @@ def cmd_register(
         path = inject_claude_http_url(http_url)
         print(f"  ✓ Claude Code (HTTP URL): {path}")
         print()
-        print("  Tip: run `codevira configure` in a project to customize which folders are indexed.")
+        print(
+            "  Tip: run `codevira configure` in a project to customize which folders are indexed."
+        )
         print()
         return
 
@@ -571,7 +637,9 @@ def cmd_register(
         print(f"  ✓ Claude Desktop: {path}")
         print("  Note: Claude Desktop uses stdio — restart it to pick up changes.")
         print()
-        print("  Tip: run `codevira configure` in a project to customize which folders are indexed.")
+        print(
+            "  Tip: run `codevira configure` in a project to customize which folders are indexed."
+        )
         print()
         return
 
@@ -599,6 +667,7 @@ def cmd_register(
                     results["Claude Desktop"] = path
             elif ide == "antigravity":
                 from mcp_server.ide_inject import inject_global_antigravity
+
                 path = inject_global_antigravity(cmd_path, python_exe)
                 if path:
                     results["Antigravity (global)"] = path
@@ -612,7 +681,9 @@ def cmd_register(
         print("  Restart your AI tools to pick up the new configuration.")
         print("  Every project you open will now have Codevira memory automatically.")
         print()
-        print("  Tip: run `codevira configure` in a project to customize which folders are indexed.")
+        print(
+            "  Tip: run `codevira configure` in a project to customize which folders are indexed."
+        )
     else:
         print("  No AI tools detected. Install Claude Code, Cursor, or Windsurf first.")
     print()
@@ -625,6 +696,7 @@ def main() -> None:
 
     if project_dir is not None:
         from mcp_server.paths import set_project_dir
+
         set_project_dir(project_dir)
 
     # P2-8 (rc.5): scoped ArgumentParser for subcommands.
@@ -640,6 +712,7 @@ def main() -> None:
             # explicitly — keeps the usage scoped to the failing subcommand
             # instead of bubbling up to the root parser's combined usage.
             import sys as _sys
+
             self.print_usage(_sys.stderr)
             self.exit(2, f"{self.prog}: error: {message}\n")
 
@@ -651,6 +724,7 @@ def main() -> None:
     # should expose one. Reads __version__ from mcp_server/__init__.py
     # so the bumper script can update one place.
     from mcp_server import __version__ as _codevira_version
+
     parser.add_argument(
         "--version",
         "-V",
@@ -683,11 +757,16 @@ def main() -> None:
     )
     init_parser.add_argument("--name", help="Override project name")
     init_parser.add_argument("--language", help="Override detected language")
-    init_parser.add_argument("--dirs", help="Override source directories (comma-separated)")
-    init_parser.add_argument("--ext", help="Override file extensions (comma-separated)")
-    init_parser.add_argument("--no-inject", action="store_true", help="Skip auto-injecting IDE configs")
     init_parser.add_argument(
-        "--single-language", action="store_true",
+        "--dirs", help="Override source directories (comma-separated)"
+    )
+    init_parser.add_argument("--ext", help="Override file extensions (comma-separated)")
+    init_parser.add_argument(
+        "--no-inject", action="store_true", help="Skip auto-injecting IDE configs"
+    )
+    init_parser.add_argument(
+        "--single-language",
+        action="store_true",
         help=(
             "Index only the dominant language's extensions (legacy pre-rc.5 "
             "behavior). Default since rc.5 is to index every common source / "
@@ -709,13 +788,19 @@ def main() -> None:
             "suppress progress output (used by the post-commit git hook)."
         ),
     )
-    index_parser.add_argument("--full", action="store_true", help="Full rebuild from scratch")
-    index_parser.add_argument("--quiet", action="store_true", help="Suppress output (used by git hook)")
+    index_parser.add_argument(
+        "--full", action="store_true", help="Full rebuild from scratch"
+    )
+    index_parser.add_argument(
+        "--quiet", action="store_true", help="Suppress output (used by git hook)"
+    )
     # 2026-05-17 Bug H fix (P10 observability): users hitting silent
     # 0-chunks had no way to see WHICH files were rejected and WHY.
     # --verbose emits per-file decisions (matched / skipped <reason>).
     index_parser.add_argument(
-        "--verbose", "-v", action="store_true",
+        "--verbose",
+        "-v",
+        action="store_true",
         help="Emit per-file decisions (matched, skipped + reason). Use to diagnose silent 0-chunks.",
     )
 
@@ -754,8 +839,15 @@ def main() -> None:
             "context. Use --clear to truncate the log after reading."
         ),
     )
-    report_parser.add_argument("--limit", type=int, default=20, help="Number of recent crashes to show (default: 20)")
-    report_parser.add_argument("--clear", action="store_true", help="Clear the crash log")
+    report_parser.add_argument(
+        "--limit",
+        type=int,
+        default=20,
+        help="Number of recent crashes to show (default: 20)",
+    )
+    report_parser.add_argument(
+        "--clear", action="store_true", help="Clear the crash log"
+    )
 
     # serve (P2-1 rc.5: added description)
     serve_parser = subparsers.add_parser(
@@ -771,23 +863,29 @@ def main() -> None:
         ),
     )
     serve_parser.add_argument(
-        "--port", type=int, default=7007,
+        "--port",
+        type=int,
+        default=7007,
         help="TCP port to listen on (default: 7007)",
     )
     serve_parser.add_argument(
-        "--host", default="127.0.0.1",
+        "--host",
+        default="127.0.0.1",
         help="Bind address (default: 127.0.0.1; use 0.0.0.0 for LAN access)",
     )
     serve_parser.add_argument(
-        "--https", action="store_true",
+        "--https",
+        action="store_true",
         help="Enable HTTPS using mkcert certs from ~/.codevira/certs/",
     )
     serve_parser.add_argument(
-        "--install-service", action="store_true",
+        "--install-service",
+        action="store_true",
         help="Install macOS launchd service so the server starts automatically on login",
     )
     serve_parser.add_argument(
-        "--uninstall-service", action="store_true",
+        "--uninstall-service",
+        action="store_true",
         help="Remove the macOS launchd service",
     )
     serve_parser.add_argument(
@@ -811,28 +909,36 @@ def main() -> None:
         ),
     )
     setup_parser.add_argument(
-        "-y", "--yes", action="store_true",
+        "-y",
+        "--yes",
+        action="store_true",
         help="Skip the confirmation prompt (CI / scripted installs)",
     )
     setup_parser.add_argument(
-        "--dry-run", action="store_true",
+        "--dry-run",
+        action="store_true",
         help="Print the plan; don't write anything",
     )
     setup_parser.add_argument(
-        "--ide", action="append", metavar="IDE",
+        "--ide",
+        action="append",
+        metavar="IDE",
         help="Only configure this IDE (repeatable). One of: claude, cursor, "
-             "windsurf, antigravity, codex, copilot, continue, aider",
+        "windsurf, antigravity, codex, copilot, continue, aider",
     )
     setup_parser.add_argument(
-        "--no-hooks", action="store_true",
+        "--no-hooks",
+        action="store_true",
         help="Skip Claude Code lifecycle hook installation",
     )
     setup_parser.add_argument(
-        "--no-nudge-files", action="store_true",
+        "--no-nudge-files",
+        action="store_true",
         help="Skip CLAUDE.md / AGENTS.md / etc. generation",
     )
     setup_parser.add_argument(
-        "--no-mcp", action="store_true",
+        "--no-mcp",
+        action="store_true",
         help="Skip MCP server config injection (just hooks + nudge files)",
     )
 
@@ -850,16 +956,17 @@ def main() -> None:
         ),
     )
     register_parser.add_argument(
-        "--claude-desktop", action="store_true",
+        "--claude-desktop",
+        action="store_true",
         help="Only configure Claude Desktop (stdio mode)",
     )
     register_parser.add_argument(
         "--http-url",
         metavar="URL",
         help="Preview (v1.7, single-project): inject an HTTPS URL into Claude Code "
-             "global config. HTTPS transport is single-project in v1.7 — "
-             "multi-project HTTPS is planned for v1.8. For multi-project use, "
-             "stick with the default stdio register.",
+        "global config. HTTPS transport is single-project in v1.7 — "
+        "multi-project HTTPS is planned for v1.8. For multi-project use, "
+        "stick with the default stdio register.",
     )
 
     # configure (v1.8: interactive multi-select to pick watched_dirs + file_extensions)
@@ -883,11 +990,13 @@ def main() -> None:
         help="Comma-separated file extensions, e.g. '.py,.ts' (non-interactive)",
     )
     cfg_parser.add_argument(
-        "--no-reindex", action="store_true",
+        "--no-reindex",
+        action="store_true",
         help="Skip the 'rebuild index now?' prompt after writing config",
     )
     cfg_parser.add_argument(
-        "--dry-run", action="store_true",
+        "--dry-run",
+        action="store_true",
         help="Scan and print the proposed config; do not write",
     )
 
@@ -906,20 +1015,27 @@ def main() -> None:
         # P1-5 (rc.5): include None as a default-only sentinel via nargs="?"+default=None
         # but DO NOT list None in `choices=` — argparse renders it as the literal
         # string "None" in error messages, which users tried as a real value.
-        "subaction", nargs="?", default=None,
+        "subaction",
+        nargs="?",
+        default=None,
         choices=["history"],
         help="Optional: 'history' to list multiple sessions",
     )
     budget_parser.add_argument(
-        "--last", type=int, default=10,
+        "--last",
+        type=int,
+        default=10,
         help="Number of sessions for 'history' (clamped 1-100)",
     )
     budget_parser.add_argument(
-        "--full", action="store_true",
+        "--full",
+        action="store_true",
         help="Show full per-source breakdown (default: top-3 wasted only)",
     )
     budget_parser.add_argument(
-        "--project", metavar="PATH", default=None,
+        "--project",
+        metavar="PATH",
+        default=None,
         help="Read another project's log instead of cwd",
     )
 
@@ -937,7 +1053,9 @@ def main() -> None:
         ),
     )
     doctor_parser.add_argument(
-        "-v", "--verbose", action="store_true",
+        "-v",
+        "--verbose",
+        action="store_true",
         help="Show extra details under each warning / failure",
     )
 
@@ -954,11 +1072,14 @@ def main() -> None:
         ),
     )
     projects_parser.add_argument(
-        "--json", action="store_true", dest="output_json",
+        "--json",
+        action="store_true",
+        dest="output_json",
         help="Emit machine-readable JSON instead of the rich-table view",
     )
     projects_parser.add_argument(
-        "--ghosts-only", action="store_true",
+        "--ghosts-only",
+        action="store_true",
         help="Show only project dirs that are missing config / metadata / global.db row",
     )
     # 2026-05-17 Bug G partial fix: project keys on disk are long hashes
@@ -967,7 +1088,8 @@ def main() -> None:
     # users can `cd $(codevira projects --paths | grep myproj | ...)`.
     # A full rename to short keys requires a migration we defer to v3.0.
     projects_parser.add_argument(
-        "--paths", action="store_true",
+        "--paths",
+        action="store_true",
         help="Show each project's source path + data dir path (pairs project basename with the ~/.codevira/projects/<key>/ dir)",
     )
 
@@ -992,10 +1114,20 @@ def main() -> None:
         # P1-1 (rc.5): default now renders nudge files for DETECTED IDEs only
         # (aligned with `setup`). Pass --ide=all to render for every supported
         # IDE regardless of whether it's installed.
-        "--ide", default=None,
-        choices=sorted({"claude", "cursor", "windsurf",
-                        "antigravity", "codex", "copilot",
-                        "agents_md", "all"}),
+        "--ide",
+        default=None,
+        choices=sorted(
+            {
+                "claude",
+                "cursor",
+                "windsurf",
+                "antigravity",
+                "codex",
+                "copilot",
+                "agents_md",
+                "all",
+            }
+        ),
         help=(
             "Render nudge files only for this IDE (default: every IDE detected "
             "on this machine). Use 'all' to render for every supported IDE "
@@ -1003,11 +1135,14 @@ def main() -> None:
         ),
     )
     agents_parser.add_argument(
-        "--dry-run", action="store_true",
+        "--dry-run",
+        action="store_true",
         help="Show what would be written without modifying any files",
     )
     agents_parser.add_argument(
-        "--project", metavar="PATH", default=None,
+        "--project",
+        metavar="PATH",
+        default=None,
         help="Generate nudge files for another project (validated)",
     )
 
@@ -1023,24 +1158,30 @@ def main() -> None:
         ),
     )
     hooks_subparsers = hooks_parser.add_subparsers(
-        dest="hooks_subcommand", required=True,
+        dest="hooks_subcommand",
+        required=True,
     )
     hooks_install = hooks_subparsers.add_parser(
-        "install", help="Install / refresh Claude Code lifecycle hooks",
+        "install",
+        help="Install / refresh Claude Code lifecycle hooks",
     )
     hooks_install.add_argument(
-        "--dry-run", action="store_true",
+        "--dry-run",
+        action="store_true",
         help="Show what would be installed without modifying any files",
     )
     hooks_install.add_argument(
-        "--project", metavar="PATH", default=None,
+        "--project",
+        metavar="PATH",
+        default=None,
         help="Operate on another project (validated)",
     )
     # P2-6 (rc.5): list + uninstall subcommands. The previous surface only
     # supported `install`; to remove hooks the user had to delete files +
     # edit ~/.claude/settings.json by hand.
     hooks_subparsers.add_parser(
-        "list", help="List installed Claude Code hook scripts + their state",
+        "list",
+        help="List installed Claude Code hook scripts + their state",
         description=(
             "Show every codevira-* hook script under ~/.claude/hooks/, its "
             "size, last-modified mtime, and whether it's registered in "
@@ -1057,11 +1198,14 @@ def main() -> None:
         ),
     )
     hooks_uninstall.add_argument(
-        "--dry-run", action="store_true",
+        "--dry-run",
+        action="store_true",
         help="Show what would be removed without deleting anything",
     )
     hooks_uninstall.add_argument(
-        "-y", "--yes", action="store_true",
+        "-y",
+        "--yes",
+        action="store_true",
         help="Skip confirmation prompt",
     )
 
@@ -1076,32 +1220,42 @@ def main() -> None:
         ),
     )
     replay_parser.add_argument(
-        "--query", default=None,
+        "--query",
+        default=None,
         help="Filter decisions/files/context by substring",
     )
     replay_parser.add_argument(
-        "--since", default="30d",
+        "--since",
+        default="30d",
         help="Lookback window: e.g. 7d, 30d, 90d (default 30d, max 365d)",
     )
     replay_parser.add_argument(
-        "--top", type=int, default=20,
+        "--top",
+        type=int,
+        default=20,
         help="Max decisions to render (clamped 1-200, default 20)",
     )
     replay_parser.add_argument(
-        "--format", default="terminal",
+        "--format",
+        default="terminal",
         choices=["terminal", "markdown", "html"],
         help="Output format (default: terminal)",
     )
     replay_parser.add_argument(
-        "--project", metavar="PATH", default=None,
+        "--project",
+        metavar="PATH",
+        default=None,
         help="Read another project's decisions (validated)",
     )
     replay_parser.add_argument(
-        "--ascii", action="store_true",
+        "--ascii",
+        action="store_true",
         help="Use ASCII fallbacks instead of unicode badges in terminal mode",
     )
     replay_parser.add_argument(
-        "--out", metavar="FILE", default=None,
+        "--out",
+        metavar="FILE",
+        default=None,
         help="Write to FILE instead of stdout (e.g. --format html --out timeline.html)",
     )
 
@@ -1117,23 +1271,31 @@ def main() -> None:
         ),
     )
     insights_parser.add_argument(
-        "--since", default="7d",
+        "--since",
+        default="7d",
         help="Lookback window: e.g. 7d, 30d, 90d (default 7d, max 365d)",
     )
     insights_parser.add_argument(
-        "--top", type=int, default=5,
+        "--top",
+        type=int,
+        default=5,
         help="Max items per section (clamped 1-20, default 5)",
     )
     insights_parser.add_argument(
-        "--project", metavar="PATH", default=None,
+        "--project",
+        metavar="PATH",
+        default=None,
         help="Read another project's insights instead of cwd",
     )
     insights_parser.add_argument(
-        "--min-outcomes", type=int, default=1,
+        "--min-outcomes",
+        type=int,
+        default=1,
         help="Decisions with fewer outcomes are filtered (default 1)",
     )
     insights_parser.add_argument(
-        "--ascii", action="store_true",
+        "--ascii",
+        action="store_true",
         help="Use ASCII fallbacks instead of unicode badges",
     )
 
@@ -1152,38 +1314,45 @@ def main() -> None:
         ),
     )
     clean_parser.add_argument(
-        "--all", action="store_true",
+        "--all",
+        action="store_true",
         help="Also clean per-project artifacts (legacy .codevira/, git hooks, per-project IDE configs)",
     )
     clean_parser.add_argument(
-        "--dry-run", action="store_true",
+        "--dry-run",
+        action="store_true",
         help="Show what would be removed without deleting anything",
     )
     clean_parser.add_argument(
-        "-y", "--yes", action="store_true",
+        "-y",
+        "--yes",
+        action="store_true",
         help="Skip confirmation prompt",
     )
     clean_parser.add_argument(
-        "--legacy", action="store_true",
+        "--legacy",
+        action="store_true",
         help="Only remove .codevira.migrated/ backup directories from project "
-             "repos. These directories are created when an older in-repo "
-             ".codevira/ layout is auto-migrated to centralised storage on "
-             "first run; they're kept around for one cycle as a safety net.",
+        "repos. These directories are created when an older in-repo "
+        ".codevira/ layout is auto-migrated to centralised storage on "
+        "first run; they're kept around for one cycle as a safety net.",
     )
     clean_parser.add_argument(
-        "--orphans", action="store_true",
+        "--orphans",
+        action="store_true",
         help="Only remove project data dirs whose original_path is no longer "
-             "a valid project root — covers projects that were registered at "
-             "$HOME or system top-levels (a v1.8.0-era bug fixed in v1.8.1) "
-             "and projects whose repo directory was deleted.",
+        "a valid project root — covers projects that were registered at "
+        "$HOME or system top-levels (a v1.8.0-era bug fixed in v1.8.1) "
+        "and projects whose repo directory was deleted.",
     )
     clean_parser.add_argument(
-        "--ghosts", action="store_true",
+        "--ghosts",
+        action="store_true",
         help="P2-4 (rc.5): only remove dirs classified as 'ghost' by "
-             "`codevira projects` — present on disk but missing config.yaml "
-             "or metadata.json (created as side effect of MCP tool calls "
-             "without a full init). Surgical cleanup; preserves tracked "
-             "projects and their indexes.",
+        "`codevira projects` — present on disk but missing config.yaml "
+        "or metadata.json (created as side effect of MCP tool calls "
+        "without a full init). Surgical cleanup; preserves tracked "
+        "projects and their indexes.",
     )
 
     # engine — internal subcommand invoked by Claude Code lifecycle hook
@@ -1208,23 +1377,34 @@ def main() -> None:
         ),
     )
     heal_parser.add_argument(
-        "--vectors", action="store_true",
+        "--vectors",
+        action="store_true",
         help="Wipe + rebuild this project's Chroma vector store (fixes HNSW corruption)",
     )
     heal_parser.add_argument(
-        "--graph", action="store_true",
+        "--graph",
+        action="store_true",
         help="Wipe + rebuild this project's graph.db (fixes graph corruption)",
     )
     heal_parser.add_argument(
-        "--all", action="store_true",
+        "--decisions",
+        action="store_true",
+        help="Embed ALL existing decisions into the semantic index (v2.0→v2.1 upgrade backfill, non-destructive)",
+    )
+    heal_parser.add_argument(
+        "--all",
+        action="store_true",
         help="Wipe ALL of this project's data (codeindex + graph + sessions)",
     )
     heal_parser.add_argument(
-        "--dry-run", action="store_true",
+        "--dry-run",
+        action="store_true",
         help="Show what would be done without making changes",
     )
     heal_parser.add_argument(
-        "--yes", "-y", action="store_true",
+        "--yes",
+        "-y",
+        action="store_true",
         help="Skip confirmation prompt",
     )
 
@@ -1249,7 +1429,7 @@ def main() -> None:
     handle_parser.add_argument(
         "event_type",
         help="Claude Code event name (PreToolUse, PostToolUse, SessionStart, "
-             "UserPromptSubmit, Stop)",
+        "UserPromptSubmit, Stop)",
     )
 
     args = parser.parse_args(raw_args)
@@ -1265,11 +1445,18 @@ def main() -> None:
     if args.command and args.command not in _NO_HEAL_COMMANDS:
         try:
             from mcp_server.paths import (
-                get_project_root, is_invalid_project_root, get_data_dir,
+                get_project_root,
+                is_invalid_project_root,
+                get_data_dir,
             )
+
             project_root = get_project_root()
-            if project_root is not None and is_invalid_project_root(project_root) is None:
+            if (
+                project_root is not None
+                and is_invalid_project_root(project_root) is None
+            ):
                 from mcp_server._repair_init import repair_incomplete_init
+
                 data_dir = get_data_dir()
                 # Only repair if there's already SOME state on disk — never
                 # bootstrap from nothing as a side effect of a read-only CLI.
@@ -1304,6 +1491,7 @@ def main() -> None:
         sub_project_dir = getattr(args, "project_dir", None)
         if sub_project_dir and project_dir is None:
             from mcp_server.paths import set_project_dir
+
             project_dir = Path(sub_project_dir).resolve()
             set_project_dir(project_dir)
         cmd_serve(
@@ -1316,6 +1504,7 @@ def main() -> None:
         )
     elif args.command == "setup":
         from mcp_server.setup_wizard import cmd_setup
+
         only_ides_arg = getattr(args, "ide", None)
         only_ides_tuple = tuple(only_ides_arg) if only_ides_arg else None
         rc = cmd_setup(
@@ -1343,9 +1532,12 @@ def main() -> None:
         )
     elif args.command == "configure":
         from mcp_server.cli_configure import cmd_configure
+
         try:
             rc = cmd_configure(
-                interactive=(args.dirs is None and args.extensions is None and not args.dry_run),
+                interactive=(
+                    args.dirs is None and args.extensions is None and not args.dry_run
+                ),
                 dirs_arg=args.dirs,
                 exts_arg=args.extensions,
                 reindex=not args.no_reindex,
@@ -1365,6 +1557,7 @@ def main() -> None:
         # Hero 6 — Token Budget Live View. Reads token_budget.jsonl
         # populated by the Stop hook + TokenBudgetPersist policy.
         from mcp_server.cli_budget import cmd_budget
+
         project_arg = getattr(args, "project", None)
         rc = cmd_budget(
             show_history=(getattr(args, "subaction", None) == "history"),
@@ -1376,11 +1569,13 @@ def main() -> None:
     elif args.command == "doctor":
         # Pillar 1.3 — health check
         from mcp_server.doctor import cmd_doctor
+
         rc = cmd_doctor(verbose=getattr(args, "verbose", False))
         sys.exit(rc)
     elif args.command == "projects":
         # Bug 21b (rc.4) — project inventory
         from mcp_server.cli_projects import cmd_projects
+
         rc = cmd_projects(
             output_json=getattr(args, "output_json", False),
             ghosts_only=getattr(args, "ghosts_only", False),
@@ -1390,6 +1585,7 @@ def main() -> None:
     elif args.command == "agents":
         # Pillar 2.2 — regenerate per-IDE nudge files
         from mcp_server.cli_agents import cmd_agents
+
         project_arg = getattr(args, "project", None)
         rc = cmd_agents(
             ide=getattr(args, "ide", None),
@@ -1403,6 +1599,7 @@ def main() -> None:
         sub = getattr(args, "hooks_subcommand", None)
         if sub == "install":
             from mcp_server.cli_agents import cmd_hooks_install
+
             project_arg = getattr(args, "project", None)
             rc = cmd_hooks_install(
                 project=Path(project_arg) if project_arg else None,
@@ -1411,13 +1608,17 @@ def main() -> None:
             sys.exit(rc)
         elif sub == "list":
             from mcp_server.cli_hooks_admin import cmd_hooks_list
+
             sys.exit(cmd_hooks_list())
         elif sub == "uninstall":
             from mcp_server.cli_hooks_admin import cmd_hooks_uninstall
-            sys.exit(cmd_hooks_uninstall(
-                dry_run=getattr(args, "dry_run", False),
-                yes=getattr(args, "yes", False),
-            ))
+
+            sys.exit(
+                cmd_hooks_uninstall(
+                    dry_run=getattr(args, "dry_run", False),
+                    yes=getattr(args, "yes", False),
+                )
+            )
         else:
             print("Error: unknown hooks subcommand", file=sys.stderr)
             print(
@@ -1429,6 +1630,7 @@ def main() -> None:
     elif args.command == "replay":
         # Hero 8 — Decision Replay. Browses decisions timeline.
         from mcp_server.cli_replay import cmd_replay
+
         project_arg = getattr(args, "project", None)
         out_arg = getattr(args, "out", None)
         rc = cmd_replay(
@@ -1445,6 +1647,7 @@ def main() -> None:
         # Hero 10 — AI Promotion Score. Reads outcomes + learned_rules
         # from the project's graph DB and renders the digest.
         from mcp_server.cli_insights import cmd_insights
+
         project_arg = getattr(args, "project", None)
         rc = cmd_insights(
             since=getattr(args, "since", "7d"),
@@ -1467,6 +1670,7 @@ def main() -> None:
         rc = cmd_heal(
             vectors=getattr(args, "vectors", False),
             graph=getattr(args, "graph", False),
+            decisions=getattr(args, "decisions", False),
             heal_all=getattr(args, "all", False),
             dry_run=getattr(args, "dry_run", False),
             yes=getattr(args, "yes", False),
@@ -1482,6 +1686,7 @@ def main() -> None:
             # as Week-1 R3.)
             try:
                 from mcp_server.engine import register_default_policies
+
                 register_default_policies()
             except Exception:
                 pass  # never let policy registration break the hook
@@ -1489,10 +1694,14 @@ def main() -> None:
             # env var is set (acceptance-test harness; not used in prod).
             try:
                 from mcp_server.engine.demo_policy import maybe_register as _maybe_demo
+
                 _maybe_demo()
             except Exception:
                 pass  # never let demo policy registration break the hook
-            from mcp_server.engine.wiring.claude_code_hooks import handle as engine_handle
+            from mcp_server.engine.wiring.claude_code_hooks import (
+                handle as engine_handle,
+            )
+
             sys.exit(engine_handle(args.event_type))
         # Unknown engine action — print usage.
         engine_parser.print_help()
@@ -1523,9 +1732,11 @@ def main() -> None:
 # cmd_clean
 # ---------------------------------------------------------------------------
 
+
 def cmd_heal(
     vectors: bool = False,
     graph: bool = False,
+    decisions: bool = False,
     heal_all: bool = False,
     dry_run: bool = False,
     yes: bool = False,
@@ -1541,6 +1752,8 @@ def cmd_heal(
     Args:
         vectors: wipe the project's Chroma vector store
         graph: wipe the project's graph.db
+        decisions: NON-DESTRUCTIVE backfill — embed every existing decision
+            into the semantic search index. Used for v2.0→v2.1 upgrades.
         heal_all: wipe everything (vectors + graph + sessions) for this project
         dry_run: print what would be done, don't touch anything
         yes: skip the confirmation prompt
@@ -1558,16 +1771,57 @@ def cmd_heal(
     from mcp_server.paths import get_data_dir, get_project_root, is_invalid_project_root
 
     # P1 (helpful errors): require at least one target.
-    if not (vectors or graph or heal_all):
+    if not (vectors or graph or decisions or heal_all):
         print(
             "Error: nothing to heal. Pass one of:\n"
-            "  --vectors   wipe + rebuild the Chroma vector store (HNSW corruption)\n"
-            "  --graph     wipe + rebuild graph.db\n"
-            "  --all       wipe ALL local state for this project\n"
+            "  --vectors    wipe + rebuild the Chroma vector store (HNSW corruption)\n"
+            "  --graph      wipe + rebuild graph.db\n"
+            "  --decisions  embed existing decisions into semantic index (v2.0→v2.1 upgrade backfill, non-destructive)\n"
+            "  --all        wipe ALL local state for this project\n"
             "Run `codevira doctor` to see what needs healing.",
             file=sys.stderr,
         )
         return 1
+
+    # ─── --decisions is the ONLY non-destructive target: handled separately ──
+    # Doesn't wipe anything — just embeds existing SQLite decisions into the
+    # semantic index. Safe to run any time; idempotent (upsert under the hood).
+    if decisions and not (vectors or graph or heal_all):
+        try:
+            from indexer.sqlite_graph import SQLiteGraph
+            from mcp_server.tools._decision_embeddings import backfill_all_decisions
+            graph_db_path = get_data_dir() / "graph" / "graph.db"
+            if not graph_db_path.is_file():
+                print(
+                    f"Error: no graph.db at {graph_db_path}. "
+                    f"Has this project been initialized? Run `codevira init` first.",
+                    file=sys.stderr,
+                )
+                return 1
+            print(f"  Backfilling decision embeddings for {graph_db_path.parent.parent} …")
+            if dry_run:
+                # Cheap count via SQLite — don't actually embed
+                db = SQLiteGraph(graph_db_path)
+                try:
+                    cur = db.conn.execute("SELECT COUNT(*) FROM decisions")
+                    total = cur.fetchone()[0]
+                finally:
+                    db.close()
+                print(f"    [dry-run] would attempt to embed {total} decision(s)")
+                return 0
+            db = SQLiteGraph(graph_db_path)
+            try:
+                result = backfill_all_decisions(db)
+            finally:
+                db.close()
+            print(f"    total={result.get('total', 0)} embedded={result.get('embedded', 0)} "
+                  f"failed={result.get('failed', 0)} skipped={result.get('skipped', 0)}")
+            if "note" in result:
+                print(f"    note: {result['note']}")
+            return 0 if result.get("failed", 0) == 0 else 1
+        except Exception as e:
+            print(f"Error: --decisions backfill failed: {e}", file=sys.stderr)
+            return 1
 
     # Guard against running from $HOME / system dirs (same protection as cmd_index).
     rejection = is_invalid_project_root(get_project_root())
@@ -1578,15 +1832,17 @@ def cmd_heal(
     try:
         data_dir = get_data_dir()
     except Exception as e:
-        print(f"Error: cannot resolve data dir for current project: {e}", file=sys.stderr)
+        print(
+            f"Error: cannot resolve data dir for current project: {e}", file=sys.stderr
+        )
         return 1
 
     project_root = get_project_root()
     print()
-    print(f"  Codevira — Heal")
+    print("  Codevira — Heal")
     print(f"  Project:    {project_root}")
     print(f"  Data dir:   {data_dir}")
-    print(f"  " + "─" * 50)
+    print("  " + "─" * 50)
     print()
 
     targets: list[tuple[str, Path]] = []
@@ -1594,18 +1850,22 @@ def cmd_heal(
         codeindex = data_dir / "codeindex"
         if codeindex.exists():
             try:
-                size_mb = sum(f.stat().st_size for f in codeindex.rglob("*") if f.is_file()) / 1024 / 1024
+                size_mb = (
+                    sum(f.stat().st_size for f in codeindex.rglob("*") if f.is_file())
+                    / 1024
+                    / 1024
+                )
                 targets.append((f"vector store (Chroma) — {size_mb:.1f} MB", codeindex))
             except Exception:
                 targets.append(("vector store (Chroma) — size unknown", codeindex))
         else:
-            print(f"    · vector store: nothing to do (codeindex/ doesn't exist)")
+            print("    · vector store: nothing to do (codeindex/ doesn't exist)")
     if graph or heal_all:
         graph_db = data_dir / "graph"
         if graph_db.exists():
             targets.append(("graph database (graph.db)", graph_db))
         else:
-            print(f"    · graph: nothing to do (graph/ doesn't exist)")
+            print("    · graph: nothing to do (graph/ doesn't exist)")
     if heal_all:
         sessions = data_dir / "sessions"
         if sessions.exists():
@@ -1616,7 +1876,7 @@ def cmd_heal(
         print("  If the issue persists, run `codevira doctor` to diagnose.")
         return 2
 
-    print(f"  Will remove:")
+    print("  Will remove:")
     for label, _ in targets:
         print(f"    • {label}")
     print()
@@ -1629,6 +1889,7 @@ def cmd_heal(
         # Bug 22 (rc.4): use shared confirm() helper.
         try:
             from mcp_server._prompts import confirm
+
             if not confirm("Proceed with heal?", default=False):
                 print("  Aborted.")
                 return 0
@@ -1662,20 +1923,25 @@ def cmd_heal(
         print(f"  ⚠ {failures} target(s) failed. Check permissions and retry.")
         return 1
 
-    print(f"  ✓ Heal complete.")
+    print("  ✓ Heal complete.")
     print()
-    print(f"  Next steps:")
+    print("  Next steps:")
     if vectors or heal_all:
-        print(f"    • Run `codevira index --full` to rebuild the vector store")
+        print("    • Run `codevira index --full` to rebuild the vector store")
     elif graph or heal_all:
-        print(f"    • Run `codevira index --full` to rebuild the graph")
+        print("    • Run `codevira index --full` to rebuild the graph")
     print()
     return 0
 
 
-def cmd_clean(clean_all: bool = False, dry_run: bool = False, yes: bool = False,
-              legacy_only: bool = False, orphans_only: bool = False,
-              ghosts_only: bool = False) -> None:
+def cmd_clean(
+    clean_all: bool = False,
+    dry_run: bool = False,
+    yes: bool = False,
+    legacy_only: bool = False,
+    orphans_only: bool = False,
+    ghosts_only: bool = False,
+) -> None:
     """Remove all Codevira data, IDE configs, and services.
 
     With --legacy, ONLY removes .codevira.migrated/ backup directories from
@@ -1728,6 +1994,7 @@ def cmd_clean(clean_all: bool = False, dry_run: bool = False, yes: bool = False,
     if global_home.exists():
         try:
             from mcp_server._project_inventory import enumerate_projects, summarize
+
             inv = summarize(enumerate_projects())
             count_breakdown = (
                 f"{inv['tracked']} tracked"
@@ -1738,12 +2005,19 @@ def cmd_clean(clean_all: bool = False, dry_run: bool = False, yes: bool = False,
         except Exception:
             count_breakdown = "(count unavailable)"
         try:
-            total_size = sum(f.stat().st_size for f in global_home.rglob("*") if f.is_file())
+            total_size = sum(
+                f.stat().st_size for f in global_home.rglob("*") if f.is_file()
+            )
             size_str = f"{total_size / 1024 / 1024:.1f} MB"
         except Exception:
             size_str = "unknown size"
         print(f"    • ~/.codevira/ ({count_breakdown}; {size_str})")
-        actions.append(("Removed ~/.codevira/", lambda: shutil.rmtree(global_home, ignore_errors=True)))
+        actions.append(
+            (
+                "Removed ~/.codevira/",
+                lambda: shutil.rmtree(global_home, ignore_errors=True),
+            )
+        )
 
     # 2. IDE configs
     ide_configs = [
@@ -1756,32 +2030,42 @@ def cmd_clean(clean_all: bool = False, dry_run: bool = False, yes: bool = False,
     for ide_name, config_path in ide_configs:
         if config_path.exists():
             from mcp_server.ide_inject import _read_json_safe
+
             data = _read_json_safe(config_path)
             servers = data.get("mcpServers", {})
-            has_codevira = any(k == "codevira" or k.startswith("codevira-") for k in servers)
+            has_codevira = any(
+                k == "codevira" or k.startswith("codevira-") for k in servers
+            )
             if has_codevira:
                 print(f"    • {ide_name} config (mcpServers.codevira)")
                 actions.append(
-                    (f"Removed codevira from {ide_name}",
-                     lambda p=config_path: remove_codevira_from_config(p))
+                    (
+                        f"Removed codevira from {ide_name}",
+                        lambda p=config_path: remove_codevira_from_config(p),
+                    )
                 )
 
     # 3. Launchd service
-    plist_path = Path.home() / "Library" / "LaunchAgents" / "com.codevira.mcp-serve.plist"
+    plist_path = (
+        Path.home() / "Library" / "LaunchAgents" / "com.codevira.mcp-serve.plist"
+    )
     if plist_path.exists():
         print("    • Launchd service (com.codevira.mcp-serve)")
+
         def _unload_launchd():
             try:
                 from mcp_server.launchd import uninstall_launchd
+
                 uninstall_launchd()
             except Exception:
                 plist_path.unlink(missing_ok=True)
+
         actions.append(("Unloaded launchd service", _unload_launchd))
 
     # 4. Server log
     log_path = Path.home() / "Library" / "Logs" / "codevira.log"
     if log_path.exists():
-        print(f"    • ~/Library/Logs/codevira.log")
+        print("    • ~/Library/Logs/codevira.log")
         actions.append(("Removed server log", lambda: log_path.unlink(missing_ok=True)))
 
     # 4b. Claude Code lifecycle hooks
@@ -1794,7 +2078,10 @@ def cmd_clean(clean_all: bool = False, dry_run: bool = False, yes: bool = False,
     if hooks_dir.is_dir():
         codevira_hooks = sorted(hooks_dir.glob("codevira-*.sh"))
         if codevira_hooks:
-            print(f"    • ~/.claude/hooks/codevira-*.sh ({len(codevira_hooks)} script(s))")
+            print(
+                f"    • ~/.claude/hooks/codevira-*.sh ({len(codevira_hooks)} script(s))"
+            )
+
             def _remove_hooks():
                 # Delegate to the canonical uninstaller — it removes the
                 # scripts AND drops the codevira entries from
@@ -1802,14 +2089,20 @@ def cmd_clean(clean_all: bool = False, dry_run: bool = False, yes: bool = False,
                 # would leave stale).
                 try:
                     from mcp_server.cli_hooks_admin import cmd_hooks_uninstall
+
                     cmd_hooks_uninstall(dry_run=False, yes=True)
                 except Exception as e:
                     # P9 graceful: if the canonical path fails, fall back
                     # to raw rm so the user isn't blocked.
-                    logger.warning("cmd_hooks_uninstall failed (%s) — falling back to rm", e)
+                    logger.warning(
+                        "cmd_hooks_uninstall failed (%s) — falling back to rm", e
+                    )
                     for h in codevira_hooks:
                         h.unlink(missing_ok=True)
-            actions.append(("Removed Claude Code hooks + settings entries", _remove_hooks))
+
+            actions.append(
+                ("Removed Claude Code hooks + settings entries", _remove_hooks)
+            )
 
     # 5. Per-project artifacts (only with --all)
     if clean_all and global_home.exists():
@@ -1818,6 +2111,7 @@ def cmd_clean(clean_all: bool = False, dry_run: bool = False, yes: bool = False,
             for meta_file in projects_dir.glob("*/metadata.json"):
                 try:
                     import json
+
                     meta = json.loads(meta_file.read_text())
                     project_path = Path(meta.get("original_path", ""))
                     if project_path.exists():
@@ -1841,6 +2135,7 @@ def cmd_clean(clean_all: bool = False, dry_run: bool = False, yes: bool = False,
     if not yes:
         # Bug 22 (rc.4): shared confirm() helper.
         from mcp_server._prompts import confirm
+
         if not confirm("Remove all of the above?", default=False):
             print("  Aborted.")
             print()
@@ -1874,13 +2169,23 @@ def _collect_project_cleanup(project_path: Path, actions: list) -> None:
     legacy = project_path / ".codevira"
     if legacy.exists():
         print(f"    • {name}/.codevira/")
-        actions.append((f"Removed {name}/.codevira/", lambda p=legacy: shutil.rmtree(p, ignore_errors=True)))
+        actions.append(
+            (
+                f"Removed {name}/.codevira/",
+                lambda p=legacy: shutil.rmtree(p, ignore_errors=True),
+            )
+        )
 
     # Migration backup
     migrated = project_path / ".codevira.migrated"
     if migrated.exists():
         print(f"    • {name}/.codevira.migrated/")
-        actions.append((f"Removed {name}/.codevira.migrated/", lambda p=migrated: shutil.rmtree(p, ignore_errors=True)))
+        actions.append(
+            (
+                f"Removed {name}/.codevira.migrated/",
+                lambda p=migrated: shutil.rmtree(p, ignore_errors=True),
+            )
+        )
 
     # Git hook
     hook = project_path / ".git" / "hooks" / "post-commit"
@@ -1892,11 +2197,19 @@ def _collect_project_cleanup(project_path: Path, actions: list) -> None:
                 # Check if hook has backup
                 backup = hook.with_suffix(".bak")
                 if backup.exists():
-                    actions.append((f"Restored {name} git hook from backup",
-                                    lambda h=hook, b=backup: b.rename(h)))
+                    actions.append(
+                        (
+                            f"Restored {name} git hook from backup",
+                            lambda h=hook, b=backup: b.rename(h),
+                        )
+                    )
                 else:
-                    actions.append((f"Removed {name} git hook",
-                                    lambda h=hook: h.unlink(missing_ok=True)))
+                    actions.append(
+                        (
+                            f"Removed {name} git hook",
+                            lambda h=hook: h.unlink(missing_ok=True),
+                        )
+                    )
         except Exception:
             pass
 
@@ -1908,12 +2221,15 @@ def _collect_project_cleanup(project_path: Path, actions: list) -> None:
     ]:
         if config_path.exists():
             from mcp_server.ide_inject import _read_json_safe
+
             data = _read_json_safe(config_path)
             if "codevira" in data.get("mcpServers", {}):
                 print(f"    • {name}/.{ide_name} config")
                 actions.append(
-                    (f"Removed codevira from {name}/{ide_name}",
-                     lambda p=config_path: remove_codevira_from_config(p))
+                    (
+                        f"Removed codevira from {name}/{ide_name}",
+                        lambda p=config_path: remove_codevira_from_config(p),
+                    )
                 )
 
 
@@ -1951,6 +2267,7 @@ def _cmd_clean_ghosts(dry_run: bool = False, yes: bool = False) -> None:
     if not yes:
         # Reuse the shared confirm helper added in Bug 22 / rc.4.
         from mcp_server._prompts import confirm
+
         if not confirm(f"Remove {len(ghosts)} ghost dir(s)?", default=False):
             print("  Aborted.")
             return
@@ -1958,6 +2275,7 @@ def _cmd_clean_ghosts(dry_run: bool = False, yes: bool = False) -> None:
     print()
     try:
         from mcp_server.paths import get_global_home
+
         projects_root = get_global_home() / "projects"
     except Exception as exc:
         print(f"  ✗ could not resolve projects directory: {exc}")
@@ -2000,7 +2318,9 @@ def _cmd_clean_orphans(dry_run: bool = False, yes: bool = False) -> None:
     import shutil
     import sqlite3
     from mcp_server.paths import (
-        get_global_home, get_global_db_path, is_invalid_project_root,
+        get_global_home,
+        get_global_db_path,
+        is_invalid_project_root,
     )
 
     print()
@@ -2032,10 +2352,13 @@ def _cmd_clean_orphans(dry_run: bool = False, yes: bool = False) -> None:
                 except (OSError, RuntimeError):
                     exists = False
                 if not exists:
-                    found.append((
-                        meta_file.parent, original_path,
-                        f"original_path no longer exists: {original_path}",
-                    ))
+                    found.append(
+                        (
+                            meta_file.parent,
+                            original_path,
+                            f"original_path no longer exists: {original_path}",
+                        )
+                    )
             except Exception:
                 # Unreadable metadata.json is its own orphan-shaped problem,
                 # but we don't auto-delete unreadable state — surface it for
@@ -2060,7 +2383,9 @@ def _cmd_clean_orphans(dry_run: bool = False, yes: bool = False) -> None:
         return
 
     if not yes:
-        answer = input(f"  Remove {len(found)} orphan data dir(s)? [y/N] ").strip().lower()
+        answer = (
+            input(f"  Remove {len(found)} orphan data dir(s)? [y/N] ").strip().lower()
+        )
         if answer != "y":
             print("  Aborted.")
             print()
@@ -2098,8 +2423,10 @@ def _cmd_clean_orphans(dry_run: bool = False, yes: bool = False) -> None:
             print(f"      (warning: could not delete global.db row: {e})")
 
     print()
-    print(f"  ✓ Removed {removed_dirs} of {len(found)} orphan data dir(s); "
-          f"{removed_rows} global.db row(s) deleted.")
+    print(
+        f"  ✓ Removed {removed_dirs} of {len(found)} orphan data dir(s); "
+        f"{removed_rows} global.db row(s) deleted."
+    )
     print()
 
 
@@ -2142,7 +2469,14 @@ def _cmd_clean_legacy_only(dry_run: bool = False, yes: bool = False) -> None:
     print(f"  Found {len(found)} project(s) with .codevira.migrated/ backups:")
     for p in found:
         try:
-            size_kb = sum(f.stat().st_size for f in (p / ".codevira.migrated").rglob("*") if f.is_file()) / 1024
+            size_kb = (
+                sum(
+                    f.stat().st_size
+                    for f in (p / ".codevira.migrated").rglob("*")
+                    if f.is_file()
+                )
+                / 1024
+            )
             print(f"    • {p}/.codevira.migrated/  ({size_kb:.0f} KB)")
         except Exception:
             print(f"    • {p}/.codevira.migrated/")
@@ -2156,6 +2490,7 @@ def _cmd_clean_legacy_only(dry_run: bool = False, yes: bool = False) -> None:
     if not yes:
         # Bug 22 (rc.4): shared confirm() helper.
         from mcp_server._prompts import confirm
+
         if not confirm(f"Delete {len(found)} backup dir(s)?", default=False):
             print("  Aborted.")
             print()

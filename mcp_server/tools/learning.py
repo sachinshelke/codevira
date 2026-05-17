@@ -192,6 +192,22 @@ def record_decision(
             do_not_revert=bool(do_not_revert),
             session_id=session_id,
         )
+        # 2026-05-17 v2.1: also embed for semantic search. Best-effort —
+        # if the embed fails (chromadb missing, corrupted, transient),
+        # we still return success. The SQL row is the canonical store;
+        # missing embedding only degrades search ranking, not data.
+        try:
+            from mcp_server.tools._decision_embeddings import embed_decision
+            embed_decision(
+                decision_id=result["decision_id"],
+                text=decision.strip(),
+                session_id=result["session_id"],
+                file_path=file_path,
+                context=context,
+            )
+        except Exception:
+            # P1+P9: degrade gracefully. Logged inside embed_decision.
+            pass
         return {
             "recorded": True,
             "decision_id": result["decision_id"],

@@ -13,6 +13,7 @@ mis-guesses a project's layout and ``codevira index --full`` silently reports
 
 CLI entry point: :func:`cmd_configure` (wired in ``mcp_server/cli.py``).
 """
+
 from __future__ import annotations
 
 import logging
@@ -38,6 +39,7 @@ class NonInteractiveError(RuntimeError):
 # ---------------------------------------------------------------------------
 # Input normalization
 # ---------------------------------------------------------------------------
+
 
 def _normalize_extensions(raw: str | list[str]) -> list[str]:
     """Accept ``"py,ts"``/``".py,.ts"``/``["py", ".ts"]``.
@@ -75,6 +77,7 @@ def _split_csv(raw: str | None) -> list[str]:
 # ---------------------------------------------------------------------------
 # Scan
 # ---------------------------------------------------------------------------
+
 
 def scan_project(project_root: Path, current_config: dict) -> dict:
     """Discover source dirs + extensions for an interactive prompt.
@@ -155,9 +158,7 @@ def scan_project(project_root: Path, current_config: dict) -> dict:
     # Deterministic display order: file-count desc, then path asc.
     dirs_discovered.sort(key=lambda r: (-r["files"], r["path"]))
 
-    exts_discovered = [
-        {"ext": e, "files": ext_files[e]} for e in ext_files
-    ]
+    exts_discovered = [{"ext": e, "files": ext_files[e]} for e in ext_files]
     exts_discovered.sort(key=lambda r: (-r["files"], r["ext"]))
 
     return {
@@ -172,6 +173,7 @@ def scan_project(project_root: Path, current_config: dict) -> dict:
 # ---------------------------------------------------------------------------
 # Multi-select prompt
 # ---------------------------------------------------------------------------
+
 
 def _questionary_multiselect(
     title: str,
@@ -193,10 +195,12 @@ def _questionary_multiselect(
         None if questionary is unavailable / unimportable (caller falls back).
     """
     import importlib.util
+
     if importlib.util.find_spec("questionary") is None:
         return None
     try:
         import questionary
+
         choices = [
             questionary.Choice(
                 label_fn(item),
@@ -217,6 +221,7 @@ def _questionary_multiselect(
         # P9 (graceful degradation): any questionary failure → fall back
         # to text prompt rather than crash mid-configure.
         import logging
+
         logging.getLogger(__name__).warning(
             "questionary failed (%s) — falling back to numbered text prompt",
             exc,
@@ -254,7 +259,11 @@ def prompt_multi_select(
     # Try the arrow-key path first. If unavailable / failed, fall through
     # to the text prompt below.
     questionary_result = _questionary_multiselect(
-        title, items, preselected, key_field, label_fn,
+        title,
+        items,
+        preselected,
+        key_field,
+        label_fn,
     )
     if questionary_result is not None:
         return questionary_result
@@ -290,11 +299,7 @@ def prompt_multi_select(
             return set(preselected)
         if s == "all":
             # "all" excludes missing-on-disk dirs by design
-            return {
-                item[key_field]
-                for item in items
-                if item.get("on_disk", True)
-            }
+            return {item[key_field] for item in items if item.get("on_disk", True)}
         if s == "none":
             return set()
 
@@ -302,7 +307,9 @@ def prompt_multi_select(
         try:
             indices = [int(p.strip()) for p in s.split(",") if p.strip()]
         except ValueError:
-            print("  Could not parse input. Example: '1,3,5' | all | none | q | <Enter>")
+            print(
+                "  Could not parse input. Example: '1,3,5' | all | none | q | <Enter>"
+            )
             continue
 
         bad = [i for i in indices if i < 1 or i > len(items)]
@@ -316,6 +323,7 @@ def prompt_multi_select(
 # ---------------------------------------------------------------------------
 # Writer
 # ---------------------------------------------------------------------------
+
 
 def _atomic_write_text(path: Path, content: str) -> None:
     """Write ``content`` to ``path`` atomically via tempfile + rename.
@@ -337,10 +345,13 @@ def _atomic_write_text(path: Path, content: str) -> None:
     """
     import os
     import tempfile
+
     parent = path.parent
     parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(
-        dir=str(parent), prefix=path.name + ".", suffix=".tmp",
+        dir=str(parent),
+        prefix=path.name + ".",
+        suffix=".tmp",
     )
     try:
         with os.fdopen(fd, "w") as f:
@@ -354,7 +365,9 @@ def _atomic_write_text(path: Path, content: str) -> None:
         raise
 
 
-def write_config_patch(data_dir: Path, dirs: set[str] | list[str], exts: set[str] | list[str]) -> None:
+def write_config_patch(
+    data_dir: Path, dirs: set[str] | list[str], exts: set[str] | list[str]
+) -> None:
     """Rewrite ``.codevira/config.yaml`` with new watched_dirs + file_extensions.
 
     Deterministic output:
@@ -400,6 +413,7 @@ def write_config_patch(data_dir: Path, dirs: set[str] | list[str], exts: set[str
 # ---------------------------------------------------------------------------
 # Orchestrator
 # ---------------------------------------------------------------------------
+
 
 def _load_current_config(data_dir: Path) -> dict:
     """Load the ``project`` sub-dict from config.yaml. Raises on malformed YAML.
@@ -461,8 +475,7 @@ def cmd_configure(
     except Exception as e:
         print(f"Error: could not resolve .codevira/: {e}", file=sys.stderr)
         print(
-            "  → run `codevira doctor` to diagnose, "
-            "or `codevira setup` to re-init.",
+            "  → run `codevira doctor` to diagnose, " "or `codevira setup` to re-init.",
             file=sys.stderr,
         )
         return 1
@@ -478,6 +491,7 @@ def cmd_configure(
     # (~/Library/..., /var/log) — see crash-log analysis 2026-04-24 for the
     # production failure that motivated this guard.
     from mcp_server.paths import is_invalid_project_root
+
     rejection = is_invalid_project_root(project_root)
     if rejection:
         print(f"Error: {rejection}", file=sys.stderr)
@@ -502,7 +516,11 @@ def cmd_configure(
     # the later write would crash with IsADirectoryError or similar. Bail
     # out early with a clear message — we can't safely auto-heal this
     # without destroying whatever is there.
-    if config_path.exists() and not config_path.is_file() and not config_path.is_symlink():
+    if (
+        config_path.exists()
+        and not config_path.is_file()
+        and not config_path.is_symlink()
+    ):
         print(
             f"Error: {config_path} exists but is not a regular file "
             f"({'directory' if config_path.is_dir() else 'special file'}). "
@@ -541,6 +559,7 @@ def cmd_configure(
         # normal interactive flow. In --dry-run mode we hold the bootstrap
         # in memory only so we don't modify disk.
         from mcp_server.detect import auto_detect_project
+
         try:
             detected = auto_detect_project(project_root)
         except Exception as e:
@@ -552,14 +571,17 @@ def cmd_configure(
             # what they asked for; interactive users see the discovery list
             # which doesn't depend on detect.
             logger.warning(
-                "auto_detect_project failed: %s. Falling back to empty defaults.", e,
+                "auto_detect_project failed: %s. Falling back to empty defaults.",
+                e,
             )
             detected = {
                 "name": project_root.name,
                 "language": "unknown",
                 "watched_dirs": [],
                 "file_extensions": [],
-                "collection_name": project_root.name.lower().replace("-", "_").replace(" ", "_"),
+                "collection_name": project_root.name.lower()
+                .replace("-", "_")
+                .replace(" ", "_"),
             }
         bootstrap_cfg = {
             "name": detected["name"],
@@ -622,6 +644,7 @@ def cmd_configure(
     # defensively wrapped so failures don't break configure.
     if not dry_run:
         from mcp_server.auto_init import _write_metadata, _register_global
+
         try:
             if not (data_dir / "metadata.json").exists():
                 _write_metadata(data_dir, project_root)
@@ -645,8 +668,10 @@ def cmd_configure(
     try:
         data_resolved = data_dir.resolve()
         project_resolved = project_root.resolve()
-        if (project_resolved in data_resolved.parents
-                and data_resolved.name == ".codevira"):
+        if (
+            project_resolved in data_resolved.parents
+            and data_resolved.name == ".codevira"
+        ):
             print(
                 "\nℹ  You're using the legacy in-project `.codevira/` layout.",
                 file=sys.stderr,
@@ -847,10 +872,7 @@ def cmd_configure(
     # ---- Compute removals (for user-visible confirmation) ------------------
     removed = sorted(set(scan["dirs_now"]) - chosen_dirs)
     if removed:
-        tagged = [
-            f"{d} (missing)" if d in scan["dirs_missing"] else d
-            for d in removed
-        ]
+        tagged = [f"{d} (missing)" if d in scan["dirs_missing"] else d for d in removed]
         print(f"\nRemoving from watched_dirs: {tagged}")
 
     dirs_final = sorted(chosen_dirs)
@@ -903,7 +925,9 @@ def cmd_configure(
     should_reindex = False
     if reindex:
         if not sys.stdin.isatty():
-            print("(non-interactive: skipping reindex. Run `codevira index --full` yourself.)")
+            print(
+                "(non-interactive: skipping reindex. Run `codevira index --full` yourself.)"
+            )
         else:
             # Bug 22 (rc.4): use shared confirm() helper. Previous code returned
             # False on any non-matching input (including paste artifacts) — looked
@@ -912,11 +936,13 @@ def cmd_configure(
             # False, so we fall through to the no-reindex branch — config is
             # already written; user can run `codevira index --full` later).
             from mcp_server._prompts import confirm
+
             print()  # preserve the blank line the old prompt prepended
             should_reindex = confirm("Rebuild index now?", default=True)
 
     if should_reindex:
         from indexer.index_codebase import cmd_full_rebuild
+
         try:
             cmd_full_rebuild()
         except KeyboardInterrupt:
@@ -934,12 +960,18 @@ def cmd_configure(
             # specific reason and let them retry manually.
             print()
             print(f"Rebuild failed: {e}", file=sys.stderr)
-            print("Your config IS saved. Run `codevira index --full` to retry the rebuild.",
-                  file=sys.stderr)
+            print(
+                "Your config IS saved. Run `codevira index --full` to retry the rebuild.",
+                file=sys.stderr,
+            )
             return 1
-        print("\nNote: restart AI tools and any running watcher to pick up the new config.")
+        print(
+            "\nNote: restart AI tools and any running watcher to pick up the new config."
+        )
     else:
         print("\nTip: run `codevira index --full` to rebuild the semantic index.")
-        print("Note: restart AI tools and any running watcher to pick up the new config.")
+        print(
+            "Note: restart AI tools and any running watcher to pick up the new config."
+        )
 
     return 0

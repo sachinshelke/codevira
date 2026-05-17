@@ -11,6 +11,27 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [2.1.1] — 2026-05-17 — Hybrid decision search
+
+### Added
+- **Hybrid search for `search_decisions`** (BM25 + ChromaDB semantic + RRF fusion).
+  Closes the UDAP-benchmark gap: queries like `"DDD architecture layer"` or
+  `"codevira backfill"` that returned 0 hits in v2.0/v2.1.0 now surface the
+  right decisions via semantic recall. Response includes a `retrieval` field
+  indicating which path contributed (hybrid / keyword / semantic).
+- **`codevira heal --decisions`** — non-destructive backfill embedding all
+  existing decisions into the semantic index. Run once after upgrading from
+  v2.0/v2.1.0 to pick up hybrid recall on pre-existing decision history.
+  Idempotent (upsert pattern).
+- **`mcp_server/tools/_decision_embeddings.py`** — new helper module:
+  embed_decision, semantic_search_decisions, rrf_merge, backfill_all_decisions.
+  P9 graceful degradation throughout — chromadb failures never block SQL
+  writes or BM25 reads.
+
+### Tests
+- `tests/test_decision_embeddings.py` — 15 new regression tests covering
+  RRF math, graceful-degradation paths, and the explicit benchmark queries.
+
 ## [2.1.0] — 2026-05-17 — Reliability hardening + Pillar 3 discipline scaffold
 
 ### Added — Pillar 3: AI development discipline scaffold (2026-05-16)

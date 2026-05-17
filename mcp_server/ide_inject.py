@@ -12,6 +12,7 @@ v1.6 additions:
   - Windows cross-platform fix for sysconfig path resolution
   - Antigravity server name sanitization (handles special chars)
 """
+
 from __future__ import annotations
 
 import json
@@ -27,6 +28,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # IDE detection
 # ---------------------------------------------------------------------------
+
 
 def detect_installed_ides(project_root: Path) -> list[str]:
     """Detect which AI coding tools are installed.
@@ -61,7 +63,9 @@ def detect_installed_ides(project_root: Path) -> list[str]:
         found.append("cursor")
 
     # Windsurf: global ~/.windsurf/ or ~/.codeium/windsurf/
-    if (Path.home() / ".windsurf").is_dir() or (Path.home() / ".codeium" / "windsurf").is_dir():
+    if (Path.home() / ".windsurf").is_dir() or (
+        Path.home() / ".codeium" / "windsurf"
+    ).is_dir():
         found.append("windsurf")
 
     # Google Antigravity: global ~/.gemini/
@@ -106,9 +110,12 @@ def _gh_copilot_extension_present() -> bool:
         return False
     try:
         import subprocess
+
         result = subprocess.run(
             [gh, "extension", "list"],
-            capture_output=True, text=True, timeout=2.0,
+            capture_output=True,
+            text=True,
+            timeout=2.0,
         )
         return "copilot" in result.stdout.lower()
     except (subprocess.TimeoutExpired, OSError, ValueError):
@@ -118,6 +125,7 @@ def _gh_copilot_extension_present() -> bool:
 # ---------------------------------------------------------------------------
 # Config file paths
 # ---------------------------------------------------------------------------
+
 
 def _claude_config_path(project_root: Path) -> Path:
     """Return the file Claude Code reads PROJECT-SCOPE ``mcpServers`` from.
@@ -132,6 +140,7 @@ def _claude_config_path(project_root: Path) -> Path:
     trust it on first use of the project.
     """
     return project_root / ".mcp.json"
+
 
 def _claude_global_config_path() -> Path:
     """Return the file Claude Code reads ``mcpServers`` from.
@@ -160,10 +169,17 @@ def _claude_cli_path() -> str | None:
     """
     return shutil.which("claude")
 
+
 def _claude_desktop_config_path() -> Path:
     """Return the Claude Desktop config file path (platform-aware)."""
     if sys.platform == "darwin":
-        return Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
+        return (
+            Path.home()
+            / "Library"
+            / "Application Support"
+            / "Claude"
+            / "claude_desktop_config.json"
+        )
     elif sys.platform == "win32":
         appdata = Path(sys.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
         return appdata / "Claude" / "claude_desktop_config.json"
@@ -171,20 +187,25 @@ def _claude_desktop_config_path() -> Path:
         # Linux / other
         return Path.home() / ".config" / "Claude" / "claude_desktop_config.json"
 
+
 def _cursor_config_path(project_root: Path) -> Path:
     return project_root / ".cursor" / "mcp.json"
+
 
 def _cursor_global_config_path() -> Path:
     return Path.home() / ".cursor" / "mcp.json"
 
+
 def _windsurf_config_path(project_root: Path) -> Path:
     return project_root / ".windsurf" / "mcp.json"
+
 
 def _windsurf_global_config_path() -> Path:
     """Return global Windsurf MCP config path."""
     if (Path.home() / ".codeium" / "windsurf").is_dir():
         return Path.home() / ".codeium" / "windsurf" / "mcp_config.json"
     return Path.home() / ".windsurf" / "mcp_config.json"
+
 
 def _antigravity_config_path() -> Path:
     return Path.home() / ".gemini" / "antigravity" / "mcp_config.json"
@@ -193,6 +214,7 @@ def _antigravity_config_path() -> Path:
 # ---------------------------------------------------------------------------
 # JSON helpers
 # ---------------------------------------------------------------------------
+
 
 def _read_json_safe(path: Path) -> dict:
     """Read a JSON file, returning {} if missing or corrupt."""
@@ -275,7 +297,9 @@ def _merge_mcp_config(existing: dict, server_name: str, server_config: dict) -> 
     return result
 
 
-def remove_codevira_from_config(config_path: Path, key_prefix: str = "codevira") -> bool:
+def remove_codevira_from_config(
+    config_path: Path, key_prefix: str = "codevira"
+) -> bool:
     """Remove all codevira entries from an IDE config file.
 
     Deletes keys from mcpServers that match `key_prefix` exactly or start
@@ -292,8 +316,7 @@ def remove_codevira_from_config(config_path: Path, key_prefix: str = "codevira")
         return False
 
     keys_to_remove = [
-        k for k in servers
-        if k == key_prefix or k.startswith(f"{key_prefix}-")
+        k for k in servers if k == key_prefix or k.startswith(f"{key_prefix}-")
     ]
     if not keys_to_remove:
         return False
@@ -308,6 +331,7 @@ def remove_codevira_from_config(config_path: Path, key_prefix: str = "codevira")
 # ---------------------------------------------------------------------------
 # Resolve the best command to run codevira
 # ---------------------------------------------------------------------------
+
 
 def _resolve_command() -> tuple[str, str]:
     """
@@ -330,15 +354,26 @@ def _resolve_command() -> tuple[str, str]:
         return exe, python_exe
 
     # 2. pipx default venv
-    pipx_bin = Path.home() / ".local" / "pipx" / "venvs" / "codevira" / "bin" / "codevira"
+    pipx_bin = (
+        Path.home() / ".local" / "pipx" / "venvs" / "codevira" / "bin" / "codevira"
+    )
     if sys.platform == "win32":
-        pipx_bin = Path.home() / ".local" / "pipx" / "venvs" / "codevira" / "Scripts" / "codevira.exe"
+        pipx_bin = (
+            Path.home()
+            / ".local"
+            / "pipx"
+            / "venvs"
+            / "codevira"
+            / "Scripts"
+            / "codevira.exe"
+        )
     if pipx_bin.exists():
         return str(pipx_bin), python_exe
 
     # 3. pip --user install location (cross-platform)
     try:
         import sysconfig
+
         if sys.platform == "win32":
             scripts_scheme = "nt_user"
         else:
@@ -366,7 +401,10 @@ def _resolve_command() -> tuple[str, str]:
 # Per-IDE injection (per-project mode)
 # ---------------------------------------------------------------------------
 
-def _build_server_config(cmd_path: str, python_exe: str, project_root: Path, use_cwd: bool = True) -> dict:
+
+def _build_server_config(
+    cmd_path: str, python_exe: str, project_root: Path, use_cwd: bool = True
+) -> dict:
     """
     Build the MCP server config dict for per-project mode.
 
@@ -375,7 +413,7 @@ def _build_server_config(cmd_path: str, python_exe: str, project_root: Path, use
       - use_cwd=True:  {"command": ..., "args": [], "cwd": ...}   (Claude / Cursor / Windsurf)
       - use_cwd=False: {"command": ..., "args": ["--project-dir", ...]}  (tools that ignore cwd)
     """
-    is_python_fallback = (cmd_path == python_exe)
+    is_python_fallback = cmd_path == python_exe
 
     if is_python_fallback:
         return {
@@ -403,7 +441,7 @@ def _build_global_server_config(cmd_path: str, python_exe: str) -> dict:
     Global mode: no project path — the server detects the project from cwd
     when each AI tool opens a project. Works for every project automatically.
     """
-    is_python_fallback = (cmd_path == python_exe)
+    is_python_fallback = cmd_path == python_exe
     if is_python_fallback:
         return {"command": cmd_path, "args": ["-m", "mcp_server"]}
     return {"command": cmd_path, "args": []}
@@ -413,13 +451,17 @@ def _inject_claude(project_root: Path, cmd_path: str, python_exe: str) -> str | 
     """Inject MCP config into Claude Code per-project settings."""
     config_path = _claude_config_path(project_root)
     existing = _read_json_safe(config_path)
-    server_config = _build_server_config(cmd_path, python_exe, project_root, use_cwd=True)
+    server_config = _build_server_config(
+        cmd_path, python_exe, project_root, use_cwd=True
+    )
     merged = _merge_mcp_config(existing, "codevira", server_config)
     _write_json_safe(config_path, merged)
     return str(config_path)
 
 
-def _inject_claude_desktop(project_root: Path, cmd_path: str, python_exe: str) -> str | None:
+def _inject_claude_desktop(
+    project_root: Path, cmd_path: str, python_exe: str
+) -> str | None:
     """Inject MCP config into Claude Desktop (stdio-only, requires full binary path).
 
     Claude Desktop:
@@ -431,7 +473,9 @@ def _inject_claude_desktop(project_root: Path, cmd_path: str, python_exe: str) -
     existing = _read_json_safe(config_path)
 
     # Always use --project-dir for Claude Desktop (no cwd support)
-    server_config = _build_server_config(cmd_path, python_exe, project_root, use_cwd=False)
+    server_config = _build_server_config(
+        cmd_path, python_exe, project_root, use_cwd=False
+    )
 
     merged = _merge_mcp_config(existing, "codevira", server_config)
     _write_json_safe(config_path, merged)
@@ -442,7 +486,9 @@ def _inject_cursor(project_root: Path, cmd_path: str, python_exe: str) -> str | 
     """Inject MCP config into Cursor per-project settings."""
     config_path = _cursor_config_path(project_root)
     existing = _read_json_safe(config_path)
-    server_config = _build_server_config(cmd_path, python_exe, project_root, use_cwd=True)
+    server_config = _build_server_config(
+        cmd_path, python_exe, project_root, use_cwd=True
+    )
     merged = _merge_mcp_config(existing, "codevira", server_config)
     _write_json_safe(config_path, merged)
     return str(config_path)
@@ -452,13 +498,17 @@ def _inject_windsurf(project_root: Path, cmd_path: str, python_exe: str) -> str 
     """Inject MCP config into Windsurf per-project settings."""
     config_path = _windsurf_config_path(project_root)
     existing = _read_json_safe(config_path)
-    server_config = _build_server_config(cmd_path, python_exe, project_root, use_cwd=True)
+    server_config = _build_server_config(
+        cmd_path, python_exe, project_root, use_cwd=True
+    )
     merged = _merge_mcp_config(existing, "codevira", server_config)
     _write_json_safe(config_path, merged)
     return str(config_path)
 
 
-def _inject_antigravity(project_root: Path, cmd_path: str, python_exe: str, project_name: str) -> str | None:
+def _inject_antigravity(
+    project_root: Path, cmd_path: str, python_exe: str, project_name: str
+) -> str | None:
     """Inject MCP config into Google Antigravity settings (global file, unique server name per project).
 
     Antigravity does not support 'cwd', so always use --project-dir args.
@@ -471,8 +521,13 @@ def _inject_antigravity(project_root: Path, cmd_path: str, python_exe: str, proj
     safe_name = re.sub(r"-{2,}", "-", safe_name).strip("-")
     server_name = f"codevira-{safe_name}"
 
-    base_config = _build_server_config(cmd_path, python_exe, project_root, use_cwd=False)
-    server_config = {"$typeName": "exa.cascade_plugins_pb.CascadePluginCommandTemplate", **base_config}
+    base_config = _build_server_config(
+        cmd_path, python_exe, project_root, use_cwd=False
+    )
+    server_config = {
+        "$typeName": "exa.cascade_plugins_pb.CascadePluginCommandTemplate",
+        **base_config,
+    }
 
     merged = _merge_mcp_config(existing, server_name, server_config)
     _write_json_safe(config_path, merged)
@@ -482,6 +537,7 @@ def _inject_antigravity(project_root: Path, cmd_path: str, python_exe: str, proj
 # ---------------------------------------------------------------------------
 # Global mode injection (v1.6) — one-time, no project path
 # ---------------------------------------------------------------------------
+
 
 def inject_global_claude_code(cmd_path: str, python_exe: str) -> str | None:
     """Inject global codevira config into Claude Code (``~/.claude.json``).
@@ -545,8 +601,11 @@ def _claude_cli_add_codevira(
     extra_args = list(server_config.get("args") or [])
 
     cmd = [
-        cli, "mcp", "add",
-        "--scope", "user",
+        cli,
+        "mcp",
+        "add",
+        "--scope",
+        "user",
         "codevira",
         cmd_path,
     ]
@@ -558,16 +617,22 @@ def _claude_cli_add_codevira(
         # (some claude versions error on duplicate add). Best-effort.
         subprocess.run(
             [cli, "mcp", "remove", "codevira", "-s", "user"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         # Now add fresh.
         result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=10,
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         if result.returncode != 0:
             logger.warning(
                 "claude mcp add returned %d: %s",
-                result.returncode, result.stderr.strip(),
+                result.returncode,
+                result.stderr.strip(),
             )
             return False
         return True
@@ -602,7 +667,7 @@ def inject_global_claude_desktop(cmd_path: str, python_exe: str) -> str | None:
     config_path = _claude_desktop_config_path()
     existing = _read_json_safe(config_path)
 
-    is_python_fallback = (cmd_path == python_exe)
+    is_python_fallback = cmd_path == python_exe
     if is_python_fallback:
         server_config = {
             "command": cmd_path,
@@ -648,7 +713,10 @@ def inject_global_antigravity(cmd_path: str, python_exe: str) -> str | None:
     config_path = _antigravity_config_path()
     existing = _read_json_safe(config_path)
     base_config = _build_global_server_config(cmd_path, python_exe)
-    server_config = {"$typeName": "exa.cascade_plugins_pb.CascadePluginCommandTemplate", **base_config}
+    server_config = {
+        "$typeName": "exa.cascade_plugins_pb.CascadePluginCommandTemplate",
+        **base_config,
+    }
     merged = _merge_mcp_config(existing, "codevira", server_config)
     _write_json_safe(config_path, merged)
     return str(config_path)
@@ -674,6 +742,7 @@ def inject_claude_http_url(url: str) -> str | None:
 # ---------------------------------------------------------------------------
 # Main orchestrators
 # ---------------------------------------------------------------------------
+
 
 def inject_ide_config(
     project_root: Path,
@@ -742,7 +811,9 @@ def inject_ide_config(
                     if path:
                         results["Windsurf"] = path
                 elif ide == "antigravity":
-                    path = _inject_antigravity(project_root, cmd_path, python_exe, project_name)
+                    path = _inject_antigravity(
+                        project_root, cmd_path, python_exe, project_name
+                    )
                     if path:
                         results["Antigravity"] = path
 
@@ -750,8 +821,12 @@ def inject_ide_config(
             logger.warning("Failed to inject %s config: %s", ide, e)
             try:
                 from mcp_server.crash_logger import log_crash
-                log_crash(e, context=f"IDE config inject: {ide}",
-                          project_path=str(project_root))
+
+                log_crash(
+                    e,
+                    context=f"IDE config inject: {ide}",
+                    project_path=str(project_root),
+                )
             except Exception:
                 pass
 

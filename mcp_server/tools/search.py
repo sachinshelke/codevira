@@ -308,6 +308,46 @@ def _structural_fallback(query: str, top_k: int, *, reason: str) -> dict[str, An
     }
 
 
+def write_session_logs(logs: list[dict]) -> dict[str, Any]:
+    """2026-05-18 v2.1.2 Item 24: batch variant of write_session_log.
+
+    Each item: ``{session_id, task, phase, files_changed?, decisions?,
+    next_steps?}``. Each invocation is independent; partial failure is
+    surfaced per-item.
+
+    Returns ``{count, session_ids, errors}``.
+    """
+    if not isinstance(logs, list):
+        return {
+            "count": 0,
+            "session_ids": [],
+            "errors": [{"idx": 0, "error": "logs must be a list"}],
+        }
+    ids: list[str] = []
+    errors: list[dict] = []
+    for idx, item in enumerate(logs):
+        if not isinstance(item, dict):
+            errors.append({"idx": idx, "error": "item must be a dict"})
+            continue
+        try:
+            r = write_session_log(
+                session_id=item.get("session_id", f"batch-{idx}"),
+                task=item.get("task", ""),
+                phase=str(item.get("phase", "")),
+                files_changed=item.get("files_changed") or [],
+                decisions=item.get("decisions") or [],
+                next_steps=item.get("next_steps") or [],
+            )
+            ids.append(r.get("session_id") or item.get("session_id"))
+        except Exception as exc:  # noqa: BLE001
+            errors.append({"idx": idx, "error": str(exc)})
+    return {
+        "count": len(ids),
+        "session_ids": ids,
+        "errors": errors,
+    }
+
+
 def write_session_log(
     session_id: str,
     task: str,
@@ -370,6 +410,7 @@ def search_decisions(
     session_id: str | None = None,
     full: bool = False,
     summary_only: bool = False,
+    since: str | None = None,
 ) -> dict[str, Any]:
     """Search past decisions across sessions, changesets, and roadmap phases.
 
@@ -413,7 +454,13 @@ def search_decisions(
     db = _get_db()
     try:
         # ─── BM25 / SQL LIKE pass (existing behavior, kept as ranked source) ──
-        bm25_results = db.search_decisions(query, limit * 3, session_id)
+        # v2.1.2 Item 25: thread since= through to the SQL filter.
+        bm25_results = db.search_decisions(
+            query,
+            limit * 3,
+            session_id,
+            since=since,
+        )
         bm25_ids = [r["id"] for r in bm25_results if r.get("id") is not None]
 
         # ─── Semantic / ChromaDB pass with threshold cut-off ─────────────────
@@ -484,6 +531,13 @@ def search_decisions(
                     d["do_not_revert"] = bool(d["do_not_revert"])
                 id_to_row[row["id"]] = d
         results = [id_to_row[i] for i in merged_ids if i in id_to_row]
+
+        # 2026-05-18 v2.1.2 Item 25: semantic-side `since` filter — chromadb
+        # doesn't know about created_at, so we drop rows whose timestamp
+        # is at or before the cutoff AFTER the merge. BM25 path already
+        # filtered server-side.
+        if since:
+            results = [r for r in results if (r.get("created_at") or "") > since]
 
         # Annotate each result with its semantic score (cosine distance).
         # Keyword-only matches get score=None so the caller can tell them apart.
@@ -694,13 +748,21 @@ def list_tags() -> dict[str, Any]:
     return {"tags": tags, "count": len(tags)}
 
 
-def get_history(file_path: str, limit: int = 5, full: bool = False) -> dict[str, Any]:
+def get_history(
+    file_path: str,
+    limit: int = 5,
+    full: bool = False,
+    since: str | None = None,
+) -> dict[str, Any]:
     """Return most recent decisions touching a file.
 
     Default: 5 most recent, with truncated context (150 chars each).
     Response stays under ~500 tokens for typical use.
 
     Pass full=True for untruncated decisions, or increase limit up to 50.
+
+    2026-05-18 v2.1.2 Item 25: optional ``since`` (ISO 8601 / YYYY-MM-DD)
+    filter — only decisions ``created_at > since`` are returned.
     """
     if limit < 1:
         limit = 1
@@ -708,15 +770,28 @@ def get_history(file_path: str, limit: int = 5, full: bool = False) -> dict[str,
         limit = 50
 
     db = _get_db()
-    sql = """
-        SELECT d.decision, d.context, s.summary, d.created_at, d.session_id
-        FROM decisions d
-        JOIN sessions s ON d.session_id = s.session_id
-        WHERE d.file_path = ? OR s.summary LIKE ?
-        ORDER BY d.created_at DESC
-        LIMIT ?
-    """
-    cur = db.conn.execute(sql, (file_path, f"%{file_path}%", limit + 1))
+    if since:
+        sql = """
+            SELECT d.decision, d.context, s.summary, d.created_at, d.session_id
+            FROM decisions d
+            JOIN sessions s ON d.session_id = s.session_id
+            WHERE (d.file_path = ? OR s.summary LIKE ?) AND d.created_at > ?
+            ORDER BY d.created_at DESC
+            LIMIT ?
+        """
+    else:
+        sql = """
+            SELECT d.decision, d.context, s.summary, d.created_at, d.session_id
+            FROM decisions d
+            JOIN sessions s ON d.session_id = s.session_id
+            WHERE d.file_path = ? OR s.summary LIKE ?
+            ORDER BY d.created_at DESC
+            LIMIT ?
+        """
+    if since:
+        cur = db.conn.execute(sql, (file_path, f"%{file_path}%", since, limit + 1))
+    else:
+        cur = db.conn.execute(sql, (file_path, f"%{file_path}%", limit + 1))
     rows = cur.fetchall()
     has_more = len(rows) > limit
     results = [dict(r) for r in rows[:limit]]

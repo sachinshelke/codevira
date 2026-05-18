@@ -800,13 +800,13 @@ class TestCallToolAdditionalRoutes:
         assert len(result) == 1
 
     def test_dispatch_get_history(self):
-        """get_history dispatches with file_path."""
+        """get_history dispatches with file_path (+ v2.1.2 Item 25 since=)."""
         sentinel = {"commits": [{"hash": "abc123"}]}
         with patch(
             "mcp_server.server.get_history", return_value=sentinel
         ) as mock_fn, patch("mcp_server.auto_init.ensure_project_initialized"):
             result = _run(call_tool("get_history", {"file_path": "src/core.py"}))
-        mock_fn.assert_called_once_with("src/core.py", limit=5, full=False)
+        mock_fn.assert_called_once_with("src/core.py", limit=5, full=False, since=None)
         assert len(result) == 1
         parsed = json.loads(result[0].text)
         assert parsed["commits"][0]["hash"] == "abc123"

@@ -974,23 +974,23 @@ class SQLiteGraph:
         return actual_session_id
 
     def search_decisions(
-        self, query: str, limit: int = 10, session_id: str | None = None
+        self,
+        query: str,
+        limit: int = 10,
+        session_id: str | None = None,
+        *,
+        since: str | None = None,
     ) -> list[dict]:
         """Search decisions with relevance-tiered ranking.
 
         v1.8: Results are ordered by match location (file_path > decision text >
-        context > summary-only) then by recency within each tier. This means a
-        decision whose ``file_path`` column matches the query — even when the
-        decision text doesn't mention the path — is findable and ranks above
-        older text-only matches.
+        context > summary-only) then by recency within each tier.
 
-        Same ``%query%`` pattern is used for every LIKE check, so the ``pat``
-        variable feeds the WHERE clause (4 places) and the ORDER BY CASE
-        (3 places — summary is the implicit ELSE tier).
+        2026-05-18 v2.1.2 Item 25: optional ``since`` filter (ISO 8601
+        timestamp or YYYY-MM-DD). Only decisions ``created_at > since``
+        are returned.
         """
         pat = f"%{query}%"
-        # v2.0-rc.3 (Bug 2): include d.id + d.do_not_revert so AI sees
-        # the protection flag and can mark_decision_protected by id.
         sql = """
             SELECT d.id, d.decision, d.context, d.file_path,
                    d.do_not_revert, s.summary, s.phase, d.created_at
@@ -1003,6 +1003,10 @@ class SQLiteGraph:
         if session_id:
             sql += " AND d.session_id = ?"
             params.append(session_id)
+
+        if since:
+            sql += " AND d.created_at > ?"
+            params.append(since)
 
         sql += """
             ORDER BY

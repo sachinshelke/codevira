@@ -353,6 +353,149 @@ def record_decision(
         db.close()
 
 
+def supersede_decision(
+    old_id: int,
+    new_decision: str,
+    reason: str,
+    *,
+    file_path: str | None = None,
+    context: str | None = None,
+    do_not_revert: bool = False,
+    tags: list[str] | None = None,
+) -> dict:
+    """2026-05-18 v2.1.2 Item 26: retire ``old_id`` and link the
+    replacement.
+
+    Writes the new decision (text prefixed with
+    ``[supersedes #<old_id>: <reason>] <new_text>``), then marks the
+    old row as superseded so it stops surfacing in search /
+    list_decisions by default. ``include_superseded=True`` on those
+    tools opts back in for audit.
+
+    Schema migration is best-effort on first call (adds
+    ``is_superseded INTEGER DEFAULT 0`` + ``superseded_by INTEGER`` to
+    ``decisions``).
+
+    Returns ``{success, old_id, new_id, reason}``.
+    """
+    if not new_decision or not isinstance(new_decision, str):
+        return {"success": False, "error": "new_decision must be a non-empty string"}
+    if not reason or not isinstance(reason, str):
+        return {"success": False, "error": "reason must be a non-empty string"}
+
+    db = _get_db()
+    try:
+        # Schema migration (idempotent, best-effort).
+        try:
+            db.conn.execute("SELECT is_superseded FROM decisions LIMIT 1")
+        except Exception:
+            try:
+                db.conn.execute(
+                    "ALTER TABLE decisions ADD COLUMN is_superseded INTEGER DEFAULT 0"
+                )
+                db.conn.execute(
+                    "ALTER TABLE decisions ADD COLUMN superseded_by INTEGER"
+                )
+                db.conn.commit()
+            except Exception:
+                pass
+
+        # Verify old_id exists.
+        cur = db.conn.execute("SELECT id FROM decisions WHERE id = ?", (int(old_id),))
+        if cur.fetchone() is None:
+            return {"success": False, "error": f"No decision with id={old_id}"}
+
+        # Record the new decision with prefix.
+        prefixed = f"[supersedes #{old_id}: {reason.strip()}] {new_decision.strip()}"
+        new_resp = record_decision(
+            decision=prefixed,
+            file_path=file_path,
+            context=context,
+            do_not_revert=bool(do_not_revert),
+            tags=tags,
+            force=True,  # supersede is intentional — bypass the conflict check
+        )
+        if not new_resp.get("recorded"):
+            return {
+                "success": False,
+                "error": new_resp.get("error") or "record_decision failed",
+            }
+        new_id = new_resp["decision_id"]
+
+        # Flag old row.
+        try:
+            db.conn.execute(
+                "UPDATE decisions SET is_superseded = 1, superseded_by = ? WHERE id = ?",
+                (int(new_id), int(old_id)),
+            )
+            db.conn.commit()
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "success": False,
+                "error": f"new decision {new_id} recorded but old {old_id} flag failed: {exc}",
+                "new_id": new_id,
+            }
+        return {
+            "success": True,
+            "old_id": int(old_id),
+            "new_id": int(new_id),
+            "reason": reason.strip(),
+        }
+    finally:
+        db.close()
+
+
+def record_decisions(decisions: list[dict]) -> dict:
+    """2026-05-18 v2.1.2 Item 23: batch variant of record_decision.
+
+    Memory-dump sessions (~26 separate calls in Report 4) collapse to one
+    round trip. Each item in ``decisions`` accepts the same keys as
+    record_decision: ``decision`` (required), ``file_path``, ``context``,
+    ``do_not_revert``, ``session_id``, ``tags``, ``force``.
+
+    Returns ``{count: N, recorded: [...ids...], errors: [{idx, error}]}``.
+    Best-effort: each item runs independently; one failure doesn't roll
+    back the rest.
+    """
+    if not isinstance(decisions, list):
+        return {
+            "recorded": [],
+            "count": 0,
+            "errors": [{"idx": 0, "error": "decisions must be a list"}],
+        }
+    out_ids: list[int] = []
+    errors: list[dict] = []
+    for idx, item in enumerate(decisions):
+        if not isinstance(item, dict):
+            errors.append({"idx": idx, "error": "item must be a dict"})
+            continue
+        try:
+            r = record_decision(
+                decision=item.get("decision", ""),
+                file_path=item.get("file_path"),
+                context=item.get("context"),
+                do_not_revert=bool(item.get("do_not_revert", False)),
+                session_id=item.get("session_id"),
+                tags=item.get("tags"),
+                force=bool(item.get("force", False)),
+            )
+            if r.get("recorded"):
+                out_ids.append(r["decision_id"])
+            else:
+                errors.append({"idx": idx, "error": r.get("error") or "unknown"})
+        except Exception as exc:  # noqa: BLE001
+            errors.append({"idx": idx, "error": str(exc)})
+    return {
+        "count": len(out_ids),
+        "recorded": out_ids,
+        "errors": errors,
+        "hint": (
+            f"Recorded {len(out_ids)} of {len(decisions)} decisions. "
+            f"Each shows up in subsequent search_decisions / list_decisions."
+        ),
+    }
+
+
 def mark_decision_protected(
     decision_id: int,
     do_not_revert: bool,
@@ -550,12 +693,17 @@ def _infer_focus(
     return None, None
 
 
-def get_session_context() -> dict:
+def get_session_context(since: str | None = None) -> dict:
     """Single 'catch me up' call — designed to be the FIRST call in a session.
 
     Returns a compact snapshot (~500 tokens target) so the agent gets oriented
     without consuming its context window. Use follow-up tools (get_node,
     get_impact, search_decisions) for targeted details.
+
+    2026-05-18 v2.1.2 Item 25: optional ``since`` (ISO 8601 / YYYY-MM-DD)
+    filter — restricts ``recent_decisions`` and ``recent_sessions`` to
+    entries created after the cutoff. Useful for "what's new since I
+    was last here" session bootstrap.
 
     Fields returned:
       current_phase     - {name, next_action, status}
@@ -571,6 +719,11 @@ def get_session_context() -> dict:
     db = _get_db()
     try:
         recent_sessions = db.get_recent_sessions(limit=2)
+        # v2.1.2 Item 25: post-filter recent_sessions by since-cutoff if provided.
+        if since:
+            recent_sessions = [
+                s for s in recent_sessions if (s.get("created_at") or "") > since
+            ]
         confidence = db.get_decision_confidence()
         prefs = db.get_preferences(min_frequency=2)[:3]
         rules = db.get_learned_rules(min_confidence=0.6)[:3]
@@ -610,11 +763,17 @@ def get_session_context() -> dict:
         ]
 
         # v1.8: Focus-weighted `recent_decisions` ranking
+        # v2.1.2 Item 25: thread `since` through to db.search_decisions (server-
+        # side filter) and post-filter the chronological pad path.
         focus, focus_source = _infer_focus(raw_changesets, current_phase)
         recent_decisions: list[dict] = []
         if focus:
             try:
-                recent_decisions = db.search_decisions(focus, limit=3)
+                recent_decisions = db.search_decisions(
+                    focus,
+                    limit=3,
+                    since=since,
+                )
             except Exception:
                 recent_decisions = []
         # Fallback / pad to 3 with chronological recent decisions
@@ -623,7 +782,10 @@ def get_session_context() -> dict:
                 (r.get("file_path"), r.get("decision"), r.get("created_at"))
                 for r in recent_decisions
             }
-            for d in db.get_recent_decisions(limit=3):
+            for d in db.get_recent_decisions(limit=10 if since else 3):
+                # v2.1.2 Item 25: skip rows older than since cutoff.
+                if since and (d.get("created_at") or "") <= since:
+                    continue
                 key = (d.get("file_path"), d.get("decision"), d.get("created_at"))
                 if key in seen_ids:
                     continue

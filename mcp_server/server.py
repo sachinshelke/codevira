@@ -80,6 +80,7 @@ from mcp_server.tools.search import (
     search_decisions,
     get_history,
     write_session_log,
+    write_session_logs,  # v2.1.2 Item 24
     list_decisions,
     list_tags,  # v2.1.2 Items 11 + 27
 )
@@ -789,6 +790,80 @@ async def list_tools() -> list[Tool]:
             inputSchema={"type": "object", "properties": {}},
         ),
         Tool(
+            name="record_decisions",
+            description=(
+                "v2.1.2 Item 23: batch variant of record_decision. Cuts ~26 "
+                "round trips on memory-dump sessions to ONE. Each item accepts "
+                "the same fields as record_decision (decision, file_path, "
+                "context, do_not_revert, session_id, tags, force). Returns "
+                "{count, recorded:[ids], errors:[...]}."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "decisions": {
+                        "type": "array",
+                        "items": {"type": "object"},
+                        "description": "List of decision dicts",
+                    },
+                },
+                "required": ["decisions"],
+            },
+        ),
+        Tool(
+            name="write_session_logs",
+            description=(
+                "v2.1.2 Item 24: batch variant of write_session_log. Each item: "
+                "{session_id, task, phase, files_changed?, decisions?, "
+                "next_steps?}. Returns {count, session_ids, errors}."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "logs": {
+                        "type": "array",
+                        "items": {"type": "object"},
+                        "description": "List of session-log dicts",
+                    },
+                },
+                "required": ["logs"],
+            },
+        ),
+        Tool(
+            name="supersede_decision",
+            description=(
+                "v2.1.2 Item 26: retire ``old_id`` and link to a replacement. "
+                "Writes the new decision with `[supersedes #<old_id>: <reason>]` "
+                "prefix, sets the old row as superseded. Default-hidden in "
+                "search / list (pass include_superseded=true to opt back in)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "old_id": {"type": "integer", "description": "Decision to retire"},
+                    "new_decision": {
+                        "type": "string",
+                        "description": "Replacement decision text",
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "Why the prior decision changed",
+                    },
+                    "file_path": {
+                        "type": "string",
+                        "description": "Optional file path",
+                    },
+                    "context": {"type": "string", "description": "Optional context"},
+                    "do_not_revert": {
+                        "type": "boolean",
+                        "description": "Lock the replacement",
+                    },
+                    "tags": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["old_id", "new_decision", "reason"],
+            },
+        ),
+        Tool(
             name="check_conflict",
             description=(
                 "v2.1.2 Item 20: check whether a proposed decision contradicts "
@@ -1486,6 +1561,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 session_id=arguments.get("session_id"),
                 full=arguments.get("full", False),
                 summary_only=arguments.get("summary_only", False),
+                since=arguments.get("since"),  # v2.1.2 Item 25
             )
         elif name == "list_decisions":
             # v2.1.2 Item 11.
@@ -1501,6 +1577,27 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             )
         elif name == "list_tags":
             result = list_tags()
+        elif name == "record_decisions":
+            # v2.1.2 Item 23.
+            from mcp_server.tools.learning import record_decisions
+
+            result = record_decisions(decisions=arguments["decisions"])
+        elif name == "write_session_logs":
+            # v2.1.2 Item 24.
+            result = write_session_logs(logs=arguments["logs"])
+        elif name == "supersede_decision":
+            # v2.1.2 Item 26.
+            from mcp_server.tools.learning import supersede_decision
+
+            result = supersede_decision(
+                old_id=arguments["old_id"],
+                new_decision=arguments["new_decision"],
+                reason=arguments["reason"],
+                file_path=arguments.get("file_path"),
+                context=arguments.get("context"),
+                do_not_revert=arguments.get("do_not_revert", False),
+                tags=arguments.get("tags"),
+            )
         elif name == "check_conflict":
             # v2.1.2 Item 20.
             from mcp_server.tools.check_conflict import check_conflict
@@ -1514,6 +1611,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 arguments["file_path"],
                 limit=arguments.get("limit", 5),
                 full=arguments.get("full", False),
+                since=arguments.get("since"),  # v2.1.2 Item 25
             )
         elif name == "write_session_log":
             result = write_session_log(
@@ -1592,7 +1690,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         elif name == "get_project_maturity":
             result = learning_get_project_maturity()
         elif name == "get_session_context":
-            result = learning_get_session_context()
+            # v2.1.2 Item 25: pass through optional since= cutoff.
+            result = learning_get_session_context(since=arguments.get("since"))
         # ---- v1.5: Deep Graph Intelligence ----
         elif name == "query_graph":
             result = query_graph_tool(

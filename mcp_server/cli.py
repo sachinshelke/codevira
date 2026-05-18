@@ -2641,23 +2641,52 @@ def _cmd_clean_ghosts(dry_run: bool = False, yes: bool = False) -> None:
     A ghost is a ``~/.codevira/projects/<slug>/`` that exists on disk but is
     missing ``config.yaml`` or ``metadata.json`` — i.e. has SOME state from
     an MCP tool call but the bookkeeping never completed.
+
+    2026-05-18 v2.1.2 Item 14: ALSO catches truly-empty data dirs
+    (status='stale' but disk has only a graph/ shell or similar
+    bookkeeping skeleton with no real content). Sachin's machine had 3
+    such dirs from sub-bootstrap that fell through to 'stale' and were
+    never cleaned. We promote them to ghost candidates if the dir
+    exists, is small (<10 KB), and contains no decisions / nodes.
     """
     import shutil
     from mcp_server._project_inventory import enumerate_projects
 
     ghosts = [e for e in enumerate_projects() if e.status == "ghost" and e.slug]
-    if not ghosts:
-        print("✓ No ghost projects on this machine.")
+
+    # 2026-05-18 v2.1.2 Item 14: pick up empty-dir 'stale' entries too.
+    empty_stale: list = []
+    for e in enumerate_projects():
+        if e.status != "stale" or not e.slug or not e.has_data_dir:
+            continue
+        # Heuristic: truly empty = directory is small (<10 KB) AND
+        # contains no real graph data (zero decisions OR no graph.db).
+        try:
+            if e.size_bytes > 10 * 1024:
+                continue
+        except Exception:
+            continue
+        empty_stale.append(e)
+
+    all_candidates = ghosts + empty_stale
+    if not all_candidates:
+        print("✓ No ghost projects or empty data dirs on this machine.")
         return
 
     print()
-    print("  Codevira — Clean Ghost Projects")
-    print("  " + "─" * 40)
+    print("  Codevira — Clean Ghost / Empty Projects")
+    print("  " + "─" * 42)
     print()
-    print(f"  Found {len(ghosts)} ghost dir(s):")
-    for e in ghosts:
-        size_kb = e.size_bytes // 1024
-        print(f"    • {e.slug}  ({size_kb:,} KB)")
+    if ghosts:
+        print(f"  Found {len(ghosts)} ghost dir(s):")
+        for e in ghosts:
+            size_kb = e.size_bytes // 1024
+            print(f"    • {e.slug}  ({size_kb:,} KB)")
+    if empty_stale:
+        print(f"  Found {len(empty_stale)} empty stale data dir(s):")
+        for e in empty_stale:
+            size_kb = e.size_bytes // 1024
+            print(f"    • {e.slug}  ({size_kb:,} KB)")
     print()
 
     if dry_run:
@@ -2668,7 +2697,11 @@ def _cmd_clean_ghosts(dry_run: bool = False, yes: bool = False) -> None:
         # Reuse the shared confirm helper added in Bug 22 / rc.4.
         from mcp_server._prompts import confirm
 
-        if not confirm(f"Remove {len(ghosts)} ghost dir(s)?", default=False):
+        if not confirm(
+            f"Remove {len(all_candidates)} dir(s) "
+            f"({len(ghosts)} ghost, {len(empty_stale)} empty)?",
+            default=False,
+        ):
             print("  Aborted.")
             return
 
@@ -2682,7 +2715,7 @@ def _cmd_clean_ghosts(dry_run: bool = False, yes: bool = False) -> None:
         return
 
     removed = 0
-    for e in ghosts:
+    for e in all_candidates:
         if e.slug is None:
             continue
         target = projects_root / e.slug
@@ -2693,7 +2726,7 @@ def _cmd_clean_ghosts(dry_run: bool = False, yes: bool = False) -> None:
         except Exception as exc:
             print(f"  ✗ {e.slug}: {exc}")
     print()
-    print(f"  Done: removed {removed} of {len(ghosts)} ghost dir(s).")
+    print(f"  Done: removed {removed} of {len(all_candidates)} dir(s).")
 
 
 def _cmd_clean_orphans(dry_run: bool = False, yes: bool = False) -> None:
@@ -2767,15 +2800,57 @@ def _cmd_clean_orphans(dry_run: bool = False, yes: bool = False) -> None:
                 # manual inspection rather than risk eating real data.
                 continue
 
-    if not found:
-        print("  No orphan project data directories found.")
+    # 2026-05-18 v2.1.2 Item 13: also scan global.db.projects for rows whose
+    # path doesn't exist on disk AND has no matching data dir. These bare
+    # rows are invisible to the per-data-dir loop above and pollute
+    # `codevira projects` output forever (Sachin's machine had 13 such rows).
+    bare_global_rows: list[tuple[str, str]] = []  # (path, reason)
+    db_path = get_global_db_path()
+    if db_path.exists():
+        try:
+            conn = sqlite3.connect(str(db_path), timeout=30)
+            try:
+                cur = conn.execute("SELECT path FROM projects")
+                for (gpath,) in cur.fetchall():
+                    if not gpath:
+                        continue
+                    p = Path(gpath)
+                    # If path corresponds to a current data dir we already
+                    # processed above, skip it.
+                    if any(str(d) == gpath for d, _o, _r in found):
+                        continue
+                    try:
+                        exists = p.exists()
+                    except (OSError, RuntimeError):
+                        exists = False
+                    if exists:
+                        continue
+                    # Bare row: global.db references a path that doesn't exist
+                    # and there's no data dir on disk for it.
+                    bare_global_rows.append(
+                        (gpath, "global.db row points at missing path; no data dir")
+                    )
+            finally:
+                conn.close()
+        except Exception as exc:
+            print(f"  (warning: could not scan global.db for bare rows: {exc})")
+
+    total_orphans = len(found) + len(bare_global_rows)
+    if total_orphans == 0:
+        print("  No orphan project data directories or bare global.db rows found.")
         print()
         return
 
-    print(f"  Found {len(found)} orphan project data dir(s):")
+    print(
+        f"  Found {total_orphans} orphan(s): {len(found)} data dir(s), "
+        f"{len(bare_global_rows)} bare global.db row(s):"
+    )
     for data_dir, op, reason in found:  # type: ignore[assignment]
         print(f"    • {data_dir}")
         print(f"        original_path: {op}")
+        print(f"        reason: {reason}")
+    for gpath, reason in bare_global_rows:
+        print(f"    • [global.db row] {gpath}")
         print(f"        reason: {reason}")
     print()
 
@@ -2786,7 +2861,12 @@ def _cmd_clean_orphans(dry_run: bool = False, yes: bool = False) -> None:
 
     if not yes:
         answer = (
-            input(f"  Remove {len(found)} orphan data dir(s)? [y/N] ").strip().lower()
+            input(
+                f"  Remove {len(found)} orphan data dir(s) and "
+                f"{len(bare_global_rows)} bare global.db row(s)? [y/N] "
+            )
+            .strip()
+            .lower()
         )
         if answer != "y":
             print("  Aborted.")
@@ -2794,9 +2874,9 @@ def _cmd_clean_orphans(dry_run: bool = False, yes: bool = False) -> None:
             return
 
     print()
-    db_path = get_global_db_path()
     removed_dirs = 0
     removed_rows = 0
+    # First: data-dir cleanup loop (existing behavior).
     for data_dir, _op, _reason in found:
         # 1. Remove the centralized data dir
         try:
@@ -2823,6 +2903,22 @@ def _cmd_clean_orphans(dry_run: bool = False, yes: bool = False) -> None:
                     conn.close()
         except Exception as e:
             print(f"      (warning: could not delete global.db row: {e})")
+
+    # 2026-05-18 v2.1.2 Item 13: also delete bare global.db rows.
+    for gpath, _reason in bare_global_rows:
+        try:
+            if db_path.exists():
+                conn = sqlite3.connect(str(db_path), timeout=30)
+                try:
+                    cur = conn.execute("DELETE FROM projects WHERE path = ?", (gpath,))
+                    conn.commit()
+                    if cur.rowcount > 0:
+                        removed_rows += cur.rowcount
+                        print(f"    ✓ Removed bare global.db row {gpath}")
+                finally:
+                    conn.close()
+        except Exception as e:
+            print(f"    ✗ [global.db row] {gpath}  FAILED ({e})")
 
     print()
     print(

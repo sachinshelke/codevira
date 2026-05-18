@@ -160,6 +160,35 @@ converged on "trust" as the gap (not capability). Full plan:
   `# type: ignore[code]` for invariant pre-existing patterns. mypy is
   now a hard pre-commit gate.
 
+### Late additions (caught by post-tag smoke testing)
+
+These three patches landed AFTER the initial v2.1.2 release commit but
+BEFORE shipping the wheel. They're all part of the v2.1.2 line:
+
+- **bulk_import_phases placeholder fix**: importing `phase=1` on a
+  fresh project was silently SKIPPING phase 1 because the bootstrap
+  "Getting Started" placeholder occupies that number. Adopters
+  migrating multi-phase git history (Report 3 #5 — the exact use case
+  Item 29 exists for) would hit this. Fixed by applying Item 18's
+  placeholder-recognition logic to bulk_import too.
+- **calibrate doc range fix**: `codevira calibrate --help` said
+  "Clamped to [0.20, 0.55]" but actual code clamps to [0.35, 0.80]
+  (the empirically-tuned values from Item 1 after measuring
+  all-MiniLM-L6-v2's distance distribution on real query/decision
+  pairs). Doc string corrected.
+- **Issue #10 — Antigravity sandbox + torch dlopen**: graceful
+  degradation across 3 tiers. (1) Removed `prewarm_embedding_model()`
+  from MCP server startup — torch loads lazily on first
+  `search_codebase` / `search_decisions` call. MCP `initialize` and
+  `tools/list` complete instantly without touching torch. All
+  non-search tools work in Antigravity. (2) `_decisions_collection_or_none()`
+  traps `OSError` (macOS dlopen errors arrive as OSError, not
+  ImportError) and surfaces `_semantic_warning` in `search_decisions`
+  responses with a clear explanation + issue link.
+  (3) `docs/troubleshooting/antigravity.md` documents the root cause
+  and four user-side workarounds. Closes
+  [#10](https://github.com/sachinshelke/codevira/issues/10).
+
 ### Tests
 
 - 2401/2401 unit tests pass + 4/4 e2e cross-tool universality.

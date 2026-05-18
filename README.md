@@ -45,6 +45,35 @@ Your AI agent reads the same 12 files every session before doing any actual work
 
 ---
 
+## What's new in v2.1.2 — trust recovery
+
+v2.1.1 shipped hybrid search (BM25 + semantic) but without a similarity floor, so off-topic prompts kept surfacing irrelevant decisions. v2.1.2 is a **trust-recovery release** based on four independent field-test reports: every fix restores confidence in something codevira already does.
+
+| Area | What changed |
+|---|---|
+| **Smart similarity threshold** | `search_decisions` self-calibrates a per-project distance threshold from your protected decisions. Gibberish queries return zero results, not "least bad" matches. `codevira calibrate` to manually re-fit. |
+| **Honest cleanup** | `codevira reset --vectors / --graph / --all` replaces destructive `heal` flags (which `rm -rf`'d decisions). Decisions auto-exported to `<data_dir>/exports/` before any wipe. Typed confirmation required (`reset` / `graph` / `vectors` / `all`). |
+| **Backup-first by default** | `codevira export decisions [--format json|sql]` — standalone backup any time. |
+| **Proactive conflict detection** | New `check_conflict(decision_text)` MCP tool flags duplicate or contradictory decisions BEFORE you write. `record_decision` runs it automatically and surfaces `_conflict_warning`. |
+| **Enumerate decisions** | New `list_decisions(limit, since_date, file_pattern, protected_only, session_id, tags)` MCP tool. Closes the "remembers but can't list" gap. |
+| **Batch APIs** | `record_decisions([…])` + `write_session_logs([…])` cut memory-dump sessions from ~26 round trips to 1. |
+| **Tags + supersede** | Decisions can carry tags (`record_decision(tags=[…])`); `list_tags()` enumerates. `supersede_decision(old_id, new_decision, reason)` retires a prior decision with auditable history. |
+| **since= filter** | `search_decisions`, `get_history`, `get_session_context` all accept `since="YYYY-MM-DD"` so "what's new since I was last here" is a one-call query. |
+| **Rule extractor noise filter** | `top_signals.rules` no longer emits sliding-window n-grams as fake patterns. Stopwords + density gate + substring suppression. Skipped entirely on pre-code projects. |
+| **Cross-project rules leak fix** | `language IS NULL` rules no longer fan out to every project. A Go-project rule stays in the Go project. |
+| **Post-edit graph refresh** | New PostToolUse policy refreshes graph nodes after Edit/Write/MultiEdit so `get_node` / `get_impact` see current data without `index --full`. |
+| **Auto-clear placeholder phase** | `add_phase(phase=1, …)` on a fresh project silently replaces the bootstrap "Getting Started" stub instead of refusing as duplicate. |
+| **`complete_phase` enhancements** | `backfill=True` + `completed_at` for retroactive completion; `git_ref` to link to a commit/PR. `bulk_import_phases([…])` for migrating multi-phase git history in one call. |
+| **Hook regex precision** | Commit-message-shaped prompts (`feat(api):` / `fix:` / etc.) no longer trigger context injection. |
+| **Bundled non-Python playbooks** | `coding-standards-typescript.md`, `coding-standards-go.md`, `coding-standards-generic.md` auto-selected by detected language. |
+| **session_id collision** | `write_session_log` auto-suffixes on conflict and returns the actual id (vs silent overwrite). |
+| **`do_not_revert` echo** | When passed as a non-bool (int 1, string "true"), the response carries `_input_coerced_warning` so you see what got stored. |
+| **mypy baseline** | All 42 pre-existing type errors cleared; mypy is now a hard gate. |
+
+Full plan + design rationale: [docs/plans/v2.1.2.md](docs/plans/v2.1.2.md).
+
+---
+
 ## What's new in v2.0
 
 > 30-second demo: **[docs/demo/codevira-demo.mp4](docs/demo/codevira-demo.mp4)**
@@ -182,19 +211,34 @@ summary: 14 pass · 0 warn · 0 fail
 
 ### Daily-use commands you'll actually run
 
-| Command | What it does |
-|---|---|
-| `codevira setup` | Re-sync IDE configs (after installing a new AI tool, etc.) |
-| `codevira doctor` | Health check |
-| `codevira projects` | List every project codevira knows about on this machine |
-| `codevira projects --ghosts-only` | Find half-initialised project dirs |
-| `codevira clean --ghosts` | Remove ghost dirs (preserves real ones) |
-| `codevira insights` | Stable + reverted decisions across past sessions |
-| `codevira replay` | Decisions timeline (terminal / markdown / html output) |
-| `codevira budget` | Per-session token usage |
-| `codevira hooks list` | Show installed Claude Code lifecycle hooks |
+| Command | What it does | Since |
+|---|---|---|
+| `codevira setup` | Re-sync IDE configs (after installing a new AI tool, etc.) | v2.0 |
+| `codevira doctor` | Health check | v2.0 |
+| `codevira projects` | List every project codevira knows about on this machine | v2.0 |
+| `codevira projects --ghosts-only` | Find half-initialised project dirs | v2.0 |
+| `codevira clean --ghosts` | Remove ghost dirs AND truly-empty data dirs | v2.0 (+ v2.1.2 #14) |
+| `codevira clean --orphans` | Remove orphan data dirs AND bare global.db rows | v2.0 (+ v2.1.2 #13) |
+| `codevira insights` | Stable + reverted decisions across past sessions | v2.0 |
+| `codevira replay` | Decisions timeline (terminal / markdown / html output) | v2.0 |
+| `codevira budget` | Per-session token usage | v2.0 |
+| `codevira hooks list` | Show installed Claude Code lifecycle hooks | v2.0 |
+| `codevira heal --decisions` | Backfill semantic embeddings for existing decisions | v2.1.0 |
+| `codevira reset --vectors/--graph/--all` | Destructive cleanup (auto-exports decisions first) | **v2.1.2** |
+| `codevira export decisions [--format json\|sql]` | Standalone backup of decisions / outcomes / preferences | **v2.1.2** |
+| `codevira calibrate` | Re-fit per-project similarity threshold | **v2.1.2** |
 
 Run `codevira --help` for the full subcommand list.
+
+### What's production-stable vs best-effort
+
+| Production-stable | Best-effort / coming soon |
+|---|---|
+| Cross-tool decision memory (search_decisions, get_session_context) | Multi-language code graph for languages OTHER than Python / TypeScript / Go / Rust / Java / C# / Ruby / C++ / Kotlin / Swift / PHP / JS — extend via tree-sitter language pack |
+| do_not_revert guarding via Decision Lock + Anti-Regression hero | Animated demo GIF (coming v2.2 launch) |
+| Hybrid BM25 + semantic search with self-calibrating threshold | Native MCP Apps UI (`ui://` URIs) — when MCP SDK exposes the scheme |
+| Per-project + cross-project preferences via global.db | Real-time multi-machine sync — local-first is by design; if you need it, export/import is the path |
+| All MCP tools (graph, roadmap, changesets, learning, decisions) | Web UI for browsing decisions (use the `codevira://decisions` MCP resource in Claude Desktop today) |
 
 ### Customizing what's indexed
 

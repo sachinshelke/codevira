@@ -11,6 +11,183 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [2.1.2] — 2026-05-19 — Trust recovery + QoL
+
+Trust-recovery release based on **four independent field-test reports** that
+converged on "trust" as the gap (not capability). Full plan:
+[docs/plans/v2.1.2.md](docs/plans/v2.1.2.md).
+
+### Added — Smart similarity threshold (Item 1)
+
+- `search_decisions` now applies a per-project, self-calibrating similarity
+  threshold before RRF fusion. Gibberish queries (`"zzzzzz xqzv9"`,
+  `"how to make a cake"`, `""`) return zero results with
+  `retrieval: "semantic-no-results-above-threshold"` instead of the
+  v2.1.1 regression where they surfaced the "least bad" matches.
+- New `codevira calibrate` CLI command for manual threshold re-fit.
+  Auto-recalibration runs in a daemon thread every ~10 decisions added.
+- Per-project `<data_dir>/calibration.json` (search threshold + hook
+  threshold + positive-sample count + ISO timestamp).
+- Cross-session hook injection (`CrossSessionConsistency`) applies the
+  stricter `hook` threshold (search − 0.10). Commit-message-shaped
+  prompts (`feat(api):` / `fix:` / etc.) skipped entirely.
+
+### Added — Honest cleanup (Item 3)
+
+- `codevira reset --vectors / --graph / --all` — destructive operations
+  split out of `codevira heal` (whose name implied fix-in-place).
+- Auto-export of decisions + outcomes + preferences + learned_rules to
+  `<data_dir>/exports/<ts>-pre-<target>.json` BEFORE any wipe of `graph/`.
+  Pass `--no-backup` to skip.
+- Typed confirmation: user must type `reset` / `graph` / `vectors` /
+  `all` (not just `y`) to proceed. `--yes` skips for scripts.
+- `codevira heal --vectors / --graph / --all` deprecation cycle:
+  forwards to `cmd_reset` with a one-time warning. Removal planned v2.2.
+- New `codevira export decisions [--format json|sql] [--out PATH]`
+  standalone backup command. Closes Report 1 §7 gap.
+- New `confirm_typed(...)` helper in `_prompts.py`.
+
+### Added — Proactive correctness
+
+- **Item 20**: `check_conflict(decision_text, file_path?)` MCP tool detects
+  duplicates and conflicts vs `do_not_revert=True` decisions. Uses Item 1's
+  calibrated threshold. `record_decision` runs it automatically pre-write
+  and surfaces `_conflict_warning` in the response (suppressible with
+  `force=True`).
+- **Item 26**: `supersede_decision(old_id, new_decision, reason)` retires
+  a prior decision with auditable history. Schema auto-migrates with
+  `is_superseded INTEGER + superseded_by INTEGER`. `list_decisions` filters
+  superseded rows by default; `include_superseded=True` opts back in.
+
+### Added — Enumeration + filtering
+
+- **Item 11**: `list_decisions(limit, since_date, file_pattern,
+  protected_only, session_id, tags, include_superseded, full)` MCP tool.
+  Closes Report 3 "remembers but can't list" gap.
+- **Item 27 (partial)**: `tags=[...]` on `record_decision`; `list_tags()`
+  MCP tool; tag filter on `list_decisions`. `decision_tags` table
+  auto-migrated.
+- **Item 25**: `since="YYYY-MM-DD"` (or ISO 8601) filter on
+  `search_decisions`, `get_history`, `get_session_context`. SQL-layer
+  for BM25, post-filter for semantic results.
+
+### Added — Batch APIs (Items 23 + 24)
+
+- `record_decisions([...])` and `write_session_logs([...])` cut
+  memory-dump sessions from ~26 separate round trips to 1. Returns
+  `{count, recorded:[ids], errors:[{idx, error}]}` with per-item
+  partial-failure surfacing.
+
+### Added — Trust + correctness fixes
+
+- **Item 2**: `get_node` / `get_impact` / `query_graph` / `update_node`
+  return `not_indexed: True` + null counts instead of misleading 0 for
+  un-indexed paths.
+- **Item 4**: New `PostEditGraphRefresh` policy refreshes graph nodes in
+  a daemon thread after Edit/Write/MultiEdit so subsequent
+  `get_node` / `get_impact` calls see fresh data.
+- **Item 9**: `global_db.get_rules()` strict-language match by default
+  (was `language = ? OR language IS NULL`). Prevents Go-project rules
+  with NULL language from leaking into Python projects. Pass
+  `strict_language=False` for legacy behavior.
+- **Item 17**: Rule extractor noise filter — stopword filter + minimum
+  content-density gate + substring suppression in `_find_common_phrases`.
+  Pre-code projects (0 indexed source files) skip
+  `_infer_decision_pattern_rules` entirely.
+- **Item 18**: `add_phase()` silently replaces the bootstrap
+  "Getting Started" placeholder when called with the SAME number (and
+  the placeholder is pristine — status=pending, no changesets, default
+  description).
+- **Item 19**: Regression test for `file_path` serialization round-trip
+  through `get_session_context`'s `recent_decisions`.
+- **Item 22**: `write_session_log` / `log_session` auto-suffix
+  `session_id` on content collision (was: silent `INSERT OR REPLACE`).
+  Same id + same summary remains idempotent; different summary returns
+  the new suffixed id with `collision_resolved: True`.
+- **Item 33**: Hook commit-message pre-filter suppresses injection on
+  prompts matching `^(feat|fix|chore|docs|refactor|test|style|perf|build|ci|revert)(\(.*\))?:`.
+
+### Added — Roadmap workflow
+
+- **Item 10**: `complete_phase(backfill=True, completed_at='YYYY-MM-DD')`
+  for retroactive phase completion (current / upcoming / synthetic
+  cases).
+- **Item 12**: `complete_phase(git_ref="...")` links a commit sha or PR
+  reference to the completion entry.
+- **Item 29**: `bulk_import_phases([...])` for adopting codevira on a
+  project that already shipped N phases in git. Idempotent.
+
+### Added — QoL
+
+- **Item 5**: `do_not_revert` int→bool coercion at SQLite read boundary
+  (`search_decisions`, missing-rows fetch path). API contract now
+  matches schema.
+- **Item 6**: Smart truncation in `top_signals.rules` (word-boundary +
+  path-aware, 160-char limit).
+- **Item 7**: `summary` derived from first 80 chars of decision text
+  instead of `"ad-hoc record_decision"` placeholder.
+- **Item 8**: `get_session_context` returns `confidence_note` instead of
+  `confidence=null` on fresh projects.
+- **Item 28**: `summary_only=True` mode on `search_decisions` returns
+  id + summary + score + do_not_revert only — ~70% smaller payload for
+  AI triage queries.
+- **Item 30**: `record_decision` input-coerced echo — when
+  `do_not_revert` is passed as a non-bool (int 1, string "true"),
+  response carries `_input_coerced_warning`.
+- **Item 31**: Bundled non-Python playbooks (TypeScript / Go / generic)
+  in `mcp_server/data/rules/coding-standards-<lang>.md`. Auto-selected
+  by detected project language. Closes Report 1 §3.5.
+- **Items 13 + 14**: `clean --orphans` catches bare global.db rows (no
+  data dir + path missing on disk). `clean --ghosts` catches truly-
+  empty data dirs (<10 KB, status='stale').
+
+### Added — Plan + governance (Item 16)
+
+- `docs/plans/v2.1.2.md` mirrors the master plan (33 items + 4 deferred
+  v2.2-class items). Establishes release-planning discipline: every
+  vX.Y.Z release with 3+ items gets its own `docs/plans/` doc.
+- `ROADMAP.md` v2.1.2 section.
+- `CONTRIBUTING.md` Release planning + Documentation discipline.
+
+### Fixed
+
+- **Item 21**: Multi-language `get_signature` / `get_code` confirmed
+  working in v2.1.1 (15+ languages via tree-sitter-language-pack). No
+  new code needed; doc fix only.
+- **Item 32**: All 42 pre-existing mypy errors cleared via real fixes
+  (type narrowing, missing imports, `Counter` / `dict[str, Any]`
+  annotations, AST isinstance gating) and targeted
+  `# type: ignore[code]` for invariant pre-existing patterns. mypy is
+  now a hard pre-commit gate.
+
+### Tests
+
+- 2401/2401 unit tests pass + 4/4 e2e cross-tool universality.
+- Replaced: `test_log_session_replaces_on_duplicate` → idempotent +
+  auto-suffix variants (Item 22).
+- Renamed: `test_8_evaluation_under_5ms_p95` → `_50ms_p95` (semantic
+  gate is inherently slower than BM25-only).
+- Updated: all `test_default_heroes_*` / `test_*_default_policies_*`
+  acceptance tests to expect `post_edit_graph_refresh` in the default
+  set; `test_dispatch_complete_phase` (×2) + `test_dispatch_get_history`
+  for new kwarg defaults.
+- New positive tests: `test_get_node_not_indexed`,
+  `test_get_impact_not_indexed`,
+  `test_gibberish_query_returns_zero_above_threshold`,
+  `test_session_context_recent_decisions_preserve_file_path`,
+  `test_add_phase_replaces_pristine_placeholder`,
+  `test_log_session_idempotent_on_same_content`,
+  `test_log_session_auto_suffixes_on_different_content`,
+  `test_language_filter_strict_excludes_null_language`,
+  `test_language_filter_loose_includes_null_language`.
+
+### Deferred to v2.1.3 / v2.2
+
+- Full README rewrite with animated 60-second demo GIF (Item 15) — pair
+  with v2.2 launch / benchmark publishing once benchmark suite ships.
+- Bundled `coding-standards-<lang>.md` for Rust / Java / etc. — extend
+  the per-language playbook system as adopters request.
+
 ## [2.1.1] — 2026-05-17 — Hybrid decision search
 
 ### Added

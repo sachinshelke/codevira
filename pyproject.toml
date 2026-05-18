@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "codevira"
-version = "2.1.1"
+version = "2.1.2"
 description = "Stop re-explaining your project to AI agents every session. Codevira gives Claude Code, Cursor, Windsurf, and Antigravity shared persistent memory of your codebase — locally, no signup, MIT-licensed. One install configures every AI tool."
 readme = "README.md"
 license = { text = "MIT" }

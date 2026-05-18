@@ -778,10 +778,40 @@ def bulk_import_phases(phases: list[dict[str, Any]]) -> dict[str, Any]:
     data = _load_roadmap()
     completed = data.setdefault("completed_phases", []) or []
     upcoming = data.setdefault("upcoming_phases", []) or []
+
+    # 2026-05-18 v2.1.2 Items 18 + 29: if the current phase is the
+    # pristine bootstrap placeholder, treat its number as AVAILABLE for
+    # bulk import (consistent with add_phase()'s placeholder-replacement
+    # behavior). Without this, an adopter migrating phase=1 from git
+    # history gets it silently skipped because the placeholder occupies
+    # that number.
+    current = data.get("current_phase", {}) or {}
+    placeholder_signals = (
+        current.get("status") == "pending"
+        and current.get("name") in ("Getting Started", "Initial Development")
+        and not (current.get("open_changesets") or [])
+        and "Auto-generated stub" in str(current.get("description", ""))
+    )
+
     existing_numbers = {str(p.get("number") or p.get("phase")) for p in completed}
     existing_numbers.update(str(p.get("number") or p.get("phase")) for p in upcoming)
-    current_number = str(data.get("current_phase", {}).get("number"))
-    existing_numbers.add(current_number)
+    current_number = str(current.get("number"))
+    if not placeholder_signals:
+        existing_numbers.add(current_number)
+
+    # If the placeholder is about to be replaced, we clear it from
+    # current_phase BEFORE processing imports so the loop's logic doesn't
+    # need to special-case it.
+    placeholder_will_be_replaced = placeholder_signals and any(
+        str(p.get("number")) == current_number for p in phases
+    )
+    if placeholder_will_be_replaced:
+        data["current_phase"] = {
+            "number": None,
+            "name": "(placeholder cleared by bulk_import_phases)",
+            "status": "pending",
+            "open_changesets": [],
+        }
 
     imported = 0
     skipped = 0

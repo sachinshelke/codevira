@@ -1511,7 +1511,7 @@ def main() -> None:
             "and decisions confirmed kept via outcome tracking). The "
             "calibrator finds the 10 nearest neighbours for each positive "
             "and sets the threshold at the 75th percentile of those "
-            "distances. Clamped to [0.20, 0.55] for safety. Stored at "
+            "distances. Clamped to [0.35, 0.80] for safety. Stored at "
             "<data_dir>/calibration.json. Auto-recalibration also runs "
             "every 10 decisions added in the background."
         ),

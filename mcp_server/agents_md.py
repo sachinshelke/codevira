@@ -66,13 +66,14 @@ The companion ``setup_wizard`` module orchestrates the per-IDE detection
 + multi-file write; this module only knows how to render and write one
 file at a time.
 """
+
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 
 # ---------------------------------------------------------------------
@@ -85,13 +86,13 @@ from typing import Literal
 #: path layout. Keep this list in sync with the SUPPORTED IDE matrix
 #: in docs/heroes/pillar-1-setup.md.
 SUPPORTED_IDES: tuple[str, ...] = (
-    "claude",        # Claude Code → <project>/CLAUDE.md
-    "cursor",        # Cursor → <project>/.cursor/rules/codevira.mdc
-    "windsurf",      # Windsurf → <project>/.windsurfrules
-    "antigravity",   # Antigravity / Gemini CLI → <project>/GEMINI.md
-    "codex",         # OpenAI Codex CLI → <project>/AGENTS.md
-    "copilot",       # GitHub Copilot → <project>/.github/copilot-instructions.md
-    "agents_md",     # Tier-2 fallback for any tool that reads AGENTS.md
+    "claude",  # Claude Code → <project>/CLAUDE.md
+    "cursor",  # Cursor → <project>/.cursor/rules/codevira.mdc
+    "windsurf",  # Windsurf → <project>/.windsurfrules
+    "antigravity",  # Antigravity / Gemini CLI → <project>/GEMINI.md
+    "codex",  # OpenAI Codex CLI → <project>/AGENTS.md
+    "copilot",  # GitHub Copilot → <project>/.github/copilot-instructions.md
+    "agents_md",  # Tier-2 fallback for any tool that reads AGENTS.md
 )
 
 #: HTML-comment markers that delimit the codevira-generated block
@@ -131,13 +132,13 @@ class _IDESpec:
 
 
 _IDE_SPECS: dict[str, _IDESpec] = {
-    "claude":      _IDESpec("claude_md.tmpl",            "CLAUDE.md"),
-    "cursor":      _IDESpec("cursor_rules.mdc.tmpl",     ".cursor/rules/codevira.mdc"),
-    "windsurf":    _IDESpec("windsurfrules.tmpl",        ".windsurfrules"),
-    "antigravity": _IDESpec("gemini_md.tmpl",            "GEMINI.md"),
-    "codex":       _IDESpec("agents_md.tmpl",            "AGENTS.md"),
-    "copilot":     _IDESpec("copilot_instructions.tmpl", ".github/copilot-instructions.md"),
-    "agents_md":   _IDESpec("agents_md.tmpl",            "AGENTS.md"),
+    "claude": _IDESpec("claude_md.tmpl", "CLAUDE.md"),
+    "cursor": _IDESpec("cursor_rules.mdc.tmpl", ".cursor/rules/codevira.mdc"),
+    "windsurf": _IDESpec("windsurfrules.tmpl", ".windsurfrules"),
+    "antigravity": _IDESpec("gemini_md.tmpl", "GEMINI.md"),
+    "codex": _IDESpec("agents_md.tmpl", "AGENTS.md"),
+    "copilot": _IDESpec("copilot_instructions.tmpl", ".github/copilot-instructions.md"),
+    "agents_md": _IDESpec("agents_md.tmpl", "AGENTS.md"),
 }
 
 
@@ -206,20 +207,21 @@ def target_path_for(ide: str, project_root: Path) -> Path:
 
 
 WriteAction = Literal[
-    "created",            # file did not exist; we wrote it from template
-    "block_replaced",     # existing file had markers; replaced block only
-    "block_appended",     # existing file had no markers; appended new block
-    "no_change",          # existing file already had identical content
-    "would_create",       # dry-run: would create
-    "would_replace",      # dry-run: would replace block
-    "would_append",       # dry-run: would append
-    "would_be_no_change", # dry-run: would be no-op
+    "created",  # file did not exist; we wrote it from template
+    "block_replaced",  # existing file had markers; replaced block only
+    "block_appended",  # existing file had no markers; appended new block
+    "no_change",  # existing file already had identical content
+    "would_create",  # dry-run: would create
+    "would_replace",  # dry-run: would replace block
+    "would_append",  # dry-run: would append
+    "would_be_no_change",  # dry-run: would be no-op
 ]
 
 
 @dataclass(frozen=True)
 class NudgeWriteResult:
     """Outcome of one ``write_nudge_file`` call."""
+
     ide: str
     target_path: Path
     action: WriteAction
@@ -290,7 +292,7 @@ def write_nudge_file(
         # Replace path: swap in the freshly-rendered block.
         replaced = _BLOCK_RE.sub(desired_block, existing, count=1)
         if replaced == existing:
-            action = "would_be_no_change" if dry_run else "no_change"
+            action: Any = "would_be_no_change" if dry_run else "no_change"
             return NudgeWriteResult(ide, target, action)
         if dry_run:
             return NudgeWriteResult(ide, target, "would_replace")
@@ -366,12 +368,16 @@ def _atomic_write_text(target: Path, content: str) -> int:
 
     # Use NamedTemporaryFile in the same dir as target so the rename
     # stays on one filesystem.
-    fd, tmp_path = tempfile.mkstemp(
-        prefix=f".{target.name}.", suffix=".tmp", dir=str(target.parent),
+    fd, _raw_tmp = tempfile.mkstemp(
+        prefix=f".{target.name}.",
+        suffix=".tmp",
+        dir=str(target.parent),
     )
+    tmp_path: str | None = _raw_tmp
     try:
         with _os.fdopen(fd, "wb") as f:
-            f.write(encoded)
+            f.write(encoded)  # tmp_path is guaranteed non-None at this point
+            assert tmp_path is not None
             # Flush to disk before rename so a crash doesn't leave the
             # destination pointing at empty content.
             f.flush()

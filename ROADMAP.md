@@ -200,6 +200,52 @@ Stay local. Stay focused on the one developer working on their machine.
 
 ---
 
+## 🔜 v2.1.2 — Trust Recovery + QoL (in progress)
+
+**Full plan:** [`docs/plans/v2.1.2.md`](docs/plans/v2.1.2.md) — 823 lines,
+16 items + per-item verification + deferred list.
+
+After v2.1.1 shipped hybrid search, three independent field-test reports
+converged on the same diagnosis: **codevira works, but doesn't yet earn
+trust.** v2.1.2 is a trust-recovery release — each fix restores
+confidence in something codevira already does:
+
+- **Trust-recovery (4):** smart similarity threshold (self-calibrating),
+  null-not-zero for unindexed graph nodes, heal safety + `reset` rename
+  + auto-export-before-destroy, auto-refresh stale graph post-edit
+- **Audit-recovered (6):** cross-project rules leak fix, `complete_phase
+  --backfill` for retroactive phases, `list_decisions` enumeration,
+  `complete_phase` optional `git_ref`, `clean --orphans` handles bare
+  global.db rows, `clean --ghosts` catches truly-empty data dirs
+- **QoL wins (4):** `do_not_revert` type consistency (`1` → `true`),
+  smart truncation in top_signals.rules, derive ad-hoc decision summaries
+  from text, hide empty auto-signal fields
+- **User-attraction (2):** README rewrite (hero block, 60-sec demo,
+  comparison table, field-tester quotes), plan-in-codebase discipline
+
+Cross-cutting: **every code change in this release must update relevant
+documentation in the same commit.**
+
+---
+
+## ✅ v2.1.1 — Hybrid decision search (2026-05-17)
+
+Released. Search_decisions now uses hybrid BM25 + ChromaDB semantic +
+RRF fusion. Closes the UDAP-benchmark gap where natural-language queries
+returned 0 hits. Added `codevira heal --decisions` non-destructive
+backfill for v2.0 → v2.1.x upgrades.
+
+---
+
+## ✅ v2.1.0 — Reliability hardening + Pillar 3 discipline scaffold (2026-05-17)
+
+Released. 22 P-violations fixed across detect / indexer / chunker / cli
+/ crash_logger / ide_inject. Discipline scaffold (5 SKILL.md files +
+hooks + Makefile gauntlet + e2e fixtures) shipped as reference
+implementation.
+
+---
+
 ## 🔜 v2.1 — New-user first contact + reliability hardening
 
 **Renamed 2026-05-15.** The original v2.1 framing ("close credibility

@@ -103,6 +103,10 @@ def _infer_layer(file_path: str) -> str:
 
 def _get_docstring(node: ast.AST) -> str:
     try:
+        if not isinstance(
+            node, (ast.AsyncFunctionDef, ast.FunctionDef, ast.ClassDef, ast.Module)
+        ):
+            return ""
         return ast.get_docstring(node) or ""
     except Exception:
         return ""

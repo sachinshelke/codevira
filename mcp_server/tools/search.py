@@ -5,6 +5,7 @@ from typing import Any
 from mcp_server.paths import get_data_dir
 from indexer.sqlite_graph import SQLiteGraph
 
+
 def _get_db() -> SQLiteGraph:
     db_path = get_data_dir() / "graph" / "graph.db"
     return SQLiteGraph(db_path)
@@ -72,7 +73,10 @@ def prewarm_embedding_model() -> None:
     t = threading.Thread(target=_warmup, daemon=True, name="codevira-embed-prewarm")
     t.start()
 
-def search_codebase(description: str, top_k: int = 5, include_content: bool = False) -> dict[str, Any]:
+
+def search_codebase(
+    description: str, top_k: int = 5, include_content: bool = False
+) -> dict[str, Any]:
     """Semantic search over the codebase.
 
     Returns file/symbol pointers by default — NOT full source code. This keeps
@@ -91,6 +95,7 @@ def search_codebase(description: str, top_k: int = 5, include_content: bool = Fa
         # and cached on disk; slow only the first time ever across any project).
         # Wrap in a short timeout so we don't block the MCP thread.
         import threading as _th
+
         load_done = _th.Event()
         load_err = [None]
 
@@ -124,6 +129,7 @@ def search_codebase(description: str, top_k: int = 5, include_content: bool = Fa
         # First check if a build is currently in progress.
         try:
             from mcp_server.auto_init import get_init_progress
+
             prog = get_init_progress()
             if prog["status"] in ("initializing", "indexing"):
                 return {
@@ -133,7 +139,8 @@ def search_codebase(description: str, top_k: int = 5, include_content: bool = Fa
         except Exception:
             pass
         return _structural_fallback(
-            description, top_k,
+            description,
+            top_k,
             reason="semantic index not built yet",
         )
 
@@ -144,7 +151,9 @@ def search_codebase(description: str, top_k: int = 5, include_content: bool = Fa
         top_k = 20
 
     try:
-        collection = client.get_collection("codebase_index", embedding_function=embed_fn)
+        collection = client.get_collection(
+            "codebase_index", embedding_function=embed_fn
+        )
         results = collection.query(query_texts=[description], n_results=top_k)
 
         matches = []
@@ -157,7 +166,8 @@ def search_codebase(description: str, top_k: int = 5, include_content: bool = Fa
                     "chunk_type": meta["chunk_type"],
                     "name": meta["name"],
                     "relevance_score": round(
-                        1.0 - (results["distances"][0][i] if "distances" in results else 0),
+                        1.0
+                        - (results["distances"][0][i] if "distances" in results else 0),
                         3,
                     ),
                 }
@@ -176,6 +186,7 @@ def search_codebase(description: str, top_k: int = 5, include_content: bool = Fa
     except Exception as e:
         try:
             from mcp_server.crash_logger import log_crash
+
             log_crash(e, context="search_codebase")
         except Exception:
             pass
@@ -199,6 +210,7 @@ def _structural_fallback(query: str, top_k: int, *, reason: str) -> dict[str, An
     try:
         from mcp_server.paths import get_data_dir
         from indexer.sqlite_graph import SQLiteGraph
+
         graph_db_path = get_data_dir() / "graph" / "graph.db"
         if not graph_db_path.is_file():
             return {
@@ -230,12 +242,14 @@ def _structural_fallback(query: str, top_k: int, *, reason: str) -> dict[str, An
                     if key in seen:
                         continue
                     seen.add(key)
-                    matches.append({
-                        "file_path": r["file_path"],
-                        "chunk_type": r["kind"],
-                        "name": r["name"],
-                        "match_type": "symbol_substring",
-                    })
+                    matches.append(
+                        {
+                            "file_path": r["file_path"],
+                            "chunk_type": r["kind"],
+                            "name": r["name"],
+                            "match_type": "symbol_substring",
+                        }
+                    )
                     if len(matches) >= top_k:
                         break
                 if len(matches) >= top_k:
@@ -259,12 +273,14 @@ def _structural_fallback(query: str, top_k: int, *, reason: str) -> dict[str, An
                         if key in seen:
                             continue
                         seen.add(key)
-                        matches.append({
-                            "file_path": r["file_path"],
-                            "chunk_type": "file",
-                            "name": "",
-                            "match_type": "filename_substring",
-                        })
+                        matches.append(
+                            {
+                                "file_path": r["file_path"],
+                                "chunk_type": "file",
+                                "name": "",
+                                "match_type": "filename_substring",
+                            }
+                        )
                         if len(matches) >= top_k:
                             break
                     if len(matches) >= top_k:
@@ -292,122 +308,391 @@ def _structural_fallback(query: str, top_k: int, *, reason: str) -> dict[str, An
     }
 
 
-def write_session_log(session_id: str, task: str, phase: str, files_changed: list[str], decisions: list[dict], next_steps: list[str]) -> dict[str, str]:
-    """Write a structured session log to SQLite Memory."""
+def write_session_log(
+    session_id: str,
+    task: str,
+    phase: str,
+    files_changed: list[str],
+    decisions: list[dict],
+    next_steps: list[str],
+) -> dict[str, Any]:
+    """Write a structured session log to SQLite Memory.
+
+    2026-05-18 v2.1.2 Item 22: if ``session_id`` collides with an
+    existing row that has different content, the storage layer
+    auto-suffixes with a short hash. The response always surfaces the
+    ACTUAL session_id written via the ``session_id`` field so the
+    caller knows what id to use for subsequent ``record_decision`` etc.
+    calls (and ``collision_resolved=True`` when the requested id was
+    rewritten).
+    """
     db = _get_db()
-    db.log_session(session_id, task, phase, decisions)
+    actual_session_id = db.log_session(session_id, task, phase, decisions)
     db.close()
 
     # v1.5: Export qualifying learnings to global memory
     try:
         from mcp_server.global_sync import export_project_to_global
+
         export_project_to_global()
     except Exception as e:
         try:
             from mcp_server.crash_logger import log_crash
+
             log_crash(e, context="write_session_log: global export")
         except Exception:
             pass
 
-    return {"status": f"Session {session_id} logged to SQLite Memory."}
+    collision = actual_session_id != session_id
+    return {
+        "status": f"Session {actual_session_id} logged to SQLite Memory.",
+        "session_id": actual_session_id,
+        "requested_session_id": session_id,
+        "collision_resolved": collision,
+        **(
+            {
+                "note": (
+                    f"Requested session_id {session_id!r} already existed with "
+                    f"different content; auto-suffixed to {actual_session_id!r} to "
+                    f"avoid silent merge. Pass the new id to subsequent "
+                    f"record_decision / get_session_context calls."
+                )
+            }
+            if collision
+            else {}
+        ),
+    }
+
 
 def search_decisions(
     query: str,
     limit: int = 5,
     session_id: str | None = None,
     full: bool = False,
+    summary_only: bool = False,
 ) -> dict[str, Any]:
     """Search past decisions across sessions, changesets, and roadmap phases.
 
-    2026-05-17 v2.1: now uses HYBRID retrieval — BM25 keyword (SQL LIKE)
-    AND semantic embedding (ChromaDB), merged with Reciprocal Rank Fusion.
-    Natural-language queries like "DDD architecture layer" or "codevira
-    backfill" — which produced 0 hits in v2.0's BM25-only search — now
-    surface the right decisions.
+    2026-05-17 v2.1.1: hybrid retrieval — BM25 keyword (SQL LIKE) AND
+    semantic embedding (ChromaDB), merged with Reciprocal Rank Fusion.
+    Natural-language queries like ``"DDD architecture layer"`` — which
+    produced 0 hits in v2.0's BM25-only search — now surface the right
+    decisions.
 
-    Default: returns up to 5 matches with truncated context (150 chars each)
-    to keep the response token-efficient (~500 tokens total).
+    2026-05-18 v2.1.2 Item 1: applies a smart self-calibrating similarity
+    THRESHOLD before RRF so gibberish queries (``"how to make a cake"``,
+    ``"zzzzzz xqzv9"``) return zero results instead of "least bad"
+    matches. The threshold defaults to 0.45 (cosine distance — lower =
+    more similar) and re-fits per project every ~10 decisions.
 
-    Pass full=True to get untruncated decision + context + summary text.
+    2026-05-18 v2.1.2 Item 28: ``summary_only=True`` returns a slim
+    payload (id + summary + score + do_not_revert only) — ~70% smaller
+    response for AI triage queries.
 
-    The response includes ``retrieval`` indicating which retrieval path(s)
-    contributed: "hybrid" (both), "keyword" (semantic unavailable), or
-    "semantic" (BM25 returned nothing).
+    Default: returns up to 5 matches with truncated context (150 chars).
+    Pass ``full=True`` for untruncated text. Response includes:
+        - ``retrieval``: ``"hybrid" | "keyword" | "semantic" |
+          "semantic-no-results-above-threshold"``
+        - ``threshold_used``: the active cosine-distance cut-off
+        - per-result ``score``: cosine distance for the semantic match
+          (omitted for keyword-only hits)
     """
     if limit < 1:
         limit = 1
     if limit > 20:
         limit = 20
 
+    # 2026-05-18 v2.1.2 Item 1: load active threshold (calibrated or static).
+    try:
+        from mcp_server.tools._decision_embeddings import load_threshold
+
+        threshold = load_threshold(target="search")
+    except Exception:
+        threshold = 0.45
+
     db = _get_db()
     try:
         # ─── BM25 / SQL LIKE pass (existing behavior, kept as ranked source) ──
-        # Over-fetch up to 3× limit so RRF has more candidates to fuse.
         bm25_results = db.search_decisions(query, limit * 3, session_id)
         bm25_ids = [r["id"] for r in bm25_results if r.get("id") is not None]
 
-        # ─── Semantic / ChromaDB pass (new in v2.1) ───────────────────────────
-        # P9 graceful: returns [] on any chromadb failure → falls back to
-        # BM25-only ranking below.
-        semantic_ids: list[int] = []
+        # ─── Semantic / ChromaDB pass with threshold cut-off ─────────────────
+        # 2026-05-18 v2.1.2 Item 1: use scored variant + filter.
+        semantic_scored: list[tuple[int, float]] = []
         try:
             from mcp_server.tools._decision_embeddings import (
-                semantic_search_decisions, rrf_merge,
+                semantic_search_decisions_scored,
+                rrf_merge,
             )
-            semantic_ids = semantic_search_decisions(query, limit * 3, session_id)
+
+            raw_scored = semantic_search_decisions_scored(query, limit * 3, session_id)
+            semantic_scored = [(did, d) for did, d in raw_scored if d <= threshold]
         except Exception:
-            semantic_ids = []
+            semantic_scored = []
+
+        semantic_ids = [did for did, _d in semantic_scored]
+        semantic_score_by_id: dict[int, float] = dict(semantic_scored)
 
         # ─── Merge ────────────────────────────────────────────────────────────
-        if semantic_ids:
-            # Reciprocal Rank Fusion of the two ranked lists.
+        retrieval: str
+        if semantic_ids and bm25_ids:
             try:
+                from mcp_server.tools._decision_embeddings import rrf_merge
+
                 merged_ids = rrf_merge(bm25_ids, semantic_ids, limit=limit)
             except Exception:
-                # If RRF itself fails, fall back to BM25-only.
                 merged_ids = bm25_ids[:limit]
                 semantic_ids = []
-            # Resolve IDs back to full decision rows. SQLite is canonical.
-            id_to_row = {r["id"]: r for r in bm25_results}
-            missing_ids = [i for i in merged_ids if i not in id_to_row]
-            if missing_ids:
-                # Fetch missing rows (decisions that ONLY semantic found).
-                placeholders = ",".join("?" * len(missing_ids))
-                cur = db.conn.execute(
-                    f"SELECT d.id, d.decision, d.context, d.file_path, "
-                    f"d.do_not_revert, s.summary, s.phase, d.created_at "
-                    f"FROM decisions d JOIN sessions s "
-                    f"ON d.session_id = s.session_id WHERE d.id IN ({placeholders})",
-                    missing_ids,
-                )
-                for row in cur.fetchall():
-                    id_to_row[row["id"]] = dict(row)
-            results = [id_to_row[i] for i in merged_ids if i in id_to_row]
-            retrieval = "hybrid" if bm25_ids else "semantic"
-        else:
-            results = bm25_results[:limit]
+            retrieval = "hybrid"
+        elif semantic_ids:
+            merged_ids = semantic_ids[:limit]
+            retrieval = "semantic"
+        elif bm25_ids:
+            merged_ids = bm25_ids[:limit]
             retrieval = "keyword"
+        else:
+            # Both retrievers returned nothing. If semantic ran but everything
+            # was above threshold, distinguish that case so the caller knows
+            # "search worked, just nothing similar enough" vs "search broken."
+            try:
+                raw_scored_unfiltered = semantic_search_decisions_scored(
+                    query, 1, session_id
+                )
+                if raw_scored_unfiltered:
+                    retrieval = "semantic-no-results-above-threshold"
+                else:
+                    retrieval = "no-matches"
+            except Exception:
+                retrieval = "no-matches"
+            merged_ids = []
+
+        # Resolve IDs → full decision rows.
+        id_to_row = {r["id"]: r for r in bm25_results}
+        missing_ids = [i for i in merged_ids if i not in id_to_row]
+        if missing_ids:
+            placeholders = ",".join("?" * len(missing_ids))
+            cur = db.conn.execute(
+                f"SELECT d.id, d.decision, d.context, d.file_path, "
+                f"d.do_not_revert, s.summary, s.phase, d.created_at "
+                f"FROM decisions d JOIN sessions s "
+                f"ON d.session_id = s.session_id WHERE d.id IN ({placeholders})",
+                missing_ids,
+            )
+            for row in cur.fetchall():
+                d = dict(row)
+                if "do_not_revert" in d:
+                    d["do_not_revert"] = bool(d["do_not_revert"])
+                id_to_row[row["id"]] = d
+        results = [id_to_row[i] for i in merged_ids if i in id_to_row]
+
+        # Annotate each result with its semantic score (cosine distance).
+        # Keyword-only matches get score=None so the caller can tell them apart.
+        for r in results:
+            rid = r.get("id")
+            r["score"] = semantic_score_by_id.get(int(rid)) if rid is not None else None
     finally:
         db.close()
 
+    if summary_only:
+        # 2026-05-18 v2.1.2 Item 28: ~70% smaller payload for triage queries.
+        slim = []
+        for r in results:
+            slim.append(
+                {
+                    "id": r.get("id"),
+                    "summary": r.get("summary"),
+                    "score": r.get("score"),
+                    "do_not_revert": r.get("do_not_revert"),
+                }
+            )
+        return {
+            "query": query,
+            "count": len(slim),
+            "retrieval": retrieval,
+            "threshold_used": threshold,
+            "results": slim,
+            "mode": "summary_only",
+        }
+
     if not full:
-        # Truncate verbose text fields
         for r in results:
             if r.get("decision"):
-                r["decision"] = (r["decision"][:199] + "…") if len(r["decision"]) > 200 else r["decision"]
+                r["decision"] = (
+                    (r["decision"][:199] + "…")
+                    if len(r["decision"]) > 200
+                    else r["decision"]
+                )
             if r.get("context"):
-                r["context"] = (r["context"][:149] + "…") if len(r["context"]) > 150 else r["context"]
+                r["context"] = (
+                    (r["context"][:149] + "…")
+                    if len(r["context"]) > 150
+                    else r["context"]
+                )
             if r.get("summary"):
-                r["summary"] = (r["summary"][:99] + "…") if len(r["summary"]) > 100 else r["summary"]
+                r["summary"] = (
+                    (r["summary"][:99] + "…")
+                    if len(r["summary"]) > 100
+                    else r["summary"]
+                )
 
     return {
         "query": query,
         "count": len(results),
         "retrieval": retrieval,
+        "threshold_used": threshold,
         "results": results,
         "hint": "Pass full=True for untruncated decision text. Increase limit up to 20."
-                if not full else "Showing full untruncated decisions.",
+        if not full
+        else "Showing full untruncated decisions.",
     }
+
+
+def list_decisions(
+    limit: int = 20,
+    since_date: str | None = None,
+    file_pattern: str | None = None,
+    protected_only: bool = False,
+    session_id: str | None = None,
+    tags: list[str] | None = None,
+    include_superseded: bool = False,
+    full: bool = False,
+) -> dict[str, Any]:
+    """2026-05-18 v2.1.2 Item 11: enumerate decisions with optional filters.
+
+    Without filters, returns the ``limit`` most recently created decisions.
+    All filters AND together — only decisions matching every supplied
+    constraint are returned.
+
+    Args:
+        limit: max rows to return (clamped to [1, 200]).
+        since_date: ISO 8601 timestamp (or YYYY-MM-DD). Only decisions
+            ``created_at > since_date`` are returned. v2.1.2 Item 25.
+        file_pattern: SQL LIKE pattern on ``file_path`` (e.g. ``"src/%"``).
+        protected_only: filter to ``do_not_revert = 1`` rows only.
+        session_id: filter to a single session.
+        tags: filter to rows that have ALL of the supplied tags (Item 27).
+        include_superseded: by default soft-deleted (Item 26 supersede)
+            rows are hidden; pass True to include them.
+        full: untruncated decision text.
+
+    Returns:
+        {"count": N, "decisions": [...], "has_more": bool, "filters_applied": {...}}
+    """
+    limit = max(1, min(int(limit), 200))
+    where_clauses: list[str] = []
+    params: list = []
+
+    if since_date:
+        where_clauses.append("d.created_at > ?")
+        params.append(since_date)
+    if file_pattern:
+        where_clauses.append("d.file_path LIKE ?")
+        params.append(file_pattern)
+    if protected_only:
+        where_clauses.append("d.do_not_revert = 1")
+    if session_id:
+        where_clauses.append("d.session_id = ?")
+        params.append(session_id)
+
+    db = _get_db()
+    try:
+        # Item 26: default-hide superseded rows. Best-effort: schema may
+        # not yet have the column, in which case the filter is a no-op.
+        if not include_superseded:
+            try:
+                db.conn.execute("SELECT is_superseded FROM decisions LIMIT 1")
+                where_clauses.append("(d.is_superseded = 0 OR d.is_superseded IS NULL)")
+            except Exception:
+                pass
+
+        # Item 27: tag filter — INTERSECT decision_tags.
+        if tags:
+            try:
+                norm_tags = sorted(
+                    {str(t).strip().lower() for t in tags if str(t).strip()}
+                )
+                placeholders = ",".join("?" * len(norm_tags))
+                where_clauses.append(
+                    f"d.id IN (SELECT decision_id FROM decision_tags "
+                    f"WHERE tag IN ({placeholders}) "
+                    f"GROUP BY decision_id HAVING COUNT(DISTINCT tag) = {len(norm_tags)})"
+                )
+                params.extend(norm_tags)
+            except Exception:
+                pass
+
+        where_sql = (" WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+        sql = (
+            "SELECT d.id, d.decision, d.context, d.file_path, "
+            "d.do_not_revert, d.session_id, d.created_at, s.summary, s.phase "
+            f"FROM decisions d LEFT JOIN sessions s ON d.session_id = s.session_id "
+            f"{where_sql} ORDER BY d.created_at DESC LIMIT ?"
+        )
+        cur = db.conn.execute(sql, [*params, limit + 1])
+        rows = [dict(r) for r in cur.fetchall()]
+        has_more = len(rows) > limit
+        results = rows[:limit]
+
+        for r in results:
+            if "do_not_revert" in r:
+                r["do_not_revert"] = bool(r["do_not_revert"])
+            # Attach tags (best-effort).
+            try:
+                tag_cur = db.conn.execute(
+                    "SELECT tag FROM decision_tags WHERE decision_id = ? ORDER BY tag",
+                    (r["id"],),
+                )
+                r["tags"] = [row["tag"] for row in tag_cur.fetchall()]
+            except Exception:
+                r["tags"] = []
+    finally:
+        db.close()
+
+    if not full:
+        for r in results:
+            if r.get("decision") and len(r["decision"]) > 200:
+                r["decision"] = r["decision"][:199] + "…"
+            if r.get("context") and len(r["context"]) > 150:
+                r["context"] = r["context"][:149] + "…"
+
+    return {
+        "count": len(results),
+        "has_more": has_more,
+        "decisions": results,
+        "filters_applied": {
+            "since_date": since_date,
+            "file_pattern": file_pattern,
+            "protected_only": protected_only,
+            "session_id": session_id,
+            "tags": list(tags) if tags else None,
+            "include_superseded": include_superseded,
+            "limit": limit,
+        },
+    }
+
+
+def list_tags() -> dict[str, Any]:
+    """2026-05-18 v2.1.2 Item 27: enumerate all tags in the project with
+    decision counts. Useful for discovery / catalog.
+
+    Returns ``{"tags": [{"tag": str, "count": int}, ...]}`` sorted by
+    count desc. Returns empty list if the ``decision_tags`` table
+    doesn't exist yet (pre-v2.1.2 schema).
+    """
+    db = _get_db()
+    try:
+        try:
+            cur = db.conn.execute(
+                "SELECT tag, COUNT(*) AS c FROM decision_tags "
+                "GROUP BY tag ORDER BY c DESC, tag ASC"
+            )
+            tags = [{"tag": r["tag"], "count": r["c"]} for r in cur.fetchall()]
+        except Exception:
+            tags = []
+    finally:
+        db.close()
+    return {"tags": tags, "count": len(tags)}
+
 
 def get_history(file_path: str, limit: int = 5, full: bool = False) -> dict[str, Any]:
     """Return most recent decisions touching a file.
@@ -423,15 +708,15 @@ def get_history(file_path: str, limit: int = 5, full: bool = False) -> dict[str,
         limit = 50
 
     db = _get_db()
-    sql = '''
+    sql = """
         SELECT d.decision, d.context, s.summary, d.created_at, d.session_id
         FROM decisions d
         JOIN sessions s ON d.session_id = s.session_id
         WHERE d.file_path = ? OR s.summary LIKE ?
         ORDER BY d.created_at DESC
         LIMIT ?
-    '''
-    cur = db.conn.execute(sql, (file_path, f'%{file_path}%', limit + 1))
+    """
+    cur = db.conn.execute(sql, (file_path, f"%{file_path}%", limit + 1))
     rows = cur.fetchall()
     has_more = len(rows) > limit
     results = [dict(r) for r in rows[:limit]]
@@ -454,6 +739,7 @@ def get_history(file_path: str, limit: int = 5, full: bool = False) -> dict[str,
         "history": results,
     }
 
+
 def refresh_index(file_paths: list[str]) -> dict:
     """Trigger an incremental reindex of changed files (non-blocking).
 
@@ -472,10 +758,12 @@ def refresh_index(file_paths: list[str]) -> dict:
     def _background_refresh():
         try:
             from mcp_server.tools.graph import refresh_graph
+
             refresh_graph(file_paths=file_paths if file_paths else None)
         except Exception as e:
             try:
                 from mcp_server.crash_logger import log_crash
+
                 log_crash(e, context="refresh_index: graph refresh (background)")
             except Exception:
                 pass
@@ -483,15 +771,19 @@ def refresh_index(file_paths: list[str]) -> dict:
         if _check_search_deps():
             try:
                 from indexer.index_codebase import cmd_incremental
+
                 cmd_incremental(quiet=True, file_paths=requested_files)
             except Exception as e:
                 try:
                     from mcp_server.crash_logger import log_crash
+
                     log_crash(e, context="refresh_index: semantic index (background)")
                 except Exception:
                     pass
 
-    t = threading.Thread(target=_background_refresh, daemon=True, name="codevira-refresh-index")
+    t = threading.Thread(
+        target=_background_refresh, daemon=True, name="codevira-refresh-index"
+    )
     t.start()
 
     mode = "targeted" if requested_files else "incremental"

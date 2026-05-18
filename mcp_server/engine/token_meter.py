@@ -17,11 +17,13 @@ Week 2 expands with: persistence to ``<data_dir>/logs/token_budget.jsonl``,
 historical accounting, optimization hints. For now we keep state in-memory
 so the wiring layer can be tested first.
 """
+
 from __future__ import annotations
 
 import threading
 from collections import defaultdict
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 
@@ -71,15 +73,19 @@ class TokenMeter:
     def summary(self) -> dict[str, Any]:
         """Return a snapshot of current accounting."""
         with self._lock:
-            efficiency = (self.used_total / self.injected_total) if self.injected_total else 0.0
+            efficiency = (
+                (self.used_total / self.injected_total) if self.injected_total else 0.0
+            )
             # Top wasted sources = where injected was high relative to used.
             wasted = []
             for src, injected in self.injected_by_source.items():
                 used = self.used_by_source.get(src, 0)
                 wasted_amt = injected - used
                 if wasted_amt > 0:
-                    wasted.append({"source": src, "wasted": wasted_amt, "injected": injected})
-            wasted.sort(key=lambda x: x["wasted"], reverse=True)
+                    wasted.append(
+                        {"source": src, "wasted": wasted_amt, "injected": injected}
+                    )
+            wasted.sort(key=lambda x: int(x["wasted"]), reverse=True)  # type: ignore[arg-type,call-overload]
             return {
                 "session_id": self.session_id,
                 "injected_total": self.injected_total,
@@ -132,7 +138,9 @@ def get_session_meter() -> TokenMeter | None:
         return _meters.get(_current_session_id)
 
 
-def end_session(session_id: str, *, project_root: "Path | None" = None) -> dict[str, Any] | None:
+def end_session(
+    session_id: str, *, project_root: "Path | None" = None
+) -> dict[str, Any] | None:
     """Drop the meter for a session. Returns its final summary.
 
     Wiring layer calls this on the ``stop`` hook event. The summary is
@@ -269,7 +277,9 @@ _HISTORY_TAIL_BYTES_CAP = 16 * 1024 * 1024
 
 
 def read_session_history(
-    project_root: "Path", *, limit: int = 100,
+    project_root: "Path",
+    *,
+    limit: int = 100,
 ) -> list[dict[str, Any]]:
     """Read the most recent N session summaries from token_budget.jsonl.
 
@@ -281,7 +291,6 @@ def read_session_history(
     that boundary are not returned.
     """
     import json
-    import os as _os
     from pathlib import Path as _Path
 
     from mcp_server.paths import _sanitize_path_key, get_global_home

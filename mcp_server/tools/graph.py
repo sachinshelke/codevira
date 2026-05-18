@@ -11,18 +11,23 @@ from indexer.sqlite_graph import SQLiteGraph
 
 logger = logging.getLogger(__name__)
 
+
 def _graph_dir() -> Path:
     return get_data_dir() / "graph"
 
+
 def _index_dir() -> Path:
     return get_data_dir() / "codeindex"
+
 
 def _get_db() -> SQLiteGraph:
     db_path = _graph_dir() / "graph.db"
     return SQLiteGraph(db_path)
 
+
 def _last_indexed_file() -> Path:
     return _index_dir() / ".last_indexed"
+
 
 def _get_index_timestamp() -> float | None:
     lif = _last_indexed_file()
@@ -33,14 +38,17 @@ def _get_index_timestamp() -> float | None:
             return None
     return None
 
+
 def _get_file_mtime(file_path: str) -> float | None:
     abs_path = get_project_root() / file_path
     if abs_path.exists():
         return abs_path.stat().st_mtime
     return None
 
+
 def _check_staleness(file_path: str) -> dict[str, Any]:
     from datetime import datetime
+
     index_ts = _get_index_timestamp()
     file_mtime = _get_file_mtime(file_path)
 
@@ -60,9 +68,14 @@ def _check_staleness(file_path: str) -> dict[str, Any]:
     return {
         "stale": stale,
         "reason": reason,
-        "last_indexed": datetime.fromtimestamp(index_ts).isoformat() if index_ts else None,
-        "file_mtime": datetime.fromtimestamp(file_mtime).isoformat() if file_mtime else None,
+        "last_indexed": datetime.fromtimestamp(index_ts).isoformat()
+        if index_ts
+        else None,
+        "file_mtime": datetime.fromtimestamp(file_mtime).isoformat()
+        if file_mtime
+        else None,
     }
+
 
 def list_nodes(
     layer: str | None = None,
@@ -82,7 +95,9 @@ def list_nodes(
     for full details including staleness.
     """
     db = _get_db()
-    all_nodes = db.list_file_nodes(layer=layer, stability=stability, do_not_revert=do_not_revert)
+    all_nodes = db.list_file_nodes(
+        layer=layer, stability=stability, do_not_revert=do_not_revert
+    )
     db.close()
 
     total = len(all_nodes)
@@ -132,11 +147,23 @@ def list_nodes(
         ),
     }
 
-def add_node(file_path: str, role: str, layer: str, stability: str = "medium", node_type: str = "file", key_functions: list[str] | None = None, connects_to: list[dict] | None = None, rules: list[str] | None = None, do_not_revert: bool = False, tests: list[str] | None = None) -> dict[str, str]:
+
+def add_node(
+    file_path: str,
+    role: str,
+    layer: str,
+    stability: str = "medium",
+    node_type: str = "file",
+    key_functions: list[str] | None = None,
+    connects_to: list[dict] | None = None,
+    rules: list[str] | None = None,
+    do_not_revert: bool = False,
+    tests: list[str] | None = None,
+) -> dict[str, str]:
     db = _get_db()
-    
+
     node_id = f"file:{file_path}"
-    
+
     db.add_node(
         node_id=node_id,
         kind="file",
@@ -149,10 +176,11 @@ def add_node(file_path: str, role: str, layer: str, stability: str = "medium", n
         key_functions=json.dumps(key_functions) if key_functions else None,
         dependencies=json.dumps(connects_to) if connects_to else None,
         rules=json.dumps(rules) if rules else None,
-        do_not_revert=do_not_revert
+        do_not_revert=do_not_revert,
     )
     db.close()
     return {"status": f"Graph node added for '{file_path}'"}
+
 
 def update_node(file_path: str, changes: dict[str, Any]) -> dict[str, str]:
     db = _get_db()
@@ -160,7 +188,7 @@ def update_node(file_path: str, changes: dict[str, Any]) -> dict[str, str]:
     if not node:
         db.close()
         return {"error": f"Node '{file_path}' not found."}
-        
+
     updates = {}
     for key, val in changes.items():
         if key in ["rules", "key_functions"]:
@@ -175,10 +203,11 @@ def update_node(file_path: str, changes: dict[str, Any]) -> dict[str, str]:
                 updates["dependencies"] = json.dumps(val)
         else:
             updates[key] = val
-            
+
     db.update_node_metadata(node["id"], **updates)
     db.close()
     return {"status": f"Updated node '{file_path}'"}
+
 
 def get_node(file_path: str, full: bool = False) -> dict[str, Any]:
     """Get context graph metadata for a file.
@@ -195,10 +224,10 @@ def get_node(file_path: str, full: bool = False) -> dict[str, Any]:
     node = db.get_node_by_path(file_path)
     if not node:
         nodes = db.list_file_nodes()
-        matches = [n for n in nodes if file_path in n['file_path']]
+        matches = [n for n in nodes if file_path in n["file_path"]]
         if len(matches) == 1:
             node = matches[0]
-            file_path = node['file_path']
+            file_path = node["file_path"]
 
     db.close()
 
@@ -206,6 +235,7 @@ def get_node(file_path: str, full: bool = False) -> dict[str, Any]:
         # v1.6: Check if auto-init is running
         try:
             from mcp_server.auto_init import get_init_progress
+
             prog = get_init_progress()
             if prog["status"] in ("initializing", "indexing"):
                 return {
@@ -226,6 +256,7 @@ def get_node(file_path: str, full: bool = False) -> dict[str, Any]:
         graph_db_present = False
         try:
             from mcp_server.paths import get_data_dir
+
             graph_db_path = get_data_dir() / "graph" / "graph.db"
             graph_db_present = graph_db_path.is_file()
             if graph_db_present:
@@ -239,13 +270,27 @@ def get_node(file_path: str, full: bool = False) -> dict[str, Any]:
         except Exception:
             pass
 
+        # 2026-05-18 v2.1.2 Item 2 (P1+P10 trust-recovery): for ALL three
+        # not-found cases, add `not_indexed: True` and return `null` for
+        # numeric count fields (rules_count, dependencies_count,
+        # key_functions_count, blast_radius). Previously these were absent
+        # OR returned 0 once the file was indexed-but-empty — the same
+        # value for "no rules" and "never indexed", which misled agents.
+        # See `docs/plans/v2.1.2.md` Item 2 for details.
+        _not_indexed_counts = {
+            "rules_count": None,
+            "dependencies_count": None,
+            "key_functions_count": None,
+        }
         if not graph_db_present:
             return {
                 "found": False,
+                "not_indexed": True,
                 "file_path": file_path,
+                **_not_indexed_counts,
                 "message": (
-                    f"No graph DB exists for this project — codevira hasn't been "
-                    f"initialised here yet."
+                    "No graph DB exists for this project — codevira hasn't been "
+                    "initialised here yet."
                 ),
                 "fix_command": "codevira init && codevira index",
                 "hint": (
@@ -256,10 +301,12 @@ def get_node(file_path: str, full: bool = False) -> dict[str, Any]:
         if graph_total_nodes == 0:
             return {
                 "found": False,
+                "not_indexed": True,
                 "file_path": file_path,
+                **_not_indexed_counts,
                 "message": (
-                    f"Graph DB exists but is empty (0 nodes) — codevira index "
-                    f"has never been run on this project."
+                    "Graph DB exists but is empty (0 nodes) — codevira index "
+                    "has never been run on this project."
                 ),
                 "fix_command": "codevira index",
                 "hint": (
@@ -272,7 +319,9 @@ def get_node(file_path: str, full: bool = False) -> dict[str, Any]:
         # Graph has nodes but this specific file isn't one of them.
         return {
             "found": False,
+            "not_indexed": True,
             "file_path": file_path,
+            **_not_indexed_counts,
             "message": (
                 f"File '{file_path}' is not in the context graph "
                 f"(graph has {graph_total_nodes} other nodes)."
@@ -341,7 +390,10 @@ def get_node(file_path: str, full: bool = False) -> dict[str, Any]:
         ),
     }
 
-def get_impact(file_path: str, limit: int = 10, summary_only: bool = False) -> dict[str, Any]:
+
+def get_impact(
+    file_path: str, limit: int = 10, summary_only: bool = False
+) -> dict[str, Any]:
     """Get the blast radius (downstream files) for a file.
 
     Default: returns up to 10 affected files with metadata (~400 tokens).
@@ -356,7 +408,7 @@ def get_impact(file_path: str, limit: int = 10, summary_only: bool = False) -> d
     node = db.get_node_by_path(file_path)
     if not node:
         nodes = db.list_file_nodes()
-        matches = [n for n in nodes if file_path in n['file_path']]
+        matches = [n for n in nodes if file_path in n["file_path"]]
         if len(matches) == 1:
             node = matches[0]
 
@@ -367,6 +419,7 @@ def get_impact(file_path: str, limit: int = 10, summary_only: bool = False) -> d
         graph_db_present = False
         try:
             from mcp_server.paths import get_data_dir
+
             graph_db_path = get_data_dir() / "graph" / "graph.db"
             graph_db_present = graph_db_path.is_file()
             if graph_db_present:
@@ -380,10 +433,20 @@ def get_impact(file_path: str, limit: int = 10, summary_only: bool = False) -> d
             pass
         db.close()
 
+        # 2026-05-18 v2.1.2 Item 2: add `not_indexed: True` + null counts
+        # so agents can distinguish "unindexed" (don't trust safety) from
+        # "indexed with no dependents" (legit blast_radius=0).
+        _not_indexed_counts = {
+            "blast_radius": None,
+            "protected_count": None,
+            "high_stability_count": None,
+        }
         if not graph_db_present:
             return {
                 "found": False,
+                "not_indexed": True,
                 "file_path": file_path,
+                **_not_indexed_counts,
                 "message": (
                     "No graph DB exists for this project — codevira hasn't "
                     "been initialised here yet. Impact analysis unavailable."
@@ -393,7 +456,9 @@ def get_impact(file_path: str, limit: int = 10, summary_only: bool = False) -> d
         if graph_total_nodes == 0:
             return {
                 "found": False,
+                "not_indexed": True,
                 "file_path": file_path,
+                **_not_indexed_counts,
                 "message": (
                     "Graph DB exists but is empty (0 nodes) — codevira index "
                     "has never been run on this project."
@@ -402,7 +467,9 @@ def get_impact(file_path: str, limit: int = 10, summary_only: bool = False) -> d
             }
         return {
             "found": False,
+            "not_indexed": True,
             "file_path": file_path,
+            **_not_indexed_counts,
             "message": (
                 f"File '{file_path}' is not in the context graph "
                 f"(graph has {graph_total_nodes} other nodes). "
@@ -417,8 +484,8 @@ def get_impact(file_path: str, limit: int = 10, summary_only: bool = False) -> d
             ),
         }
 
-    file_path = node['file_path']
-    blast_radius = db.get_blast_radius(node['id'], max_depth=3)
+    file_path = node["file_path"]
+    blast_radius = db.get_blast_radius(node["id"], max_depth=3)
     db.close()
 
     # Clamp limit
@@ -430,16 +497,18 @@ def get_impact(file_path: str, limit: int = 10, summary_only: bool = False) -> d
     affected = []
     seen_paths = set()
     for r in blast_radius:
-        path = r['file_path']
+        path = r["file_path"]
         if path == file_path or path in seen_paths:
             continue
         seen_paths.add(path)
-        affected.append({
-            "file": path,
-            "role": r.get('role', 'Unknown'),
-            "stability": r.get('stability', 'medium'),
-            "do_not_revert": bool(r.get('do_not_revert')),
-        })
+        affected.append(
+            {
+                "file": path,
+                "role": r.get("role", "Unknown"),
+                "stability": r.get("stability", "medium"),
+                "do_not_revert": bool(r.get("do_not_revert")),
+            }
+        )
 
     total = len(affected)
     protected = sum(1 for a in affected if a["do_not_revert"])
@@ -455,7 +524,8 @@ def get_impact(file_path: str, limit: int = 10, summary_only: bool = False) -> d
             "high_stability_count": high_stability,
             "hint": (
                 "Call get_impact(path, summary_only=False) to see the file list."
-                if total > 0 else "No downstream dependents."
+                if total > 0
+                else "No downstream dependents."
             ),
         }
 
@@ -477,6 +547,7 @@ def get_impact(file_path: str, limit: int = 10, summary_only: bool = False) -> d
         ),
     }
 
+
 def export_graph(format: str = "mermaid", scope: str | None = None) -> dict[str, Any]:
     """Export the dependency graph as Mermaid or DOT format."""
     db = _get_db()
@@ -488,7 +559,11 @@ def export_graph(format: str = "mermaid", scope: str | None = None) -> dict[str,
         if scope:
             nodes = [n for n in nodes if n["file_path"].startswith(scope)]
             node_ids = {f"file:{n['file_path']}" for n in nodes}
-            edges = [e for e in edges if e["source_id"] in node_ids or e["target_id"] in node_ids]
+            edges = [
+                e
+                for e in edges
+                if e["source_id"] in node_ids or e["target_id"] in node_ids
+            ]
 
         if format == "mermaid":
             output = _to_mermaid(nodes, edges)
@@ -521,7 +596,7 @@ def _to_mermaid(nodes: list[dict], edges: list[dict]) -> str:
             style = ":::high"
         elif stability == "low":
             style = ":::low"
-        lines.append(f"    {safe_id}[\"{label}\"]{style}")
+        lines.append(f'    {safe_id}["{label}"]{style}')
 
     for e in edges:
         src = id_map.get(e["source_id"])
@@ -533,14 +608,22 @@ def _to_mermaid(nodes: list[dict], edges: list[dict]) -> str:
 
 
 def _to_dot(nodes: list[dict], edges: list[dict]) -> str:
-    lines = ["digraph codevira {", "    rankdir=LR;", "    node [shape=box, fontsize=10];"]
+    lines = [
+        "digraph codevira {",
+        "    rankdir=LR;",
+        "    node [shape=box, fontsize=10];",
+    ]
     id_map = {}
     for n in nodes:
         safe_id = n["file_path"].replace("/", "_").replace(".", "_").replace("-", "_")
         id_map[f"file:{n['file_path']}"] = safe_id
         label = Path(n["file_path"]).name
-        color = {"high": "green", "medium": "yellow", "low": "red"}.get(n.get("stability", "medium"), "white")
-        lines.append(f'    {safe_id} [label="{label}", fillcolor={color}, style=filled];')
+        color = {"high": "green", "medium": "yellow", "low": "red"}.get(
+            n.get("stability", "medium"), "white"
+        )
+        lines.append(
+            f'    {safe_id} [label="{label}", fillcolor={color}, style=filled];'
+        )
 
     for e in edges:
         src = id_map.get(e["source_id"])
@@ -557,17 +640,32 @@ def get_graph_diff(base_ref: str = "main", head_ref: str = "HEAD") -> dict[str, 
     root = get_project_root()
 
     try:
-        diff_output = subprocess.check_output(
-            ["git", "-C", str(root), "diff", "--name-only", f"{base_ref}...{head_ref}"],
-            stderr=subprocess.DEVNULL,
-        ).decode("utf-8").strip()
+        diff_output = (
+            subprocess.check_output(
+                [
+                    "git",
+                    "-C",
+                    str(root),
+                    "diff",
+                    "--name-only",
+                    f"{base_ref}...{head_ref}",
+                ],
+                stderr=subprocess.DEVNULL,
+            )
+            .decode("utf-8")
+            .strip()
+        )
     except subprocess.CalledProcessError:
         # Fallback for when there's no common ancestor (e.g., same branch)
         try:
-            diff_output = subprocess.check_output(
-                ["git", "-C", str(root), "diff", "--name-only", base_ref, head_ref],
-                stderr=subprocess.DEVNULL,
-            ).decode("utf-8").strip()
+            diff_output = (
+                subprocess.check_output(
+                    ["git", "-C", str(root), "diff", "--name-only", base_ref, head_ref],
+                    stderr=subprocess.DEVNULL,
+                )
+                .decode("utf-8")
+                .strip()
+            )
         except subprocess.CalledProcessError as e:
             return {
                 "error": f"Could not compute diff between {base_ref} and {head_ref}",
@@ -575,7 +673,11 @@ def get_graph_diff(base_ref: str = "main", head_ref: str = "HEAD") -> dict[str, 
             }
 
     if not diff_output:
-        return {"changed_files": [], "total_blast_radius": 0, "hint": "No files changed."}
+        return {
+            "changed_files": [],
+            "total_blast_radius": 0,
+            "hint": "No files changed.",
+        }
 
     changed_files = [f for f in diff_output.split("\n") if f.strip()]
 
@@ -590,23 +692,27 @@ def get_graph_diff(base_ref: str = "main", head_ref: str = "HEAD") -> dict[str, 
                 blast = db.get_blast_radius(node["id"], max_depth=3)
                 affected_paths = [r["file_path"] for r in blast if r["file_path"] != fp]
                 all_affected.update(affected_paths)
-                result_files.append({
-                    "file_path": fp,
-                    "in_graph": True,
-                    "stability": node.get("stability", "medium"),
-                    "do_not_revert": bool(node.get("do_not_revert")),
-                    "blast_radius": len(affected_paths),
-                    "affected": affected_paths[:5],  # Top 5 for brevity
-                })
+                result_files.append(
+                    {
+                        "file_path": fp,
+                        "in_graph": True,
+                        "stability": node.get("stability", "medium"),
+                        "do_not_revert": bool(node.get("do_not_revert")),
+                        "blast_radius": len(affected_paths),
+                        "affected": affected_paths[:5],  # Top 5 for brevity
+                    }
+                )
             else:
-                result_files.append({
-                    "file_path": fp,
-                    "in_graph": False,
-                    "stability": "unknown",
-                    "do_not_revert": False,
-                    "blast_radius": 0,
-                    "affected": [],
-                })
+                result_files.append(
+                    {
+                        "file_path": fp,
+                        "in_graph": False,
+                        "stability": "unknown",
+                        "do_not_revert": False,
+                        "blast_radius": 0,
+                        "affected": [],
+                    }
+                )
 
         return {
             "base_ref": base_ref,
@@ -658,8 +764,10 @@ def refresh_graph(file_paths: list[str] | None = None) -> dict[str, Any]:
 # v1.5: query_graph — callers/callees/tests/dependents
 # ---------------------------------------------------------------------------
 
-def query_graph(file_path: str, symbol: str | None = None,
-                query_type: str = "callees") -> dict[str, Any]:
+
+def query_graph(
+    file_path: str, symbol: str | None = None, query_type: str = "callees"
+) -> dict[str, Any]:
     """
     Query the call graph.
     query_type: 'callers' | 'callees' | 'tests' | 'dependents' | 'symbols'
@@ -671,8 +779,12 @@ def query_graph(file_path: str, symbol: str | None = None,
     # left the user not knowing whether the file was missing or the index
     # had never been built.
     def _maybe_graph_empty_response() -> dict[str, Any] | None:
+        # 2026-05-18 v2.1.2 Item 2: add `not_indexed: True` to error
+        # responses so MCP consumers can distinguish "unindexed" from
+        # a legit empty result set on an indexed file.
         try:
             from mcp_server.paths import get_data_dir
+
             graph_db_path = get_data_dir() / "graph" / "graph.db"
             if not graph_db_path.is_file():
                 return {
@@ -680,6 +792,7 @@ def query_graph(file_path: str, symbol: str | None = None,
                         "No graph DB exists for this project — codevira hasn't "
                         "been initialised here yet."
                     ),
+                    "not_indexed": True,
                     "fix_command": "codevira init && codevira index",
                 }
             n = db.conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
@@ -689,6 +802,7 @@ def query_graph(file_path: str, symbol: str | None = None,
                         "Graph DB exists but is empty (0 nodes) — "
                         "codevira index has never been run on this project."
                     ),
+                    "not_indexed": True,
                     "fix_command": "codevira index",
                 }
         except Exception:
@@ -709,9 +823,14 @@ def query_graph(file_path: str, symbol: str | None = None,
                 "file_path": file_path,
                 "query_type": "symbols",
                 "results": [
-                    {"name": s["name"], "kind": s["kind"], "signature": s["signature"],
-                     "start_line": s["start_line"], "end_line": s["end_line"],
-                     "is_public": bool(s["is_public"])}
+                    {
+                        "name": s["name"],
+                        "kind": s["kind"],
+                        "signature": s["signature"],
+                        "start_line": s["start_line"],
+                        "end_line": s["end_line"],
+                        "is_public": bool(s["is_public"]),
+                    }
                     for s in symbols
                 ],
                 "count": len(symbols),
@@ -727,33 +846,50 @@ def query_graph(file_path: str, symbol: str | None = None,
             empty_resp = _maybe_graph_empty_response()
             if empty_resp:
                 return empty_resp
-            return {"error": f"Symbol '{symbol}' not found in {file_path}",
-                    "hint": (
-                        "Call query_graph with query_type='symbols' to list "
-                        "available symbols. If the file isn't indexed, run "
-                        "`codevira index` to refresh."
-                    ),
-                    "fix_command": "codevira index"}
+            return {
+                "error": f"Symbol '{symbol}' not found in {file_path}",
+                "not_indexed": True,
+                "hint": (
+                    "Call query_graph with query_type='symbols' to list "
+                    "available symbols. If the file isn't indexed, run "
+                    "`codevira index` to refresh."
+                ),
+                "fix_command": "codevira index",
+            }
 
         sym_id = sym["id"]
 
         if query_type == "callers":
             callers = db.get_callers(sym_id)
             return {
-                "file_path": file_path, "symbol": symbol, "query_type": "callers",
-                "results": [{"name": c["name"], "kind": c["kind"],
-                             "file": c["file_node_id"].replace("file:", "")}
-                            for c in callers],
+                "file_path": file_path,
+                "symbol": symbol,
+                "query_type": "callers",
+                "results": [
+                    {
+                        "name": c["name"],
+                        "kind": c["kind"],
+                        "file": c["file_node_id"].replace("file:", ""),
+                    }
+                    for c in callers
+                ],
                 "count": len(callers),
             }
 
         elif query_type == "callees":
             callees = db.get_callees(sym_id)
             return {
-                "file_path": file_path, "symbol": symbol, "query_type": "callees",
-                "results": [{"name": c["name"], "kind": c["kind"],
-                             "file": c["file_node_id"].replace("file:", "")}
-                            for c in callees],
+                "file_path": file_path,
+                "symbol": symbol,
+                "query_type": "callees",
+                "results": [
+                    {
+                        "name": c["name"],
+                        "kind": c["kind"],
+                        "file": c["file_node_id"].replace("file:", ""),
+                    }
+                    for c in callees
+                ],
                 "count": len(callees),
             }
 
@@ -771,7 +907,9 @@ def query_graph(file_path: str, symbol: str | None = None,
                 if "test" in src.lower():
                     test_files.append(src)
             return {
-                "file_path": file_path, "symbol": symbol, "query_type": "tests",
+                "file_path": file_path,
+                "symbol": symbol,
+                "query_type": "tests",
                 "test_files": test_files,
                 "count": len(test_files),
             }
@@ -781,13 +919,17 @@ def query_graph(file_path: str, symbol: str | None = None,
             node_id = f"file:{file_path}"
             blast = db.get_blast_radius(node_id, max_depth=2)
             return {
-                "file_path": file_path, "symbol": symbol, "query_type": "dependents",
+                "file_path": file_path,
+                "symbol": symbol,
+                "query_type": "dependents",
                 "results": [{"file": r["file_path"]} for r in blast],
                 "count": len(blast),
             }
 
         else:
-            return {"error": f"Unknown query_type: {query_type}. Use: callers, callees, tests, dependents, symbols"}
+            return {
+                "error": f"Unknown query_type: {query_type}. Use: callers, callees, tests, dependents, symbols"
+            }
     finally:
         db.close()
 
@@ -795,6 +937,7 @@ def query_graph(file_path: str, symbol: str | None = None,
 # ---------------------------------------------------------------------------
 # v1.5: analyze_changes — function-level risk-scored change analysis
 # ---------------------------------------------------------------------------
+
 
 def analyze_changes(base_ref: str = "main", head_ref: str = "HEAD") -> dict[str, Any]:
     """
@@ -805,16 +948,31 @@ def analyze_changes(base_ref: str = "main", head_ref: str = "HEAD") -> dict[str,
 
     # Get changed files
     try:
-        diff_output = subprocess.check_output(
-            ["git", "-C", str(root), "diff", "--name-only", f"{base_ref}...{head_ref}"],
-            stderr=subprocess.DEVNULL,
-        ).decode("utf-8").strip()
+        diff_output = (
+            subprocess.check_output(
+                [
+                    "git",
+                    "-C",
+                    str(root),
+                    "diff",
+                    "--name-only",
+                    f"{base_ref}...{head_ref}",
+                ],
+                stderr=subprocess.DEVNULL,
+            )
+            .decode("utf-8")
+            .strip()
+        )
     except subprocess.CalledProcessError:
         try:
-            diff_output = subprocess.check_output(
-                ["git", "-C", str(root), "diff", "--name-only", base_ref, head_ref],
-                stderr=subprocess.DEVNULL,
-            ).decode("utf-8").strip()
+            diff_output = (
+                subprocess.check_output(
+                    ["git", "-C", str(root), "diff", "--name-only", base_ref, head_ref],
+                    stderr=subprocess.DEVNULL,
+                )
+                .decode("utf-8")
+                .strip()
+            )
         except subprocess.CalledProcessError as e:
             return {"error": f"Could not compute diff: {e}"}
 
@@ -838,8 +996,11 @@ def analyze_changes(base_ref: str = "main", head_ref: str = "HEAD") -> dict[str,
                 "SELECT source_id FROM edges WHERE target_id = ? AND kind = 'imports'",
                 (node_id,),
             ).fetchall()
-            test_files = [e["source_id"].replace("file:", "") for e in test_edges
-                          if "test" in e["source_id"].lower()]
+            test_files = [
+                e["source_id"].replace("file:", "")
+                for e in test_edges
+                if "test" in e["source_id"].lower()
+            ]
             has_tests = len(test_files) > 0
 
             for sym in symbols:
@@ -859,17 +1020,21 @@ def analyze_changes(base_ref: str = "main", head_ref: str = "HEAD") -> dict[str,
                 total_risk[risk] += 1
 
                 if is_public and not has_tests:
-                    test_gaps.append({"file": fp, "symbol": sym["name"], "callers": caller_count})
+                    test_gaps.append(
+                        {"file": fp, "symbol": sym["name"], "callers": caller_count}
+                    )
 
-                results.append({
-                    "file": fp,
-                    "symbol": sym["name"],
-                    "kind": sym["kind"],
-                    "risk": risk,
-                    "caller_count": caller_count,
-                    "has_tests": has_tests,
-                    "callers": [c["name"] for c in callers[:5]],
-                })
+                results.append(
+                    {
+                        "file": fp,
+                        "symbol": sym["name"],
+                        "kind": sym["kind"],
+                        "risk": risk,
+                        "caller_count": caller_count,
+                        "has_tests": has_tests,
+                        "callers": [c["name"] for c in callers[:5]],
+                    }
+                )
 
         return {
             "base_ref": base_ref,
@@ -888,6 +1053,7 @@ def analyze_changes(base_ref: str = "main", head_ref: str = "HEAD") -> dict[str,
 # v1.5: find_hotspots — complexity and risk hotspots
 # ---------------------------------------------------------------------------
 
+
 def find_hotspots(threshold: int = 50) -> dict[str, Any]:
     """
     Find complexity hotspots: large functions, high fan-in, high fan-out,
@@ -902,28 +1068,39 @@ def find_hotspots(threshold: int = 50) -> dict[str, Any]:
         high_fan_in = db.find_high_fan_in(min_callers=3)
 
         # High fan-out (files with many dependencies = fragile)
-        fan_out = db.conn.execute('''
+        fan_out = db.conn.execute("""
             SELECT source_id, COUNT(target_id) as dep_count
             FROM edges
             GROUP BY source_id
             HAVING dep_count >= 5
             ORDER BY dep_count DESC
             LIMIT 10
-        ''').fetchall()
+        """).fetchall()
 
         return {
             "large_functions": [
-                {"file": f.get("full_path", ""), "name": f["name"], "lines": f["line_count"],
-                 "kind": f["kind"]}
+                {
+                    "file": f.get("full_path", ""),
+                    "name": f["name"],
+                    "lines": f["line_count"],
+                    "kind": f["kind"],
+                }
                 for f in large_funcs[:10]
             ],
             "high_fan_in": [
-                {"name": h["name"], "kind": h["kind"], "callers": h["caller_count"],
-                 "file": h["file_node_id"].replace("file:", "")}
+                {
+                    "name": h["name"],
+                    "kind": h["kind"],
+                    "callers": h["caller_count"],
+                    "file": h["file_node_id"].replace("file:", ""),
+                }
                 for h in high_fan_in[:10]
             ],
             "high_fan_out": [
-                {"file": f["source_id"].replace("file:", ""), "dependencies": f["dep_count"]}
+                {
+                    "file": f["source_id"].replace("file:", ""),
+                    "dependencies": f["dep_count"],
+                }
                 for f in fan_out
             ],
             "threshold": threshold,

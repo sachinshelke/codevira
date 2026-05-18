@@ -48,6 +48,7 @@ Failure modes considered
 - embed call raises ValueError (e.g. text too long) → caught; SQL write
   succeeds, semantic ranking degraded for that one decision
 """
+
 from __future__ import annotations
 
 import logging
@@ -81,7 +82,9 @@ def _decisions_collection_or_none():
         )
     except ImportError:
         # indexer not importable (very rare — installation issue).
-        logger.debug("indexer.index_codebase not importable; decisions search degraded to BM25 only")
+        logger.debug(
+            "indexer.index_codebase not importable; decisions search degraded to BM25 only"
+        )
         return None
 
     try:
@@ -174,7 +177,8 @@ def embed_decision(
     except Exception as exc:
         logger.warning(
             "embed_decision(%s) failed: %s — SQL row preserved, ranking degraded",
-            decision_id, exc,
+            decision_id,
+            exc,
         )
         return False
 
@@ -192,6 +196,34 @@ def semantic_search_decisions(
 
     Returns empty list on any failure (P9 graceful degradation): caller
     falls through to BM25-only ranking.
+
+    Note: kept for backward compat. New callers should prefer
+    :func:`semantic_search_decisions_scored` so they can apply a
+    similarity threshold (v2.1.2 Item 1).
+    """
+    return [
+        did for did, _dist in semantic_search_decisions_scored(query, limit, session_id)
+    ]
+
+
+def semantic_search_decisions_scored(
+    query: str,
+    limit: int = 10,
+    session_id: str | None = None,
+) -> list[tuple[int, float]]:
+    """v2.1.2 Item 1: scored variant of :func:`semantic_search_decisions`.
+
+    Returns ``[(decision_id, cosine_distance), ...]`` in ranked order
+    (lowest distance = most similar). The caller applies a threshold
+    cut-off so gibberish queries don't surface "least bad" matches
+    (the trust-recovery fix that v2.1.1 missed).
+
+    Distance convention: ChromaDB's default is cosine distance in
+    roughly ``[0, 2]``; in practice with the all-MiniLM-L6-v2
+    embedding it sits in ``[0, ~1.2]``. Lower = more similar. The
+    ``search`` threshold default is 0.45 (filter anything looser);
+    ``hook`` injection uses 0.30 (stricter; surfaces fewer false
+    positives on prompts only loosely related to existing decisions).
     """
     if not query or not query.strip():
         return []
@@ -200,27 +232,324 @@ def semantic_search_decisions(
         return []
 
     try:
-        # Build a where filter only if session_id is provided. ChromaDB
-        # requires non-None values in `where`.
         where = {"session_id": str(session_id)} if session_id else None
         result = collection.query(
             query_texts=[query],
             n_results=max(1, min(limit, 50)),
             where=where,
+            include=["distances"],
         )
     except Exception as exc:
-        logger.warning("semantic_search_decisions(%r) failed: %s", query, exc)
+        logger.warning("semantic_search_decisions_scored(%r) failed: %s", query, exc)
         return []
 
-    # chromadb returns ids as a list-of-lists (per-query). Flatten to first.
     raw_ids = (result.get("ids") or [[]])[0]
-    out: list[int] = []
-    for raw in raw_ids:
+    raw_distances = (result.get("distances") or [[]])[0]
+    out: list[tuple[int, float]] = []
+    for idx, raw in enumerate(raw_ids):
         try:
-            out.append(int(raw))
+            did = int(raw)
         except (TypeError, ValueError):
             continue
+        try:
+            dist = float(raw_distances[idx]) if idx < len(raw_distances) else 1.0
+        except (TypeError, ValueError):
+            dist = 1.0
+        out.append((did, dist))
     return out
+
+
+# ---------------------------------------------------------------------
+# 2026-05-18 v2.1.2 Item 1: smart self-calibrating similarity threshold
+# ---------------------------------------------------------------------
+
+# Static fallback when calibration hasn't run or has too few positive
+# samples to be reliable. Distance convention: lower = more similar
+# (chromadb cosine distance; range roughly [0, 1.2] for all-MiniLM-L6-v2).
+#
+# Tuning notes (2026-05-18, empirically measured):
+#   - all-MiniLM-L6-v2 puts "same topic, different phrasing" at ~0.55
+#     distance ("use bcrypt over argon2" vs "What did we decide about
+#     bcrypt for password hashing?")
+#   - Truly unrelated content sits at ~0.90 ("how to make a cake" vs
+#     "use bcrypt over argon2")
+#   - Gap is wide and stable; we set:
+#       search  ≤ 0.65 — accept legitimate "same topic" matches,
+#                        reject anything semantically distant
+#       hook    ≤ 0.55 — auto-injection has higher false-positive cost,
+#                        so we require a strong-match signal
+#   - The original plan targeted 0.45 / 0.30; empirical testing showed
+#     those reject legitimate question-form prompts on this model. The
+#     calibrator can still tighten per-project below these defaults.
+_STATIC_THRESHOLD_SEARCH = 0.65
+_STATIC_THRESHOLD_HOOK = 0.55
+# Hook injection uses a STRICTER threshold than user-initiated search.
+_HOOK_DELTA = 0.10
+# Calibration safety rails — never let the auto-calibrator return a
+# threshold so loose that gibberish surfaces, or so tight that almost
+# nothing surfaces.
+_THRESHOLD_MIN = 0.35
+_THRESHOLD_MAX = 0.80
+# Minimum positive sample count before we trust a calibration result.
+_MIN_POSITIVE_SAMPLES = 5
+# Auto-recalibration cadence: every N decisions added, re-fit in a
+# background thread.
+_CALIBRATION_AUTO_EVERY_N = 10
+
+
+def _calibration_path():
+    """Return the per-project calibration.json path."""
+    from mcp_server.paths import get_data_dir
+
+    return get_data_dir() / "calibration.json"
+
+
+def load_threshold(*, target: str = "search") -> float:
+    """Return the active similarity threshold for a retrieval target.
+
+    ``target`` is ``"search"`` (user-initiated search_decisions) or
+    ``"hook"`` (cross-session prompt-injection). Order of resolution:
+
+    1. Per-project ``calibration.json`` written by :func:`recalibrate_threshold`
+    2. Static defaults (0.45 / 0.30) when calibration is absent or
+       has fewer than ``_MIN_POSITIVE_SAMPLES`` positives.
+
+    Never raises — calibration errors fall through to the static default.
+    """
+    static = _STATIC_THRESHOLD_SEARCH if target == "search" else _STATIC_THRESHOLD_HOOK
+    try:
+        import json
+
+        p = _calibration_path()
+        if not p.is_file():
+            return static
+        data = json.loads(p.read_text())
+        if int(data.get("positive_samples", 0)) < _MIN_POSITIVE_SAMPLES:
+            return static
+        # The canonical stored value is the search threshold; derive hook
+        # by subtracting the delta so both stay in lockstep.
+        search_thr = float(data.get("threshold_search", static))
+        if target == "hook":
+            return max(_THRESHOLD_MIN, search_thr - _HOOK_DELTA)
+        return search_thr
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("load_threshold(%s) fell back to static: %s", target, exc)
+        return static
+
+
+def recalibrate_threshold(db=None) -> dict[str, Any]:
+    """Re-fit the similarity threshold from the project's positive samples.
+
+    Algorithm (kept deliberately ML-free — pure descriptive statistics):
+
+    1. Pull "positive samples" — decisions the user clearly valued
+       (``do_not_revert=True`` OR has a confirmed-kept outcome).
+    2. For each, find its 10 nearest neighbours in the project's
+       ChromaDB decisions collection. Record those cosine distances.
+    3. The 75th percentile of that distribution is the new threshold:
+       "be at least as similar as 75% of historical surface-worthy
+       pairs."
+    4. Clamp to ``[_THRESHOLD_MIN, _THRESHOLD_MAX]``.
+    5. Persist to ``<data_dir>/calibration.json`` with sample count +
+       timestamp metadata.
+
+    Returns a dict summary:
+        {
+            "positive_samples": int,
+            "neighbor_distances_collected": int,
+            "threshold_search": float,
+            "threshold_hook": float,
+            "p75_raw": float,
+            "clamped": bool,
+            "static_default": bool,  # True if fewer than MIN_POSITIVE_SAMPLES
+            "calibrated_at": ISO timestamp,
+        }
+    """
+    import json
+    from datetime import datetime, timezone
+
+    own_db = False
+    if db is None:
+        try:
+            from indexer.sqlite_graph import SQLiteGraph
+            from mcp_server.paths import get_data_dir
+
+            graph_db_path = get_data_dir() / "graph" / "graph.db"
+            if not graph_db_path.is_file():
+                return {
+                    "positive_samples": 0,
+                    "threshold_search": _STATIC_THRESHOLD_SEARCH,
+                    "threshold_hook": _STATIC_THRESHOLD_HOOK,
+                    "static_default": True,
+                    "note": "no graph.db — calibration skipped",
+                }
+            db = SQLiteGraph(graph_db_path)
+            own_db = True
+        except Exception as exc:
+            logger.warning("recalibrate_threshold: cannot open db: %s", exc)
+            return {
+                "positive_samples": 0,
+                "threshold_search": _STATIC_THRESHOLD_SEARCH,
+                "threshold_hook": _STATIC_THRESHOLD_HOOK,
+                "static_default": True,
+                "error": str(exc),
+            }
+
+    try:
+        # Step 1: pull positive samples.
+        positives: list[tuple[int, str]] = []
+        try:
+            cur = db.conn.execute(
+                "SELECT id, decision FROM decisions "
+                "WHERE do_not_revert = 1 AND decision IS NOT NULL AND decision != '' "
+                "ORDER BY id ASC"
+            )
+            for row in cur.fetchall():
+                positives.append((int(row["id"]), str(row["decision"])))
+        except Exception as exc:
+            logger.debug("recalibrate_threshold: do_not_revert query failed: %s", exc)
+        # Also pull kept-by-outcome decisions (the second axis of "user
+        # valued this"). outcomes.classification = 'kept' is the signal.
+        try:
+            cur = db.conn.execute(
+                "SELECT d.id, d.decision FROM decisions d "
+                "JOIN outcomes o ON o.decision_id = d.id "
+                "WHERE LOWER(o.classification) = 'kept' "
+                "AND d.decision IS NOT NULL AND d.decision != ''"
+            )
+            seen_ids = {p[0] for p in positives}
+            for row in cur.fetchall():
+                if int(row["id"]) not in seen_ids:
+                    positives.append((int(row["id"]), str(row["decision"])))
+        except Exception as exc:
+            logger.debug("recalibrate_threshold: outcomes query failed: %s", exc)
+
+        result: dict[str, Any] = {
+            "positive_samples": len(positives),
+            "calibrated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+        if len(positives) < _MIN_POSITIVE_SAMPLES:
+            result.update(
+                {
+                    "threshold_search": _STATIC_THRESHOLD_SEARCH,
+                    "threshold_hook": _STATIC_THRESHOLD_HOOK,
+                    "static_default": True,
+                    "note": f"fewer than {_MIN_POSITIVE_SAMPLES} positive samples — using static defaults",
+                }
+            )
+            return result
+
+        # Step 2: for each positive, find its 10 nearest neighbours.
+        collection = _decisions_collection_or_none()
+        if collection is None:
+            result.update(
+                {
+                    "threshold_search": _STATIC_THRESHOLD_SEARCH,
+                    "threshold_hook": _STATIC_THRESHOLD_HOOK,
+                    "static_default": True,
+                    "note": "chromadb unavailable — using static defaults",
+                }
+            )
+            return result
+
+        all_distances: list[float] = []
+        for pid, ptext in positives:
+            try:
+                qres = collection.query(
+                    query_texts=[ptext[:4096]],
+                    n_results=10,
+                    include=["distances"],
+                )
+                dists = (qres.get("distances") or [[]])[0]
+                ids = (qres.get("ids") or [[]])[0]
+                # Exclude self-match (the positive's own embedding will
+                # always rank distance 0 — would skew low).
+                for idx, raw_id in enumerate(ids):
+                    if str(raw_id) == str(pid):
+                        continue
+                    if idx < len(dists):
+                        try:
+                            all_distances.append(float(dists[idx]))
+                        except (TypeError, ValueError):
+                            continue
+            except Exception as exc:
+                logger.debug("calibration query for positive %s failed: %s", pid, exc)
+                continue
+
+        result["neighbor_distances_collected"] = len(all_distances)
+
+        if not all_distances:
+            result.update(
+                {
+                    "threshold_search": _STATIC_THRESHOLD_SEARCH,
+                    "threshold_hook": _STATIC_THRESHOLD_HOOK,
+                    "static_default": True,
+                    "note": "no neighbor distances collected — using static defaults",
+                }
+            )
+            return result
+
+        # Step 3: 75th percentile.
+        all_distances.sort()
+        p75_index = int(len(all_distances) * 0.75)
+        p75_index = min(p75_index, len(all_distances) - 1)
+        p75_raw = all_distances[p75_index]
+        result["p75_raw"] = p75_raw
+
+        # Step 4: clamp.
+        clamped_thr = max(_THRESHOLD_MIN, min(_THRESHOLD_MAX, p75_raw))
+        result["clamped"] = clamped_thr != p75_raw
+        result["threshold_search"] = clamped_thr
+        result["threshold_hook"] = max(_THRESHOLD_MIN, clamped_thr - _HOOK_DELTA)
+        result["static_default"] = False
+
+        # Step 5: persist.
+        try:
+            p = _calibration_path()
+            p.parent.mkdir(parents=True, exist_ok=True)
+            tmp = p.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(result, indent=2, default=str))
+            tmp.replace(p)
+        except Exception as exc:
+            logger.warning(
+                "recalibrate_threshold: failed to persist calibration: %s", exc
+            )
+            result["persist_error"] = str(exc)
+
+        return result
+    finally:
+        if own_db:
+            try:
+                db.close()
+            except Exception:
+                pass
+
+
+def maybe_auto_recalibrate(decisions_count_total: int) -> bool:
+    """Trigger a background recalibration if ``decisions_count_total`` is
+    a multiple of ``_CALIBRATION_AUTO_EVERY_N``.
+
+    Non-blocking (runs in a daemon thread). Returns True if a
+    recalibration thread was spawned, False otherwise.
+
+    Called from :func:`record_decision` after a successful write.
+    """
+    if decisions_count_total <= 0:
+        return False
+    if decisions_count_total % _CALIBRATION_AUTO_EVERY_N != 0:
+        return False
+    import threading
+
+    def _bg():
+        try:
+            recalibrate_threshold()
+        except Exception as exc:
+            logger.debug("auto-recalibration failed: %s", exc)
+
+    t = threading.Thread(target=_bg, daemon=True, name="codevira-recalibrate")
+    t.start()
+    return True
 
 
 def rrf_merge(

@@ -28,9 +28,9 @@ Chaos tests:
 Edge cases: empty graph, isolated nodes, circular deps, deep chains,
 filter combinations, no git repo.
 """
+
 from __future__ import annotations
 
-import json
 import subprocess
 import time
 from pathlib import Path
@@ -44,6 +44,7 @@ from mcp_server.tools import graph
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _setup_project(tmp_path, monkeypatch) -> tuple[Path, Path, SQLiteGraph]:
     """Create a temp project with a graph database and monkeypatched paths."""
@@ -68,16 +69,51 @@ def _populate_graph(db: SQLiteGraph) -> None:
 
     Layers:  api -> core -> utils, routes -> api, tests -> api
     """
-    db.add_node("file:src/api.py", "file", "api.py", "src/api.py",
-                layer="api", stability="medium", role="API handlers")
-    db.add_node("file:src/core.py", "file", "core.py", "src/core.py",
-                layer="core", stability="high", role="Business logic")
-    db.add_node("file:src/utils.py", "file", "utils.py", "src/utils.py",
-                layer="utils", stability="high", role="Utility functions")
-    db.add_node("file:src/routes.py", "file", "routes.py", "src/routes.py",
-                layer="api", stability="low", role="Route definitions")
-    db.add_node("file:tests/test_api.py", "file", "test_api.py", "tests/test_api.py",
-                layer="tests", stability="medium", role="API tests")
+    db.add_node(
+        "file:src/api.py",
+        "file",
+        "api.py",
+        "src/api.py",
+        layer="api",
+        stability="medium",
+        role="API handlers",
+    )
+    db.add_node(
+        "file:src/core.py",
+        "file",
+        "core.py",
+        "src/core.py",
+        layer="core",
+        stability="high",
+        role="Business logic",
+    )
+    db.add_node(
+        "file:src/utils.py",
+        "file",
+        "utils.py",
+        "src/utils.py",
+        layer="utils",
+        stability="high",
+        role="Utility functions",
+    )
+    db.add_node(
+        "file:src/routes.py",
+        "file",
+        "routes.py",
+        "src/routes.py",
+        layer="api",
+        stability="low",
+        role="Route definitions",
+    )
+    db.add_node(
+        "file:tests/test_api.py",
+        "file",
+        "test_api.py",
+        "tests/test_api.py",
+        layer="tests",
+        stability="medium",
+        role="API tests",
+    )
 
     db.add_edge("file:src/api.py", "file:src/core.py", kind="imports")
     db.add_edge("file:src/core.py", "file:src/utils.py", kind="imports")
@@ -88,27 +124,73 @@ def _populate_graph(db: SQLiteGraph) -> None:
 def _add_symbols(db: SQLiteGraph) -> None:
     """Add function-level symbols and call edges for query_graph tests."""
     # api.py symbols
-    db.add_symbol("file:src/api.py::handle_request", "file:src/api.py",
-                  "handle_request", "function", start_line=10, end_line=30, is_public=True)
-    db.add_symbol("file:src/api.py::validate_input", "file:src/api.py",
-                  "validate_input", "function", start_line=32, end_line=45, is_public=True)
-    db.add_symbol("file:src/api.py::_internal_helper", "file:src/api.py",
-                  "_internal_helper", "function", start_line=47, end_line=55, is_public=False)
+    db.add_symbol(
+        "file:src/api.py::handle_request",
+        "file:src/api.py",
+        "handle_request",
+        "function",
+        start_line=10,
+        end_line=30,
+        is_public=True,
+    )
+    db.add_symbol(
+        "file:src/api.py::validate_input",
+        "file:src/api.py",
+        "validate_input",
+        "function",
+        start_line=32,
+        end_line=45,
+        is_public=True,
+    )
+    db.add_symbol(
+        "file:src/api.py::_internal_helper",
+        "file:src/api.py",
+        "_internal_helper",
+        "function",
+        start_line=47,
+        end_line=55,
+        is_public=False,
+    )
 
     # core.py symbols
-    db.add_symbol("file:src/core.py::process_data", "file:src/core.py",
-                  "process_data", "function", start_line=5, end_line=80, is_public=True)
-    db.add_symbol("file:src/core.py::transform", "file:src/core.py",
-                  "transform", "function", start_line=82, end_line=100, is_public=True)
+    db.add_symbol(
+        "file:src/core.py::process_data",
+        "file:src/core.py",
+        "process_data",
+        "function",
+        start_line=5,
+        end_line=80,
+        is_public=True,
+    )
+    db.add_symbol(
+        "file:src/core.py::transform",
+        "file:src/core.py",
+        "transform",
+        "function",
+        start_line=82,
+        end_line=100,
+        is_public=True,
+    )
 
     # utils.py symbol
-    db.add_symbol("file:src/utils.py::sanitize", "file:src/utils.py",
-                  "sanitize", "function", start_line=1, end_line=15, is_public=True)
+    db.add_symbol(
+        "file:src/utils.py::sanitize",
+        "file:src/utils.py",
+        "sanitize",
+        "function",
+        start_line=1,
+        end_line=15,
+        is_public=True,
+    )
 
     # Call edges: handle_request -> process_data -> sanitize
     #             handle_request -> validate_input
-    db.add_call_edge("file:src/api.py::handle_request", "file:src/core.py::process_data")
-    db.add_call_edge("file:src/api.py::handle_request", "file:src/api.py::validate_input")
+    db.add_call_edge(
+        "file:src/api.py::handle_request", "file:src/core.py::process_data"
+    )
+    db.add_call_edge(
+        "file:src/api.py::handle_request", "file:src/api.py::validate_input"
+    )
     db.add_call_edge("file:src/core.py::process_data", "file:src/utils.py::sanitize")
     # Multiple callers for sanitize (high fan-in scenario)
     db.add_call_edge("file:src/api.py::validate_input", "file:src/utils.py::sanitize")
@@ -118,6 +200,7 @@ def _add_symbols(db: SQLiteGraph) -> None:
 # =====================================================================
 # add_node
 # =====================================================================
+
 
 class TestAddNode:
     def test_add_node_basic(self, tmp_path, monkeypatch):
@@ -147,7 +230,9 @@ class TestAddNode:
             key_functions=["process_payment", "validate_card"],
             rules=["Never remove error handling", "Keep retry logic"],
             tests=["tests/test_payment.py"],
-            connects_to=[{"target": "src/db.py", "edge": "imports", "via": "sqlalchemy"}],
+            connects_to=[
+                {"target": "src/db.py", "edge": "imports", "via": "sqlalchemy"}
+            ],
         )
         assert "status" in result
         assert "src/critical.py" in result["status"]
@@ -183,13 +268,13 @@ class TestAddNode:
 # update_node
 # =====================================================================
 
+
 class TestUpdateNode:
     def test_update_rules_list(self, tmp_path, monkeypatch):
         """Updating rules should merge with existing rules."""
         _, _, db = _setup_project(tmp_path, monkeypatch)
         db.close()
-        graph.add_node("src/svc.py", role="Service", layer="service",
-                       rules=["Rule A"])
+        graph.add_node("src/svc.py", role="Service", layer="service", rules=["Rule A"])
         result = graph.update_node("src/svc.py", {"rules": ["Rule B", "Rule C"]})
         assert "status" in result
         assert "Updated" in result["status"]
@@ -203,8 +288,9 @@ class TestUpdateNode:
         """Updating stability should replace the value."""
         _, _, db = _setup_project(tmp_path, monkeypatch)
         db.close()
-        graph.add_node("src/evolve.py", role="Evolving module", layer="core",
-                       stability="low")
+        graph.add_node(
+            "src/evolve.py", role="Evolving module", layer="core", stability="low"
+        )
         graph.update_node("src/evolve.py", {"stability": "high"})
         node = graph.get_node("src/evolve.py")
         assert node["stability"] == "high"
@@ -213,8 +299,9 @@ class TestUpdateNode:
         """Updating key_functions should merge with existing ones."""
         _, _, db = _setup_project(tmp_path, monkeypatch)
         db.close()
-        graph.add_node("src/funcs.py", role="Functions", layer="utils",
-                       key_functions=["func_a"])
+        graph.add_node(
+            "src/funcs.py", role="Functions", layer="utils", key_functions=["func_a"]
+        )
         graph.update_node("src/funcs.py", {"key_functions": ["func_b"]})
         node = graph.get_node("src/funcs.py", full=True)
         assert "func_a" in node["key_functions"]
@@ -241,6 +328,7 @@ class TestUpdateNode:
 # =====================================================================
 # get_node
 # =====================================================================
+
 
 class TestGetNode:
     def test_get_node_found_with_full_fields(self, tmp_path, monkeypatch):
@@ -297,6 +385,39 @@ class TestGetNode:
         assert result["found"] is False
         assert "hint" in result
 
+    def test_get_node_not_indexed_returns_null_counts(self, tmp_path, monkeypatch):
+        """2026-05-18 v2.1.2 Item 2: get_node for an unindexed file must
+        return `not_indexed: True` AND `null` for all numeric counts
+        (rules_count, dependencies_count, key_functions_count). Previously
+        these fields were absent OR were `0` — agents couldn't distinguish
+        'unindexed' from 'indexed-with-zero-deps' (the trust-recovery bug
+        Report 3 §'Graph layer is dead weight for new code' identified)."""
+        _, _, db = _setup_project(tmp_path, monkeypatch)
+        db.close()
+        result = graph.get_node("does/not/exist.py")
+        assert result["found"] is False
+        assert result["not_indexed"] is True, (
+            "Bug regression: get_node must return not_indexed=True for "
+            "unindexed paths so agents don't trust a zero blast-radius lie."
+        )
+        # Counts must be null, NOT 0 (the whole point of this fix).
+        assert result["rules_count"] is None
+        assert result["dependencies_count"] is None
+        assert result["key_functions_count"] is None
+
+    def test_get_impact_not_indexed_returns_null_counts(self, tmp_path, monkeypatch):
+        """Same Item 2 contract for get_impact: unindexed → null counts +
+        not_indexed: True. Previously returned blast_radius: 0 which
+        agents trusted as 'safe to edit'."""
+        _, _, db = _setup_project(tmp_path, monkeypatch)
+        db.close()
+        result = graph.get_impact("does/not/exist.py")
+        assert result["found"] is False
+        assert result["not_indexed"] is True
+        assert result["blast_radius"] is None
+        assert result["protected_count"] is None
+        assert result["high_stability_count"] is None
+
     def test_staleness_file_does_not_exist(self, tmp_path, monkeypatch):
         """_check_staleness should flag stale=True if file is missing from disk."""
         _, _, db = _setup_project(tmp_path, monkeypatch)
@@ -308,7 +429,10 @@ class TestGetNode:
         # Summary: stale flag at top; full mode includes stale_reason
         assert result["stale"] is True
         full = graph.get_node("src/ghost.py", full=True)
-        assert "does not exist" in full["stale_reason"].lower() or "missing" in full["stale_reason"].lower()
+        assert (
+            "does not exist" in full["stale_reason"].lower()
+            or "missing" in full["stale_reason"].lower()
+        )
 
     def test_staleness_index_missing(self, tmp_path, monkeypatch):
         """_check_staleness should flag stale when .last_indexed file is missing."""
@@ -324,7 +448,10 @@ class TestGetNode:
         # Summary: stale at top level
         assert result["stale"] is True
         full = graph.get_node("src/real.py", full=True)
-        assert "index missing" in full["stale_reason"].lower() or "last_indexed" in full["stale_reason"].lower()
+        assert (
+            "index missing" in full["stale_reason"].lower()
+            or "last_indexed" in full["stale_reason"].lower()
+        )
 
     def test_staleness_file_newer_than_index(self, tmp_path, monkeypatch):
         """_check_staleness should flag stale when file is newer than index."""
@@ -350,6 +477,7 @@ class TestGetNode:
 # =====================================================================
 # list_nodes
 # =====================================================================
+
 
 class TestListNodes:
     def test_list_all_nodes(self, tmp_path, monkeypatch):
@@ -415,6 +543,7 @@ class TestListNodes:
 # query_graph
 # =====================================================================
 
+
 class TestQueryGraph:
     def test_query_symbols(self, tmp_path, monkeypatch):
         _, _, db = _setup_project(tmp_path, monkeypatch)
@@ -434,7 +563,9 @@ class TestQueryGraph:
         _populate_graph(db)
         _add_symbols(db)
         db.close()
-        result = graph.query_graph("src/api.py", symbol="handle_request", query_type="callees")
+        result = graph.query_graph(
+            "src/api.py", symbol="handle_request", query_type="callees"
+        )
         assert result["query_type"] == "callees"
         assert result["count"] == 2
         callee_names = {c["name"] for c in result["results"]}
@@ -446,7 +577,9 @@ class TestQueryGraph:
         _populate_graph(db)
         _add_symbols(db)
         db.close()
-        result = graph.query_graph("src/utils.py", symbol="sanitize", query_type="callers")
+        result = graph.query_graph(
+            "src/utils.py", symbol="sanitize", query_type="callers"
+        )
         assert result["query_type"] == "callers"
         assert result["count"] == 3
         caller_names = {c["name"] for c in result["results"]}
@@ -459,7 +592,9 @@ class TestQueryGraph:
         _populate_graph(db)
         _add_symbols(db)
         db.close()
-        result = graph.query_graph("src/api.py", symbol="handle_request", query_type="tests")
+        result = graph.query_graph(
+            "src/api.py", symbol="handle_request", query_type="tests"
+        )
         assert result["query_type"] == "tests"
         assert "tests/test_api.py" in result["test_files"]
 
@@ -468,7 +603,9 @@ class TestQueryGraph:
         _populate_graph(db)
         _add_symbols(db)
         db.close()
-        result = graph.query_graph("src/api.py", symbol="handle_request", query_type="dependents")
+        result = graph.query_graph(
+            "src/api.py", symbol="handle_request", query_type="dependents"
+        )
         assert result["query_type"] == "dependents"
         # routes.py and tests/test_api.py depend on api.py
         dep_files = {r["file"] for r in result["results"]}
@@ -479,7 +616,9 @@ class TestQueryGraph:
         _populate_graph(db)
         _add_symbols(db)
         db.close()
-        result = graph.query_graph("src/api.py", symbol="nonexistent_func", query_type="callers")
+        result = graph.query_graph(
+            "src/api.py", symbol="nonexistent_func", query_type="callers"
+        )
         assert "error" in result
 
     def test_query_callers_without_symbol_error(self, tmp_path, monkeypatch):
@@ -494,7 +633,9 @@ class TestQueryGraph:
         _populate_graph(db)
         _add_symbols(db)
         db.close()
-        result = graph.query_graph("src/api.py", symbol="handle_request", query_type="invalid")
+        result = graph.query_graph(
+            "src/api.py", symbol="handle_request", query_type="invalid"
+        )
         assert "error" in result
 
     def test_query_with_none_symbol_chaos(self, tmp_path, monkeypatch):
@@ -510,6 +651,7 @@ class TestQueryGraph:
 # =====================================================================
 # find_hotspots
 # =====================================================================
+
 
 class TestFindHotspots:
     def test_large_functions_detected(self, tmp_path, monkeypatch):
@@ -587,6 +729,7 @@ class TestFindHotspots:
 # get_impact (BFS blast radius)
 # =====================================================================
 
+
 class TestGetImpact:
     def test_impact_basic(self, tmp_path, monkeypatch):
         _, _, db = _setup_project(tmp_path, monkeypatch)
@@ -600,7 +743,9 @@ class TestGetImpact:
 
     def test_impact_isolated_node(self, tmp_path, monkeypatch):
         _, _, db = _setup_project(tmp_path, monkeypatch)
-        db.add_node("file:isolated.py", "file", "isolated.py", "isolated.py", layer="misc")
+        db.add_node(
+            "file:isolated.py", "file", "isolated.py", "isolated.py", layer="misc"
+        )
         db.close()
         result = graph.get_impact("isolated.py")
         assert result["found"] is True
@@ -676,6 +821,7 @@ class TestGetImpact:
 # export_graph (extended)
 # =====================================================================
 
+
 class TestExportGraph:
     def test_mermaid_with_scope(self, tmp_path, monkeypatch):
         _, _, db = _setup_project(tmp_path, monkeypatch)
@@ -704,8 +850,12 @@ class TestExportGraph:
     def test_mermaid_stability_styles(self, tmp_path, monkeypatch):
         """High and low stability nodes should have style annotations in mermaid output."""
         _, _, db = _setup_project(tmp_path, monkeypatch)
-        db.add_node("file:high.py", "file", "high.py", "high.py", stability="high", layer="x")
-        db.add_node("file:low.py", "file", "low.py", "low.py", stability="low", layer="x")
+        db.add_node(
+            "file:high.py", "file", "high.py", "high.py", stability="high", layer="x"
+        )
+        db.add_node(
+            "file:low.py", "file", "low.py", "low.py", stability="low", layer="x"
+        )
         db.close()
         result = graph.export_graph(format="mermaid")
         assert ":::high" in result["output"]
@@ -723,11 +873,18 @@ class TestExportGraph:
         """Chaos: export_graph with 55 nodes should complete without error."""
         _, _, db = _setup_project(tmp_path, monkeypatch)
         for i in range(55):
-            db.add_node(f"file:src/mod_{i}.py", "file", f"mod_{i}.py",
-                        f"src/mod_{i}.py", layer="gen")
+            db.add_node(
+                f"file:src/mod_{i}.py",
+                "file",
+                f"mod_{i}.py",
+                f"src/mod_{i}.py",
+                layer="gen",
+            )
         # Add some edges too
         for i in range(54):
-            db.add_edge(f"file:src/mod_{i}.py", f"file:src/mod_{i+1}.py", kind="imports")
+            db.add_edge(
+                f"file:src/mod_{i}.py", f"file:src/mod_{i+1}.py", kind="imports"
+            )
         db.close()
 
         result = graph.export_graph(format="mermaid")
@@ -743,6 +900,7 @@ class TestExportGraph:
 # =====================================================================
 # get_graph_diff (mocked git)
 # =====================================================================
+
 
 class TestGetGraphDiff:
     def test_diff_with_changed_files(self, tmp_path, monkeypatch):
@@ -819,6 +977,7 @@ class TestGetGraphDiff:
 # analyze_changes (mocked git)
 # =====================================================================
 
+
 class TestAnalyzeChanges:
     def test_analyze_with_symbols(self, tmp_path, monkeypatch):
         _, _, db = _setup_project(tmp_path, monkeypatch)
@@ -837,17 +996,38 @@ class TestAnalyzeChanges:
         """Public functions with many callers and no tests should be high risk."""
         _, _, db = _setup_project(tmp_path, monkeypatch)
         # Create file nodes first (FK requirement: symbols reference file_node_ids)
-        db.add_node("file:src/risky.py", "file", "risky.py", "src/risky.py", layer="core")
+        db.add_node(
+            "file:src/risky.py", "file", "risky.py", "src/risky.py", layer="core"
+        )
         for i in range(3):
-            db.add_node(f"file:src/caller_{i}.py", "file", f"caller_{i}.py",
-                        f"src/caller_{i}.py", layer="core")
-        db.add_symbol("file:src/risky.py::risky_func", "file:src/risky.py",
-                      "risky_func", "function", start_line=1, end_line=20, is_public=True)
+            db.add_node(
+                f"file:src/caller_{i}.py",
+                "file",
+                f"caller_{i}.py",
+                f"src/caller_{i}.py",
+                layer="core",
+            )
+        db.add_symbol(
+            "file:src/risky.py::risky_func",
+            "file:src/risky.py",
+            "risky_func",
+            "function",
+            start_line=1,
+            end_line=20,
+            is_public=True,
+        )
         # 3 callers
         for i in range(3):
             caller_id = f"file:src/caller_{i}.py::call_func"
-            db.add_symbol(caller_id, f"file:src/caller_{i}.py",
-                          "call_func", "function", start_line=1, end_line=5, is_public=True)
+            db.add_symbol(
+                caller_id,
+                f"file:src/caller_{i}.py",
+                "call_func",
+                "function",
+                start_line=1,
+                end_line=5,
+                is_public=True,
+            )
             db.add_call_edge(caller_id, "file:src/risky.py::risky_func")
         db.close()
 
@@ -897,6 +1077,7 @@ class TestAnalyzeChanges:
 # refresh_graph (mocked)
 # =====================================================================
 
+
 class TestRefreshGraph:
     def test_refresh_graph_calls_generator(self, tmp_path, monkeypatch):
         _, data_dir, db = _setup_project(tmp_path, monkeypatch)
@@ -913,6 +1094,7 @@ class TestRefreshGraph:
         # module level (the module may fail to import due to missing tree_sitter deps).
         # Use sys.modules to inject a fake module.
         import sys
+
         fake_module = MagicMock()
         fake_module.generate_graph_sqlite = fake_generate
         fake_treesitter = MagicMock()

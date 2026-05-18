@@ -5,6 +5,7 @@ The 8 scenarios in docs/heroes/05-cross-session.md "Acceptance test list"
 plus configuration robustness, keyword-extraction unit tests, and
 registration tests.
 """
+
 from __future__ import annotations
 
 import os
@@ -19,7 +20,6 @@ from mcp_server.engine.policies.cross_session import (
     _extract_keywords,
     _format_injection,
     _collect_matches,
-    _STOP_WORDS,
 )
 
 
@@ -44,7 +44,10 @@ class _FakeSignals:
         self.graph = None  # not used here
 
     def search_decisions(
-        self, query: str, *, limit: int = 5,
+        self,
+        query: str,
+        *,
+        limit: int = 5,
     ) -> list[dict[str, Any]]:
         return self._by_keyword.get(query, [])[:limit]
 
@@ -64,12 +67,15 @@ def _clear_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class TestAcceptanceScenarios:
-
     def test_1_non_user_prompt_submit_allowed(self):
         """PreToolUse, SessionStart, etc. pass through allow."""
         policy = CrossSessionConsistency()
-        for et in (EventType.PRE_TOOL_USE, EventType.POST_TOOL_USE,
-                   EventType.SESSION_START, EventType.STOP):
+        for et in (
+            EventType.PRE_TOOL_USE,
+            EventType.POST_TOOL_USE,
+            EventType.SESSION_START,
+            EventType.STOP,
+        ):
             event = HookEvent(
                 event_type=et,
                 project_root=Path("/p"),
@@ -104,12 +110,14 @@ class TestAcceptanceScenarios:
         assertions.)
         """
         from mcp_server.engine.policies.cross_session import (
-            _MIN_PROMPT_CHARS, _extract_keywords,
+            _MIN_PROMPT_CHARS,
+            _extract_keywords,
         )
 
         class _SpySignals:
             def __init__(self):
                 self.search_calls: list[tuple] = []
+
             def search_decisions(self, query: str, *, limit: int = 5):
                 self.search_calls.append((query, limit))
                 return []
@@ -151,7 +159,6 @@ class TestAcceptanceScenarios:
         # extracts ['there'] which IS not a stop-word. To make this test
         # actually trigger zero-keyword path, use only stop-words ≥ 3 chars.
         event = _make_event("are these the same?")
-        keywords = _extract_keywords(event.prompt_text)
         # Either zero keywords (preferred) OR keywords that won't match
         # the empty signals. Both result in allow.
         verdict = policy.evaluate(event, _FakeSignals())
@@ -168,13 +175,19 @@ class TestAcceptanceScenarios:
         """Hero 5's primary path: inject markdown-formatted decision list."""
         policy = CrossSessionConsistency()
         event = _make_event("Add a styled Tailwind button")
-        signals = _FakeSignals(by_keyword={
-            "tailwind": [{
-                "id": 1, "decision": "Tailwind, not Bootstrap — bundle size",
-                "file_path": "styles/", "context": "performance",
-                "created_at": "2025-04-13T10:00:00Z",
-            }],
-        })
+        signals = _FakeSignals(
+            by_keyword={
+                "tailwind": [
+                    {
+                        "id": 1,
+                        "decision": "Tailwind, not Bootstrap — bundle size",
+                        "file_path": "styles/",
+                        "context": "performance",
+                        "created_at": "2025-04-13T10:00:00Z",
+                    }
+                ],
+            }
+        )
         verdict = policy.evaluate(event, signals)
         assert verdict.action == "inject"
         assert verdict.inject_context is not None
@@ -189,38 +202,65 @@ class TestAcceptanceScenarios:
         event = _make_event("Add a Tailwind button with a styled hover")
         # Same decision returned for both keywords
         same_decision = {
-            "id": 1, "decision": "Tailwind only, no Bootstrap",
-            "file_path": "styles/", "context": "",
+            "id": 1,
+            "decision": "Tailwind only, no Bootstrap",
+            "file_path": "styles/",
+            "context": "",
             "created_at": "2025-04-13T10:00:00Z",
         }
-        signals = _FakeSignals(by_keyword={
-            "tailwind": [same_decision],
-            "button": [same_decision],
-            "styled": [same_decision],
-            "hover": [same_decision],
-        })
+        signals = _FakeSignals(
+            by_keyword={
+                "tailwind": [same_decision],
+                "button": [same_decision],
+                "styled": [same_decision],
+                "hover": [same_decision],
+            }
+        )
         verdict = policy.evaluate(event, signals)
         assert verdict.action == "inject"
         assert verdict.metadata["matched_count"] == 1
         # The injected context lists exactly ONE decision, not 4
         assert verdict.inject_context.count("Tailwind only") == 1
 
-    def test_8_evaluation_under_5ms_p95(self):
-        """Warm signals → sub-millisecond evaluation."""
-        import statistics, time
+    def test_8_evaluation_under_25ms_p95(self):
+        """Warm signals → low-millisecond evaluation.
+
+        2026-05-18 v2.1.2 Item 1: budget raised from 5ms to 25ms. The
+        policy now runs a ChromaDB semantic gate on every prompt to
+        filter BM25 substring-matches that share a keyword but are
+        semantically unrelated (trust-recovery fix for the
+        ``"how to make a cake"`` regression in v2.1.1). Even with the
+        chromadb collection absent / empty (the test environment),
+        we still pay the import + lazy-init cost.
+
+        The hook fires on UserPromptSubmit (rare, human-paced); 25ms
+        is well within the acceptable latency budget for one-per-prompt
+        injection. The original 5ms target was for BM25-only.
+        """
+        import time
+
         policy = CrossSessionConsistency()
         event = _make_event("refactor auth.py modernize hashing")
-        signals = _FakeSignals(by_keyword={
-            "refactor": [{"id": 1, "decision": "x", "file_path": "auth.py",
-                          "context": "", "created_at": "2025-04-13T10:00:00Z"}],
-        })
+        signals = _FakeSignals(
+            by_keyword={
+                "refactor": [
+                    {
+                        "id": 1,
+                        "decision": "x",
+                        "file_path": "auth.py",
+                        "context": "",
+                        "created_at": "2025-04-13T10:00:00Z",
+                    }
+                ],
+            }
+        )
         durations = []
         for _ in range(100):
             t = time.perf_counter()
             policy.evaluate(event, signals)
             durations.append((time.perf_counter() - t) * 1000)
         p95 = sorted(durations)[94]
-        assert p95 < 5.0, f"p95 = {p95:.3f} ms"
+        assert p95 < 25.0, f"p95 = {p95:.3f} ms"
 
 
 # =====================================================================
@@ -229,7 +269,6 @@ class TestAcceptanceScenarios:
 
 
 class TestKeywordExtraction:
-
     def test_basic_extraction(self):
         result = _extract_keywords("Add a styled Tailwind button to the homepage")
         # Should have content tokens, not articles/preps
@@ -247,9 +286,7 @@ class TestKeywordExtraction:
         assert len(result) <= 5
 
     def test_dedup_in_extraction(self):
-        result = _extract_keywords(
-            "tailwind button tailwind hover tailwind classes"
-        )
+        result = _extract_keywords("tailwind button tailwind hover tailwind classes")
         # 'tailwind' appears 3 times in input but only once in output
         assert result.count("tailwind") == 1
 
@@ -304,36 +341,38 @@ class TestKeywordExtraction:
 
 
 class TestConfiguration:
-
     def test_default_mode_is_inject(self):
         policy = CrossSessionConsistency()
         config = policy._config()
         assert config["mode"] == "inject"
         assert config["max_inject"] == 5
 
-    def test_off_mode_disables_policy(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
+    def test_off_mode_disables_policy(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv("CODEVIRA_CROSS_SESSION_MODE", "off")
         policy = CrossSessionConsistency()
         event = _make_event("Add a Tailwind button")
-        signals = _FakeSignals(by_keyword={
-            "tailwind": [{"id": 1, "decision": "x", "file_path": "",
-                          "context": "", "created_at": "2025-01-01"}],
-        })
+        signals = _FakeSignals(
+            by_keyword={
+                "tailwind": [
+                    {
+                        "id": 1,
+                        "decision": "x",
+                        "file_path": "",
+                        "context": "",
+                        "created_at": "2025-01-01",
+                    }
+                ],
+            }
+        )
         verdict = policy.evaluate(event, signals)
         assert verdict.is_allowing()
 
-    def test_invalid_mode_falls_back_to_default(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
+    def test_invalid_mode_falls_back_to_default(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv("CODEVIRA_CROSS_SESSION_MODE", "totally-fake")
         policy = CrossSessionConsistency()
         assert policy._config()["mode"] == "inject"
 
-    def test_max_inject_clamped(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
+    def test_max_inject_clamped(self, monkeypatch: pytest.MonkeyPatch):
         # Negative → default
         monkeypatch.setenv("CODEVIRA_CROSS_SESSION_MAX_INJECT", "-5")
         policy = CrossSessionConsistency()
@@ -349,9 +388,7 @@ class TestConfiguration:
         policy = CrossSessionConsistency()
         assert policy._config()["max_inject"] == 10
 
-    def test_garbage_max_inject_falls_back(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
+    def test_garbage_max_inject_falls_back(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv("CODEVIRA_CROSS_SESSION_MAX_INJECT", "not-a-number")
         policy = CrossSessionConsistency()
         assert policy._config()["max_inject"] == 5
@@ -363,25 +400,43 @@ class TestConfiguration:
 
 
 class TestMatchCollection:
-
     def test_recency_sort_descending(self):
-        signals = _FakeSignals(by_keyword={
-            "x": [
-                {"id": 1, "decision": "old", "file_path": "",
-                 "created_at": "2025-01-01"},
-                {"id": 2, "decision": "new", "file_path": "",
-                 "created_at": "2025-06-01"},
-            ],
-        })
+        signals = _FakeSignals(
+            by_keyword={
+                "x": [
+                    {
+                        "id": 1,
+                        "decision": "old",
+                        "file_path": "",
+                        "created_at": "2025-01-01",
+                    },
+                    {
+                        "id": 2,
+                        "decision": "new",
+                        "file_path": "",
+                        "created_at": "2025-06-01",
+                    },
+                ],
+            }
+        )
         out = _collect_matches(signals, ["x"], total_cap=5)
         assert out[0]["id"] == 2  # newer first
         assert out[1]["id"] == 1
 
     def test_total_cap_enforced(self):
-        signals = _FakeSignals(by_keyword={
-            "a": [{"id": i, "decision": f"d{i}", "file_path": "",
-                   "created_at": f"2025-{i:02}-01"} for i in range(1, 11)],
-        })
+        signals = _FakeSignals(
+            by_keyword={
+                "a": [
+                    {
+                        "id": i,
+                        "decision": f"d{i}",
+                        "file_path": "",
+                        "created_at": f"2025-{i:02}-01",
+                    }
+                    for i in range(1, 11)
+                ],
+            }
+        )
         out = _collect_matches(signals, ["a"], max_per_keyword=10, total_cap=3)
         assert len(out) == 3
 
@@ -389,17 +444,24 @@ class TestMatchCollection:
         class _Broken:
             def search_decisions(self, *a, **kw):
                 raise RuntimeError("boom")
+
         out = _collect_matches(_Broken(), ["a"], total_cap=5)
         assert out == []
 
     def test_decisions_without_created_at_sink_to_bottom(self):
-        signals = _FakeSignals(by_keyword={
-            "x": [
-                {"id": 1, "decision": "no-date", "file_path": ""},
-                {"id": 2, "decision": "with-date", "file_path": "",
-                 "created_at": "2025-01-01"},
-            ],
-        })
+        signals = _FakeSignals(
+            by_keyword={
+                "x": [
+                    {"id": 1, "decision": "no-date", "file_path": ""},
+                    {
+                        "id": 2,
+                        "decision": "with-date",
+                        "file_path": "",
+                        "created_at": "2025-01-01",
+                    },
+                ],
+            }
+        )
         out = _collect_matches(signals, ["x"], total_cap=5)
         # The dated decision should rank higher
         assert out[0]["id"] == 2
@@ -423,9 +485,11 @@ class TestBehavioralGates:
         would reach extract_keywords on prompt_text=None and crash —
         OR pass with empty signals. Spy catches it directly.
         """
+
         class _SpySignals:
             def __init__(self):
                 self.calls: list[tuple] = []
+
             def search_decisions(self, query, *, limit=5):
                 self.calls.append((query, limit))
                 return []
@@ -433,8 +497,10 @@ class TestBehavioralGates:
         policy = CrossSessionConsistency()
         spy = _SpySignals()
         for et in (
-            EventType.PRE_TOOL_USE, EventType.POST_TOOL_USE,
-            EventType.SESSION_START, EventType.STOP,
+            EventType.PRE_TOOL_USE,
+            EventType.POST_TOOL_USE,
+            EventType.SESSION_START,
+            EventType.STOP,
         ):
             event = HookEvent(
                 event_type=et,
@@ -449,9 +515,11 @@ class TestBehavioralGates:
 
     def test_empty_prompt_does_not_call_signals(self):
         """Empty prompt → no work. Behavioral spy."""
+
         class _SpySignals:
             def __init__(self):
                 self.calls: list[tuple] = []
+
             def search_decisions(self, query, *, limit=5):
                 self.calls.append((query, limit))
                 return []
@@ -467,9 +535,7 @@ class TestBehavioralGates:
             policy.evaluate(event, spy)
         assert spy.calls == [], f"empty-prompt gate degraded: {spy.calls}"
 
-    def test_no_keywords_skips_collect_matches(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
+    def test_no_keywords_skips_collect_matches(self, monkeypatch: pytest.MonkeyPatch):
         """Empty-keywords gate: when ``_extract_keywords`` returns
         nothing, the policy must NOT call ``_collect_matches``.
         Output-only assertions can't catch the gate (empty keywords
@@ -480,9 +546,11 @@ class TestBehavioralGates:
 
         invocations: list[tuple] = []
         original = cs_mod._collect_matches
+
         def spy(*args, **kw):
             invocations.append((args, kw))
             return original(*args, **kw)
+
         monkeypatch.setattr(cs_mod, "_collect_matches", spy)
 
         policy = CrossSessionConsistency()
@@ -490,13 +558,11 @@ class TestBehavioralGates:
         event = _make_event("the and the of we have for it as if")
         verdict = policy.evaluate(event, _FakeSignals())
         assert verdict.is_allowing()
-        assert invocations == [], (
-            f"empty-keywords gate degraded: _collect_matches called: {invocations}"
-        )
+        assert (
+            invocations == []
+        ), f"empty-keywords gate degraded: _collect_matches called: {invocations}"
 
-    def test_signals_none_skips_collect_matches(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
+    def test_signals_none_skips_collect_matches(self, monkeypatch: pytest.MonkeyPatch):
         """signals=None gate: must NOT reach ``_collect_matches`` with
         a None signals (which would AttributeError, caught by the
         per-keyword try/except, but still wastes work and depends on
@@ -506,18 +572,20 @@ class TestBehavioralGates:
 
         invocations: list[tuple] = []
         original = cs_mod._collect_matches
+
         def spy(*args, **kw):
             invocations.append((args, kw))
             return original(*args, **kw)
+
         monkeypatch.setattr(cs_mod, "_collect_matches", spy)
 
         policy = CrossSessionConsistency()
         event = _make_event("refactor auth.py to use bcrypt")
         verdict = policy.evaluate(event, None)
         assert verdict.is_allowing()
-        assert invocations == [], (
-            f"signals=None gate degraded: _collect_matches called: {invocations}"
-        )
+        assert (
+            invocations == []
+        ), f"signals=None gate degraded: _collect_matches called: {invocations}"
 
     def test_priority_value_stable(self):
         """Hero 5 priority MUST stay below block-class heroes (1, 4).
@@ -526,12 +594,13 @@ class TestBehavioralGates:
         """
         from mcp_server.engine.policies.decision_lock import DecisionLock
         from mcp_server.engine.policies.blast_radius import BlastRadiusVeto
-        assert CrossSessionConsistency.priority < DecisionLock.priority, (
-            f"Hero 5 priority must be below Hero 1 (block-class)"
-        )
-        assert CrossSessionConsistency.priority < BlastRadiusVeto.priority, (
-            f"Hero 5 priority must be below Hero 4 (block-class)"
-        )
+
+        assert (
+            CrossSessionConsistency.priority < DecisionLock.priority
+        ), "Hero 5 priority must be below Hero 1 (block-class)"
+        assert (
+            CrossSessionConsistency.priority < BlastRadiusVeto.priority
+        ), "Hero 5 priority must be below Hero 4 (block-class)"
 
     def test_dedup_collapses_same_decision_under_strict_key(self):
         """Dedup key is (decision_text, file_path). Two matches with
@@ -545,14 +614,26 @@ class TestBehavioralGates:
         #   - if dedup-by-id, both appear; if dedup-by-(text, path), one
         same_text = "Tailwind, not Bootstrap — bundle size"
         same_path = "styles/"
-        signals = _FakeSignals(by_keyword={
-            "tailwind": [
-                {"id": 1, "decision": same_text, "file_path": same_path,
-                 "context": "", "created_at": "2025-04-13"},
-                {"id": 2, "decision": same_text, "file_path": same_path,
-                 "context": "", "created_at": "2025-04-13"},
-            ],
-        })
+        signals = _FakeSignals(
+            by_keyword={
+                "tailwind": [
+                    {
+                        "id": 1,
+                        "decision": same_text,
+                        "file_path": same_path,
+                        "context": "",
+                        "created_at": "2025-04-13",
+                    },
+                    {
+                        "id": 2,
+                        "decision": same_text,
+                        "file_path": same_path,
+                        "context": "",
+                        "created_at": "2025-04-13",
+                    },
+                ],
+            }
+        )
         event = _make_event("Add a Tailwind button")
         verdict = policy.evaluate(event, signals)
         assert verdict.action == "inject"
@@ -564,11 +645,13 @@ class TestBehavioralGates:
 
 
 class TestRegistration:
-
     def test_register_default_policies_includes_hero_5(self):
         from mcp_server.engine import (
-            register_default_policies, registered_policies, reset_policies,
+            register_default_policies,
+            registered_policies,
+            reset_policies,
         )
+
         reset_policies()
         register_default_policies()
         names = sorted(p.name for p in registered_policies())
@@ -588,10 +671,11 @@ class TestRegistration:
         from indexer.sqlite_graph import SQLiteGraph
         from mcp_server.engine.events import EventType, HookEvent
         from mcp_server.engine import (
-            register_policy, reset_policies, dispatch,
+            register_policy,
+            reset_policies,
+            dispatch,
         )
         import mcp_server.paths as paths_mod
-        import os
 
         fake_home = tmp_path / "home"
         fake_home.mkdir()
@@ -604,6 +688,7 @@ class TestRegistration:
         paths_mod.invalidate_data_dir_cache()
 
         from mcp_server.paths import get_data_dir
+
         db_path = get_data_dir() / "graph" / "graph.db"
         db_path.parent.mkdir(parents=True, exist_ok=True)
         g = SQLiteGraph(db_path)
@@ -614,8 +699,13 @@ class TestRegistration:
         g.conn.execute(
             "INSERT INTO decisions (session_id, decision, file_path, "
             "context, created_at) VALUES (?, ?, ?, ?, ?)",
-            ("s1", "Tailwind, not Bootstrap — bundle size",
-             "styles/", "", "2025-04-13"),
+            (
+                "s1",
+                "Tailwind, not Bootstrap — bundle size",
+                "styles/",
+                "",
+                "2025-04-13",
+            ),
         )
         g.conn.commit()
         g.close()
@@ -643,14 +733,19 @@ class TestRegistration:
 
     def test_idempotent_with_three_heroes(self):
         from mcp_server.engine import (
-            register_default_policies, registered_policies, reset_policies,
+            register_default_policies,
+            registered_policies,
+            reset_policies,
         )
+
         reset_policies()
         register_default_policies()
         register_default_policies()  # idempotent
         names = [p.name for p in registered_policies()]
         for n in (
-            "blast_radius_veto", "decision_lock", "cross_session_consistency",
+            "blast_radius_veto",
+            "decision_lock",
+            "cross_session_consistency",
         ):
             assert names.count(n) == 1
 
@@ -661,7 +756,6 @@ class TestRegistration:
 
 
 class TestRobustness:
-
     def test_none_signals_allows_gracefully(self):
         policy = CrossSessionConsistency()
         event = _make_event("Add a Tailwind button")
@@ -671,11 +765,13 @@ class TestRobustness:
     def test_signals_search_raises_caught(self):
         """Hero 5 must NOT crash when signals.search_decisions raises;
         _collect_matches catches per-keyword failures and continues."""
+
         class _PartiallyBroken:
             def search_decisions(self, query, *, limit=5):
                 if query == "tailwind":
                     raise RuntimeError("boom")
                 return []
+
         policy = CrossSessionConsistency()
         event = _make_event("Add a Tailwind button to homepage")
         verdict = policy.evaluate(event, _PartiallyBroken())
@@ -689,40 +785,55 @@ class TestRobustness:
 
 
 class TestInjectionFormatting:
-
     def test_format_includes_preamble_and_postamble(self):
-        matches = [{
-            "id": 1, "decision": "Tailwind, not Bootstrap",
-            "file_path": "styles/", "created_at": "2025-04-13T10:00:00Z",
-        }]
+        matches = [
+            {
+                "id": 1,
+                "decision": "Tailwind, not Bootstrap",
+                "file_path": "styles/",
+                "created_at": "2025-04-13T10:00:00Z",
+            }
+        ]
         text = _format_injection(matches)
         assert "Prior decisions you may want to consider" in text
         assert "If your current request conflicts" in text
 
     def test_format_truncates_long_decisions(self):
         long_text = "x" * 500
-        matches = [{
-            "id": 1, "decision": long_text,
-            "file_path": "", "created_at": "2025-01-01",
-        }]
+        matches = [
+            {
+                "id": 1,
+                "decision": long_text,
+                "file_path": "",
+                "created_at": "2025-01-01",
+            }
+        ]
         text = _format_injection(matches)
         assert "..." in text
         # Decision portion truncated to ~200
         assert "x" * 500 not in text
 
     def test_format_handles_missing_file_path(self):
-        matches = [{
-            "id": 1, "decision": "global decision", "file_path": "",
-            "created_at": "2025-01-01",
-        }]
+        matches = [
+            {
+                "id": 1,
+                "decision": "global decision",
+                "file_path": "",
+                "created_at": "2025-01-01",
+            }
+        ]
         text = _format_injection(matches)
         # When file_path is empty, no [filepath] prefix
         assert "[]" not in text
 
     def test_format_handles_missing_created_at(self):
-        matches = [{
-            "id": 1, "decision": "no date", "file_path": "",
-        }]
+        matches = [
+            {
+                "id": 1,
+                "decision": "no date",
+                "file_path": "",
+            }
+        ]
         text = _format_injection(matches)
         # Falls back to placeholder
         assert "????-??-??" in text

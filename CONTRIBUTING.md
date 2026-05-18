@@ -94,6 +94,32 @@ trigger automatically. If you're working without an AI agent, the
 Makefile + hooks + CI still enforce the same discipline at the tool
 layer.
 
+### Release-planning discipline (added 2026-05-18)
+
+Every `vX.Y.Z` release that has 3+ items gets a written plan at
+`docs/plans/vX.Y.Z.md` BEFORE implementation begins. The plan covers:
+
+- Context (why this release exists)
+- Per-item: problem, design, files to touch, existing helpers to reuse,
+  verification test
+- Implementation order
+- Explicitly deferred items + reasons
+- Per-item documentation updates (see "Documentation discipline" below)
+
+See [`docs/plans/v2.1.2.md`](docs/plans/v2.1.2.md) for the canonical
+example.
+
+### Documentation discipline (cross-cutting rule, added 2026-05-18)
+
+**Every code change must update the relevant user-facing documentation
+in the same commit.** Not deferred, not "we'll write docs later." The
+per-release plan (see above) calls out which docs each item must touch
+— typically a mix of: README.md, MIGRATING.md, CHANGELOG.md, MCP tool
+docstrings, and any new docs/ pages the change warrants.
+
+PR template includes a checklist line: *"Did this PR update the docs
+listed in the plan for this item?"*
+
 ---
 
 ## Getting Started

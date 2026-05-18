@@ -338,7 +338,7 @@ def cmd_init() -> None:
             results = inject_ide_config(cwd, project_name=detected["name"])
             if results:
                 print("done")
-                for ide_name, config_path in results.items():
+                for ide_name, config_path in results.items():  # type: ignore[assignment]
                     print(f"    ✓ {ide_name}: {config_path}")
             else:
                 print("no AI tools detected")
@@ -1408,6 +1408,132 @@ def main() -> None:
         help="Skip confirmation prompt",
     )
 
+    # 2026-05-18 v2.1.2 Item 3b: `codevira reset` — destructive operations
+    # move OUT of `heal` (whose name implies fix-in-place). `heal`
+    # retains only the non-destructive `--decisions` backfill.
+    reset_parser = subparsers.add_parser(
+        "reset",
+        help="DESTRUCTIVE: wipe + rebuild this project's vector store / graph (auto-backs-up decisions first)",
+        description=(
+            "Destructive recovery operations. Each flag wipes a specific "
+            "part of this project's local state and rebuilds it. Decisions, "
+            "outcomes, preferences, and learned rules are AUTO-EXPORTED to "
+            "`<data_dir>/exports/<timestamp>-pre-<target>.json` before "
+            "any wipe (pass --no-backup to skip). This command was split "
+            "from `codevira heal` in v2.1.2 — heal's name implied 'fix in "
+            "place,' but the implementation always wiped + rebuilt. "
+            "`reset` is the honest name."
+        ),
+    )
+    reset_parser.add_argument(
+        "--vectors",
+        action="store_true",
+        help="Wipe + rebuild this project's Chroma vector store (fixes HNSW corruption)",
+    )
+    reset_parser.add_argument(
+        "--graph",
+        action="store_true",
+        help="Wipe + rebuild this project's graph.db (DESTROYS decisions, outcomes, preferences, rules unless --no-backup is omitted)",
+    )
+    reset_parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Wipe ALL of this project's local state (vectors + graph + sessions)",
+    )
+    reset_parser.add_argument(
+        "--no-backup",
+        action="store_true",
+        help="Skip the automatic export-before-destroy backup (use with caution)",
+    )
+    reset_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be done without making changes",
+    )
+    reset_parser.add_argument(
+        "--yes",
+        "-y",
+        action="store_true",
+        help="Skip the typed confirmation prompt (script use)",
+    )
+
+    # 2026-05-18 v2.1.2 Item 3e: `codevira export decisions` — standalone
+    # backup command. Closes Report 1 §7 gap ("Is there an export tool we're
+    # missing?"). Shares its implementation with the auto-backup in reset.
+    export_parser = subparsers.add_parser(
+        "export",
+        help="Export this project's decisions / state to JSON or SQL",
+        description=(
+            "Export this project's local state to a portable file. The "
+            "default target 'decisions' writes decisions + sessions + "
+            "outcomes + preferences + learned_rules + phases — everything "
+            "you'd want to back up before a destructive operation OR "
+            "carry to another machine. Target 'all' adds nodes / edges / "
+            "symbols / call_edges / file_hashes (the full graph state). "
+            "Format defaults to JSON (human-readable, jq-friendly); SQL "
+            "dump preserves schema + FK relationships for full restoration."
+        ),
+    )
+    export_parser.add_argument(
+        "target",
+        nargs="?",
+        default="decisions",
+        choices=["decisions", "all"],
+        help="What to export (default: decisions)",
+    )
+    export_parser.add_argument(
+        "--format",
+        dest="format",
+        default="json",
+        choices=["json", "sql"],
+        help="Output format (default: json)",
+    )
+    export_parser.add_argument(
+        "--out",
+        default=None,
+        help="Output file path (default: <data_dir>/exports/<timestamp>-<target>.<ext>)",
+    )
+    export_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be done without writing",
+    )
+
+    # 2026-05-18 v2.1.2 Item 1: `codevira calibrate` — manual re-fit of
+    # similarity thresholds. Auto-recalibration also runs every 10
+    # decisions added, but power users may want explicit control.
+    calibrate_parser = subparsers.add_parser(
+        "calibrate",
+        help="Re-fit semantic similarity thresholds from this project's positive samples",
+        description=(
+            "Re-fit search_decisions similarity thresholds from this "
+            "project's positive samples (decisions marked do_not_revert=True "
+            "and decisions confirmed kept via outcome tracking). The "
+            "calibrator finds the 10 nearest neighbours for each positive "
+            "and sets the threshold at the 75th percentile of those "
+            "distances. Clamped to [0.20, 0.55] for safety. Stored at "
+            "<data_dir>/calibration.json. Auto-recalibration also runs "
+            "every 10 decisions added in the background."
+        ),
+    )
+    calibrate_parser.add_argument(
+        "target",
+        nargs="?",
+        default="decisions",
+        choices=["decisions"],
+        help="What to calibrate (default: decisions; only target supported in v2.1.2)",
+    )
+    calibrate_parser.add_argument(
+        "--decisions",
+        action="store_true",
+        help="Equivalent to passing 'decisions' as target",
+    )
+    calibrate_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be set without writing calibration.json",
+    )
+
     engine_parser = subparsers.add_parser(
         "engine",
         help="Internal: lifecycle-hook engine entry (called by hook scripts)",
@@ -1467,15 +1593,16 @@ def main() -> None:
             pass
 
     if args.command == "init":
-        # Pass overrides via function attribute (avoids changing signature)
-        cmd_init._overrides = {
+        # Pass overrides via function attribute (avoids changing signature).
+        # mypy doesn't model attribute-on-function so we silence per-line.
+        cmd_init._overrides = {  # type: ignore[attr-defined]
             "name": getattr(args, "name", None),
             "language": getattr(args, "language", None),
             "dirs": getattr(args, "dirs", None),
             "ext": getattr(args, "ext", None),
         }
-        cmd_init._no_inject = getattr(args, "no_inject", False)
-        cmd_init._single_language = getattr(args, "single_language", False)
+        cmd_init._no_inject = getattr(args, "no_inject", False)  # type: ignore[attr-defined]
+        cmd_init._single_language = getattr(args, "single_language", False)  # type: ignore[attr-defined]
         cmd_init()
     elif args.command == "index":
         cmd_index(full=args.full, quiet=args.quiet, verbose=args.verbose)
@@ -1676,6 +1803,37 @@ def main() -> None:
             yes=getattr(args, "yes", False),
         )
         sys.exit(rc)
+    elif args.command == "reset":
+        # 2026-05-18 v2.1.2 Item 3b: destructive operations split from heal.
+        rc = cmd_reset(
+            vectors=getattr(args, "vectors", False),
+            graph=getattr(args, "graph", False),
+            reset_all=getattr(args, "all", False),
+            no_backup=getattr(args, "no_backup", False),
+            dry_run=getattr(args, "dry_run", False),
+            yes=getattr(args, "yes", False),
+        )
+        sys.exit(rc)
+    elif args.command == "export":
+        # 2026-05-18 v2.1.2 Item 3e: standalone export command.
+        from mcp_server.cli_export import cmd_export
+
+        rc = cmd_export(
+            target=getattr(args, "target", "decisions"),
+            fmt=getattr(args, "format", "json"),
+            out=getattr(args, "out", None),
+            dry_run=getattr(args, "dry_run", False),
+        )
+        sys.exit(rc)
+    elif args.command == "calibrate":
+        # 2026-05-18 v2.1.2 Item 1: manual threshold re-fit.
+        from mcp_server.cli_calibrate import cmd_calibrate
+
+        rc = cmd_calibrate(
+            target=getattr(args, "target", "decisions"),
+            dry_run=getattr(args, "dry_run", False),
+        )
+        sys.exit(rc)
     elif args.command == "engine":
         # Internal — Claude Code hook scripts call us with `engine handle <event>`.
         if getattr(args, "engine_action", None) == "handle":
@@ -1733,6 +1891,216 @@ def main() -> None:
 # ---------------------------------------------------------------------------
 
 
+def cmd_reset(
+    vectors: bool = False,
+    graph: bool = False,
+    reset_all: bool = False,
+    no_backup: bool = False,
+    dry_run: bool = False,
+    yes: bool = False,
+) -> int:
+    """2026-05-18 v2.1.2 Item 3b: destructive recovery operations.
+
+    Replaces the destructive flags of `codevira heal`. Each flag wipes
+    a specific part of local project state. Decisions / outcomes /
+    preferences / learned_rules are AUTO-EXPORTED to
+    `<data_dir>/exports/<timestamp>-pre-<target>.json` BEFORE any wipe
+    of graph/ unless `--no-backup` is passed.
+
+    Confirmation: typed (user must type 'reset' or the target name).
+    `--yes` skips for scripts.
+
+    Returns:
+        0 success, 1 error, 2 nothing to do.
+
+    P-principles satisfied:
+      P1: emit reason + remediation if no target specified
+      P3: rename-style atomic deletion (rename-then-delete)
+      P7: scoped recovery — never touches OTHER projects or global.db
+      P8: every output line says WHAT + WHY + (next) FIX
+    """
+    import shutil
+    from mcp_server.paths import get_data_dir, get_project_root, is_invalid_project_root
+    from mcp_server.cli_export import auto_export_before_destructive
+    from mcp_server._prompts import confirm_typed
+
+    # P1: require at least one target.
+    if not (vectors or graph or reset_all):
+        print(
+            "Error: nothing to reset. Pass one of:\n"
+            "  --vectors   wipe Chroma vector store (fixes HNSW corruption)\n"
+            "  --graph     wipe graph.db (DESTROYS decisions unless --no-backup is omitted)\n"
+            "  --all       wipe ALL local state (vectors + graph + sessions)\n"
+            "\n"
+            "Add --no-backup to skip auto-export (use with caution).\n"
+            "Add --dry-run to preview, --yes to skip typed confirmation.",
+            file=sys.stderr,
+        )
+        return 1
+
+    # Guard against $HOME / system dirs.
+    rejection = is_invalid_project_root(get_project_root())
+    if rejection:
+        print(f"Error: {rejection}", file=sys.stderr)
+        return 1
+
+    try:
+        data_dir = get_data_dir()
+    except Exception as e:
+        print(f"Error: cannot resolve data dir: {e}", file=sys.stderr)
+        return 1
+
+    project_root = get_project_root()
+
+    # Build the list of targets up front so the user sees the FULL plan.
+    targets: list[tuple[str, Path]] = []
+    if vectors or reset_all:
+        codeindex = data_dir / "codeindex"
+        if codeindex.exists():
+            try:
+                size_mb = (
+                    sum(f.stat().st_size for f in codeindex.rglob("*") if f.is_file())
+                    / 1024
+                    / 1024
+                )
+                targets.append((f"vector store (Chroma) — {size_mb:.1f} MB", codeindex))
+            except Exception:
+                targets.append(("vector store (Chroma)", codeindex))
+    if graph or reset_all:
+        graph_path = data_dir / "graph"
+        if graph_path.exists():
+            targets.append(
+                ("graph database (decisions / outcomes / prefs / rules)", graph_path)
+            )
+    if reset_all:
+        sessions = data_dir / "sessions"
+        if sessions.exists():
+            targets.append(("session logs", sessions))
+
+    # Count what's about to be lost so the confirm prompt can scream.
+    decision_count = 0
+    outcome_count = 0
+    rule_count = 0
+    if (graph or reset_all) and (data_dir / "graph" / "graph.db").is_file():
+        try:
+            import sqlite3 as _sqlite3
+
+            conn = _sqlite3.connect(
+                f"file:{data_dir / 'graph' / 'graph.db'}?mode=ro", uri=True
+            )
+            try:
+                for tbl, var in (
+                    ("decisions", "decision_count"),
+                    ("outcomes", "outcome_count"),
+                    ("learned_rules", "rule_count"),
+                ):
+                    try:
+                        n = conn.execute(f"SELECT COUNT(*) FROM {tbl}").fetchone()[0]
+                        if tbl == "decisions":
+                            decision_count = n
+                        elif tbl == "outcomes":
+                            outcome_count = n
+                        elif tbl == "learned_rules":
+                            rule_count = n
+                    except Exception:
+                        pass
+            finally:
+                conn.close()
+        except Exception:
+            pass
+
+    print()
+    print("  Codevira — Reset")
+    print(f"  Project: {project_root}")
+    print("  " + "─" * 60)
+    print()
+
+    if not targets:
+        print("  Nothing to reset — none of the targeted state exists on disk.")
+        return 2
+
+    # Render the destructive-op summary so the user sees WHAT vanishes.
+    print("  ⚠  DESTRUCTIVE OPERATION — will remove:")
+    for label, _path in targets:
+        print(f"    • {label}")
+    if (graph or reset_all) and (decision_count + outcome_count + rule_count) > 0:
+        print()
+        print("    Inside graph/:")
+        if decision_count:
+            print(f"      • {decision_count} decision(s)")
+        if outcome_count:
+            print(f"      • {outcome_count} outcome(s)")
+        if rule_count:
+            print(f"      • {rule_count} learned rule(s)")
+    print()
+    if no_backup:
+        print("  Auto-backup: OFF (--no-backup). Decisions WILL be lost.")
+    else:
+        print("  Auto-backup: ON — decisions exported BEFORE wipe.")
+    print()
+
+    if dry_run:
+        print("  [dry-run] No changes made.")
+        return 0
+
+    # Typed confirmation unless --yes.
+    if not yes:
+        target_word = "all" if reset_all else ("graph" if graph else "vectors")
+        ok = confirm_typed(
+            f"Type '{target_word}' to confirm this destructive operation.",
+            target_word,
+        )
+        if not ok:
+            print("  Aborted.")
+            return 0
+
+    # Auto-export before any wipe of graph/.
+    if (graph or reset_all) and not no_backup:
+        target_kind = "all" if reset_all else "graph"
+        backup_path = auto_export_before_destructive(target_kind)
+        if backup_path is not None:
+            print(f"    ✓ Backed up decisions → {backup_path}")
+        else:
+            print("    ⚠ Backup attempted but failed (see stderr above).")
+            print("      Pass --no-backup to skip this step explicitly,")
+            print("      OR fix the backup issue and retry.")
+            return 1
+
+    # Execute the wipes — rename-then-delete for atomicity.
+    print()
+    failures = 0
+    for label, path in targets:
+        try:
+            backup_name = path.with_name(path.name + ".resetting")
+            if backup_name.exists():
+                shutil.rmtree(backup_name, ignore_errors=True)
+            path.rename(backup_name)
+            shutil.rmtree(backup_name, ignore_errors=True)
+            print(f"    ✓ Removed {label}")
+        except Exception as e:
+            print(f"    ✗ Failed to remove {label}: {e}")
+            failures += 1
+
+    print()
+    if failures:
+        print(f"  ⚠ {failures} target(s) failed. Check permissions and retry.")
+        return 1
+
+    print("  ✓ Reset complete.")
+    print()
+    print("  Next steps:")
+    if vectors or reset_all:
+        print("    • Run `codevira index --full` to rebuild the vector store")
+    if graph or reset_all:
+        print("    • Run `codevira index --full` to rebuild the graph")
+        if not no_backup:
+            print(
+                "    • Decisions backup is at <data_dir>/exports/ — restore via SQLite if needed"
+            )
+    print()
+    return 0
+
+
 def cmd_heal(
     vectors: bool = False,
     graph: bool = False,
@@ -1741,32 +2109,50 @@ def cmd_heal(
     dry_run: bool = False,
     yes: bool = False,
 ) -> int:
-    """Self-service recovery for corrupted state (P7 reversible operations).
+    """Self-service recovery (v2.1.2: non-destructive only — `decisions`).
 
-    Pairs with the HNSW self-heal detection in
-    ``indexer.index_codebase._check_chroma_health``: when a user hits the
-    Chroma corruption pattern, they no longer need to look up the data dir
-    path and run ``rm -rf`` by hand — this command does it cleanly and
-    rebuilds.
+    History: prior to v2.1.2 this command also handled --vectors / --graph
+    / --all (destructive). Those moved to `codevira reset` because
+    "heal" implied fix-in-place but the implementation always wiped +
+    rebuilt. Field-test reports flagged the naming as the #1 data-loss
+    footgun.
 
     Args:
-        vectors: wipe the project's Chroma vector store
-        graph: wipe the project's graph.db
+        vectors / graph / heal_all: DEPRECATED — forwarded to cmd_reset
+            with a one-time deprecation warning. Will be removed in v2.2.
         decisions: NON-DESTRUCTIVE backfill — embed every existing decision
-            into the semantic search index. Used for v2.0→v2.1 upgrades.
-        heal_all: wipe everything (vectors + graph + sessions) for this project
+            into the semantic search index. Used for v2.0/v2.1.0 →
+            v2.1.x upgrades.
         dry_run: print what would be done, don't touch anything
         yes: skip the confirmation prompt
-
-    Returns:
-        Exit code: 0 success, 1 error, 2 nothing to do.
-
-    P-principles satisfied:
-      P1: emit reason + remediation if no target specified
-      P3: rename-style atomic deletion (rename-then-delete) where possible
-      P7: scoped recovery — never touches OTHER projects or global.db
-      P8: every output line says WHAT + WHY + (next) FIX
     """
+    # 2026-05-18 v2.1.2 Item 3c: deprecation cycle for destructive flags.
+    # Forward to cmd_reset with a one-time warning. Remove in v2.2.
+    if vectors or graph or heal_all:
+        which = []
+        if vectors:
+            which.append("--vectors")
+        if graph:
+            which.append("--graph")
+        if heal_all:
+            which.append("--all")
+        print(
+            f"\n⚠  DEPRECATED in v2.1.2: `codevira heal {' '.join(which)}` is\n"
+            f"   destructive and the name is misleading. Forwarding to:\n"
+            f"     codevira reset {' '.join(which)}\n"
+            f"   `heal` will accept only non-destructive flags (currently\n"
+            f"   only --decisions) starting in v2.2. Update your scripts.\n",
+            file=sys.stderr,
+        )
+        return cmd_reset(
+            vectors=vectors,
+            graph=graph,
+            reset_all=heal_all,
+            no_backup=False,  # safety: deprecated path keeps backup ON
+            dry_run=dry_run,
+            yes=yes,
+        )
+
     import shutil
     from mcp_server.paths import get_data_dir, get_project_root, is_invalid_project_root
 
@@ -1790,6 +2176,7 @@ def cmd_heal(
         try:
             from indexer.sqlite_graph import SQLiteGraph
             from mcp_server.tools._decision_embeddings import backfill_all_decisions
+
             graph_db_path = get_data_dir() / "graph" / "graph.db"
             if not graph_db_path.is_file():
                 print(
@@ -1798,7 +2185,9 @@ def cmd_heal(
                     file=sys.stderr,
                 )
                 return 1
-            print(f"  Backfilling decision embeddings for {graph_db_path.parent.parent} …")
+            print(
+                f"  Backfilling decision embeddings for {graph_db_path.parent.parent} …"
+            )
             if dry_run:
                 # Cheap count via SQLite — don't actually embed
                 db = SQLiteGraph(graph_db_path)
@@ -1814,8 +2203,10 @@ def cmd_heal(
                 result = backfill_all_decisions(db)
             finally:
                 db.close()
-            print(f"    total={result.get('total', 0)} embedded={result.get('embedded', 0)} "
-                  f"failed={result.get('failed', 0)} skipped={result.get('skipped', 0)}")
+            print(
+                f"    total={result.get('total', 0)} embedded={result.get('embedded', 0)} "
+                f"failed={result.get('failed', 0)} skipped={result.get('skipped', 0)}"
+            )
             if "note" in result:
                 print(f"    note: {result['note']}")
             return 0 if result.get("failed", 0) == 0 else 1
@@ -1981,7 +2372,9 @@ def cmd_clean(
         remove_codevira_from_config,
     )
 
-    actions: list[tuple[str, callable]] = []
+    from typing import Callable as _Callable
+
+    actions: list[tuple[str, _Callable[[], object]]] = []
     print()
     print("  Codevira — Clean Setup")
     print("  " + "─" * 40)
@@ -2038,10 +2431,15 @@ def cmd_clean(
             )
             if has_codevira:
                 print(f"    • {ide_name} config (mcpServers.codevira)")
+                _cp: Path = config_path
+
+                def _remove_codevira(p: Path = _cp) -> object:
+                    return remove_codevira_from_config(p)
+
                 actions.append(
                     (
                         f"Removed codevira from {ide_name}",
-                        lambda p=config_path: remove_codevira_from_config(p),
+                        _remove_codevira,
                     )
                 )
 
@@ -2094,7 +2492,9 @@ def cmd_clean(
                 except Exception as e:
                     # P9 graceful: if the canonical path fails, fall back
                     # to raw rm so the user isn't blocked.
-                    logger.warning(
+                    import logging
+
+                    logging.getLogger(__name__).warning(
                         "cmd_hooks_uninstall failed (%s) — falling back to rm", e
                     )
                     for h in codevira_hooks:
@@ -2283,6 +2683,8 @@ def _cmd_clean_ghosts(dry_run: bool = False, yes: bool = False) -> None:
 
     removed = 0
     for e in ghosts:
+        if e.slug is None:
+            continue
         target = projects_root / e.slug
         try:
             shutil.rmtree(target, ignore_errors=True)
@@ -2371,7 +2773,7 @@ def _cmd_clean_orphans(dry_run: bool = False, yes: bool = False) -> None:
         return
 
     print(f"  Found {len(found)} orphan project data dir(s):")
-    for data_dir, op, reason in found:
+    for data_dir, op, reason in found:  # type: ignore[assignment]
         print(f"    • {data_dir}")
         print(f"        original_path: {op}")
         print(f"        reason: {reason}")

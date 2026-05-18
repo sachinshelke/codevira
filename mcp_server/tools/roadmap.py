@@ -13,6 +13,7 @@ Full planning lifecycle:
   add_open_changeset()       → register active changeset in current phase
   remove_open_changeset()    → resolve changeset from current phase
 """
+
 from __future__ import annotations
 
 from datetime import date
@@ -38,7 +39,9 @@ def _phase_number(entry: Any) -> Any:
     return entry
 
 
-def _normalize_phase_entry(entry: Any, default_status: str | None = None) -> dict[str, Any]:
+def _normalize_phase_entry(
+    entry: Any, default_status: str | None = None
+) -> dict[str, Any]:
     normalized = dict(entry) if isinstance(entry, dict) else {}
     phase_number = _phase_number(entry)
 
@@ -64,18 +67,18 @@ def _normalize_current_phase(raw_current: Any, data: dict[str, Any]) -> dict[str
 
     if current_number is None and phases:
         for candidate in phases:
-            if isinstance(candidate, dict) and candidate.get("status") in {"in_progress", "blocked", "pending"}:
+            if isinstance(candidate, dict) and candidate.get("status") in {
+                "in_progress",
+                "blocked",
+                "pending",
+            }:
                 current_number = _phase_number(candidate)
                 break
         if current_number is None:
             current_number = _phase_number(phases[0])
 
-    matched_phase = next(
-        (
-            phase
-            for phase in phases
-            if str(_phase_number(phase)) == str(current_number)
-        ),
+    matched_phase: dict[str, Any] = next(
+        (phase for phase in phases if str(_phase_number(phase)) == str(current_number)),
         {},
     )
     if isinstance(matched_phase, dict):
@@ -128,7 +131,9 @@ def _normalize_roadmap(data: Any) -> dict[str, Any]:
             phase
             for phase in phases
             if str(_phase_number(phase)) != str(current_number)
-            and str(getattr(phase, "get", lambda _k, _d=None: None)("status", "")).lower()
+            and str(
+                getattr(phase, "get", lambda _k, _d=None: None)("status", "")
+            ).lower()
             not in {"done", "complete", "completed"}
         ]
 
@@ -138,7 +143,9 @@ def _normalize_roadmap(data: Any) -> dict[str, Any]:
             phase
             for phase in phases
             if str(_phase_number(phase)) != str(current_number)
-            and str(getattr(phase, "get", lambda _k, _d=None: None)("status", "")).lower()
+            and str(
+                getattr(phase, "get", lambda _k, _d=None: None)("status", "")
+            ).lower()
             in {"done", "complete", "completed"}
         ]
 
@@ -204,12 +211,15 @@ def _create_stub_roadmap() -> dict:
 def _save_roadmap(data: dict) -> None:
     _roadmap_file().parent.mkdir(parents=True, exist_ok=True)
     with open(_roadmap_file(), "w") as f:
-        yaml.dump(data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+        yaml.dump(
+            data, f, default_flow_style=False, sort_keys=False, allow_unicode=True
+        )
 
 
 # ─────────────────────────────────────────────
 # READ TOOLS
 # ─────────────────────────────────────────────
+
 
 def get_roadmap() -> dict[str, Any]:
     """
@@ -290,9 +300,10 @@ def get_full_roadmap(include_decisions: bool = False) -> dict[str, Any]:
             "deferred": len(data.get("deferred", [])),
         },
         "hint": (
-            None if include_decisions
+            None
+            if include_decisions
             else "Completed phases summarized. Call get_phase(number) for full details "
-                 "or get_full_roadmap(include_decisions=True) for all history inline."
+            "or get_full_roadmap(include_decisions=True) for all history inline."
         ),
     }
 
@@ -338,6 +349,7 @@ def get_phase(phase_number: int | str) -> dict[str, Any]:
 # ─────────────────────────────────────────────
 # PLANNING TOOLS
 # ─────────────────────────────────────────────
+
 
 def add_phase(
     phase: int | str,
@@ -436,10 +448,16 @@ def update_phase_status(
     """
     valid = {"pending", "in_progress", "blocked"}
     if status not in valid:
-        return {"success": False, "message": f"Invalid status '{status}'. Must be one of: {sorted(valid)}"}
+        return {
+            "success": False,
+            "message": f"Invalid status '{status}'. Must be one of: {sorted(valid)}",
+        }
 
     if status == "blocked" and not blocker:
-        return {"success": False, "message": "blocker description required when status=blocked"}
+        return {
+            "success": False,
+            "message": "blocker description required when status=blocked",
+        }
 
     data = _load_roadmap()
     current = data.get("current_phase", {})
@@ -525,6 +543,7 @@ def defer_phase(
 # LIFECYCLE TOOLS
 # ─────────────────────────────────────────────
 
+
 def complete_phase(phase_number: int | str, key_decisions: list[str]) -> dict[str, Any]:
     """
     Mark the current phase as complete and advance to the next upcoming phase.
@@ -567,7 +586,9 @@ def complete_phase(phase_number: int | str, key_decisions: list[str]) -> dict[st
             "number": next_phase["phase"],
             "name": next_phase["name"],
             "status": "pending",
-            "next_action": f"Begin {next_phase['name']}: {next_phase.get('description', '')}".strip(": "),
+            "next_action": f"Begin {next_phase['name']}: {next_phase.get('description', '')}".strip(
+                ": "
+            ),
             "open_changesets": [],
             "description": next_phase.get("description", ""),
             "goal": next_phase.get("goal", next_phase.get("description", "")),
@@ -602,5 +623,3 @@ def update_next_action(next_action: str) -> dict[str, Any]:
     data.setdefault("current_phase", {})["next_action"] = next_action
     _save_roadmap(data)
     return {"success": True, "next_action": next_action}
-
-

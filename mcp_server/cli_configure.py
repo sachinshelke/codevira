@@ -156,10 +156,10 @@ def scan_project(project_root: Path, current_config: dict) -> dict:
         dirs_discovered.append({"path": d, "files": 0, "exts": set(), "on_disk": False})
 
     # Deterministic display order: file-count desc, then path asc.
-    dirs_discovered.sort(key=lambda r: (-r["files"], r["path"]))
+    dirs_discovered.sort(key=lambda r: (-int(r["files"]), str(r["path"])))  # type: ignore[call-overload]
 
     exts_discovered = [{"ext": e, "files": ext_files[e]} for e in ext_files]
-    exts_discovered.sort(key=lambda r: (-r["files"], r["ext"]))
+    exts_discovered.sort(key=lambda r: (-int(r["files"]), str(r["ext"])))  # type: ignore[call-overload]
 
     return {
         "dirs_discovered": dirs_discovered,
@@ -199,7 +199,7 @@ def _questionary_multiselect(
     if importlib.util.find_spec("questionary") is None:
         return None
     try:
-        import questionary
+        import questionary  # type: ignore[import-not-found]
 
         choices = [
             questionary.Choice(

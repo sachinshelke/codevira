@@ -31,14 +31,14 @@ The engine philosophy in this file:
     every policy at the dispatcher; the engine returns allow without
     invoking anything. Lets users escape if a buggy policy ships.
 """
+
 from __future__ import annotations
 
 import logging
 import os
 import time
-from typing import Any
 
-from mcp_server.engine.events import EventType, HookEvent
+from mcp_server.engine.events import HookEvent
 from mcp_server.engine.policy import Policy, PolicyVerdict
 from mcp_server.engine.signals import SignalContext
 
@@ -113,9 +113,7 @@ def dispatch(event: HookEvent) -> PolicyVerdict:
         return PolicyVerdict.allow(metadata={"engine_disabled": True})
 
     # 2 + 3: filter by event type, sort by priority
-    eligible = [
-        p for p in _POLICIES if event.event_type in set(p.handles)
-    ]
+    eligible = [p for p in _POLICIES if event.event_type in set(p.handles)]
     eligible.sort(key=lambda p: p.priority, reverse=True)
 
     if not eligible:
@@ -181,7 +179,7 @@ def _safe_evaluate(policy: Policy, event: HookEvent) -> PolicyVerdict:
         # whose evaluate() takes only ``event`` (the demo_policy,
         # for example).
         try:
-            verdict = policy.evaluate(event, signals=signals)
+            verdict = policy.evaluate(event, signals=signals)  # type: ignore[call-arg]
         except TypeError:
             # Policy.evaluate doesn't accept signals kwarg — fall back
             # to the legacy single-arg form. This keeps the demo
@@ -191,7 +189,8 @@ def _safe_evaluate(policy: Policy, event: HookEvent) -> PolicyVerdict:
         if not isinstance(verdict, PolicyVerdict):
             logger.warning(
                 "Policy %s returned non-PolicyVerdict %r; treating as allow",
-                policy.name, type(verdict).__name__,
+                policy.name,
+                type(verdict).__name__,
             )
             return PolicyVerdict.allow(metadata={"_policy_error": "bad_return_type"})
         return verdict
@@ -199,12 +198,18 @@ def _safe_evaluate(policy: Policy, event: HookEvent) -> PolicyVerdict:
         # Log to crash_logger so users can find this in `codevira report`.
         try:
             from mcp_server.crash_logger import log_crash
-            log_crash(e, context=f"engine.dispatch policy={policy.name} event={event.event_type}")
+
+            log_crash(
+                e,
+                context=f"engine.dispatch policy={policy.name} event={event.event_type}",
+            )
         except Exception:  # pragma: no cover — crash_logger itself failing
             pass
         logger.warning(
             "Policy %s raised %s: %s — treating as allow",
-            policy.name, type(e).__name__, e,
+            policy.name,
+            type(e).__name__,
+            e,
         )
         return PolicyVerdict.allow(metadata={"_policy_error": str(e)})
     finally:
@@ -214,7 +219,9 @@ def _safe_evaluate(policy: Policy, event: HookEvent) -> PolicyVerdict:
             # across ALL policies; one policy spending >100ms is suspicious.
             logger.warning(
                 "Slow policy %s: %0.1f ms on %s",
-                policy.name, elapsed, event.event_type,
+                policy.name,
+                elapsed,
+                event.event_type,
             )
 
 

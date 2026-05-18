@@ -4,14 +4,19 @@ prompts.py — MCP workflow prompt templates.
 Five pre-built prompts that give AI agents structured starting points
 for common workflows: review, debug, onboard, pre-commit, and architecture.
 """
+
 from __future__ import annotations
 
-PROMPTS = {
+PROMPTS: dict[str, dict] = {
     "review_changes": {
         "name": "review_changes",
         "description": "Review current changes with risk analysis, test coverage gaps, and learned rules.",
         "arguments": [
-            {"name": "base_ref", "description": "Base git ref to diff against (default: main)", "required": False},
+            {
+                "name": "base_ref",
+                "description": "Base git ref to diff against (default: main)",
+                "required": False,
+            },
         ],
         "template": (
             "Review the current code changes for quality, risks, and missed tests.\n\n"
@@ -31,7 +36,11 @@ PROMPTS = {
         "name": "debug_issue",
         "description": "Debug an issue by tracing code paths, searching past decisions, and checking confidence.",
         "arguments": [
-            {"name": "description", "description": "Description of the issue to debug", "required": True},
+            {
+                "name": "description",
+                "description": "Description of the issue to debug",
+                "required": True,
+            },
         ],
         "template": (
             "Debug the following issue: {description}\n\n"

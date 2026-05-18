@@ -8,6 +8,7 @@ These tools expose the feedback loop to AI agents:
   - get_project_maturity: Overall project intelligence score
   - get_session_context: Single "catch me up" call for cross-tool continuity
 """
+
 from __future__ import annotations
 
 import logging
@@ -21,7 +22,9 @@ def _get_db() -> SQLiteGraph:
     return SQLiteGraph(get_data_dir() / "graph" / "graph.db")
 
 
-def get_decision_confidence(file_path: str | None = None, pattern: str | None = None) -> dict:
+def get_decision_confidence(
+    file_path: str | None = None, pattern: str | None = None
+) -> dict:
     """Get confidence scores for decisions about a file or pattern.
 
     P0-D (rc.5 audit): the underlying outcomes table is only populated for
@@ -66,8 +69,11 @@ def get_decision_confidence(file_path: str | None = None, pattern: str | None = 
 
 
 def _interpret_confidence_with_eligibility(
-    *, confidence_score: float, outcomes_total: int,
-    decisions_total: int, decisions_eligible: int,
+    *,
+    confidence_score: float,
+    outcomes_total: int,
+    decisions_total: int,
+    decisions_eligible: int,
 ) -> str:
     """P0-D (rc.5): rich interpretation that distinguishes empty cases.
 
@@ -111,7 +117,8 @@ def get_preferences(category: str | None = None) -> dict:
             "preferences": prefs,
             "total": len(prefs),
             "hint": "Apply these preferences when writing code to match the developer's style."
-                    if prefs else "No preferences learned yet. They build up over sessions.",
+            if prefs
+            else "No preferences learned yet. They build up over sessions.",
         }
     finally:
         db.close()
@@ -155,8 +162,8 @@ def get_learned_rules(
                 "more reliable. If a rule references a file/directory that no "
                 "longer exists, call retire_rule(rule_id=N, reason='...') so it "
                 "stops firing as a high-confidence signal."
-                if rules else
-                "No rules learned yet. They emerge after multiple sessions."
+                if rules
+                else "No rules learned yet. They emerge after multiple sessions."
             ),
         }
     finally:
@@ -169,6 +176,8 @@ def record_decision(
     context: str | None = None,
     do_not_revert: bool = False,
     session_id: str | None = None,
+    tags: list[str] | None = None,
+    force: bool = False,
 ) -> dict:
     """Record a single decision with optional do_not_revert flag.
 
@@ -176,13 +185,76 @@ def record_decision(
     primitive — the missing piece of Hero 1's positioning. Lighter
     than ``write_session_log`` for ad-hoc captures during a session.
 
-    Returns ``{decision_id, session_id, do_not_revert}``.
+    2026-05-18 v2.1.2 Item 1: triggers a background auto-recalibration
+    of the similarity threshold every ~10 decisions added (cheap; runs
+    in a daemon thread — never blocks the response).
+    2026-05-18 v2.1.2 Item 20: runs :func:`check_conflict` BEFORE write
+    and surfaces ``_conflict_warning`` in the response if the new
+    decision contradicts a protected (do_not_revert=True) decision.
+    Pass ``force=True`` to suppress the warning (e.g. when intentionally
+    superseding a prior decision).
+    2026-05-18 v2.1.2 Item 27: optional ``tags`` list — lowercased,
+    deduped, persisted to ``decision_tags`` table.
+    2026-05-18 v2.1.2 Item 30: surfaces ``_input_coerced_warning`` when
+    ``do_not_revert`` is passed as something other than a Python bool
+    (e.g. the int ``1`` or string ``"true"``).
+
+    Returns ``{decision_id, session_id, do_not_revert, [_conflict_warning],
+    [_input_coerced_warning]}``.
     """
     if not decision or not isinstance(decision, str):
         return {
             "recorded": False,
             "error": "decision must be a non-empty string",
         }
+
+    # 2026-05-18 v2.1.2 Item 30: detect non-bool do_not_revert input.
+    input_coerced_warning = None
+    if not isinstance(do_not_revert, bool):
+        input_coerced_warning = (
+            f"do_not_revert passed as {type(do_not_revert).__name__} "
+            f"({do_not_revert!r}); coerced to {bool(do_not_revert)}"
+        )
+
+    # 2026-05-18 v2.1.2 Item 20: pre-write conflict check.
+    conflict_warning = None
+    if not force:
+        try:
+            from mcp_server.tools.check_conflict import check_conflict
+
+            check = check_conflict(decision_text=decision.strip(), file_path=file_path)
+            conflicts = check.get("conflicts") or []
+            duplicates = check.get("duplicates") or []
+            if conflicts:
+                conflict_warning = {
+                    "kind": "conflict",
+                    "message": (
+                        f"This decision may conflict with {len(conflicts)} "
+                        f"protected (do_not_revert=True) decision(s). Pass "
+                        f"force=True to record anyway, or use "
+                        f"supersede_decision(old_id, new_decision, reason) "
+                        f"to explicitly retire the prior one."
+                    ),
+                    "conflicting_decision_ids": [
+                        c.get("decision_id") for c in conflicts
+                    ],
+                }
+            elif duplicates:
+                conflict_warning = {
+                    "kind": "duplicate",
+                    "message": (
+                        f"This decision looks similar to {len(duplicates)} "
+                        f"existing decision(s). Pass force=True to record "
+                        f"anyway. Existing ids: {[d.get('decision_id') for d in duplicates]}."
+                    ),
+                    "duplicate_decision_ids": [
+                        d.get("decision_id") for d in duplicates
+                    ],
+                }
+        except Exception:
+            # P9: never block a write on the conflict check failing.
+            pass
+
     db = _get_db()
     try:
         result = db.record_decision(
@@ -197,7 +269,11 @@ def record_decision(
         # we still return success. The SQL row is the canonical store;
         # missing embedding only degrades search ranking, not data.
         try:
-            from mcp_server.tools._decision_embeddings import embed_decision
+            from mcp_server.tools._decision_embeddings import (
+                embed_decision,
+                maybe_auto_recalibrate,
+            )
+
             embed_decision(
                 decision_id=result["decision_id"],
                 text=decision.strip(),
@@ -205,10 +281,51 @@ def record_decision(
                 file_path=file_path,
                 context=context,
             )
+            # 2026-05-18 v2.1.2 Item 1: background re-fit every ~10 decisions.
+            try:
+                cur = db.conn.execute("SELECT COUNT(*) AS c FROM decisions")
+                total = int(cur.fetchone()["c"])
+                maybe_auto_recalibrate(total)
+            except Exception:
+                pass
         except Exception:
-            # P1+P9: degrade gracefully. Logged inside embed_decision.
             pass
-        return {
+
+        # 2026-05-18 v2.1.2 Item 27: persist tags if provided.
+        if tags:
+            try:
+                norm_tags = sorted(
+                    {str(t).strip().lower() for t in tags if str(t).strip()}
+                )
+                for t in norm_tags:
+                    db.conn.execute(
+                        "INSERT OR IGNORE INTO decision_tags(decision_id, tag) VALUES (?, ?)",
+                        (result["decision_id"], t),
+                    )
+                db.conn.commit()
+            except Exception:
+                # Tags table may not exist (pre-v2.1.2 schema); auto-migrate.
+                try:
+                    db.conn.execute(
+                        "CREATE TABLE IF NOT EXISTS decision_tags("
+                        "decision_id INTEGER NOT NULL, "
+                        "tag TEXT NOT NULL, "
+                        "PRIMARY KEY(decision_id, tag), "
+                        "FOREIGN KEY(decision_id) REFERENCES decisions(id) ON DELETE CASCADE)"
+                    )
+                    db.conn.execute(
+                        "CREATE INDEX IF NOT EXISTS idx_decision_tags_tag ON decision_tags(tag)"
+                    )
+                    for t in norm_tags:
+                        db.conn.execute(
+                            "INSERT OR IGNORE INTO decision_tags(decision_id, tag) VALUES (?, ?)",
+                            (result["decision_id"], t),
+                        )
+                    db.conn.commit()
+                except Exception:
+                    pass
+
+        response = {
             "recorded": True,
             "decision_id": result["decision_id"],
             "session_id": result["session_id"],
@@ -218,11 +335,20 @@ def record_decision(
                 "calls in this OR other AI tools will surface "
                 "do_not_revert=true. Use mark_decision_protected(decision_id, "
                 "do_not_revert=false) to unprotect later."
-                if do_not_revert else
-                "Decision recorded. Pass do_not_revert=true if it should "
+                if do_not_revert
+                else "Decision recorded. Pass do_not_revert=true if it should "
                 "be locked against future revert."
             ),
         }
+        if input_coerced_warning:
+            response["_input_coerced_warning"] = input_coerced_warning
+        if conflict_warning:
+            response["_conflict_warning"] = conflict_warning
+        if tags:
+            response["tags"] = sorted(
+                {str(t).strip().lower() for t in tags if str(t).strip()}
+            )
+        return response
     finally:
         db.close()
 
@@ -314,16 +440,75 @@ def _truncate(text: str | None, max_chars: int = 120) -> str | None:
     return text[: max_chars - 1] + "…"
 
 
+def _smart_truncate(text: str | None, max_chars: int = 160) -> str | None:
+    """2026-05-18 v2.1.2 Item 6: word-boundary truncation that respects
+    paths.
+
+    Field-test Report 3 §"Truncation mid-word" flagged the existing
+    `_truncate` cutting mid-path: `"test/uni…"` (truncated inside
+    `test/unit/`). For learned rules — which often reference directory
+    paths — that's actively misleading. This variant:
+
+    1. Prefers cutting at the last whitespace boundary before `max_chars`
+       (so words stay whole).
+    2. If the text ends with a path-like segment that would be cut, keeps
+       the FULL last path segment if it fits within `max_chars + 30`
+       slack (so `test/unit/` stays intact at the small cost of a
+       slightly-longer line).
+    3. Falls back to character-truncate with `…` only when neither
+       strategy produces a sensible cut.
+
+    Used by `top_signals.rules` because learned rules embed paths.
+    """
+    if not text:
+        return text
+    if len(text) <= max_chars:
+        return text
+
+    # Strategy 1: word-boundary truncate at the last space ≤ max_chars.
+    cut = text[: max_chars - 1]
+    last_space = cut.rfind(" ")
+    if last_space >= max_chars - 40:  # only honor if reasonably close to limit
+        return text[:last_space] + " …"
+
+    # Strategy 2: if the next path-like segment can fit in the slack zone,
+    # keep it whole. Look ahead 30 chars for a slash-ended segment.
+    slack = text[max_chars - 1 : max_chars + 29]
+    slash_in_slack = slack.find("/")
+    if 0 <= slash_in_slack <= 29:
+        # Keep up to that slash. Length = max_chars-1 + slash_in_slack + 1
+        end = max_chars - 1 + slash_in_slack + 1
+        if end < len(text):
+            return text[:end] + " …"
+        return text  # the whole thing fits in slack — return unchanged
+
+    # Strategy 3: character-truncate fallback (the original behavior).
+    return text[: max_chars - 1] + "…"
+
+
 # v1.8: Focus inference stop-list. A `next_action` composed entirely of these
 # tokens is considered a weak signal (e.g. "continue work", "fix the thing")
 # and is discarded in favour of the chronological fallback.
-_WEAK_FOCUS_TOKENS = frozenset({
-    "continue", "work", "fix", "add", "update", "improve",
-    "todo", "the", "a", "implement", "build",
-})
+_WEAK_FOCUS_TOKENS = frozenset(
+    {
+        "continue",
+        "work",
+        "fix",
+        "add",
+        "update",
+        "improve",
+        "todo",
+        "the",
+        "a",
+        "implement",
+        "build",
+    }
+)
 
 
-def _infer_focus(open_changesets: list[dict], current_phase: dict) -> tuple[str | None, str | None]:
+def _infer_focus(
+    open_changesets: list[dict], current_phase: dict
+) -> tuple[str | None, str | None]:
     """Infer what the agent is currently focused on.
 
     Returns ``(focus, focus_source)``:
@@ -394,6 +579,7 @@ def get_session_context() -> dict:
         current_phase = {}
         try:
             from mcp_server.tools.roadmap import get_roadmap
+
             roadmap = get_roadmap()
             cp = roadmap.get("current_phase", {}) or {}
             current_phase = {
@@ -409,6 +595,7 @@ def get_session_context() -> dict:
         raw_changesets: list[dict] = []
         try:
             from mcp_server.tools.changesets import list_open_changesets
+
             raw_changesets = list_open_changesets().get("open_changesets", []) or []
         except Exception:
             pass
@@ -456,6 +643,7 @@ def get_session_context() -> dict:
         recent_phase_decisions: list[dict] = []
         try:
             from mcp_server.tools.roadmap import _load_roadmap
+
             roadmap_data = _load_roadmap()
             completed = roadmap_data.get("completed_phases", []) or []
             # Latest first
@@ -463,12 +651,14 @@ def get_session_context() -> dict:
                 phase_num = phase.get("number")
                 phase_name = phase.get("name")
                 for decision in (phase.get("key_decisions") or [])[:5]:
-                    recent_phase_decisions.append({
-                        "decision": _truncate(decision, 120),
-                        "phase_number": phase_num,
-                        "phase_name": phase_name,
-                        "source": "phase_completion",
-                    })
+                    recent_phase_decisions.append(
+                        {
+                            "decision": _truncate(decision, 120),
+                            "phase_number": phase_num,
+                            "phase_name": phase_name,
+                            "source": "phase_completion",
+                        }
+                    )
                 if len(recent_phase_decisions) >= 5:
                     break
             recent_phase_decisions = recent_phase_decisions[:5]
@@ -484,6 +674,7 @@ def get_session_context() -> dict:
         try:
             from mcp_server.roadmap_drift import check_drift
             from mcp_server.paths import get_project_root
+
             drift_warning = check_drift(
                 project_root=get_project_root(),
                 current_phase=current_phase,
@@ -513,20 +704,60 @@ def get_session_context() -> dict:
             ],
             "recent_phase_decisions": recent_phase_decisions,
             "focus_source": focus_source,
-            "confidence": {
-                "overall_rate": confidence.get("overall_rate"),
-                "total_decisions": confidence.get("total", 0),
-            },
-            "top_signals": {
-                "preferences": [
-                    {"category": p["category"], "signal": _truncate(p["signal"], 80)}
-                    for p in prefs
-                ],
-                "rules": [
-                    {"rule": _truncate(r["rule_text"], 100), "confidence": round(r["confidence"], 2)}
-                    for r in rules
-                ],
-            },
+            # 2026-05-18 v2.1.2 Item 8: hide empty auto-signal fields on
+            # fresh projects. Field-test Report 3 §"Auto-populated signals
+            # stay empty for early projects" and Report 2 both flagged
+            # confidence=null / preferences=[] as misleading for new
+            # users (looks broken). For projects with no classified
+            # outcomes yet, replace `confidence` with a human-readable
+            # `confidence_note`. For empty `preferences` / `rules`,
+            # OMIT them entirely (cleaner) and surface a single
+            # `top_signals_note` instead.
+            **(
+                {
+                    "confidence": {
+                        "overall_rate": confidence.get("overall_rate"),
+                        "total_decisions": confidence.get("total", 0),
+                    }
+                }
+                if confidence.get("total", 0) > 0
+                else {
+                    "confidence_note": (
+                        "Outcome tracker has not classified any decisions yet. "
+                        "Outcomes accumulate over git commits (kept / modified / "
+                        "reverted) — confidence scores appear once data is "
+                        "available."
+                    )
+                }
+            ),
+            **(
+                {
+                    "top_signals": {
+                        "preferences": [
+                            {
+                                "category": p["category"],
+                                "signal": _truncate(p["signal"], 80),
+                            }
+                            for p in prefs
+                        ],
+                        "rules": [
+                            {
+                                "rule": _smart_truncate(r["rule_text"], 160),
+                                "confidence": round(r["confidence"], 2),
+                            }
+                            for r in rules
+                        ],
+                    }
+                }
+                if (prefs or rules)
+                else {
+                    "top_signals_note": (
+                        "No learned preferences or rules yet — these emerge "
+                        "after several sessions of decisions + outcome tracking. "
+                        "Skip checking these for fresh projects."
+                    )
+                }
+            ),
             "hint": (
                 "Before touching a file: get_node(path) + get_impact(path). "
                 "For past decisions: search_decisions(query). "

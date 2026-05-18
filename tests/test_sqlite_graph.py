@@ -19,14 +19,12 @@ Covers:
   - transaction() context manager
   - Chaos: concurrent R/W, large node count, unicode, disconnected graph
 """
+
 from __future__ import annotations
 
 import json
-import sqlite3
 import threading
-from pathlib import Path
 
-import pytest
 
 from indexer.sqlite_graph import SQLiteGraph
 
@@ -34,6 +32,7 @@ from indexer.sqlite_graph import SQLiteGraph
 # ===========================================================================
 # Edge Management Tests
 # ===========================================================================
+
 
 class TestEdgeManagement:
     def test_add_edge(self, project_env):
@@ -109,12 +108,22 @@ class TestEdgeManagement:
 # Outcome Tracking Tests
 # ===========================================================================
 
+
 class TestOutcomeTracking:
     def test_record_and_retrieve_outcome(self, project_env):
         _, _, db = project_env
-        db.log_session("sess-001", "Test session", "1", [
-            {"file_path": "src/api.py", "decision": "Use REST endpoints", "context": "API design"}
-        ])
+        db.log_session(
+            "sess-001",
+            "Test session",
+            "1",
+            [
+                {
+                    "file_path": "src/api.py",
+                    "decision": "Use REST endpoints",
+                    "context": "API design",
+                }
+            ],
+        )
         db.record_outcome("sess-001", "src/api.py", "kept", decision_id=1)
         outcomes = db.get_outcomes_for_file("src/api.py")
         assert len(outcomes) == 1
@@ -122,14 +131,22 @@ class TestOutcomeTracking:
 
     def test_multiple_outcomes_for_file(self, project_env):
         _, _, db = project_env
-        db.log_session("sess-001", "Session 1", "1", [
-            {"file_path": "src/api.py", "decision": "Decision 1", "context": "ctx"}
-        ])
-        db.log_session("sess-002", "Session 2", "1", [
-            {"file_path": "src/api.py", "decision": "Decision 2", "context": "ctx"}
-        ])
+        db.log_session(
+            "sess-001",
+            "Session 1",
+            "1",
+            [{"file_path": "src/api.py", "decision": "Decision 1", "context": "ctx"}],
+        )
+        db.log_session(
+            "sess-002",
+            "Session 2",
+            "1",
+            [{"file_path": "src/api.py", "decision": "Decision 2", "context": "ctx"}],
+        )
         db.record_outcome("sess-001", "src/api.py", "kept")
-        db.record_outcome("sess-002", "src/api.py", "modified", delta_summary="Changed naming")
+        db.record_outcome(
+            "sess-002", "src/api.py", "modified", delta_summary="Changed naming"
+        )
 
         outcomes = db.get_outcomes_for_file("src/api.py")
         assert len(outcomes) == 2
@@ -138,6 +155,7 @@ class TestOutcomeTracking:
 # ===========================================================================
 # Confidence Scoring Tests
 # ===========================================================================
+
 
 class TestConfidenceScoring:
     def test_empty_confidence(self, project_env):
@@ -148,7 +166,9 @@ class TestConfidenceScoring:
 
     def test_all_kept_confidence(self, project_env):
         _, _, db = project_env
-        db.log_session("s1", "S1", "1", [{"file_path": "a.py", "decision": "d1", "context": "c"}])
+        db.log_session(
+            "s1", "S1", "1", [{"file_path": "a.py", "decision": "d1", "context": "c"}]
+        )
         db.record_outcome("s1", "a.py", "kept")
         db.record_outcome("s1", "a.py", "kept")
         db.record_outcome("s1", "a.py", "kept")
@@ -159,10 +179,12 @@ class TestConfidenceScoring:
 
     def test_mixed_confidence(self, project_env):
         _, _, db = project_env
-        db.log_session("s1", "S1", "1", [{"file_path": "a.py", "decision": "d1", "context": "c"}])
-        db.record_outcome("s1", "a.py", "kept")      # +1.0
-        db.record_outcome("s1", "a.py", "modified")   # +0.5
-        db.record_outcome("s1", "a.py", "reverted")   # +0.0
+        db.log_session(
+            "s1", "S1", "1", [{"file_path": "a.py", "decision": "d1", "context": "c"}]
+        )
+        db.record_outcome("s1", "a.py", "kept")  # +1.0
+        db.record_outcome("s1", "a.py", "modified")  # +0.5
+        db.record_outcome("s1", "a.py", "reverted")  # +0.0
 
         confidence = db.get_decision_confidence(file_path="a.py")
         assert confidence["confidence"] == 0.5
@@ -170,7 +192,12 @@ class TestConfidenceScoring:
     def test_confidence_with_pattern(self, project_env):
         """Test confidence filtered by file path pattern."""
         _, _, db = project_env
-        db.log_session("s1", "S1", "1", [{"file_path": "src/api.py", "decision": "d1", "context": "c"}])
+        db.log_session(
+            "s1",
+            "S1",
+            "1",
+            [{"file_path": "src/api.py", "decision": "d1", "context": "c"}],
+        )
         db.record_outcome("s1", "src/api.py", "kept")
         db.record_outcome("s1", "src/api.py", "kept")
 
@@ -182,6 +209,7 @@ class TestConfidenceScoring:
 # ===========================================================================
 # Developer Preferences Tests
 # ===========================================================================
+
 
 class TestPreferences:
     def test_record_and_retrieve_preference(self, project_env):
@@ -223,6 +251,7 @@ class TestPreferences:
 # ===========================================================================
 # Learned Rules Tests
 # ===========================================================================
+
 
 class TestLearnedRules:
     def test_add_and_retrieve_rule(self, project_env):
@@ -277,6 +306,7 @@ class TestLearnedRules:
 # Project Maturity Tests
 # ===========================================================================
 
+
 class TestProjectMaturity:
     def test_empty_project_maturity(self, project_env):
         _, _, db = project_env
@@ -289,9 +319,12 @@ class TestProjectMaturity:
         _, _, db = project_env
         db.add_node("file:a.py", "file", "a.py", "a.py")
         db.add_node("file:b.py", "file", "b.py", "b.py")
-        db.log_session("s1", "Session 1", "1", [
-            {"file_path": "a.py", "decision": "d1", "context": "c"}
-        ])
+        db.log_session(
+            "s1",
+            "Session 1",
+            "1",
+            [{"file_path": "a.py", "decision": "d1", "context": "c"}],
+        )
 
         maturity = db.get_project_maturity()
         assert maturity["session_count"] == 1
@@ -314,6 +347,7 @@ class TestProjectMaturity:
 # ===========================================================================
 # Graph Visualization Tests
 # ===========================================================================
+
 
 class TestGraphVisualization:
     def test_export_mermaid(self, project_env):
@@ -350,6 +384,7 @@ class TestGraphVisualization:
 # Session Helpers Tests
 # ===========================================================================
 
+
 class TestSessionHelpers:
     def test_get_recent_sessions(self, project_env):
         _, _, db = project_env
@@ -361,34 +396,69 @@ class TestSessionHelpers:
 
     def test_get_recent_decisions(self, project_env):
         _, _, db = project_env
-        db.log_session("s1", "Test", "1", [
-            {"file_path": "a.py", "decision": "Decision A", "context": "ctx"},
-            {"file_path": "b.py", "decision": "Decision B", "context": "ctx"},
-        ])
+        db.log_session(
+            "s1",
+            "Test",
+            "1",
+            [
+                {"file_path": "a.py", "decision": "Decision A", "context": "ctx"},
+                {"file_path": "b.py", "decision": "Decision B", "context": "ctx"},
+            ],
+        )
 
         decisions = db.get_recent_decisions(limit=5)
         assert len(decisions) == 2
 
-    def test_log_session_replaces_on_duplicate(self, project_env):
-        """Logging same session_id twice replaces the session row."""
+    def test_log_session_idempotent_on_same_content(self, project_env):
+        """v2.1.2 Item 22: same session_id + same summary → idempotent
+        replace (returns the same id, single row, latest phase wins).
+        Used by replay/retry callers that re-write the same session.
+        """
         _, _, db = project_env
-        db.log_session("s1", "First summary", "1", [])
-        db.log_session("s1", "Updated summary", "2", [])
+        id1 = db.log_session("s1", "Same summary", "1", [])
+        id2 = db.log_session("s1", "Same summary", "2", [])
 
+        assert id1 == "s1" == id2
         sessions = db.get_recent_sessions()
         assert len(sessions) == 1
-        assert sessions[0]["summary"] == "Updated summary"
+        assert sessions[0]["summary"] == "Same summary"
+
+    def test_log_session_auto_suffixes_on_different_content(self, project_env):
+        """v2.1.2 Item 22: same session_id + DIFFERENT summary → auto-
+        suffix with a short hash so the two sessions don't silently
+        merge. Returns the actual (suffixed) id.
+        """
+        _, _, db = project_env
+        id1 = db.log_session("s1", "First summary", "1", [])
+        id2 = db.log_session("s1", "Different summary", "2", [])
+
+        assert id1 == "s1"
+        assert id2.startswith("s1-")
+        assert id2 != "s1"
+        sessions = db.get_recent_sessions()
+        # Both sessions kept — collision did NOT silently overwrite.
+        assert len(sessions) == 2
+        summaries = sorted(s["summary"] for s in sessions)
+        assert summaries == ["Different summary", "First summary"]
 
 
 # ===========================================================================
 # get_node / update_node / list_file_nodes
 # ===========================================================================
 
+
 class TestNodeOperations:
     def test_get_node_existing(self, project_env):
         _, _, db = project_env
-        db.add_node("file:src/main.py", "file", "main.py", "src/main.py",
-                     role="entry point", layer="core", stability="high")
+        db.add_node(
+            "file:src/main.py",
+            "file",
+            "main.py",
+            "src/main.py",
+            role="entry point",
+            layer="core",
+            stability="high",
+        )
         node = db.get_node("file:src/main.py")
         assert node is not None
         assert node["name"] == "main.py"
@@ -412,12 +482,14 @@ class TestNodeOperations:
         _, _, db = project_env
         db.add_node("file:src/api.py", "file", "api.py", "src/api.py")
 
-        db.update_node_metadata("file:src/api.py",
-                                role="REST API handler",
-                                layer="api",
-                                stability="high",
-                                rules='["always validate input"]',
-                                key_functions='["get_user", "create_order"]')
+        db.update_node_metadata(
+            "file:src/api.py",
+            role="REST API handler",
+            layer="api",
+            stability="high",
+            rules='["always validate input"]',
+            key_functions='["get_user", "create_order"]',
+        )
 
         node = db.get_node("file:src/api.py")
         assert node["role"] == "REST API handler"
@@ -488,6 +560,7 @@ class TestNodeOperations:
 # File hash tracking
 # ===========================================================================
 
+
 class TestFileHashTracking:
     def test_get_file_hash_none_for_new_file(self, project_env):
         _, _, db = project_env
@@ -512,50 +585,123 @@ class TestFileHashTracking:
 # search_decisions
 # ===========================================================================
 
+
 class TestSearchDecisions:
     def test_search_finds_by_decision_text(self, project_env):
         _, _, db = project_env
-        db.log_session("s1", "API setup", "1", [
-            {"file_path": "api.py", "decision": "Use REST endpoints", "context": "Design"},
-        ])
+        db.log_session(
+            "s1",
+            "API setup",
+            "1",
+            [
+                {
+                    "file_path": "api.py",
+                    "decision": "Use REST endpoints",
+                    "context": "Design",
+                },
+            ],
+        )
         results = db.search_decisions("REST")
         assert len(results) >= 1
         assert any("REST" in r["decision"] for r in results)
 
+    def test_search_decisions_returns_do_not_revert_as_bool(self, project_env):
+        """2026-05-18 v2.1.2 Item 5: do_not_revert must be Python bool
+        (True/False), not SQLite int (1/0). Field-test Report 3 §"Storage
+        leak" flagged the type inconsistency — schema says boolean, API
+        returned 1. Coercion happens at the storage-layer read boundary."""
+        _, _, db = project_env
+        protected = db.record_decision(
+            decision="Protected decision",
+            do_not_revert=True,
+            session_id="prot-sess",
+        )
+        unprotected = db.record_decision(
+            decision="Unprotected decision",
+            do_not_revert=False,
+            session_id="unprot-sess",
+        )
+        results = db.search_decisions("decision")
+        by_id = {r["id"]: r for r in results}
+        # Both rows must have do_not_revert as bool (not int).
+        for did in (protected["decision_id"], unprotected["decision_id"]):
+            row = by_id.get(did)
+            assert row is not None, f"decision {did} missing from results"
+            assert isinstance(row["do_not_revert"], bool), (
+                f"Bug regression: do_not_revert is {type(row['do_not_revert']).__name__}, "
+                f"expected bool. Value: {row['do_not_revert']!r}"
+            )
+        # And the values are semantically correct.
+        assert by_id[protected["decision_id"]]["do_not_revert"] is True
+        assert by_id[unprotected["decision_id"]]["do_not_revert"] is False
+
     def test_search_finds_by_context(self, project_env):
         _, _, db = project_env
-        db.log_session("s1", "DB layer", "2", [
-            {"file_path": "db.py", "decision": "Use SQLite", "context": "Performance optimization"},
-        ])
+        db.log_session(
+            "s1",
+            "DB layer",
+            "2",
+            [
+                {
+                    "file_path": "db.py",
+                    "decision": "Use SQLite",
+                    "context": "Performance optimization",
+                },
+            ],
+        )
         results = db.search_decisions("Performance")
         assert len(results) >= 1
 
     def test_search_finds_by_summary(self, project_env):
         _, _, db = project_env
-        db.log_session("s1", "Refactored authentication module", "3", [
-            {"file_path": "auth.py", "decision": "Use JWT", "context": "Security"},
-        ])
+        db.log_session(
+            "s1",
+            "Refactored authentication module",
+            "3",
+            [
+                {"file_path": "auth.py", "decision": "Use JWT", "context": "Security"},
+            ],
+        )
         results = db.search_decisions("authentication")
         assert len(results) >= 1
 
     def test_search_with_session_id_filter(self, project_env):
         _, _, db = project_env
-        db.log_session("s1", "Session 1", "1", [
-            {"file_path": "a.py", "decision": "Decision A", "context": "ctx"},
-        ])
-        db.log_session("s2", "Session 2", "2", [
-            {"file_path": "b.py", "decision": "Decision B about A topic", "context": "ctx"},
-        ])
+        db.log_session(
+            "s1",
+            "Session 1",
+            "1",
+            [
+                {"file_path": "a.py", "decision": "Decision A", "context": "ctx"},
+            ],
+        )
+        db.log_session(
+            "s2",
+            "Session 2",
+            "2",
+            [
+                {
+                    "file_path": "b.py",
+                    "decision": "Decision B about A topic",
+                    "context": "ctx",
+                },
+            ],
+        )
 
         results = db.search_decisions("Decision", session_id="s1")
         assert all(r.get("phase") == "1" for r in results)  # from session s1
 
     def test_search_with_limit(self, project_env):
         _, _, db = project_env
-        db.log_session("s1", "Lots", "1", [
-            {"file_path": f"f{i}.py", "decision": f"Decision {i}", "context": "ctx"}
-            for i in range(20)
-        ])
+        db.log_session(
+            "s1",
+            "Lots",
+            "1",
+            [
+                {"file_path": f"f{i}.py", "decision": f"Decision {i}", "context": "ctx"}
+                for i in range(20)
+            ],
+        )
         results = db.search_decisions("Decision", limit=5)
         assert len(results) == 5
 
@@ -568,6 +714,7 @@ class TestSearchDecisions:
 # ===========================================================================
 # transaction() context manager
 # ===========================================================================
+
 
 class TestTransactionContextManager:
     def test_transaction_commits_on_success(self, project_env):
@@ -601,6 +748,7 @@ class TestTransactionContextManager:
 # Edge Case Tests (ported)
 # ===========================================================================
 
+
 class TestEdgeCases:
     def test_add_edge_idempotent(self, project_env):
         """Adding the same edge twice should not crash (INSERT OR REPLACE)."""
@@ -619,7 +767,9 @@ class TestEdgeCases:
     def test_confidence_with_only_reverts(self, project_env):
         """All reverted outcomes should yield 0.0 confidence."""
         _, _, db = project_env
-        db.log_session("s1", "S1", "1", [{"file_path": "a.py", "decision": "d1", "context": "c"}])
+        db.log_session(
+            "s1", "S1", "1", [{"file_path": "a.py", "decision": "d1", "context": "c"}]
+        )
         db.record_outcome("s1", "a.py", "reverted")
         db.record_outcome("s1", "a.py", "reverted")
         confidence = db.get_decision_confidence(file_path="a.py")
@@ -650,7 +800,9 @@ class TestEdgeCases:
     def test_learned_rule_empty_file_pattern(self, project_env):
         """Rules with no file_pattern should still be retrievable."""
         _, _, db = project_env
-        db.add_learned_rule("General rule", 0.7, [], category="patterns", file_pattern=None)
+        db.add_learned_rule(
+            "General rule", 0.7, [], category="patterns", file_pattern=None
+        )
         rules = db.get_learned_rules(category="patterns")
         assert len(rules) == 1
 
@@ -659,14 +811,20 @@ class TestEdgeCases:
 # Symbol & Call Graph Tests
 # ===========================================================================
 
+
 class TestSymbolsAndCallGraph:
     def test_add_and_get_symbol(self, project_env):
         _, _, db = project_env
         db.add_node("file:src/api.py", "file", "api.py", "src/api.py")
         db.add_symbol(
-            "file:src/api.py::get_user", "file:src/api.py", "get_user", "function",
+            "file:src/api.py::get_user",
+            "file:src/api.py",
+            "get_user",
+            "function",
             signature="def get_user(user_id: int) -> dict",
-            start_line=10, end_line=25, is_public=True,
+            start_line=10,
+            end_line=25,
+            is_public=True,
         )
         symbols = db.get_symbols_for_file("file:src/api.py")
         assert len(symbols) == 1
@@ -728,10 +886,17 @@ class TestSymbolsAndCallGraph:
     def test_find_hotspot_functions(self, project_env):
         _, _, db = project_env
         db.add_node("file:a.py", "file", "a.py", "a.py")
-        db.add_symbol("file:a.py::big", "file:a.py", "big", "function",
-                       start_line=1, end_line=100)
-        db.add_symbol("file:a.py::small", "file:a.py", "small", "function",
-                       start_line=1, end_line=10)
+        db.add_symbol(
+            "file:a.py::big", "file:a.py", "big", "function", start_line=1, end_line=100
+        )
+        db.add_symbol(
+            "file:a.py::small",
+            "file:a.py",
+            "small",
+            "function",
+            start_line=1,
+            end_line=10,
+        )
 
         hotspots = db.find_hotspot_functions(min_lines=50)
         assert len(hotspots) == 1
@@ -742,8 +907,8 @@ class TestSymbolsAndCallGraph:
 # Chaos Tests
 # ===========================================================================
 
-class TestChaos:
 
+class TestChaos:
     def test_concurrent_reads_and_writes(self, project_env):
         """Sequential rapid reads and writes should not corrupt DB.
 
@@ -754,12 +919,24 @@ class TestChaos:
         _, _, db = project_env
 
         for idx in range(20):
-            db.add_node(f"file:concurrent_{idx}.py", "file",
-                        f"concurrent_{idx}.py", f"concurrent_{idx}.py")
-            db.log_session(f"s-{idx}", f"Session {idx}", "1", [
-                {"file_path": f"concurrent_{idx}.py",
-                 "decision": f"Decision {idx}", "context": "test"}
-            ])
+            db.add_node(
+                f"file:concurrent_{idx}.py",
+                "file",
+                f"concurrent_{idx}.py",
+                f"concurrent_{idx}.py",
+            )
+            db.log_session(
+                f"s-{idx}",
+                f"Session {idx}",
+                "1",
+                [
+                    {
+                        "file_path": f"concurrent_{idx}.py",
+                        "decision": f"Decision {idx}",
+                        "context": "test",
+                    }
+                ],
+            )
             # Interleave reads
             db.get_recent_sessions()
             db.list_file_nodes()
@@ -774,9 +951,14 @@ class TestChaos:
         """Adding 100+ nodes should work without issues."""
         _, _, db = project_env
         for i in range(150):
-            db.add_node(f"file:bulk_{i:03d}.py", "file",
-                        f"bulk_{i:03d}.py", f"bulk_{i:03d}.py",
-                        layer="bulk", stability="medium")
+            db.add_node(
+                f"file:bulk_{i:03d}.py",
+                "file",
+                f"bulk_{i:03d}.py",
+                f"bulk_{i:03d}.py",
+                layer="bulk",
+                stability="medium",
+            )
 
         nodes = db.list_file_nodes()
         assert len(nodes) == 150
@@ -784,20 +966,32 @@ class TestChaos:
     def test_unicode_in_node_names_and_decisions(self, project_env):
         """Unicode characters in names, decisions, and rules should work."""
         _, _, db = project_env
-        db.add_node("file:caf\u00e9.py", "file", "caf\u00e9.py", "caf\u00e9.py",
-                     role="\u65e5\u672c\u8a9e\u306e\u5f79\u5272",
-                     rules='["\u4f7f\u7528\u898f\u5247"]')
+        db.add_node(
+            "file:caf\u00e9.py",
+            "file",
+            "caf\u00e9.py",
+            "caf\u00e9.py",
+            role="\u65e5\u672c\u8a9e\u306e\u5f79\u5272",
+            rules='["\u4f7f\u7528\u898f\u5247"]',
+        )
 
         node = db.get_node("file:caf\u00e9.py")
         assert node is not None
         assert node["name"] == "caf\u00e9.py"
         assert "\u65e5\u672c\u8a9e" in node["role"]
 
-        db.log_session("s-unicode", "\u00dcbersicht der Sitzung", "1", [
-            {"file_path": "caf\u00e9.py",
-             "decision": "Verwende Uml\u00e4ute: \u00e4\u00f6\u00fc\u00df",
-             "context": "\u4e2d\u6587\u4e0a\u4e0b\u6587"}
-        ])
+        db.log_session(
+            "s-unicode",
+            "\u00dcbersicht der Sitzung",
+            "1",
+            [
+                {
+                    "file_path": "caf\u00e9.py",
+                    "decision": "Verwende Uml\u00e4ute: \u00e4\u00f6\u00fc\u00df",
+                    "context": "\u4e2d\u6587\u4e0a\u4e0b\u6587",
+                }
+            ],
+        )
         results = db.search_decisions("Uml\u00e4ute")
         assert len(results) >= 1
 
@@ -850,9 +1044,12 @@ class TestChaos:
         """Very long decision text should not cause issues."""
         _, _, db = project_env
         long_text = "x" * 50_000
-        db.log_session("s-long", "Long session", "1", [
-            {"file_path": "f.py", "decision": long_text, "context": "test"}
-        ])
+        db.log_session(
+            "s-long",
+            "Long session",
+            "1",
+            [{"file_path": "f.py", "decision": long_text, "context": "test"}],
+        )
         results = db.search_decisions("xxx", limit=1)
         assert len(results) >= 1
 
@@ -893,19 +1090,42 @@ class TestSearchDecisionsRanking:
         _, _, db = project_env
 
         # Oldest = file_path match — should still win despite being oldest.
-        db.log_session("s-old", "summary one", "1", [
-            {"file_path": "src/auth.py", "decision": "Refactor login flow",
-             "context": "misc"},
-        ])
-        db.log_session("s-mid", "summary two", "1", [
-            {"file_path": "src/user.py",
-             "decision": "Improve validation in auth module",
-             "context": "misc"},
-        ])
-        db.log_session("s-new", "summary three", "1", [
-            {"file_path": "src/db.py",
-             "decision": "Refactor DB pool", "context": "auth stuff here"},
-        ])
+        db.log_session(
+            "s-old",
+            "summary one",
+            "1",
+            [
+                {
+                    "file_path": "src/auth.py",
+                    "decision": "Refactor login flow",
+                    "context": "misc",
+                },
+            ],
+        )
+        db.log_session(
+            "s-mid",
+            "summary two",
+            "1",
+            [
+                {
+                    "file_path": "src/user.py",
+                    "decision": "Improve validation in auth module",
+                    "context": "misc",
+                },
+            ],
+        )
+        db.log_session(
+            "s-new",
+            "summary three",
+            "1",
+            [
+                {
+                    "file_path": "src/db.py",
+                    "decision": "Refactor DB pool",
+                    "context": "auth stuff here",
+                },
+            ],
+        )
 
         results = db.search_decisions("auth", limit=10)
         # First hit must be the file_path match.
@@ -917,15 +1137,31 @@ class TestSearchDecisionsRanking:
         _, _, db = project_env
 
         # Older session: decision text matches "cache"
-        db.log_session("s-old", "summary", "1", [
-            {"file_path": "a.py", "decision": "Add cache layer here",
-             "context": "unrelated"},
-        ])
+        db.log_session(
+            "s-old",
+            "summary",
+            "1",
+            [
+                {
+                    "file_path": "a.py",
+                    "decision": "Add cache layer here",
+                    "context": "unrelated",
+                },
+            ],
+        )
         # Newer session: only context matches "cache"
-        db.log_session("s-new", "summary", "1", [
-            {"file_path": "b.py", "decision": "Unrelated change",
-             "context": "something about cache"},
-        ])
+        db.log_session(
+            "s-new",
+            "summary",
+            "1",
+            [
+                {
+                    "file_path": "b.py",
+                    "decision": "Unrelated change",
+                    "context": "something about cache",
+                },
+            ],
+        )
 
         results = db.search_decisions("cache", limit=10)
         assert results[0]["decision"] == "Add cache layer here"
@@ -936,14 +1172,30 @@ class TestSearchDecisionsRanking:
         # Both match by decision text (tier 1). Force distinct created_at
         # (SQLite CURRENT_TIMESTAMP resolution is 1s — same-second inserts
         # would tie-break unpredictably).
-        db.log_session("s1", "summary", "1", [
-            {"file_path": "a.py", "decision": "Refactor old flow",
-             "context": "ctx"},
-        ])
-        db.log_session("s2", "summary", "1", [
-            {"file_path": "b.py", "decision": "Refactor new flow",
-             "context": "ctx"},
-        ])
+        db.log_session(
+            "s1",
+            "summary",
+            "1",
+            [
+                {
+                    "file_path": "a.py",
+                    "decision": "Refactor old flow",
+                    "context": "ctx",
+                },
+            ],
+        )
+        db.log_session(
+            "s2",
+            "summary",
+            "1",
+            [
+                {
+                    "file_path": "b.py",
+                    "decision": "Refactor new flow",
+                    "context": "ctx",
+                },
+            ],
+        )
         db.conn.execute(
             "UPDATE decisions SET created_at='2026-01-01 10:00:00' "
             "WHERE decision='Refactor old flow'"
@@ -961,10 +1213,18 @@ class TestSearchDecisionsRanking:
     def test_ranking_null_file_path_still_returned(self, project_env):
         """A decision with NULL file_path is still findable via decision text."""
         _, _, db = project_env
-        db.log_session("s1", "summary", "1", [
-            {"file_path": None, "decision": "Free-floating note about caching",
-             "context": None},
-        ])
+        db.log_session(
+            "s1",
+            "summary",
+            "1",
+            [
+                {
+                    "file_path": None,
+                    "decision": "Free-floating note about caching",
+                    "context": None,
+                },
+            ],
+        )
         results = db.search_decisions("caching", limit=10)
         assert len(results) == 1
         assert results[0]["file_path"] is None
@@ -972,11 +1232,18 @@ class TestSearchDecisionsRanking:
     def test_ranking_file_path_in_where_clause(self, project_env):
         """File_path matches are findable even when decision text doesn't mention the query."""
         _, _, db = project_env
-        db.log_session("s1", "summary", "1", [
-            {"file_path": "src/payments/stripe_gateway.py",
-             "decision": "Minor cleanup",
-             "context": "Trivial edit"},
-        ])
+        db.log_session(
+            "s1",
+            "summary",
+            "1",
+            [
+                {
+                    "file_path": "src/payments/stripe_gateway.py",
+                    "decision": "Minor cleanup",
+                    "context": "Trivial edit",
+                },
+            ],
+        )
         # Query only matches file_path
         results = db.search_decisions("stripe_gateway", limit=10)
         assert len(results) == 1
@@ -985,12 +1252,22 @@ class TestSearchDecisionsRanking:
     def test_ranking_session_id_filter_still_applies(self, project_env):
         """session_id filter must still work with the new ranking SQL."""
         _, _, db = project_env
-        db.log_session("s-keep", "summary", "1", [
-            {"file_path": "a.py", "decision": "keep me cache", "context": "x"},
-        ])
-        db.log_session("s-other", "summary", "1", [
-            {"file_path": "b.py", "decision": "exclude cache", "context": "y"},
-        ])
+        db.log_session(
+            "s-keep",
+            "summary",
+            "1",
+            [
+                {"file_path": "a.py", "decision": "keep me cache", "context": "x"},
+            ],
+        )
+        db.log_session(
+            "s-other",
+            "summary",
+            "1",
+            [
+                {"file_path": "b.py", "decision": "exclude cache", "context": "y"},
+            ],
+        )
         results = db.search_decisions("cache", limit=10, session_id="s-keep")
         assert len(results) == 1
         assert results[0]["decision"] == "keep me cache"
@@ -1005,18 +1282,29 @@ class TestIsDuplicateHelper:
     """Unit tests for the pure _is_duplicate() token-overlap function."""
 
     def test_exact_duplicate(self):
-        assert _is_duplicate("add validation layer here",
-                             ["add validation layer here"]) is True
+        assert (
+            _is_duplicate("add validation layer here", ["add validation layer here"])
+            is True
+        )
 
     def test_high_overlap_above_threshold(self):
         # 4 shared / 5 max = 0.8 → triggers at threshold 0.8
-        assert _is_duplicate("add validation layer for inputs",
-                             ["add validation layer for forms"]) is True
+        assert (
+            _is_duplicate(
+                "add validation layer for inputs", ["add validation layer for forms"]
+            )
+            is True
+        )
 
     def test_low_overlap_below_threshold(self):
         # Very little overlap
-        assert _is_duplicate("rewrite the auth middleware pipeline",
-                             ["add tests for the user module"]) is False
+        assert (
+            _is_duplicate(
+                "rewrite the auth middleware pipeline",
+                ["add tests for the user module"],
+            )
+            is False
+        )
 
     def test_empty_existing_list(self):
         assert _is_duplicate("any decision text here", []) is False
@@ -1027,7 +1315,9 @@ class TestIsDuplicateHelper:
 
     def test_empty_existing_decision_skipped(self):
         # One empty string in existing list must be skipped, not crash
-        assert _is_duplicate("fix the auth bug properly", ["", "irrelevant here"]) is False
+        assert (
+            _is_duplicate("fix the auth bug properly", ["", "irrelevant here"]) is False
+        )
 
     def test_threshold_boundary(self):
         # Tunable threshold: lowering should accept more as duplicate
@@ -1040,9 +1330,13 @@ class TestDedupInLogSession:
 
     def test_dedup_exact_duplicate_skipped(self, project_env):
         _, _, db = project_env
-        payload = [{"file_path": "src/auth.py",
-                    "decision": "Switch to PBKDF2 password hashing",
-                    "context": "security"}]
+        payload = [
+            {
+                "file_path": "src/auth.py",
+                "decision": "Switch to PBKDF2 password hashing",
+                "context": "security",
+            }
+        ]
         db.log_session("s1", "first", "1", payload)
         db.log_session("s2", "second", "1", payload)
         rows = db.conn.execute(
@@ -1052,16 +1346,30 @@ class TestDedupInLogSession:
 
     def test_dedup_high_overlap_skipped(self, project_env):
         _, _, db = project_env
-        db.log_session("s1", "first", "1", [{
-            "file_path": "src/x.py",
-            "decision": "add validation layer for inputs",
-            "context": "",
-        }])
-        db.log_session("s2", "second", "1", [{
-            "file_path": "src/x.py",
-            "decision": "add validation layer for forms",
-            "context": "",
-        }])
+        db.log_session(
+            "s1",
+            "first",
+            "1",
+            [
+                {
+                    "file_path": "src/x.py",
+                    "decision": "add validation layer for inputs",
+                    "context": "",
+                }
+            ],
+        )
+        db.log_session(
+            "s2",
+            "second",
+            "1",
+            [
+                {
+                    "file_path": "src/x.py",
+                    "decision": "add validation layer for forms",
+                    "context": "",
+                }
+            ],
+        )
         rows = db.conn.execute(
             "SELECT COUNT(*) AS c FROM decisions WHERE file_path='src/x.py'"
         ).fetchone()
@@ -1069,16 +1377,30 @@ class TestDedupInLogSession:
 
     def test_dedup_low_overlap_kept(self, project_env):
         _, _, db = project_env
-        db.log_session("s1", "first", "1", [{
-            "file_path": "src/x.py",
-            "decision": "rewrite the authentication middleware pipeline",
-            "context": "",
-        }])
-        db.log_session("s2", "second", "1", [{
-            "file_path": "src/x.py",
-            "decision": "drop unused imports and format file",
-            "context": "",
-        }])
+        db.log_session(
+            "s1",
+            "first",
+            "1",
+            [
+                {
+                    "file_path": "src/x.py",
+                    "decision": "rewrite the authentication middleware pipeline",
+                    "context": "",
+                }
+            ],
+        )
+        db.log_session(
+            "s2",
+            "second",
+            "1",
+            [
+                {
+                    "file_path": "src/x.py",
+                    "decision": "drop unused imports and format file",
+                    "context": "",
+                }
+            ],
+        )
         rows = db.conn.execute(
             "SELECT COUNT(*) AS c FROM decisions WHERE file_path='src/x.py'"
         ).fetchone()
@@ -1088,21 +1410,35 @@ class TestDedupInLogSession:
         """Same decision text, different file_path → both kept."""
         _, _, db = project_env
         text = "Switch to PBKDF2 password hashing"
-        db.log_session("s1", "first", "1", [
-            {"file_path": "src/auth.py", "decision": text, "context": "x"},
-        ])
-        db.log_session("s2", "second", "1", [
-            {"file_path": "src/user.py", "decision": text, "context": "x"},
-        ])
+        db.log_session(
+            "s1",
+            "first",
+            "1",
+            [
+                {"file_path": "src/auth.py", "decision": text, "context": "x"},
+            ],
+        )
+        db.log_session(
+            "s2",
+            "second",
+            "1",
+            [
+                {"file_path": "src/user.py", "decision": text, "context": "x"},
+            ],
+        )
         rows = db.conn.execute("SELECT COUNT(*) AS c FROM decisions").fetchone()
         assert rows["c"] == 2
 
     def test_dedup_no_file_path_never_deduped(self, project_env):
         """Decisions without file_path are always inserted."""
         _, _, db = project_env
-        payload = [{"file_path": None,
-                    "decision": "Generic note about refactoring everything",
-                    "context": "none"}]
+        payload = [
+            {
+                "file_path": None,
+                "decision": "Generic note about refactoring everything",
+                "context": "none",
+            }
+        ]
         db.log_session("s1", "first", "1", payload)
         db.log_session("s2", "second", "1", payload)
         rows = db.conn.execute(
@@ -1113,8 +1449,7 @@ class TestDedupInLogSession:
     def test_dedup_short_decision_never_deduped(self, project_env):
         """Decisions < 3 tokens always insert (even exact repeats)."""
         _, _, db = project_env
-        payload = [{"file_path": "src/x.py", "decision": "fix bug",
-                    "context": "short"}]
+        payload = [{"file_path": "src/x.py", "decision": "fix bug", "context": "short"}]
         db.log_session("s1", "first", "1", payload)
         db.log_session("s2", "second", "1", payload)
         rows = db.conn.execute(
@@ -1125,10 +1460,18 @@ class TestDedupInLogSession:
     def test_dedup_first_decision_always_stored(self, project_env):
         """Nothing to compare against → first decision always persists."""
         _, _, db = project_env
-        db.log_session("s1", "first", "1", [
-            {"file_path": "src/new.py", "decision": "add initial feature flag",
-             "context": "first ever"},
-        ])
+        db.log_session(
+            "s1",
+            "first",
+            "1",
+            [
+                {
+                    "file_path": "src/new.py",
+                    "decision": "add initial feature flag",
+                    "context": "first ever",
+                },
+            ],
+        )
         rows = db.conn.execute(
             "SELECT COUNT(*) AS c FROM decisions WHERE file_path='src/new.py'"
         ).fetchone()
@@ -1137,9 +1480,13 @@ class TestDedupInLogSession:
     def test_dedup_session_row_always_created(self, project_env):
         """Session row should exist even when all decisions are skipped."""
         _, _, db = project_env
-        payload = [{"file_path": "src/x.py",
-                    "decision": "add validation layer for inputs",
-                    "context": ""}]
+        payload = [
+            {
+                "file_path": "src/x.py",
+                "decision": "add validation layer for inputs",
+                "context": "",
+            }
+        ]
         db.log_session("s1", "first", "1", payload)
         db.log_session("s2", "second", "1", payload)  # all decisions dedup'd
 
@@ -1152,6 +1499,7 @@ class TestDedupInLogSession:
 # ===========================================================================
 # v1.8.1 — WAL mode + concurrent-writer race
 # ===========================================================================
+
 
 class TestSQLiteGraphWALV181:
     """Regression for the v1.8.0 production failure: 2 OperationalError
@@ -1191,8 +1539,9 @@ class TestSQLiteGraphWALV181:
                 try:
                     for i in range(10):
                         node_id = f"file:t{thread_id}/p{i}.py"
-                        db.add_node(node_id, "file", f"p{i}.py",
-                                    f"t{thread_id}/p{i}.py")
+                        db.add_node(
+                            node_id, "file", f"p{i}.py", f"t{thread_id}/p{i}.py"
+                        )
                 finally:
                     db.close()
             except Exception as e:

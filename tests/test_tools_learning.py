@@ -12,11 +12,11 @@ Covers ALL functions (0% coverage previously):
   - _compute_maturity_score: weighted formula verification
   - _maturity_level: threshold-based level classification
 """
+
 from __future__ import annotations
 
-import logging
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import mcp_server.paths as paths
 from indexer.sqlite_graph import SQLiteGraph
@@ -26,6 +26,7 @@ from mcp_server.tools import learning
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _setup_project(tmp_path, monkeypatch) -> tuple[Path, Path, SQLiteGraph]:
     """Create a temp project with a graph database and monkeypatched paths."""
@@ -45,9 +46,18 @@ def _seed_outcomes(db: SQLiteGraph, outcomes: list[tuple[str, str, str]]) -> Non
     sessions_seen = set()
     for sess_id, fp, ot in outcomes:
         if sess_id not in sessions_seen:
-            db.log_session(sess_id, f"Session {sess_id}", "1", [
-                {"file_path": fp, "decision": f"decision for {fp}", "context": "test"}
-            ])
+            db.log_session(
+                sess_id,
+                f"Session {sess_id}",
+                "1",
+                [
+                    {
+                        "file_path": fp,
+                        "decision": f"decision for {fp}",
+                        "context": "test",
+                    }
+                ],
+            )
             sessions_seen.add(sess_id)
         db.record_outcome(sess_id, fp, ot)
 
@@ -59,15 +69,38 @@ def _seed_full_project(db: SQLiteGraph) -> None:
     db.add_node("file:src/core.py", "file", "core.py", "src/core.py", layer="core")
 
     # Sessions with decisions
-    db.log_session("s1", "First session", "1", [
-        {"file_path": "src/api.py", "decision": "Use REST", "context": "api design"},
-    ])
-    db.log_session("s2", "Second session", "2", [
-        {"file_path": "src/core.py", "decision": "Add caching", "context": "perf"},
-    ])
-    db.log_session("s3", "Third session", "2", [
-        {"file_path": "src/api.py", "decision": "Add validation", "context": "security"},
-    ])
+    db.log_session(
+        "s1",
+        "First session",
+        "1",
+        [
+            {
+                "file_path": "src/api.py",
+                "decision": "Use REST",
+                "context": "api design",
+            },
+        ],
+    )
+    db.log_session(
+        "s2",
+        "Second session",
+        "2",
+        [
+            {"file_path": "src/core.py", "decision": "Add caching", "context": "perf"},
+        ],
+    )
+    db.log_session(
+        "s3",
+        "Third session",
+        "2",
+        [
+            {
+                "file_path": "src/api.py",
+                "decision": "Add validation",
+                "context": "security",
+            },
+        ],
+    )
 
     # Outcomes
     db.record_outcome("s1", "src/api.py", "kept")
@@ -88,6 +121,7 @@ def _seed_full_project(db: SQLiteGraph) -> None:
 # =====================================================================
 # _interpret_confidence
 # =====================================================================
+
 
 class TestInterpretConfidence:
     def test_no_data(self):
@@ -123,59 +157,81 @@ class TestInterpretConfidence:
 # _compute_maturity_score
 # =====================================================================
 
+
 class TestComputeMaturityScore:
     def test_zero_maturity(self):
         maturity = {
-            "session_count": 0, "coverage": 0.0, "overall_confidence": 0.0,
-            "learned_rules": 0, "preference_signals": 0,
+            "session_count": 0,
+            "coverage": 0.0,
+            "overall_confidence": 0.0,
+            "learned_rules": 0,
+            "preference_signals": 0,
         }
         score = learning._compute_maturity_score(maturity)
         assert score == 0.0
 
     def test_max_maturity(self):
         maturity = {
-            "session_count": 20, "coverage": 1.0, "overall_confidence": 1.0,
-            "learned_rules": 10, "preference_signals": 10,
+            "session_count": 20,
+            "coverage": 1.0,
+            "overall_confidence": 1.0,
+            "learned_rules": 10,
+            "preference_signals": 10,
         }
         score = learning._compute_maturity_score(maturity)
         assert score == 100.0
 
     def test_sessions_capped_at_20pts(self):
         maturity = {
-            "session_count": 100, "coverage": 0.0, "overall_confidence": 0.0,
-            "learned_rules": 0, "preference_signals": 0,
+            "session_count": 100,
+            "coverage": 0.0,
+            "overall_confidence": 0.0,
+            "learned_rules": 0,
+            "preference_signals": 0,
         }
         score = learning._compute_maturity_score(maturity)
         assert score == 20.0  # max(100*2, 20) = 20
 
     def test_coverage_contributes_30pts(self):
         maturity = {
-            "session_count": 0, "coverage": 1.0, "overall_confidence": 0.0,
-            "learned_rules": 0, "preference_signals": 0,
+            "session_count": 0,
+            "coverage": 1.0,
+            "overall_confidence": 0.0,
+            "learned_rules": 0,
+            "preference_signals": 0,
         }
         score = learning._compute_maturity_score(maturity)
         assert score == 30.0
 
     def test_confidence_contributes_25pts(self):
         maturity = {
-            "session_count": 0, "coverage": 0.0, "overall_confidence": 1.0,
-            "learned_rules": 0, "preference_signals": 0,
+            "session_count": 0,
+            "coverage": 0.0,
+            "overall_confidence": 1.0,
+            "learned_rules": 0,
+            "preference_signals": 0,
         }
         score = learning._compute_maturity_score(maturity)
         assert score == 25.0
 
     def test_rules_capped_at_15pts(self):
         maturity = {
-            "session_count": 0, "coverage": 0.0, "overall_confidence": 0.0,
-            "learned_rules": 100, "preference_signals": 0,
+            "session_count": 0,
+            "coverage": 0.0,
+            "overall_confidence": 0.0,
+            "learned_rules": 100,
+            "preference_signals": 0,
         }
         score = learning._compute_maturity_score(maturity)
         assert score == 15.0
 
     def test_preferences_capped_at_10pts(self):
         maturity = {
-            "session_count": 0, "coverage": 0.0, "overall_confidence": 0.0,
-            "learned_rules": 0, "preference_signals": 100,
+            "session_count": 0,
+            "coverage": 0.0,
+            "overall_confidence": 0.0,
+            "learned_rules": 0,
+            "preference_signals": 100,
         }
         score = learning._compute_maturity_score(maturity)
         assert score == 10.0
@@ -183,8 +239,11 @@ class TestComputeMaturityScore:
     def test_total_capped_at_100(self):
         """Even with overflowing inputs, score should not exceed 100."""
         maturity = {
-            "session_count": 1000, "coverage": 5.0, "overall_confidence": 5.0,
-            "learned_rules": 1000, "preference_signals": 1000,
+            "session_count": 1000,
+            "coverage": 5.0,
+            "overall_confidence": 5.0,
+            "learned_rules": 1000,
+            "preference_signals": 1000,
         }
         score = learning._compute_maturity_score(maturity)
         assert score == 100.0
@@ -192,8 +251,11 @@ class TestComputeMaturityScore:
     def test_partial_maturity(self):
         """5 sessions=10pts, 50% coverage=15pts, 0.4 confidence=10pts, 2 rules=6pts, 1 pref=2pts."""
         maturity = {
-            "session_count": 5, "coverage": 0.5, "overall_confidence": 0.4,
-            "learned_rules": 2, "preference_signals": 1,
+            "session_count": 5,
+            "coverage": 0.5,
+            "overall_confidence": 0.4,
+            "learned_rules": 2,
+            "preference_signals": 1,
         }
         score = learning._compute_maturity_score(maturity)
         expected = 10.0 + 15.0 + 10.0 + 6.0 + 2.0
@@ -203,6 +265,7 @@ class TestComputeMaturityScore:
 # =====================================================================
 # _maturity_level
 # =====================================================================
+
 
 class TestMaturityLevel:
     def test_new_project(self):
@@ -242,6 +305,7 @@ class TestMaturityLevel:
 # get_decision_confidence (tool-level)
 # =====================================================================
 
+
 class TestGetDecisionConfidence:
     def test_empty_db_confidence(self, tmp_path, monkeypatch):
         _, _, db = _setup_project(tmp_path, monkeypatch)
@@ -252,11 +316,14 @@ class TestGetDecisionConfidence:
 
     def test_file_specific_confidence(self, tmp_path, monkeypatch):
         _, _, db = _setup_project(tmp_path, monkeypatch)
-        _seed_outcomes(db, [
-            ("s1", "src/api.py", "kept"),
-            ("s2", "src/api.py", "kept"),
-            ("s3", "src/api.py", "kept"),
-        ])
+        _seed_outcomes(
+            db,
+            [
+                ("s1", "src/api.py", "kept"),
+                ("s2", "src/api.py", "kept"),
+                ("s3", "src/api.py", "kept"),
+            ],
+        )
         db.close()
         result = learning.get_decision_confidence(file_path="src/api.py")
         assert result["scope"] == "src/api.py"
@@ -265,10 +332,13 @@ class TestGetDecisionConfidence:
 
     def test_pattern_confidence(self, tmp_path, monkeypatch):
         _, _, db = _setup_project(tmp_path, monkeypatch)
-        _seed_outcomes(db, [
-            ("s1", "src/api.py", "kept"),
-            ("s2", "src/core.py", "reverted"),
-        ])
+        _seed_outcomes(
+            db,
+            [
+                ("s1", "src/api.py", "kept"),
+                ("s2", "src/core.py", "reverted"),
+            ],
+        )
         db.close()
         result = learning.get_decision_confidence(pattern="src/")
         assert result["scope"] == "src/"
@@ -276,10 +346,13 @@ class TestGetDecisionConfidence:
 
     def test_project_wide_confidence(self, tmp_path, monkeypatch):
         _, _, db = _setup_project(tmp_path, monkeypatch)
-        _seed_outcomes(db, [
-            ("s1", "a.py", "kept"),
-            ("s2", "b.py", "modified"),
-        ])
+        _seed_outcomes(
+            db,
+            [
+                ("s1", "a.py", "kept"),
+                ("s2", "b.py", "modified"),
+            ],
+        )
         db.close()
         result = learning.get_decision_confidence()
         assert result["scope"] == "project-wide"
@@ -289,6 +362,7 @@ class TestGetDecisionConfidence:
 # =====================================================================
 # get_preferences (tool-level)
 # =====================================================================
+
 
 class TestGetPreferences:
     def test_empty_preferences(self, tmp_path, monkeypatch):
@@ -321,6 +395,7 @@ class TestGetPreferences:
 # get_learned_rules (tool-level)
 # =====================================================================
 
+
 class TestGetLearnedRules:
     def test_empty_rules(self, tmp_path, monkeypatch):
         _, _, db = _setup_project(tmp_path, monkeypatch)
@@ -349,7 +424,9 @@ class TestGetLearnedRules:
 
     def test_rules_filtered_by_file(self, tmp_path, monkeypatch):
         _, _, db = _setup_project(tmp_path, monkeypatch)
-        db.add_learned_rule("API rule", 0.8, ["s1"], category="testing", file_pattern="src/api%")
+        db.add_learned_rule(
+            "API rule", 0.8, ["s1"], category="testing", file_pattern="src/api%"
+        )
         db.add_learned_rule("General rule", 0.7, ["s1"], category="testing")
         db.close()
         result = learning.get_learned_rules(file_path="src/api.py")
@@ -371,6 +448,7 @@ class TestGetLearnedRules:
 # =====================================================================
 # get_project_maturity (tool-level)
 # =====================================================================
+
 
 class TestGetProjectMaturity:
     def test_fresh_project_maturity(self, tmp_path, monkeypatch):
@@ -407,6 +485,7 @@ class TestGetProjectMaturity:
 # get_session_context (tool-level)
 # =====================================================================
 
+
 class TestGetSessionContext:
     def test_session_context_basic(self, tmp_path, monkeypatch):
         _, _, db = _setup_project(tmp_path, monkeypatch)
@@ -415,33 +494,55 @@ class TestGetSessionContext:
 
         # Mock the external imports that session_context pulls in
         mock_roadmap = {
-            "current_phase": {"name": "Phase 5", "next_action": "Do stuff", "status": "in_progress"},
+            "current_phase": {
+                "name": "Phase 5",
+                "next_action": "Do stuff",
+                "status": "in_progress",
+            },
         }
         mock_changesets = {"open_changesets": [], "count": 0, "warning": None}
 
-        with patch("mcp_server.tools.learning.get_roadmap", return_value=mock_roadmap, create=True):
-            with patch("mcp_server.tools.roadmap.get_roadmap", return_value=mock_roadmap):
-                with patch("mcp_server.tools.changesets.list_open_changesets",
-                           return_value=mock_changesets):
+        with patch(
+            "mcp_server.tools.learning.get_roadmap",
+            return_value=mock_roadmap,
+            create=True,
+        ):
+            with patch(
+                "mcp_server.tools.roadmap.get_roadmap", return_value=mock_roadmap
+            ):
+                with patch(
+                    "mcp_server.tools.changesets.list_open_changesets",
+                    return_value=mock_changesets,
+                ):
                     result = learning.get_session_context()
 
         assert "recent_sessions" in result
         assert "recent_decisions" in result
-        assert "confidence" in result
-        assert "top_signals" in result
-        assert "preferences" in result["top_signals"]
-        assert "rules" in result["top_signals"]
+        # 2026-05-18 v2.1.2 Item 8: confidence + top_signals may be
+        # replaced by *_note fields when there's no outcome data yet OR
+        # no learned preferences/rules. Accept both shapes.
+        assert "confidence" in result or "confidence_note" in result
+        assert "top_signals" in result or "top_signals_note" in result
+        if "top_signals" in result:
+            assert "preferences" in result["top_signals"]
+            assert "rules" in result["top_signals"]
 
     def test_session_context_with_roadmap(self, tmp_path, monkeypatch):
         _, _, db = _setup_project(tmp_path, monkeypatch)
         db.close()
 
         mock_roadmap = {
-            "current_phase": {"name": "API Refactor", "next_action": "Fix routes", "status": "in_progress"},
+            "current_phase": {
+                "name": "API Refactor",
+                "next_action": "Fix routes",
+                "status": "in_progress",
+            },
         }
         with patch("mcp_server.tools.roadmap.get_roadmap", return_value=mock_roadmap):
-            with patch("mcp_server.tools.changesets.list_open_changesets",
-                       return_value={"open_changesets": [], "count": 0, "warning": None}):
+            with patch(
+                "mcp_server.tools.changesets.list_open_changesets",
+                return_value={"open_changesets": [], "count": 0, "warning": None},
+            ):
                 result = learning.get_session_context()
 
         # New shape: current_phase at top level (no more nested `roadmap` key)
@@ -453,9 +554,13 @@ class TestGetSessionContext:
         _, _, db = _setup_project(tmp_path, monkeypatch)
         db.close()
 
-        with patch("mcp_server.tools.roadmap.get_roadmap", side_effect=Exception("broken")):
-            with patch("mcp_server.tools.changesets.list_open_changesets",
-                       return_value={"open_changesets": [], "count": 0, "warning": None}):
+        with patch(
+            "mcp_server.tools.roadmap.get_roadmap", side_effect=Exception("broken")
+        ):
+            with patch(
+                "mcp_server.tools.changesets.list_open_changesets",
+                return_value={"open_changesets": [], "count": 0, "warning": None},
+            ):
                 result = learning.get_session_context()
 
         # On failure current_phase stays empty dict
@@ -467,11 +572,17 @@ class TestGetSessionContext:
         db.close()
 
         mock_roadmap = {
-            "current_phase": {"name": "Phase 1", "next_action": "Do", "status": "pending"},
+            "current_phase": {
+                "name": "Phase 1",
+                "next_action": "Do",
+                "status": "pending",
+            },
         }
         with patch("mcp_server.tools.roadmap.get_roadmap", return_value=mock_roadmap):
-            with patch("mcp_server.tools.changesets.list_open_changesets",
-                       side_effect=Exception("broken")):
+            with patch(
+                "mcp_server.tools.changesets.list_open_changesets",
+                side_effect=Exception("broken"),
+            ):
                 result = learning.get_session_context()
 
         assert result["open_changesets"] == []
@@ -480,16 +591,26 @@ class TestGetSessionContext:
         _, _, db = _setup_project(tmp_path, monkeypatch)
         db.close()
 
-        with patch("mcp_server.tools.roadmap.get_roadmap",
-                   side_effect=Exception("no roadmap")):
-            with patch("mcp_server.tools.changesets.list_open_changesets",
-                       side_effect=Exception("no changesets")):
+        with patch(
+            "mcp_server.tools.roadmap.get_roadmap", side_effect=Exception("no roadmap")
+        ):
+            with patch(
+                "mcp_server.tools.changesets.list_open_changesets",
+                side_effect=Exception("no changesets"),
+            ):
                 result = learning.get_session_context()
 
         assert result["recent_sessions"] == []
         assert result["recent_decisions"] == []
-        assert result["top_signals"]["preferences"] == []
-        assert result["top_signals"]["rules"] == []
+        # 2026-05-18 v2.1.2 Item 8: with no data, top_signals is omitted
+        # in favor of top_signals_note (cleaner UX for fresh projects).
+        if "top_signals" in result:
+            assert result["top_signals"]["preferences"] == []
+            assert result["top_signals"]["rules"] == []
+        else:
+            assert (
+                "top_signals_note" in result
+            ), "expected either top_signals dict OR top_signals_note for empty state"
 
     def test_session_context_surfaces_phase_key_decisions(self, tmp_path, monkeypatch):
         """Bug 5 regression: complete_phase(key_decisions=[...]) writes to
@@ -505,7 +626,11 @@ class TestGetSessionContext:
 
         # Simulate two completed phases with key_decisions
         mock_roadmap_for_get = {
-            "current_phase": {"name": "Phase 5", "next_action": "Do", "status": "in_progress"},
+            "current_phase": {
+                "name": "Phase 5",
+                "next_action": "Do",
+                "status": "in_progress",
+            },
         }
         mock_roadmap_data = {
             "completed_phases": [
@@ -527,12 +652,16 @@ class TestGetSessionContext:
             ],
         }
 
-        with patch("mcp_server.tools.roadmap.get_roadmap",
-                   return_value=mock_roadmap_for_get):
-            with patch("mcp_server.tools.roadmap._load_roadmap",
-                       return_value=mock_roadmap_data):
-                with patch("mcp_server.tools.changesets.list_open_changesets",
-                           return_value={"open_changesets": [], "count": 0, "warning": None}):
+        with patch(
+            "mcp_server.tools.roadmap.get_roadmap", return_value=mock_roadmap_for_get
+        ):
+            with patch(
+                "mcp_server.tools.roadmap._load_roadmap", return_value=mock_roadmap_data
+            ):
+                with patch(
+                    "mcp_server.tools.changesets.list_open_changesets",
+                    return_value={"open_changesets": [], "count": 0, "warning": None},
+                ):
                     result = learning.get_session_context()
 
         assert "recent_phase_decisions" in result, (
@@ -560,10 +689,13 @@ class TestGetSessionContext:
                 {"number": 1, "name": "Phase 1", "key_decisions": many_decisions},
             ],
         }
-        with patch("mcp_server.tools.roadmap._load_roadmap",
-                   return_value=mock_roadmap_data):
-            with patch("mcp_server.tools.changesets.list_open_changesets",
-                       return_value={"open_changesets": [], "count": 0, "warning": None}):
+        with patch(
+            "mcp_server.tools.roadmap._load_roadmap", return_value=mock_roadmap_data
+        ):
+            with patch(
+                "mcp_server.tools.changesets.list_open_changesets",
+                return_value={"open_changesets": [], "count": 0, "warning": None},
+            ):
                 result = learning.get_session_context()
 
         assert len(result["recent_phase_decisions"]) <= 5
@@ -574,27 +706,40 @@ class TestGetSessionContext:
         _, _, db = _setup_project(tmp_path, monkeypatch)
         db.close()
 
-        with patch("mcp_server.tools.roadmap._load_roadmap",
-                   return_value={"completed_phases": []}):
-            with patch("mcp_server.tools.changesets.list_open_changesets",
-                       return_value={"open_changesets": [], "count": 0, "warning": None}):
+        with patch(
+            "mcp_server.tools.roadmap._load_roadmap",
+            return_value={"completed_phases": []},
+        ):
+            with patch(
+                "mcp_server.tools.changesets.list_open_changesets",
+                return_value={"open_changesets": [], "count": 0, "warning": None},
+            ):
                 result = learning.get_session_context()
 
         assert result["recent_phase_decisions"] == []
 
-    def test_session_context_recent_decisions_tagged_with_source(self, tmp_path, monkeypatch):
+    def test_session_context_recent_decisions_tagged_with_source(
+        self, tmp_path, monkeypatch
+    ):
         """Bug 5 — the existing recent_decisions list (from sessions table)
         should now be tagged source='session' so AIs can distinguish it
         from the new recent_phase_decisions list."""
         project, data_dir, db = _setup_project(tmp_path, monkeypatch)
         # Seed a real decision so recent_decisions isn't empty
-        db.log_session("s-test", "test session", "1", [
-            {"file_path": "src/api.py", "decision": "Use REST", "context": "ctx"},
-        ])
+        db.log_session(
+            "s-test",
+            "test session",
+            "1",
+            [
+                {"file_path": "src/api.py", "decision": "Use REST", "context": "ctx"},
+            ],
+        )
         db.close()
 
-        with patch("mcp_server.tools.changesets.list_open_changesets",
-                   return_value={"open_changesets": [], "count": 0, "warning": None}):
+        with patch(
+            "mcp_server.tools.changesets.list_open_changesets",
+            return_value={"open_changesets": [], "count": 0, "warning": None},
+        ):
             result = learning.get_session_context()
 
         if result["recent_decisions"]:
@@ -609,6 +754,7 @@ class TestGetSessionContext:
 # get_session_context exception branches (lines 171-173, 180-182)
 # =====================================================================
 
+
 class TestGetSessionContextExceptions:
     def test_graceful_on_dependent_failures(self, tmp_path, monkeypatch):
         """get_session_context continues when sub-calls raise.
@@ -619,9 +765,12 @@ class TestGetSessionContextExceptions:
         """
         _setup_project(tmp_path, monkeypatch)
 
-        with patch("mcp_server.tools.roadmap.get_roadmap", side_effect=Exception("no roadmap")), \
-             patch("mcp_server.tools.changesets.list_open_changesets",
-                   side_effect=Exception("no changesets")):
+        with patch(
+            "mcp_server.tools.roadmap.get_roadmap", side_effect=Exception("no roadmap")
+        ), patch(
+            "mcp_server.tools.changesets.list_open_changesets",
+            side_effect=Exception("no changesets"),
+        ):
             result = learning.get_session_context()
 
         assert result is not None
@@ -633,6 +782,7 @@ class TestGetSessionContextExceptions:
 # =====================================================================
 # _maturity_hint boundary coverage (lines 233, 237)
 # =====================================================================
+
 
 class TestMaturityHint:
     def test_score_above_80_returns_mature_hint(self):
@@ -660,8 +810,10 @@ class TestMaturityHint:
 # v1.8: Open-changesets key bug (Change 0) + focus inference (Change 1)
 # =====================================================================
 
-def _changeset(id: str, files: list[str], created: str = "2026-04-22",
-               description: str = "desc") -> dict:
+
+def _changeset(
+    id: str, files: list[str], created: str = "2026-04-22", description: str = "desc"
+) -> dict:
     """Helper producing the raw list_open_changesets() item shape."""
     return {
         "id": id,
@@ -688,10 +840,11 @@ class TestOpenChangesetsKeyFixed:
             "warning": None,
         }
 
-        with patch("mcp_server.tools.roadmap.get_roadmap",
-                   return_value={"current_phase": {}}), \
-             patch("mcp_server.tools.changesets.list_open_changesets",
-                   return_value=cs_payload):
+        with patch(
+            "mcp_server.tools.roadmap.get_roadmap", return_value={"current_phase": {}}
+        ), patch(
+            "mcp_server.tools.changesets.list_open_changesets", return_value=cs_payload
+        ):
             result = learning.get_session_context()
 
         assert len(result["open_changesets"]) == 1
@@ -760,10 +913,12 @@ class TestSessionContextFocus:
     def test_focus_source_field_always_present(self, tmp_path, monkeypatch):
         _, _, db = _setup_project(tmp_path, monkeypatch)
         db.close()
-        with patch("mcp_server.tools.roadmap.get_roadmap",
-                   return_value={"current_phase": {}}), \
-             patch("mcp_server.tools.changesets.list_open_changesets",
-                   return_value={"open_changesets": [], "count": 0, "warning": None}):
+        with patch(
+            "mcp_server.tools.roadmap.get_roadmap", return_value={"current_phase": {}}
+        ), patch(
+            "mcp_server.tools.changesets.list_open_changesets",
+            return_value={"open_changesets": [], "count": 0, "warning": None},
+        ):
             result = learning.get_session_context()
         assert "focus_source" in result
         assert result["focus_source"] is None
@@ -775,19 +930,20 @@ class TestSessionContextFocus:
 
         cs = {
             "open_changesets": [_changeset("api-work", ["src/api.py"])],
-            "count": 1, "warning": None,
+            "count": 1,
+            "warning": None,
         }
-        with patch("mcp_server.tools.roadmap.get_roadmap",
-                   return_value={"current_phase": {}}), \
-             patch("mcp_server.tools.changesets.list_open_changesets",
-                   return_value=cs):
+        with patch(
+            "mcp_server.tools.roadmap.get_roadmap", return_value={"current_phase": {}}
+        ), patch("mcp_server.tools.changesets.list_open_changesets", return_value=cs):
             result = learning.get_session_context()
 
         assert result["focus_source"] == "open_changeset:api-work"
         # Decisions ranked against "src/api.py" should surface api.py matches.
         # Seed has 2 decisions touching src/api.py — both should appear.
-        api_matches = [d for d in result["recent_decisions"]
-                       if d.get("file_path") == "src/api.py"]
+        api_matches = [
+            d for d in result["recent_decisions"] if d.get("file_path") == "src/api.py"
+        ]
         assert len(api_matches) >= 1
 
     def test_focus_pads_with_recent_when_few_matches(self, tmp_path, monkeypatch):
@@ -799,12 +955,12 @@ class TestSessionContextFocus:
         # Focus on a file that has NO decisions — should pad with recent.
         cs = {
             "open_changesets": [_changeset("unseen", ["src/unknown.py"])],
-            "count": 1, "warning": None,
+            "count": 1,
+            "warning": None,
         }
-        with patch("mcp_server.tools.roadmap.get_roadmap",
-                   return_value={"current_phase": {}}), \
-             patch("mcp_server.tools.changesets.list_open_changesets",
-                   return_value=cs):
+        with patch(
+            "mcp_server.tools.roadmap.get_roadmap", return_value={"current_phase": {}}
+        ), patch("mcp_server.tools.changesets.list_open_changesets", return_value=cs):
             result = learning.get_session_context()
 
         # Seed has 3 decisions total → pads to 3
@@ -823,10 +979,10 @@ class TestSessionContextFocus:
                 "next_action": "Add validation layer to api endpoints",
             }
         }
-        with patch("mcp_server.tools.roadmap.get_roadmap",
-                   return_value=roadmap), \
-             patch("mcp_server.tools.changesets.list_open_changesets",
-                   return_value={"open_changesets": [], "count": 0, "warning": None}):
+        with patch("mcp_server.tools.roadmap.get_roadmap", return_value=roadmap), patch(
+            "mcp_server.tools.changesets.list_open_changesets",
+            return_value={"open_changesets": [], "count": 0, "warning": None},
+        ):
             result = learning.get_session_context()
 
         assert result["focus_source"] == "next_action"
@@ -836,10 +992,12 @@ class TestSessionContextFocus:
         _seed_full_project(db)
         db.close()
 
-        with patch("mcp_server.tools.roadmap.get_roadmap",
-                   return_value={"current_phase": {}}), \
-             patch("mcp_server.tools.changesets.list_open_changesets",
-                   return_value={"open_changesets": [], "count": 0, "warning": None}):
+        with patch(
+            "mcp_server.tools.roadmap.get_roadmap", return_value={"current_phase": {}}
+        ), patch(
+            "mcp_server.tools.changesets.list_open_changesets",
+            return_value={"open_changesets": [], "count": 0, "warning": None},
+        ):
             result = learning.get_session_context()
 
         assert result["focus_source"] is None

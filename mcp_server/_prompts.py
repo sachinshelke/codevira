@@ -23,6 +23,7 @@ even ``"yy"`` got a silent "no" — surface symptom: *"I typed Y and nothing
 happened"*. The retry loop here makes that impossible: invalid input
 reprompts visibly instead.
 """
+
 from __future__ import annotations
 
 import sys
@@ -80,3 +81,49 @@ def confirm(question: str, *, default: bool = True, indent: str = "  ") -> bool:
         # silently returned False here, which the user reads as "Y didn't
         # work" instead of "I typed something funky".
         print(f"{indent}Please answer 'y' or 'n'.")
+
+
+def confirm_typed(question: str, expected: str, *, indent: str = "  ") -> bool:
+    """2026-05-18 v2.1.2 Item 3d: ask the user to TYPE a specific word
+    (literal, case-sensitive) to confirm a destructive operation.
+
+    Used by `codevira reset` so a slip of the hand can't trash decisions
+    on a `y` keystroke. Field-test reports + your own feedback flagged
+    `heal`/`reset` as the data-loss footgun; this prompt makes accidental
+    triggering structurally much harder.
+
+    Behaviour:
+      - Renders the question, then `Type '<expected>' to proceed (or
+        anything else to abort): `
+      - Returns True only if the user types `expected` exactly (after
+        strip()).
+      - On EOFError (non-interactive) → return False with a hint to use
+        --yes.
+      - On Ctrl+C → return False cleanly.
+
+    Args:
+        question: prompt text the user sees first.
+        expected: the literal word the user must type (e.g. "reset",
+                  "vectors", "all"). Case-sensitive by design — the user
+                  must DELIBERATELY type it.
+        indent: leading whitespace on prompt lines (default two spaces).
+    """
+    try:
+        sys.stdout.flush()
+        print(f"{indent}{question}")
+        raw = input(
+            f"{indent}Type '{expected}' to proceed (or anything else to abort): "
+        )
+    except EOFError:
+        print()
+        print(
+            f"{indent}Non-interactive shell — pass --yes to skip the typed confirmation."
+        )
+        return False
+    except KeyboardInterrupt:
+        print()
+        return False
+    if raw.strip() == expected:
+        return True
+    print(f"{indent}Did not type {expected!r} — aborted.")
+    return False

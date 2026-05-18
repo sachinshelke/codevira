@@ -32,6 +32,7 @@ Usage (Claude Code .claude/settings.json):
 
 Usage (Cursor / Windsurf): configure via their MCP settings UI with same command.
 """
+
 from __future__ import annotations
 
 import sys
@@ -43,23 +44,45 @@ try:
 except ImportError:
     # Use stderr — stdout is the MCP protocol channel in stdio mode.
     # Printing to stdout here would corrupt the MCP handshake.
-    print("ERROR: mcp package not installed. Run: pip install 'mcp>=1.0.0'", file=sys.stderr)
+    print(
+        "ERROR: mcp package not installed. Run: pip install 'mcp>=1.0.0'",
+        file=sys.stderr,
+    )
     raise
 
 import json
 from mcp_server.tools.graph import (
-    get_node, get_impact, list_nodes, add_node, update_node, refresh_graph,
-    export_graph, get_graph_diff,
+    get_node,
+    get_impact,
+    list_nodes,
+    add_node,
+    update_node,
+    refresh_graph,
+    export_graph,
+    get_graph_diff,
     query_graph as query_graph_tool,
     analyze_changes as analyze_changes_tool,
     find_hotspots as find_hotspots_tool,
 )
 from mcp_server.tools.roadmap import (
-    get_roadmap, get_full_roadmap, get_phase,
-    add_phase, update_phase_status, defer_phase,
-    complete_phase, update_next_action,
+    get_roadmap,
+    get_full_roadmap,
+    get_phase,
+    add_phase,
+    update_phase_status,
+    defer_phase,
+    complete_phase,
+    update_next_action,
 )
-from mcp_server.tools.search import search_codebase, refresh_index, search_decisions, get_history, write_session_log
+from mcp_server.tools.search import (
+    search_codebase,
+    refresh_index,
+    search_decisions,
+    get_history,
+    write_session_log,
+    list_decisions,
+    list_tags,  # v2.1.2 Items 11 + 27
+)
 from mcp_server.tools.changesets import (
     start_changeset,
     update_changeset_progress,
@@ -77,6 +100,7 @@ from mcp_server.tools.learning import (
 )
 
 from mcp_server import __version__ as _codevira_version
+
 # Pass version so MCP's serverInfo handshake response reports the codevira
 # version (e.g. "1.8.0"). Without this, clients see serverInfo.version ==
 # the mcp framework library's own version (currently 1.27.0), which is
@@ -90,13 +114,18 @@ server = Server("codevira", version=_codevira_version)
 async def handle_list_prompts():
     from mcp_server.prompts import list_prompts as _list_prompts
     from mcp.types import Prompt, PromptArgument
+
     prompts = _list_prompts()
     return [
         Prompt(
             name=p["name"],
             description=p.get("description"),
             arguments=[
-                PromptArgument(name=a["name"], description=a.get("description"), required=a.get("required", False))
+                PromptArgument(
+                    name=a["name"],
+                    description=a.get("description"),
+                    required=a.get("required", False),
+                )
                 for a in p.get("arguments", [])
             ],
         )
@@ -107,14 +136,22 @@ async def handle_list_prompts():
 @server.get_prompt()
 async def handle_get_prompt(name: str, arguments: dict | None = None):
     from mcp_server.prompts import get_prompt as _get_prompt
-    from mcp.types import GetPromptResult, PromptMessage, TextContent as PromptTextContent
+    from mcp.types import (
+        GetPromptResult,
+        PromptMessage,
+        TextContent as PromptTextContent,
+    )
+
     result = _get_prompt(name, arguments)
     if not result:
         raise ValueError(f"Unknown prompt: {name}")
     return GetPromptResult(
         description=result["description"],
         messages=[
-            PromptMessage(role=m["role"], content=PromptTextContent(type="text", text=m["content"]["text"]))
+            PromptMessage(
+                role=m["role"],
+                content=PromptTextContent(type="text", text=m["content"]["text"]),
+            )
             for m in result["messages"]
         ],
     )
@@ -172,7 +209,8 @@ async def handle_read_resource(uri):
     elif uri_str.startswith("codevira://decisions/"):
         # Everything after the prefix is the query, URL-decoded if needed.
         from urllib.parse import unquote
-        raw_query = uri_str[len("codevira://decisions/"):]
+
+        raw_query = uri_str[len("codevira://decisions/") :]
         query = unquote(raw_query) or None
         title = f"Codevira Replay — query: {query!r}"
     else:
@@ -181,6 +219,7 @@ async def handle_read_resource(uri):
 
     try:
         from indexer.sqlite_graph import SQLiteGraph
+
         graph_db = get_data_dir() / "graph" / "graph.db"
         if not graph_db.exists():
             return render_html([], title=title)
@@ -194,6 +233,7 @@ async def handle_read_resource(uri):
         # Bug-X-shape defense: never let resource-read crash the MCP
         # client. Return an HTML page with the error so the user knows.
         import html as _html
+
         return (
             f"<!DOCTYPE html><html><body>"
             f"<h1>{_html.escape(title)}</h1>"
@@ -206,6 +246,7 @@ async def handle_read_resource(uri):
 async def list_tools() -> list[Tool]:
     # Hide tools whose deps aren't installed — AI agents only see what works.
     from indexer.index_codebase import _check_search_deps
+
     _has_search = _check_search_deps()
 
     tools = [
@@ -342,13 +383,33 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "phase": {"type": ["integer", "string"], "description": "Phase number or label"},
+                    "phase": {
+                        "type": ["integer", "string"],
+                        "description": "Phase number or label",
+                    },
                     "name": {"type": "string", "description": "Short phase name"},
-                    "description": {"type": "string", "description": "What this phase does and why"},
-                    "priority": {"type": "string", "description": "high | medium | low", "default": "medium"},
-                    "depends_on": {"type": "array", "items": {"type": ["integer", "string"]}},
-                    "files": {"type": "array", "items": {"type": "string"}, "description": "Key files that will be touched"},
-                    "effort": {"type": "string", "description": "Rough estimate e.g. '~2 hours'"},
+                    "description": {
+                        "type": "string",
+                        "description": "What this phase does and why",
+                    },
+                    "priority": {
+                        "type": "string",
+                        "description": "high | medium | low",
+                        "default": "medium",
+                    },
+                    "depends_on": {
+                        "type": "array",
+                        "items": {"type": ["integer", "string"]},
+                    },
+                    "files": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Key files that will be touched",
+                    },
+                    "effort": {
+                        "type": "string",
+                        "description": "Rough estimate e.g. '~2 hours'",
+                    },
                 },
                 "required": ["phase", "name", "description"],
             },
@@ -362,9 +423,18 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "status": {"type": "string", "description": "pending | in_progress | blocked"},
-                    "blocker": {"type": "string", "description": "Required when status=blocked"},
-                    "started": {"type": "string", "description": "ISO date override (defaults to today)"},
+                    "status": {
+                        "type": "string",
+                        "description": "pending | in_progress | blocked",
+                    },
+                    "blocker": {
+                        "type": "string",
+                        "description": "Required when status=blocked",
+                    },
+                    "started": {
+                        "type": "string",
+                        "description": "ISO date override (defaults to today)",
+                    },
                 },
                 "required": ["status"],
             },
@@ -379,7 +449,10 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "phase_number": {"type": ["integer", "string"]},
-                    "reason": {"type": "string", "description": "Why this is being deferred"},
+                    "reason": {
+                        "type": "string",
+                        "description": "Why this is being deferred",
+                    },
                 },
                 "required": ["phase_number", "reason"],
             },
@@ -393,7 +466,10 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "phase_number": {"type": ["integer", "string"], "description": "Must match current phase"},
+                    "phase_number": {
+                        "type": ["integer", "string"],
+                        "description": "Must match current phase",
+                    },
                     "key_decisions": {
                         "type": "array",
                         "items": {"type": "string"},
@@ -446,8 +522,14 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "changeset_id": {"type": "string"},
-                    "file_done": {"type": "string", "description": "File path that was completed"},
-                    "blocker": {"type": "string", "description": "Optional blocker note if session ending early"},
+                    "file_done": {
+                        "type": "string",
+                        "description": "File path that was completed",
+                    },
+                    "blocker": {
+                        "type": "string",
+                        "description": "Optional blocker note if session ending early",
+                    },
                 },
                 "required": ["changeset_id", "file_done"],
             },
@@ -543,11 +625,25 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "file_path": {"type": "string", "description": "Relative file path"},
-                    "role": {"type": "string", "description": "One-line description of what the file does"},
+                    "file_path": {
+                        "type": "string",
+                        "description": "Relative file path",
+                    },
+                    "role": {
+                        "type": "string",
+                        "description": "One-line description of what the file does",
+                    },
                     "layer": {"type": "string", "description": "Architectural layer"},
-                    "stability": {"type": "string", "description": "low | medium | high", "default": "medium"},
-                    "node_type": {"type": "string", "description": "file | service | schema | event", "default": "file"},
+                    "stability": {
+                        "type": "string",
+                        "description": "low | medium | high",
+                        "default": "medium",
+                    },
+                    "node_type": {
+                        "type": "string",
+                        "description": "file | service | schema | event",
+                        "default": "file",
+                    },
                     "key_functions": {"type": "array", "items": {"type": "string"}},
                     "connects_to": {
                         "type": "array",
@@ -565,18 +661,121 @@ async def list_tools() -> list[Tool]:
             name="search_decisions",
             description=(
                 "Search past decisions across sessions, changesets, and roadmap phases. "
+                "v2.1.1: hybrid BM25+semantic with RRF. v2.1.2 Item 1: applies a "
+                "self-calibrating similarity threshold so gibberish queries return "
+                "zero results (not 'least bad' matches). v2.1.2 Item 28: pass "
+                "summary_only=true for a ~70% smaller payload (triage queries). "
                 "Default: 5 matches with truncated context (~500 tokens). "
                 "Pass full=true for untruncated text. Answers 'has anyone decided this before?'"
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "Keywords to search (e.g. 'threshold', 'uuid', 'retry')"},
-                    "limit": {"type": "integer", "description": "Max results (default 5, max 20)", "default": 5},
-                    "full": {"type": "boolean", "description": "Return untruncated decision text (default false)"},
-                    "session_id": {"type": "string", "description": "Optional — filter to a specific session"},
+                    "query": {
+                        "type": "string",
+                        "description": "Keywords to search (e.g. 'threshold', 'uuid', 'retry')",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max results (default 5, max 20)",
+                        "default": 5,
+                    },
+                    "full": {
+                        "type": "boolean",
+                        "description": "Return untruncated decision text (default false)",
+                    },
+                    "session_id": {
+                        "type": "string",
+                        "description": "Optional — filter to a specific session",
+                    },
+                    "summary_only": {
+                        "type": "boolean",
+                        "description": "v2.1.2 Item 28: return id+summary+score only (smallest payload)",
+                    },
                 },
                 "required": ["query"],
+            },
+        ),
+        Tool(
+            name="list_decisions",
+            description=(
+                "v2.1.2 Item 11: enumerate decisions with filters (since_date, "
+                "file_pattern, protected_only, session_id, tags). Closes the gap "
+                "that 'codevira can remember things across sessions, but can't "
+                "list what it remembers.' Returns ~50 tokens per row by default."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max rows (default 20, max 200)",
+                    },
+                    "since_date": {
+                        "type": "string",
+                        "description": "ISO 8601 timestamp or YYYY-MM-DD",
+                    },
+                    "file_pattern": {
+                        "type": "string",
+                        "description": "SQL LIKE pattern on file_path",
+                    },
+                    "protected_only": {
+                        "type": "boolean",
+                        "description": "Only do_not_revert=true rows",
+                    },
+                    "session_id": {
+                        "type": "string",
+                        "description": "Filter to one session",
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Filter to rows matching ALL these tags (v2.1.2 Item 27)",
+                    },
+                    "include_superseded": {
+                        "type": "boolean",
+                        "description": "Include soft-deleted rows (v2.1.2 Item 26)",
+                    },
+                    "full": {
+                        "type": "boolean",
+                        "description": "Untruncated decision text",
+                    },
+                },
+            },
+        ),
+        Tool(
+            name="list_tags",
+            description=(
+                "v2.1.2 Item 27: enumerate all tags in the project with decision "
+                "counts. Useful for discovery — 'what categories of decisions do "
+                "we track?'"
+            ),
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        Tool(
+            name="check_conflict",
+            description=(
+                "v2.1.2 Item 20: check whether a proposed decision contradicts "
+                "any existing do_not_revert=True decision OR duplicates an "
+                "existing one. Returns {status: novel|duplicate|conflict, "
+                "conflicts: [...], duplicates: [...]}. Call this BEFORE "
+                "record_decision when you want to surface conflicts proactively. "
+                "(record_decision also runs this internally and surfaces a "
+                "_conflict_warning unless force=true.)"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "decision_text": {
+                        "type": "string",
+                        "description": "The decision text you'd pass to record_decision",
+                    },
+                    "file_path": {
+                        "type": "string",
+                        "description": "Optional — prefer hits on the same file",
+                    },
+                },
+                "required": ["decision_text"],
             },
         ),
         Tool(
@@ -589,12 +788,18 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "file_path": {"type": "string", "description": "Relative file path"},
+                    "file_path": {
+                        "type": "string",
+                        "description": "Relative file path",
+                    },
                     "limit": {
                         "type": "integer",
                         "description": "Max decisions (default 5, max 50)",
                     },
-                    "full": {"type": "boolean", "description": "Untruncated decision text (default false)"},
+                    "full": {
+                        "type": "boolean",
+                        "description": "Untruncated decision text (default false)",
+                    },
                 },
                 "required": ["file_path"],
             },
@@ -679,8 +884,14 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "session_id": {"type": "string", "description": "Short ID (8-char slug)"},
-                    "task": {"type": "string", "description": "Original developer prompt"},
+                    "session_id": {
+                        "type": "string",
+                        "description": "Short ID (8-char slug)",
+                    },
+                    "task": {
+                        "type": "string",
+                        "description": "Original developer prompt",
+                    },
                     "phase": {"type": "string", "description": "phase"},
                     "files_changed": {"type": "array", "items": {"type": "string"}},
                     "decisions": {
@@ -690,13 +901,20 @@ async def list_tools() -> list[Tool]:
                             "properties": {
                                 "file_path": {"type": "string"},
                                 "decision": {"type": "string"},
-                                "context": {"type": "string"}
-                            }
-                        }
+                                "context": {"type": "string"},
+                            },
+                        },
                     },
-                    "next_steps": {"type": "array", "items": {"type": "string"}}
+                    "next_steps": {"type": "array", "items": {"type": "string"}},
                 },
-                "required": ["session_id", "task", "phase", "files_changed", "decisions", "next_steps"],
+                "required": [
+                    "session_id",
+                    "task",
+                    "phase",
+                    "files_changed",
+                    "decisions",
+                    "next_steps",
+                ],
             },
         ),
         Tool(
@@ -988,8 +1206,14 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "file_path": {"type": "string", "description": "Relative file path"},
-                    "symbol": {"type": "string", "description": "Function or class name to query"},
+                    "file_path": {
+                        "type": "string",
+                        "description": "Relative file path",
+                    },
+                    "symbol": {
+                        "type": "string",
+                        "description": "Function or class name to query",
+                    },
                     "query_type": {
                         "type": "string",
                         "description": "callers | callees | tests | dependents | symbols",
@@ -1009,8 +1233,16 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "base_ref": {"type": "string", "description": "Base git ref (default: main)", "default": "main"},
-                    "head_ref": {"type": "string", "description": "Head git ref (default: HEAD)", "default": "HEAD"},
+                    "base_ref": {
+                        "type": "string",
+                        "description": "Base git ref (default: main)",
+                        "default": "main",
+                    },
+                    "head_ref": {
+                        "type": "string",
+                        "description": "Head git ref (default: HEAD)",
+                        "default": "HEAD",
+                    },
                 },
             },
         ),
@@ -1024,7 +1256,11 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "threshold": {"type": "integer", "description": "Min lines for large function (default: 50)", "default": 50},
+                    "threshold": {
+                        "type": "integer",
+                        "description": "Min lines for large function (default: 50)",
+                        "default": 50,
+                    },
                 },
             },
         ),
@@ -1041,18 +1277,18 @@ async def list_tools() -> list[Tool]:
     # Humans access them via the CLI (codevira index, codevira status) or
     # dedicated MCP prompts (architecture_overview, pre_commit_check).
     _ADMIN_TOOLS = {
-        "list_nodes",              # replaced by get_node(path) targeted queries
-        "add_node",                # auto-generated by refresh_graph
-        "refresh_graph",           # background/automatic
-        "refresh_index",           # background/automatic
-        "export_graph",            # 5k-50k token Mermaid/DOT dump
-        "get_graph_diff",          # PR review — use prompt instead
-        "analyze_changes",         # PR review — use prompt instead
-        "find_hotspots",           # dashboard metric — use prompt instead
-        "get_project_maturity",    # dashboard metric
-        "get_preferences",         # included in get_session_context
-        "get_learned_rules",       # included in get_session_context
-        "get_full_roadmap",        # rarely needed by agents — use get_phase(n)
+        "list_nodes",  # replaced by get_node(path) targeted queries
+        "add_node",  # auto-generated by refresh_graph
+        "refresh_graph",  # background/automatic
+        "refresh_index",  # background/automatic
+        "export_graph",  # 5k-50k token Mermaid/DOT dump
+        "get_graph_diff",  # PR review — use prompt instead
+        "analyze_changes",  # PR review — use prompt instead
+        "find_hotspots",  # dashboard metric — use prompt instead
+        "get_project_maturity",  # dashboard metric
+        "get_preferences",  # included in get_session_context
+        "get_learned_rules",  # included in get_session_context
+        "get_full_roadmap",  # rarely needed by agents — use get_phase(n)
     }
     tools = [t for t in tools if t.name not in _ADMIN_TOOLS]
 
@@ -1065,6 +1301,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     # This is a no-op (<1ms) on every subsequent call after initialization.
     try:
         from mcp_server.auto_init import ensure_project_initialized
+
         ensure_project_initialized()
     except Exception:
         pass  # auto-init must never block tool dispatch
@@ -1083,8 +1320,10 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         # the MCP server would have ZERO policies registered and
         # silently allow every edit).
         from mcp_server.engine import register_default_policies
+
         register_default_policies()
         from mcp_server.engine.wiring.mcp_dispatch import pre_call
+
         _engine_verdict = pre_call(name, arguments)
         if _engine_verdict.is_blocking():
             # Block: return the verdict's message as the tool result so
@@ -1202,6 +1441,29 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 limit=arguments.get("limit", 5),
                 session_id=arguments.get("session_id"),
                 full=arguments.get("full", False),
+                summary_only=arguments.get("summary_only", False),
+            )
+        elif name == "list_decisions":
+            # v2.1.2 Item 11.
+            result = list_decisions(
+                limit=arguments.get("limit", 20),
+                since_date=arguments.get("since_date"),
+                file_pattern=arguments.get("file_pattern"),
+                protected_only=arguments.get("protected_only", False),
+                session_id=arguments.get("session_id"),
+                tags=arguments.get("tags"),
+                include_superseded=arguments.get("include_superseded", False),
+                full=arguments.get("full", False),
+            )
+        elif name == "list_tags":
+            result = list_tags()
+        elif name == "check_conflict":
+            # v2.1.2 Item 20.
+            from mcp_server.tools.check_conflict import check_conflict
+
+            result = check_conflict(
+                decision_text=arguments["decision_text"],
+                file_path=arguments.get("file_path"),
             )
         elif name == "get_history":
             result = get_history(
@@ -1222,6 +1484,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             from mcp_server.tools.learning import (
                 record_decision as learning_record_decision,
             )
+
             result = learning_record_decision(
                 decision=arguments["decision"],
                 file_path=arguments.get("file_path"),
@@ -1233,6 +1496,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             from mcp_server.tools.learning import (
                 mark_decision_protected as learning_mark_decision_protected,
             )
+
             result = learning_mark_decision_protected(
                 decision_id=arguments["decision_id"],
                 do_not_revert=arguments["do_not_revert"],
@@ -1276,6 +1540,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             )
         elif name == "retire_rule":
             from mcp_server.tools.learning import retire_rule as learning_retire_rule
+
             result = learning_retire_rule(
                 rule_id=arguments["rule_id"],
                 reason=arguments.get("reason"),
@@ -1309,8 +1574,13 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         try:
             from mcp_server.crash_logger import log_crash
             from mcp_server.paths import get_project_root
-            log_crash(e, context="tool dispatch", tool_name=name,
-                      project_path=str(get_project_root()))
+
+            log_crash(
+                e,
+                context="tool dispatch",
+                tool_name=name,
+                project_path=str(get_project_root()),
+            )
         except Exception:
             pass  # crash logger must never break the server
 
@@ -1320,6 +1590,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     # to the AI — wiring layer swallows.
     try:
         from mcp_server.engine.wiring.mcp_dispatch import post_call
+
         post_call(name, arguments, result)
     except Exception:
         pass
@@ -1336,7 +1607,8 @@ def main():
 
     # Install global crash handler — catches unhandled exceptions
     try:
-        from mcp_server.crash_logger import install_global_handler, log_crash
+        from mcp_server.crash_logger import install_global_handler
+
         install_global_handler()
     except Exception as e:
         logger.warning("Could not install crash handler: %s", e)
@@ -1352,6 +1624,7 @@ def main():
     # existing-rogue path from spinning up the watcher.
     try:
         from mcp_server.paths import get_project_root, is_invalid_project_root
+
         _early_root = get_project_root()
         _rejection = is_invalid_project_root(_early_root)
         if _rejection:
@@ -1374,13 +1647,17 @@ def main():
     try:
         from mcp_server.migrate import detect_migration_needed, migrate_to_centralized
         from mcp_server.paths import get_project_root
+
         _proj_root = get_project_root()
         if detect_migration_needed(_proj_root):
             logger.info("Migrating legacy .codevira/ to centralized storage...")
             result = migrate_to_centralized(_proj_root)
             if result.get("migrated"):
-                logger.info("Migration complete: %d files moved to %s",
-                            result.get("files_copied", 0), result.get("new_path", ""))
+                logger.info(
+                    "Migration complete: %d files moved to %s",
+                    result.get("files_copied", 0),
+                    result.get("new_path", ""),
+                )
     except Exception as e:
         logger.warning("Could not run storage migration: %s", e)
 
@@ -1389,12 +1666,14 @@ def main():
     watcher = None
     try:
         from indexer.index_codebase import start_background_watcher
+
         watcher = start_background_watcher(quiet=True)
         logger.info("Live file watcher active — index updates on save")
     except Exception as e:
         # Watcher is best-effort; don't block server startup
         logger.warning("Could not start background watcher: %s", e)
         from mcp_server._safe_crash import safe_log_crash
+
         safe_log_crash(e, context="background watcher startup")
 
     # v1.4: Run outcome analysis and rule inference on startup
@@ -1402,33 +1681,42 @@ def main():
     try:
         from indexer.outcome_tracker import analyze_session_outcomes
         from indexer.rule_learner import run_rule_inference
+
         analyze_session_outcomes()
         run_rule_inference()
         logger.info("Outcome analysis and rule inference complete")
     except Exception as e:
         logger.warning("Could not run startup learning: %s", e)
         from mcp_server._safe_crash import safe_log_crash
+
         safe_log_crash(e, context="startup learning pipeline")
 
     # v1.5: Import global intelligence from cross-project memory
     try:
         from mcp_server.global_sync import import_global_to_project
+
         stats = import_global_to_project()
         if stats.get("preferences_imported") or stats.get("rules_imported"):
-            logger.info("Global memory: imported %d preferences, %d rules",
-                        stats["preferences_imported"], stats["rules_imported"])
+            logger.info(
+                "Global memory: imported %d preferences, %d rules",
+                stats["preferences_imported"],
+                stats["rules_imported"],
+            )
     except Exception as e:
         logger.warning("Could not sync global memory: %s", e)
         from mcp_server._safe_crash import safe_log_crash
+
         safe_log_crash(e, context="global memory import")
 
     # v1.7: Enforce logs.retention_days from config (opt-in, default 0 = keep forever)
     try:
         from mcp_server.log_retention import enforce_retention
+
         enforce_retention()
     except Exception as e:
         logger.warning("Log retention cleanup failed: %s", e)
         from mcp_server._safe_crash import safe_log_crash
+
         safe_log_crash(e, context="log retention cleanup")
 
     # v1.7: Pre-warm the embedding model in a background thread so the first
@@ -1436,6 +1724,7 @@ def main():
     # while waiting for PyTorch init / model download.
     try:
         from mcp_server.tools.search import prewarm_embedding_model
+
         prewarm_embedding_model()
     except Exception as e:
         logger.warning("Embedding prewarm failed: %s", e)

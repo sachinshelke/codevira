@@ -16,6 +16,7 @@ logic so existing user content is preserved on regenerate.
 Used by ``mcp_server.cli`` (the ``agents`` subcommand). Also importable
 for tests.
 """
+
 from __future__ import annotations
 
 import sys
@@ -27,23 +28,23 @@ from mcp_server import agents_md
 
 # Map raw WriteAction → human-readable label + icon
 _ACTION_LABELS: dict[str, tuple[str, str]] = {
-    "created":            ("✓", "created"),
-    "block_replaced":     ("✓", "updated"),
-    "block_appended":     ("✓", "appended"),
-    "no_change":          ("·", "unchanged"),
-    "would_create":       ("▸", "would create"),
-    "would_replace":      ("▸", "would update"),
-    "would_append":       ("▸", "would append"),
+    "created": ("✓", "created"),
+    "block_replaced": ("✓", "updated"),
+    "block_appended": ("✓", "appended"),
+    "no_change": ("·", "unchanged"),
+    "would_create": ("▸", "would create"),
+    "would_replace": ("▸", "would update"),
+    "would_append": ("▸", "would append"),
     "would_be_no_change": ("·", "would be unchanged"),
 }
 
 
 def cmd_agents(
     *,
-    ide: str | None = None,         # one of supported_ides() or None for all
+    ide: str | None = None,  # one of supported_ides() or None for all
     dry_run: bool = False,
     project: Path | None = None,
-    out: IO[str] | None = None,     # for testability
+    out: IO[str] | None = None,  # for testability
 ) -> int:
     """Generate per-IDE nudge files. Returns process exit code.
 
@@ -56,9 +57,12 @@ def cmd_agents(
     # CLI uses.
     try:
         from mcp_server.paths import (
-            get_project_root, set_project_dir,
-            invalidate_data_dir_cache, is_invalid_project_root,
+            get_project_root,
+            set_project_dir,
+            invalidate_data_dir_cache,
+            is_invalid_project_root,
         )
+
         if project is not None:
             resolved = Path(project).resolve()
             rejection = is_invalid_project_root(resolved)
@@ -90,19 +94,20 @@ def cmd_agents(
                 f"Valid: {', '.join(supported)} or 'all'\n"
             )
             return 1
-        targets = (ide,)
+        targets: tuple[str, ...] = (ide,)
     elif ide == "all":
-        targets = supported
+        targets = tuple(supported)
     else:
         # Default: align with detect_installed_ides()
         try:
             from mcp_server.ide_inject import detect_installed_ides
+
             detected = set(detect_installed_ides(project_root))
             # Always include agents_md (the universal fallback).
             detected.add("agents_md")
             targets = tuple(i for i in supported if i in detected)
         except Exception:
-            targets = supported
+            targets = tuple(supported)
 
     out.write(f"▸ Generating nudge files in {project_root}\n")
     if dry_run:
@@ -134,8 +139,14 @@ def cmd_agents(
         size_hint = f", {result.bytes_written:,} bytes" if result.bytes_written else ""
         out.write(f"  {icon} {ide_name:<14} → {rel}  ({label}{size_hint})\n")
 
-        if result.action in ("created", "block_replaced", "block_appended",
-                              "would_create", "would_replace", "would_append"):
+        if result.action in (
+            "created",
+            "block_replaced",
+            "block_appended",
+            "would_create",
+            "would_replace",
+            "would_append",
+        ):
             written.append(ide_name)
         else:
             skipped.append(ide_name)
@@ -170,9 +181,12 @@ def cmd_hooks_install(
 
     try:
         from mcp_server.paths import (
-            get_project_root, set_project_dir,
-            invalidate_data_dir_cache, is_invalid_project_root,
+            get_project_root,
+            set_project_dir,
+            invalidate_data_dir_cache,
+            is_invalid_project_root,
         )
+
         if project is not None:
             resolved = Path(project).resolve()
             rejection = is_invalid_project_root(resolved)
@@ -214,7 +228,5 @@ def cmd_hooks_install(
             out.write(f"  ✗ {label}  ({result.error or result.action})\n")
             failures.append(label)
 
-    out.write(
-        f"\n▸ summary: {len(successes)} ok, {len(failures)} failed\n"
-    )
+    out.write(f"\n▸ summary: {len(successes)} ok, {len(failures)} failed\n")
     return 1 if failures else 0

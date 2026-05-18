@@ -10,6 +10,7 @@ Language support:
   - Python: stdlib ast module (full support)
   - TypeScript, Go, Rust: tree-sitter grammars via treesitter_parser
 """
+
 from __future__ import annotations
 
 import ast
@@ -43,7 +44,8 @@ def _node_kind(node: ast.AST) -> str:
 
 def _signature_line(source_lines: list[str], node: ast.AST) -> str:
     """Return the def/class line (first line of the node), stripped."""
-    return source_lines[node.lineno - 1].strip()
+    lineno = getattr(node, "lineno", 1)
+    return source_lines[lineno - 1].strip()
 
 
 def get_signature(file_path: str) -> dict:
@@ -282,11 +284,13 @@ def _get_code_python(file_path: str, abs_path: Path, symbol: str | None) -> dict
         for node in tree.body:
             if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
                 lines = source_lines[node.lineno - 1 : node.end_lineno]
-                assignments.append({
-                    "start_line": node.lineno,
-                    "end_line": node.end_lineno,
-                    "source": "\n".join(lines),
-                })
+                assignments.append(
+                    {
+                        "start_line": node.lineno,
+                        "end_line": node.end_lineno,
+                        "source": "\n".join(lines),
+                    }
+                )
         return {
             "found": True,
             "file_path": file_path,
@@ -297,32 +301,34 @@ def _get_code_python(file_path: str, abs_path: Path, symbol: str | None) -> dict
         }
 
     # Walk all nodes to find functions inside classes too
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+    for any_node in ast.walk(tree):
+        if not isinstance(
+            any_node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+        ):
             continue
-        if node.name != symbol:
+        if any_node.name != symbol:
             continue
 
-        kind = _node_kind(node)
-        docstring = ast.get_docstring(node) or None
-        lines = source_lines[node.lineno - 1 : node.end_lineno]
+        kind = _node_kind(any_node)
+        docstring = ast.get_docstring(any_node) or None
+        lines = source_lines[any_node.lineno - 1 : any_node.end_lineno]
 
         return {
             "found": True,
             "file_path": file_path,
             "symbol": symbol,
             "kind": kind,
-            "start_line": node.lineno,
-            "end_line": node.end_lineno,
+            "start_line": any_node.lineno,
+            "end_line": any_node.end_lineno,
             "docstring": docstring,
             "source": "\n".join(lines),
         }
 
     # Symbol not found — provide available symbol names as a hint
-    available = []
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            available.append(node.name)
+    available: list[str] = []
+    for any_node in ast.walk(tree):
+        if isinstance(any_node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            available.append(any_node.name)
 
     return {
         "found": False,

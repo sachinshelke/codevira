@@ -11,6 +11,7 @@ the same concept. Every future agent (including AI re-decisions) would
 miss prior context → drift. These tests prevent that regression — any
 PR that breaks one of these queries fails CI.
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
@@ -180,12 +181,16 @@ class TestBenchmarkQueriesNoLongerMiss:
         mock_cur.fetchall.return_value = [mock_row]
         mock_db.conn.execute.return_value = mock_cur
 
-        with patch("mcp_server.tools.search._get_db", return_value=mock_db), \
-             patch(
-                 "mcp_server.tools._decision_embeddings.semantic_search_decisions",
-                 return_value=[42],
-             ):
+        # 2026-05-18 v2.1.2 Item 1: search.py now calls the scored variant
+        # so it can apply a similarity threshold. We mock that instead and
+        # return a distance well BELOW the 0.65 search threshold so the
+        # match survives the filter.
+        with patch("mcp_server.tools.search._get_db", return_value=mock_db), patch(
+            "mcp_server.tools._decision_embeddings.semantic_search_decisions_scored",
+            return_value=[(42, 0.30)],
+        ):
             from mcp_server.tools.search import search_decisions
+
             result = search_decisions("DDD architecture layer", limit=5)
 
         # Critical assertions: count>0 AND retrieval flagged correctly.
@@ -193,26 +198,56 @@ class TestBenchmarkQueriesNoLongerMiss:
             f"Bug regression: 'DDD architecture layer' returned 0 hits. "
             f"v2.0 BM25-only behavior re-introduced? Got: {result}"
         )
-        assert result["retrieval"] in ("hybrid", "semantic"), (
-            f"Hybrid path didn't engage; retrieval={result['retrieval']!r}"
-        )
+        assert result["retrieval"] in (
+            "hybrid",
+            "semantic",
+        ), f"Hybrid path didn't engage; retrieval={result['retrieval']!r}"
         assert result["results"][0]["id"] == 42
+        # v2.1.2 Item 1: response now exposes threshold_used.
+        assert "threshold_used" in result
 
     def test_pure_bm25_path_still_works_when_semantic_unavailable(self):
         """If semantic returns nothing (chromadb unavailable), fall back to
         BM25-only. Verifies P9 graceful degradation."""
         mock_db = MagicMock()
         mock_db.search_decisions.return_value = [
-            {"id": 1, "decision": "x", "context": "y", "file_path": None,
-             "do_not_revert": 0, "summary": None, "phase": None,
-             "created_at": "2026-05-17T12:00:00"},
+            {
+                "id": 1,
+                "decision": "x",
+                "context": "y",
+                "file_path": None,
+                "do_not_revert": 0,
+                "summary": None,
+                "phase": None,
+                "created_at": "2026-05-17T12:00:00",
+            },
         ]
-        with patch("mcp_server.tools.search._get_db", return_value=mock_db), \
-             patch(
-                 "mcp_server.tools._decision_embeddings.semantic_search_decisions",
-                 return_value=[],
-             ):
+        with patch("mcp_server.tools.search._get_db", return_value=mock_db), patch(
+            "mcp_server.tools._decision_embeddings.semantic_search_decisions_scored",
+            return_value=[],
+        ):
             from mcp_server.tools.search import search_decisions
+
             result = search_decisions("anything", limit=5)
         assert result["count"] == 1
         assert result["retrieval"] == "keyword"
+
+    def test_gibberish_query_returns_zero_above_threshold(self):
+        """v2.1.2 Item 1: when semantic returns hits but all have distance
+        ABOVE the search threshold, the response has count=0 and a
+        distinguishing retrieval marker. The trust-recovery fix for the
+        ``"how to make a cake"`` regression in v2.1.1.
+        """
+        mock_db = MagicMock()
+        mock_db.search_decisions.return_value = []
+        # Semantic finds the closest decisions but every distance is > 0.65
+        # (the default search threshold). The threshold filter rejects all.
+        with patch("mcp_server.tools.search._get_db", return_value=mock_db), patch(
+            "mcp_server.tools._decision_embeddings.semantic_search_decisions_scored",
+            return_value=[(7, 0.90), (8, 0.88)],
+        ):
+            from mcp_server.tools.search import search_decisions
+
+            result = search_decisions("how to make a cake", limit=5)
+        assert result["count"] == 0
+        assert result["retrieval"] == "semantic-no-results-above-threshold"

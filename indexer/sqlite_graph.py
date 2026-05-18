@@ -5,6 +5,7 @@ import sqlite3
 import logging
 from pathlib import Path
 from contextlib import contextmanager
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -368,7 +369,7 @@ class SQLiteGraph:
         do_not_revert: bool | None = None,
     ) -> list[dict]:
         query = 'SELECT * FROM nodes WHERE kind = "file"'
-        params = []
+        params: list[Any] = []
         if layer:
             query += " AND layer = ?"
             params.append(layer)
@@ -657,7 +658,8 @@ class SQLiteGraph:
         confidence: float | None = None,
         source_sessions: list[str] | None = None,
     ):
-        updates, values = [], []
+        updates: list[str] = []
+        values: list[Any] = []
         if confidence is not None:
             updates.append("confidence = ?")
             values.append(confidence)
@@ -824,12 +826,35 @@ class SQLiteGraph:
         import uuid
 
         sid = session_id or f"rec_{uuid.uuid4().hex[:8]}"
+        # 2026-05-18 v2.1.2 Item 7: derive a useful summary from the
+        # decision text instead of the unhelpful "ad-hoc record_decision"
+        # placeholder. Field-test Report 3 §"Decisions recorded ad-hoc
+        # show useless summary" flagged this — `summary: "ad-hoc
+        # record_decision"` shows up in subsequent search results, telling
+        # users the tool name not the actual content.
+        if summary:
+            effective_summary = summary
+        elif decision:
+            # First 80 chars of decision text, word-boundary trimmed.
+            trimmed = decision.strip().split("\n", 1)[0]
+            if len(trimmed) > 80:
+                # Cut at last space ≤ 78 to avoid mid-word
+                cut = trimmed[:78]
+                last_space = cut.rfind(" ")
+                if last_space >= 50:
+                    effective_summary = trimmed[:last_space] + "…"
+                else:
+                    effective_summary = cut + "…"
+            else:
+                effective_summary = trimmed
+        else:
+            effective_summary = "ad-hoc record_decision"  # safety fallback
         with self.transaction() as conn:
             # Ensure parent session exists (FK constraint).
             conn.execute(
                 "INSERT OR IGNORE INTO sessions (session_id, summary, phase) "
                 "VALUES (?, ?, ?)",
-                (sid, summary or "ad-hoc record_decision", phase),
+                (sid, effective_summary, phase),
             )
             cur = conn.execute(
                 "INSERT INTO decisions "
@@ -871,7 +896,7 @@ class SQLiteGraph:
 
     def log_session(
         self, session_id: str, summary: str, phase: str, decisions: list[dict]
-    ):
+    ) -> str:
         """Insert a session row plus its decisions, skipping duplicates.
 
         v1.8: A decision is skipped when it has a ``file_path`` and overlaps
@@ -879,21 +904,57 @@ class SQLiteGraph:
         same file. The session row is always written — only redundant
         *decisions* are dropped. Decisions without a ``file_path`` are always
         inserted (no scope to compare against).
+
+        2026-05-18 v2.1.2 Item 22: returns the (possibly auto-suffixed)
+        session_id actually written. If the requested session_id already
+        exists with a DIFFERENT summary, we auto-suffix with a short hash
+        of the new summary so the two sessions don't silently merge. If
+        the existing row has the same summary, we keep the requested id
+        (idempotent — for replay / retry cases).
         """
+        import hashlib as _hashlib
+
         with self.transaction() as conn:
+            # Check for collision FIRST (before any insert that might mutate).
+            existing = conn.execute(
+                "SELECT summary FROM sessions WHERE session_id = ? LIMIT 1",
+                (session_id,),
+            ).fetchone()
+            actual_session_id = session_id
+            if existing is not None:
+                existing_summary = (existing["summary"] or "").strip()
+                new_summary = (summary or "").strip()
+                if existing_summary and new_summary and existing_summary != new_summary:
+                    # Different content → auto-suffix with short hash.
+                    digest = _hashlib.sha1(
+                        f"{new_summary}|{phase or ''}".encode("utf-8")
+                    ).hexdigest()[:8]
+                    actual_session_id = f"{session_id}-{digest}"
+                    # Defensive: still possible (very rare) for the suffixed
+                    # id to also collide. Keep extending if so.
+                    n = 1
+                    while (
+                        conn.execute(
+                            "SELECT 1 FROM sessions WHERE session_id = ? LIMIT 1",
+                            (actual_session_id,),
+                        ).fetchone()
+                        is not None
+                    ):
+                        actual_session_id = f"{session_id}-{digest}-{n}"
+                        n += 1
             conn.execute(
                 """
                 INSERT OR REPLACE INTO sessions (session_id, summary, phase)
                 VALUES (?, ?, ?)
             """,
-                (session_id, summary, phase),
+                (actual_session_id, summary, phase),
             )
 
             for d in decisions:
                 fp = d.get("file_path")
                 dtext = d.get("decision")
                 if fp and dtext:
-                    existing = [
+                    existing_decisions = [
                         row["decision"]
                         for row in conn.execute(
                             "SELECT decision FROM decisions WHERE file_path = ? "
@@ -901,15 +962,16 @@ class SQLiteGraph:
                             (fp,),
                         ).fetchall()
                     ]
-                    if _is_duplicate(dtext, existing):
+                    if _is_duplicate(dtext, existing_decisions):
                         continue
                 conn.execute(
                     """
                     INSERT INTO decisions (session_id, file_path, decision, context)
                     VALUES (?, ?, ?, ?)
                 """,
-                    (session_id, fp, dtext, d.get("context")),
+                    (actual_session_id, fp, dtext, d.get("context")),
                 )
+        return actual_session_id
 
     def search_decisions(
         self, query: str, limit: int = 10, session_id: str | None = None
@@ -956,7 +1018,19 @@ class SQLiteGraph:
         params.extend([pat, pat, pat, limit])
 
         cur = self.conn.execute(sql, params)
-        return [dict(r) for r in cur.fetchall()]
+        # 2026-05-18 v2.1.2 Item 5: coerce `do_not_revert` INTEGER (0/1
+        # in SQLite) → bool (True/False) before exposing to MCP callers.
+        # Field-test Report 3 flagged the inconsistency: schema says
+        # boolean but API returns `1`. Coerce at the read boundary so all
+        # downstream paths (search.py response, engine signals, replay)
+        # see the right type.
+        rows = []
+        for r in cur.fetchall():
+            d = dict(r)
+            if "do_not_revert" in d:
+                d["do_not_revert"] = bool(d["do_not_revert"])
+            rows.append(d)
+        return rows
 
     # ------------------------------------------------------------------
     # v1.5: Function-level symbols and call graph

@@ -4,6 +4,7 @@ treesitter_parser.py — Unified tree-sitter parser using tree-sitter-language-p
 Supports parsing AST nodes (classes, functions, methods, imports) across many languages.
 Python files are NOT handled here — they use the stdlib `ast` module.
 """
+
 from __future__ import annotations
 
 import logging
@@ -20,10 +21,11 @@ logger = logging.getLogger(__name__)
 # Data classes — unified output across all languages
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ParsedSymbol:
     name: str
-    kind: str             # "function" | "class" | "method" | "interface" | "struct" | "enum" | "trait" | "impl"
+    kind: str  # "function" | "class" | "method" | "interface" | "struct" | "enum" | "trait" | "impl"
     signature_line: str
     start_line: int
     end_line: int
@@ -74,6 +76,7 @@ EXTENSION_MAP: dict[str, str] = {
     ".jsx": "javascript",
 }
 
+
 def get_language(extension: str) -> str | None:
     return EXTENSION_MAP.get(extension.lower())
 
@@ -91,12 +94,21 @@ _CLASS_TYPES = {
     "java": ["class_declaration", "interface_declaration", "enum_declaration"],
     "c": ["struct_specifier", "type_definition"],
     "cpp": ["class_specifier", "struct_specifier"],
-    "csharp": ["class_declaration", "interface_declaration", "enum_declaration", "struct_declaration"],
+    "csharp": [
+        "class_declaration",
+        "interface_declaration",
+        "enum_declaration",
+        "struct_declaration",
+    ],
     "ruby": ["class", "module"],
     "kotlin": ["class_declaration", "object_declaration"],
     "swift": ["class_declaration", "struct_declaration", "protocol_declaration"],
     "php": ["class_declaration", "interface_declaration"],
-    "solidity": ["contract_declaration", "interface_declaration", "library_declaration"],
+    "solidity": [
+        "contract_declaration",
+        "interface_declaration",
+        "library_declaration",
+    ],
 }
 
 _FUNCTION_TYPES = {
@@ -126,7 +138,7 @@ _IMPORT_TYPES = {
     "c": ["preproc_include"],
     "cpp": ["preproc_include"],
     "csharp": ["using_directive"],
-    "ruby": ["call"], 
+    "ruby": ["call"],
     "kotlin": ["import_header"],
     "swift": ["import_declaration"],
     "php": ["namespace_use_declaration"],
@@ -136,6 +148,7 @@ _IMPORT_TYPES = {
 # ---------------------------------------------------------------------------
 # Parsing core
 # ---------------------------------------------------------------------------
+
 
 def parse_file(file_path: str, language: str | None = None) -> ParsedFile:
     path = Path(file_path)
@@ -148,7 +161,7 @@ def parse_file(file_path: str, language: str | None = None) -> ParsedFile:
             raise ValueError(f"Cannot infer language for extension: {path.suffix}")
 
     try:
-        parser = tslp.get_parser(language)
+        parser = tslp.get_parser(language)  # type: ignore[arg-type]
     except Exception as e:
         raise ValueError(f"Failed to load parser for {language}: {e}")
 
@@ -170,10 +183,10 @@ def parse_file(file_path: str, language: str | None = None) -> ParsedFile:
     def walk(node: Node, parent_kind: str | None = None, is_exported: bool = False):
         if not node:
             return
-            
+
         node_type = node.type
         current_exported = is_exported or "export" in node_type
-        
+
         # 1. Imports
         if node_type in import_types:
             raw = _node_text(node, source_bytes)
@@ -186,18 +199,22 @@ def parse_file(file_path: str, language: str | None = None) -> ParsedFile:
                 # Rust/Go/C: extract scoped path or identifier directly
                 # For Rust use_declaration: "use std::collections::HashMap;" → "std::collections::HashMap"
                 # For Go import_spec: "fmt" or quoted
-                path_parts = re.findall(r'(?:use|import)\s+(.+?)(?:\s*;|\s*$)', raw.strip())
+                path_parts = re.findall(
+                    r"(?:use|import)\s+(.+?)(?:\s*;|\s*$)", raw.strip()
+                )
                 if path_parts:
-                    module = path_parts[0].strip().rstrip(';')
+                    module = path_parts[0].strip().rstrip(";")
                     imports.append(ParsedImport(module=module, raw_line=raw.strip()))
                 elif raw.strip():
-                    imports.append(ParsedImport(module=raw.strip(), raw_line=raw.strip()))
-        
+                    imports.append(
+                        ParsedImport(module=raw.strip(), raw_line=raw.strip())
+                    )
+
         # 2. Classes / Types
         elif node_type in class_types:
             name_node = node.child_by_field_name("name")
             name = _node_text(name_node, source_bytes) if name_node else None
-            
+
             if not name:
                 for child in node.children:
                     if "identifier" in child.type or child.type == "type_identifier":
@@ -218,18 +235,22 @@ def parse_file(file_path: str, language: str | None = None) -> ParsedFile:
                                 kind_override = "interface"
                         if name and name not in seen:
                             seen.add(name)
-                            k = kind_override if 'kind_override' in dir() else "struct"
+                            k = kind_override if "kind_override" in dir() else "struct"
                             public = _is_public(name, node, language)
-                            symbols.append(ParsedSymbol(
-                                name=name,
-                                kind=k,
-                                signature_line=_first_line_text(node, source_lines),
-                                start_line=node.start_point[0] + 1,
-                                end_line=node.end_point[0] + 1,
-                                docstring=_get_preceding_comment(node, source_lines),
-                                is_public=public,
-                                methods=[]
-                            ))
+                            symbols.append(
+                                ParsedSymbol(
+                                    name=name,
+                                    kind=k,
+                                    signature_line=_first_line_text(node, source_lines),
+                                    start_line=node.start_point[0] + 1,
+                                    end_line=node.end_point[0] + 1,
+                                    docstring=_get_preceding_comment(
+                                        node, source_lines
+                                    ),
+                                    is_public=public,
+                                    methods=[],
+                                )
+                            )
                 # Walk children for nested declarations
                 for child in node.children:
                     walk(child, parent_kind, current_exported)
@@ -238,7 +259,11 @@ def parse_file(file_path: str, language: str | None = None) -> ParsedFile:
             if name and name not in seen:
                 seen.add(name)
                 methods = []
-                body = node.child_by_field_name("body") or node.child_by_field_name("declaration_list") or node
+                body = (
+                    node.child_by_field_name("body")
+                    or node.child_by_field_name("declaration_list")
+                    or node
+                )
                 for child in body.children:
                     if child.type in func_types:
                         m_name_node = child.child_by_field_name("name")
@@ -246,57 +271,74 @@ def parse_file(file_path: str, language: str | None = None) -> ParsedFile:
                             methods.append(_node_text(m_name_node, source_bytes))
 
                 kind = "class"
-                if "interface" in node_type: kind = "interface"
-                elif "struct" in node_type or "type" in node_type: kind = "struct"
-                elif "enum" in node_type: kind = "enum"
-                elif "trait" in node_type: kind = "trait"
-                elif "impl" in node_type: kind = "impl"
+                if "interface" in node_type:
+                    kind = "interface"
+                elif "struct" in node_type or "type" in node_type:
+                    kind = "struct"
+                elif "enum" in node_type:
+                    kind = "enum"
+                elif "trait" in node_type:
+                    kind = "trait"
+                elif "impl" in node_type:
+                    kind = "impl"
 
                 if language == "rust" and "impl" in node_type:
                     for c in node.children:
                         if c.type == "type_identifier":
                             name = _node_text(c, source_bytes)
                             break
-                            
+
                 public = current_exported or _is_public(name, node, language)
 
-                symbols.append(ParsedSymbol(
-                    name=name,
-                    kind=kind,
-                    signature_line=_first_line_text(node, source_lines),
-                    start_line=node.start_point[0] + 1,
-                    end_line=node.end_point[0] + 1,
-                    docstring=_get_preceding_comment(node, source_lines),
-                    is_public=public,
-                    methods=methods
-                ))
-            
-            for child in node.children:
-                walk(child, "class", current_exported)
-                
-        # 3. Functions / Methods
-        elif node_type in func_types:
-            name_node = node.child_by_field_name("name")
-            name = _node_text(name_node, source_bytes) if name_node else None
-            if name and name not in seen:
-                seen.add(name)
-                kind = "method" if parent_kind == "class" or "method" in node_type else "function"
-                
-                if language == "rust" and node.parent and node.parent.type == "declaration_list":
-                    pass 
-                else:
-                    public = current_exported or _is_public(name, node, language)
-                    symbols.append(ParsedSymbol(
+                symbols.append(
+                    ParsedSymbol(
                         name=name,
                         kind=kind,
                         signature_line=_first_line_text(node, source_lines),
                         start_line=node.start_point[0] + 1,
                         end_line=node.end_point[0] + 1,
                         docstring=_get_preceding_comment(node, source_lines),
-                        is_public=public
-                    ))
+                        is_public=public,
+                        methods=methods,
+                    )
+                )
+
+            for child in node.children:
+                walk(child, "class", current_exported)
+
+        # 3. Functions / Methods
+        elif node_type in func_types:
+            name_node = node.child_by_field_name("name")
+            name = _node_text(name_node, source_bytes) if name_node else None
+            if name and name not in seen:
+                seen.add(name)
+                kind = (
+                    "method"
+                    if parent_kind == "class" or "method" in node_type
+                    else "function"
+                )
+
+                if (
+                    language == "rust"
+                    and node.parent
+                    and node.parent.type == "declaration_list"
+                ):
+                    pass
+                else:
+                    public = current_exported or _is_public(name, node, language)
+                    symbols.append(
+                        ParsedSymbol(
+                            name=name,
+                            kind=kind,
+                            signature_line=_first_line_text(node, source_lines),
+                            start_line=node.start_point[0] + 1,
+                            end_line=node.end_point[0] + 1,
+                            docstring=_get_preceding_comment(node, source_lines),
+                            is_public=public,
+                        )
+                    )
             return
-            
+
         else:
             for child in node.children:
                 walk(child, parent_kind, current_exported)
@@ -312,7 +354,10 @@ def parse_file(file_path: str, language: str | None = None) -> ParsedFile:
         module_docstring=mod_doc,
     )
 
-def get_symbol_source(file_path: str, symbol_name: str, language: str | None = None) -> dict:
+
+def get_symbol_source(
+    file_path: str, symbol_name: str, language: str | None = None
+) -> dict:
     path = Path(file_path)
     if not path.exists():
         return {"found": False, "error": f"File not found: {file_path}"}
@@ -353,8 +398,12 @@ def get_symbol_source(file_path: str, symbol_name: str, language: str | None = N
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _node_text(node: Node, source_bytes: bytes) -> str:
-    return source_bytes[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
+    return source_bytes[node.start_byte : node.end_byte].decode(
+        "utf-8", errors="replace"
+    )
+
 
 def _first_line_text(node: Node, source_lines: list[str]) -> str:
     start_row = node.start_point[0]
@@ -365,10 +414,11 @@ def _first_line_text(node: Node, source_lines: list[str]) -> str:
         return line
     return ""
 
+
 def _get_preceding_comment(node: Node, source_lines: list[str]) -> str | None:
     comments = []
     current_line = node.start_point[0] - 1
-    
+
     while current_line >= 0:
         line = source_lines[current_line].strip()
         if line.startswith(("//", "#", "*", "/*", "*/", "///")):
@@ -378,20 +428,23 @@ def _get_preceding_comment(node: Node, source_lines: list[str]) -> str | None:
             current_line -= 1
         else:
             break
-            
+
     if comments:
         comments.reverse()
         return "\n".join(comments)
     return None
 
+
 def _extract_module_docstring(root: Node, source_lines: list[str]) -> str | None:
-    if not root.children: return None
+    if not root.children:
+        return None
     for i in range(min(5, len(root.children))):
         n = root.children[i]
         if n.type == "comment" or n.type == "line_comment" or n.type == "block_comment":
-            doc = _node_text(n, "\n".join(source_lines).encode('utf-8'))
+            doc = _node_text(n, "\n".join(source_lines).encode("utf-8"))
             return doc.strip()
     return None
+
 
 def _is_public(name: str, node: Node, language: str) -> bool:
     if not name:
@@ -399,7 +452,8 @@ def _is_public(name: str, node: Node, language: str) -> bool:
     if language == "go":
         return name[0].isupper()
     if language in ("typescript", "tsx", "javascript", "jsx"):
-        if name.startswith("_"): return False
+        if name.startswith("_"):
+            return False
         if node.parent and "export" in node.parent.type:
             return True
         return False
@@ -415,6 +469,5 @@ def _is_public(name: str, node: Node, language: str) -> bool:
         except Exception:
             pass
         return False
-        
-    return not name.startswith("_")
 
+    return not name.startswith("_")

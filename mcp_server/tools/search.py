@@ -559,7 +559,24 @@ def search_decisions(
                     "do_not_revert": r.get("do_not_revert"),
                 }
             )
-        return {
+    # 2026-05-19 issue #10: if the semantic infra failed to load in this
+    # process (most commonly: torch dlopen blocked by a sandboxed parent
+    # like Antigravity), surface a clear one-shot warning in the response
+    # so the caller knows WHY semantic ranking is missing instead of
+    # silently degrading to BM25.
+    semantic_warning = None
+    try:
+        from mcp_server.tools._decision_embeddings import (
+            get_semantic_unavailable_reason,
+        )
+
+        semantic_warning = get_semantic_unavailable_reason()
+    except Exception:
+        pass
+
+    if summary_only:
+        # Item 28 slim payload assembled above
+        resp = {
             "query": query,
             "count": len(slim),
             "retrieval": retrieval,
@@ -567,6 +584,9 @@ def search_decisions(
             "results": slim,
             "mode": "summary_only",
         }
+        if semantic_warning:
+            resp["_semantic_warning"] = semantic_warning
+        return resp
 
     if not full:
         for r in results:
@@ -589,7 +609,7 @@ def search_decisions(
                     else r["summary"]
                 )
 
-    return {
+    resp = {
         "query": query,
         "count": len(results),
         "retrieval": retrieval,
@@ -599,6 +619,9 @@ def search_decisions(
         if not full
         else "Showing full untruncated decisions.",
     }
+    if semantic_warning:
+        resp["_semantic_warning"] = semantic_warning
+    return resp
 
 
 def list_decisions(

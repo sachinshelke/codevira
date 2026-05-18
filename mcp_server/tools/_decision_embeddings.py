@@ -61,6 +61,26 @@ logger = logging.getLogger(__name__)
 _DECISIONS_COLLECTION_NAME = "codevira_decisions"
 
 
+# 2026-05-19 issue #10: cache the SHAPE of the failure when chromadb /
+# torch can't load (sandboxed Antigravity case). Tools that depend on
+# semantic search use this to surface a clear one-time warning in their
+# response instead of silently degrading to BM25. None = "we haven't
+# determined yet". str = "we tried and failed; here's the reason".
+_semantic_unavailable_reason: str | None = None
+
+
+def get_semantic_unavailable_reason() -> str | None:
+    """Issue #10: return a human-readable reason if semantic infra
+    failed to load in this process, else None.
+
+    The reason is set by :func:`_decisions_collection_or_none` the first
+    time it tries to load chromadb + sentence-transformers + torch and
+    catches an OSError / ImportError. Subsequent calls don't re-try
+    the load.
+    """
+    return _semantic_unavailable_reason
+
+
 def _decisions_collection_or_none():
     """Return the ChromaDB decisions collection, or None on any error.
 
@@ -73,6 +93,7 @@ def _decisions_collection_or_none():
         / any other unrecoverable error. Callers MUST treat None as
         "semantic search disabled" and degrade gracefully (P9).
     """
+    global _semantic_unavailable_reason
     try:
         from indexer.index_codebase import (
             _get_chroma_client,
@@ -80,11 +101,14 @@ def _decisions_collection_or_none():
             _looks_like_chroma_corruption,
             ChromaCorrupted,
         )
-    except ImportError:
+    except ImportError as exc:
         # indexer not importable (very rare — installation issue).
-        logger.debug(
-            "indexer.index_codebase not importable; decisions search degraded to BM25 only"
+        msg = (
+            f"indexer.index_codebase not importable: {exc}. Semantic "
+            f"search degraded to BM25 only."
         )
+        logger.debug(msg)
+        _semantic_unavailable_reason = msg
         return None
 
     try:
@@ -97,23 +121,50 @@ def _decisions_collection_or_none():
             embedding_function=embed_fn,
         )
     except ChromaCorrupted:
-        logger.warning(
-            "Chroma store corrupted; decisions semantic search disabled. "
-            "Run `codevira heal --vectors` to recover."
+        msg = (
+            "Chroma store corrupted. Run `codevira reset --vectors` to "
+            "recover (auto-backs-up decisions first)."
         )
+        logger.warning(msg + " Decisions semantic search disabled.")
+        _semantic_unavailable_reason = msg
         return None
     except ImportError as exc:
         # chromadb or sentence-transformers missing
-        logger.debug("Semantic search dep missing; decisions search degraded: %s", exc)
+        msg = (
+            f"chromadb / sentence-transformers / torch failed to load: "
+            f"{exc}. Semantic search degraded to BM25 only. If running "
+            f"under a sandboxed parent process (Antigravity / hardened-"
+            f"runtime macOS app), see issue #10 — torch dylib dlopen "
+            f"may be blocked by the parent's entitlements."
+        )
+        logger.debug(msg)
+        _semantic_unavailable_reason = msg
+        return None
+    except OSError as exc:
+        # macOS dlopen failures arrive as OSError, not ImportError.
+        # Issue #10: torch's libtorch_global_deps.dylib fails to load
+        # under Antigravity's sandbox.
+        msg = (
+            f"Native library load failed: {exc}. Common cause: parent "
+            f"process (e.g. Antigravity) sandbox blocks dlopen of "
+            f"unsigned PyPI dylibs. Semantic search degraded to BM25 "
+            f"only. See issue #10 + docs/troubleshooting/antigravity.md."
+        )
+        logger.warning(msg)
+        _semantic_unavailable_reason = msg
         return None
     except Exception as exc:
         if _looks_like_chroma_corruption(exc):
-            logger.warning(
-                "Chroma corruption detected; decisions semantic search disabled: %s",
-                exc,
+            msg = (
+                f"Chroma corruption detected: {exc}. Run `codevira reset "
+                f"--vectors` to recover."
             )
+            logger.warning(msg)
+            _semantic_unavailable_reason = msg
         else:
-            logger.warning("Decisions collection unavailable: %s", exc)
+            msg = f"Decisions collection unavailable: {exc}"
+            logger.warning(msg)
+            _semantic_unavailable_reason = msg
         return None
 
 

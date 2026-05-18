@@ -1862,15 +1862,32 @@ def main():
 
         safe_log_crash(e, context="log retention cleanup")
 
-    # v1.7: Pre-warm the embedding model in a background thread so the first
-    # search_codebase() call doesn't hit the MCP client's ~30s timeout
-    # while waiting for PyTorch init / model download.
-    try:
-        from mcp_server.tools.search import prewarm_embedding_model
-
-        prewarm_embedding_model()
-    except Exception as e:
-        logger.warning("Embedding prewarm failed: %s", e)
+    # 2026-05-19 v2.1.2 issue #10: prewarm REMOVED at startup.
+    #
+    # History: v1.7 added a background daemon thread that pre-loaded the
+    # ChromaDB embedding model so the first search_codebase() call didn't
+    # block on PyTorch init. v2.1.2 removed this because:
+    #
+    #   1. Antigravity (Cascade) runs MCP-server children under sandbox
+    #      entitlements that block dlopen() of unsigned PyPI dylibs like
+    #      torch/lib/libtorch_global_deps.dylib. The prewarm daemon thread
+    #      fails during MCP server startup; Antigravity reports it as
+    #      "tools/list failed: dlopen ... no such file" even though the
+    #      file exists. Issue #10.
+    #
+    #   2. The MCP server itself + every non-search tool (graph, roadmap,
+    #      changesets, decisions read/write, etc.) work fine WITHOUT
+    #      torch. Loading torch at startup forced the whole server to
+    #      either succeed-on-torch or be partly broken.
+    #
+    #   3. The existing lazy-load in search.py:_get_chroma_client()
+    #      already handles "first call is slow" via the "warming" status
+    #      response — the MCP client retries on the next invocation.
+    #
+    # Net effect: server starts instantly everywhere. First semantic
+    # search call pays the ~1-3s PyTorch init cost (sometimes returning
+    # status="warming" if the MCP client's per-call timeout is short).
+    # Non-search tools unaffected.
 
     async def _run():
         async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):

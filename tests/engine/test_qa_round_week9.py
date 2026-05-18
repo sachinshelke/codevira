@@ -44,11 +44,11 @@ I4-I7: Bug 1/2/3/4 regression checks under full default set
 I8-I10: Engine kill switch, idempotency, signal context sharing
 M1-M5: Mutation tests on the seams
 """
+
 from __future__ import annotations
 
 import io
 import json
-import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -75,7 +75,8 @@ def isolated_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     project.mkdir()
     (project / "pyproject.toml").write_text("")
     monkeypatch.setattr(
-        "mcp_server.paths.get_global_home", lambda: cv_data,
+        "mcp_server.paths.get_global_home",
+        lambda: cv_data,
     )
     return project
 
@@ -84,6 +85,7 @@ def isolated_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def _isolate_engine(monkeypatch: pytest.MonkeyPatch):
     """Each test starts with a clean policy registry and clean env vars."""
     from mcp_server.engine.runner import reset_policies
+
     reset_policies()
     for env in (
         "CODEVIRA_ENGINE",
@@ -103,6 +105,7 @@ def _isolate_engine(monkeypatch: pytest.MonkeyPatch):
 def _set_project(monkeypatch: pytest.MonkeyPatch, project: Path) -> None:
     """Wire mcp_server.paths to point at our isolated project."""
     import mcp_server.paths as paths_mod
+
     paths_mod.set_project_dir(project)
     paths_mod.invalidate_data_dir_cache()
 
@@ -111,6 +114,7 @@ def _open_graph(project: Path):
     """Open the project's graph.db (creating it if needed)."""
     from mcp_server.paths import get_data_dir
     from indexer.sqlite_graph import SQLiteGraph
+
     graph_db = get_data_dir() / "graph" / "graph.db"
     graph_db.parent.mkdir(parents=True, exist_ok=True)
     return SQLiteGraph(graph_db)
@@ -130,7 +134,6 @@ def _ensure_session(g, session_id: str = "s1") -> None:
 
 
 class TestI1_DefaultRegistration:
-
     def test_all_default_heroes_registered(self):
         """Locks in the full set of policies registered by default. As
         new heroes ship (Week 10+), update the expected set explicitly —
@@ -139,35 +142,40 @@ class TestI1_DefaultRegistration:
         End of Week 10: the set expanded to include AIPromotionScore.
         """
         from mcp_server.engine import (
-            register_default_policies, registered_policies,
+            register_default_policies,
+            registered_policies,
         )
+
         register_default_policies()
         names = {p.name for p in registered_policies()}
-        # The full v2.0-alpha line-up at end of Week 10.
+        # The full v2.0-alpha line-up + v2.1.2 Item 4 addition.
         assert names == {
-            "blast_radius_veto",        # Hero 4 (Week 4)
-            "decision_lock",            # Hero 1 (Week 5)
+            "blast_radius_veto",  # Hero 4 (Week 4)
+            "decision_lock",  # Hero 1 (Week 5)
             "cross_session_consistency",  # Hero 5 (Week 6)
-            "token_budget_persist",     # Hero 6 (Week 7)
-            "anti_regression",          # Hero 2 (Week 8)
-            "live_style_enforcement",   # Hero 7 (Week 9)
-            "ai_promotion_score",       # Hero 10 (Week 10)
-            "intent_inference",         # Hero 9 (Week 11)
-            "scope_contract_lock",      # Hero 3 (Week 12)
+            "token_budget_persist",  # Hero 6 (Week 7)
+            "anti_regression",  # Hero 2 (Week 8)
+            "live_style_enforcement",  # Hero 7 (Week 9)
+            "ai_promotion_score",  # Hero 10 (Week 10)
+            "intent_inference",  # Hero 9 (Week 11)
+            "scope_contract_lock",  # Hero 3 (Week 12)
+            "post_edit_graph_refresh",  # v2.1.2 Item 4
         }, f"default-hero set mismatch — got {sorted(names)}"
 
     def test_pre_tool_use_eligible_policies(self):
         """5 of 6 heroes fire on PreToolUse; Hero 7 must NOT be among them."""
         from mcp_server.engine import register_default_policies, registered_policies
         from mcp_server.engine.events import EventType
+
         register_default_policies()
         pre_eligible = {
-            p.name for p in registered_policies()
+            p.name
+            for p in registered_policies()
             if EventType.PRE_TOOL_USE in set(p.handles)
         }
-        assert "live_style_enforcement" not in pre_eligible, (
-            "Hero 7 is PostToolUse-only; must NOT be eligible for PreToolUse"
-        )
+        assert (
+            "live_style_enforcement" not in pre_eligible
+        ), "Hero 7 is PostToolUse-only; must NOT be eligible for PreToolUse"
         assert "decision_lock" in pre_eligible
         assert "anti_regression" in pre_eligible
         assert "blast_radius_veto" in pre_eligible
@@ -177,9 +185,11 @@ class TestI1_DefaultRegistration:
         handles POST_TOOL_USE for token-meter telemetry."""
         from mcp_server.engine import register_default_policies, registered_policies
         from mcp_server.engine.events import EventType
+
         register_default_policies()
         post_eligible = {
-            p.name for p in registered_policies()
+            p.name
+            for p in registered_policies()
             if EventType.POST_TOOL_USE in set(p.handles)
         }
         assert "live_style_enforcement" in post_eligible
@@ -191,9 +201,10 @@ class TestI1_DefaultRegistration:
 
 
 class TestI2_VerdictCombination:
-
     def test_higher_priority_block_wins_other_block_in_metadata(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """Decision Lock (priority 100) and Anti-Regression (priority 80)
         both fire on the same Edit. Decision Lock wins. Anti-Regression
@@ -203,7 +214,9 @@ class TestI2_VerdictCombination:
         """
         from indexer.fix_history import record_fix
         from mcp_server.engine import (
-            dispatch, register_default_policies, reset_policies,
+            dispatch,
+            register_default_policies,
+            reset_policies,
         )
         from mcp_server.engine.events import EventType, HookEvent
 
@@ -227,8 +240,10 @@ class TestI2_VerdictCombination:
 
         # Plant a fix: Anti-Regression will also block on a revert-shaped diff.
         record_fix(
-            isolated_project, file_path="x.py",
-            line_start=0, line_end=0,
+            isolated_project,
+            file_path="x.py",
+            line_start=0,
+            line_end=0,
             description="fix: deadlock race condition resolved",
             source="manual",
         )
@@ -256,13 +271,13 @@ class TestI2_VerdictCombination:
         )
         verdict = dispatch(event)
 
-        assert verdict.is_blocking(), (
-            f"Both heroes should block; got {verdict.action}: {verdict.message!r}"
-        )
+        assert (
+            verdict.is_blocking()
+        ), f"Both heroes should block; got {verdict.action}: {verdict.message!r}"
         # Decision Lock wins (priority 100 > Anti-Regression's 80).
-        assert verdict.policy == "decision_lock", (
-            f"Higher-priority block must win; got {verdict.policy!r}"
-        )
+        assert (
+            verdict.policy == "decision_lock"
+        ), f"Higher-priority block must win; got {verdict.policy!r}"
         # Anti-Regression is recorded as a co-blocker.
         others = verdict.metadata.get("other_blocking_policies", [])
         assert "anti_regression" in others, (
@@ -271,13 +286,17 @@ class TestI2_VerdictCombination:
         )
 
     def test_block_on_pre_does_not_short_circuit_other_post_policies(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """Block on PreToolUse must not affect a SUBSEQUENT PostToolUse
         dispatch. They're separate events; state must not leak between
         dispatch calls."""
         from mcp_server.engine import (
-            dispatch, register_default_policies, reset_policies,
+            dispatch,
+            register_default_policies,
+            reset_policies,
         )
         from mcp_server.engine.events import EventType, HookEvent
 
@@ -313,9 +332,10 @@ class TestI2_VerdictCombination:
 
 
 class TestI3_EventTypePartition:
-
     def test_pretool_policies_silent_on_post_event(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """Even if a PostToolUse event has all the conditions that would
         trigger Hero 1/2/4 on a PreToolUse, they MUST stay silent because
@@ -326,7 +346,9 @@ class TestI3_EventTypePartition:
         """
         from indexer.fix_history import record_fix
         from mcp_server.engine import (
-            dispatch, register_default_policies, reset_policies,
+            dispatch,
+            register_default_policies,
+            reset_policies,
         )
         from mcp_server.engine.events import EventType, HookEvent
 
@@ -348,8 +370,10 @@ class TestI3_EventTypePartition:
         g.conn.commit()
         g.close()
         record_fix(
-            isolated_project, file_path="z.py",
-            line_start=0, line_end=0,
+            isolated_project,
+            file_path="z.py",
+            line_start=0,
+            line_end=0,
             description="fix: race condition",
             source="manual",
         )
@@ -377,12 +401,16 @@ class TestI3_EventTypePartition:
         )
 
     def test_post_tool_policy_silent_on_pre_event(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """Inverse: Hero 7 (POST) must not fire on a PRE event even with
         preferences planted and a violating diff."""
         from mcp_server.engine import (
-            dispatch, register_default_policies, reset_policies,
+            dispatch,
+            register_default_policies,
+            reset_policies,
         )
         from mcp_server.engine.events import EventType, HookEvent
 
@@ -423,9 +451,10 @@ class TestI3_EventTypePartition:
 
 
 class TestI4_Bug1Regression:
-
     def test_signals_decisions_returns_rows_from_real_graph(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """Bug 1 (Week-5 R8 redo): signals.decisions used SELECT d.timestamp
         but the schema column is created_at — silently returned [] for 5
@@ -434,6 +463,7 @@ class TestI4_Bug1Regression:
         Lock this in: a real graph with one decision must return one row.
         """
         from mcp_server.engine.signals import SignalContext
+
         _set_project(monkeypatch, isolated_project)
         g = _open_graph(isolated_project)
         _ensure_session(g)
@@ -453,9 +483,9 @@ class TestI4_Bug1Regression:
         )
         assert rows[0]["decision"] == "use locks"
         # The aliased column must be ``timestamp``, not ``created_at``.
-        assert "timestamp" in rows[0], (
-            "Bug 1 regression: SQL alias dropped — `timestamp` key missing"
-        )
+        assert (
+            "timestamp" in rows[0]
+        ), "Bug 1 regression: SQL alias dropped — `timestamp` key missing"
 
 
 # =====================================================================
@@ -464,9 +494,10 @@ class TestI4_Bug1Regression:
 
 
 class TestI5_Bug2Regression:
-
     def test_signals_kwarg_reaches_evaluate(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """Bug 2 (Week-5 retrospective): runner._safe_evaluate didn't pass
         signals as a kwarg — Heroes 1, 4, 5 silently no-op'd against every
@@ -503,7 +534,8 @@ class TestI5_Bug2Regression:
         )
 
     def test_legacy_policy_without_signals_kwarg_still_works(
-        self, isolated_project: Path,
+        self,
+        isolated_project: Path,
     ):
         """The Bug 2 fix added a TypeError fallback for older policies that
         only accept `evaluate(event)`. Verify the fallback path still works
@@ -531,9 +563,9 @@ class TestI5_Bug2Regression:
             target_file=isolated_project / "f.py",
         )
         v = dispatch(event)
-        assert called["n"] == 1, (
-            "Bug 2 fix regression: legacy single-arg evaluate() not called via TypeError fallback"
-        )
+        assert (
+            called["n"] == 1
+        ), "Bug 2 fix regression: legacy single-arg evaluate() not called via TypeError fallback"
         assert v.action == "allow"
 
 
@@ -543,9 +575,9 @@ class TestI5_Bug2Regression:
 
 
 class TestI6_Bug3Regression:
-
     def test_enabled_by_default_false_excludes_from_register_default(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """Bug 3 (Week-7 retrospective): the flag was declared on the base
         class but never read by register_default_policies. Setting it to
@@ -556,7 +588,8 @@ class TestI6_Bug3Regression:
         NOT in the registry.
         """
         from mcp_server.engine import (
-            register_default_policies, registered_policies,
+            register_default_policies,
+            registered_policies,
         )
         from mcp_server.engine.policies.live_style import LiveStyleEnforcement
 
@@ -579,8 +612,10 @@ class TestI6_Bug3Regression:
         doesn't go stale every time a new hero ships — it's a Bug-3
         regression test, not a hero-count audit."""
         from mcp_server.engine import (
-            register_default_policies, registered_policies,
+            register_default_policies,
+            registered_policies,
         )
+
         register_default_policies()
         names = {p.name for p in registered_policies()}
         assert len(names) >= 6, (
@@ -595,18 +630,20 @@ class TestI6_Bug3Regression:
 
 
 class TestI7_Bug4Regression:
-
     def test_extract_after_block_handles_raw_write_content(self):
         """Direct unit test of the parser fix."""
         from mcp_server.engine.policies.live_style import _extract_after_block
+
         write_content = "def fetchUserMetadata(userId):\n    return userId\n"
         out = _extract_after_block(write_content)
-        assert out == write_content, (
-            "Bug 4 regression: Write-tool content (no markers) returned empty"
-        )
+        assert (
+            out == write_content
+        ), "Bug 4 regression: Write-tool content (no markers) returned empty"
 
     def test_bug4_hero_7_fires_on_write_through_dispatch(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """End-to-end: a PostToolUse event with tool_name='Write' and
         proposed_diff in raw-content shape (no --- after marker) must
@@ -616,7 +653,9 @@ class TestI7_Bug4Regression:
         the fix, this returned ``allow`` (silent no-op).
         """
         from mcp_server.engine import (
-            dispatch, register_default_policies, reset_policies,
+            dispatch,
+            register_default_policies,
+            reset_policies,
         )
         from mcp_server.engine.events import EventType, HookEvent
 
@@ -634,10 +673,7 @@ class TestI7_Bug4Regression:
         register_default_policies()
 
         # WRITE format: raw content, no markers.
-        write_content = (
-            "def fetchUserMetadata(userId):\n"
-            "    return userId\n"
-        )
+        write_content = "def fetchUserMetadata(userId):\n" "    return userId\n"
         event = HookEvent(
             event_type=EventType.POST_TOOL_USE,
             project_root=isolated_project,
@@ -652,12 +688,14 @@ class TestI7_Bug4Regression:
         )
         # The violation message must mention the offending name + signal.
         msg = (verdict.message or "").lower()
-        assert "snake_case" in msg or "fetchuser" in msg.lower(), (
-            f"Warning message lost key fields: {verdict.message!r}"
-        )
+        assert (
+            "snake_case" in msg or "fetchuser" in msg.lower()
+        ), f"Warning message lost key fields: {verdict.message!r}"
 
     def test_bug4_hero_7_fires_on_write_through_claude_code_wiring(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """End-to-end through the actual Claude Code hook handler.
 
@@ -670,7 +708,8 @@ class TestI7_Bug4Regression:
         tests because all unit tests bypassed the wiring layer.
         """
         from mcp_server.engine import (
-            register_default_policies, reset_policies,
+            register_default_policies,
+            reset_policies,
         )
         from mcp_server.engine.wiring import claude_code_hooks
 
@@ -726,15 +765,18 @@ class TestI7_Bug4Regression:
 
 
 class TestI8_KillSwitch:
-
     def test_engine_disabled_returns_allow_with_metadata(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """CODEVIRA_ENGINE=0 must short-circuit dispatch BEFORE any policy
         is invoked. Even with a locked decision in the graph (Hero 1
         would block), the verdict is allow."""
         from mcp_server.engine import (
-            dispatch, register_default_policies, reset_policies,
+            dispatch,
+            register_default_policies,
+            reset_policies,
         )
         from mcp_server.engine.events import EventType, HookEvent
 
@@ -779,23 +821,28 @@ class TestI8_KillSwitch:
 
 
 class TestI9_Idempotency:
-
     def test_register_twice_no_duplicates_all_six(self):
         """Calling register_default_policies twice keeps exactly one of
         each. Stale Hero-2 test only checked 5 names; this enforces 6."""
         from mcp_server.engine import (
-            register_default_policies, registered_policies,
+            register_default_policies,
+            registered_policies,
         )
+
         register_default_policies()
         register_default_policies()
         names = [p.name for p in registered_policies()]
         for n in (
-            "blast_radius_veto", "decision_lock", "cross_session_consistency",
-            "token_budget_persist", "anti_regression", "live_style_enforcement",
+            "blast_radius_veto",
+            "decision_lock",
+            "cross_session_consistency",
+            "token_budget_persist",
+            "anti_regression",
+            "live_style_enforcement",
         ):
-            assert names.count(n) == 1, (
-                f"Idempotency broken — {n!r} appears {names.count(n)} times"
-            )
+            assert (
+                names.count(n) == 1
+            ), f"Idempotency broken — {n!r} appears {names.count(n)} times"
 
 
 # =====================================================================
@@ -804,9 +851,9 @@ class TestI9_Idempotency:
 
 
 class TestI10_CrashIsolation:
-
     def test_buggy_policy_does_not_break_other_policies(
-        self, isolated_project: Path,
+        self,
+        isolated_project: Path,
     ):
         """A policy that raises must be isolated. The runner logs to
         crash_logger and treats it as allow, then continues with other
@@ -859,9 +906,10 @@ class TestI10_CrashIsolation:
 
 
 class TestI11_SharedSignalContext:
-
     def test_decisions_query_is_called_once_across_two_policies(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """Two policies that both call signals.decisions(file=X) must hit
         the cache on the second call. Catches a regression where the
@@ -918,9 +966,9 @@ class TestI11_SharedSignalContext:
         # spied on the public `.decisions()` (not the SQL execute), we
         # see 2 calls. The cache check below validates the actual SQL
         # query happens once.
-        assert execute_count["n"] == 2, (
-            f"Expected 2 calls to signals.decisions; got {execute_count['n']}"
-        )
+        assert (
+            execute_count["n"] == 2
+        ), f"Expected 2 calls to signals.decisions; got {execute_count['n']}"
 
         # Now verify caching: build a fresh SignalContext and ask twice.
         ctx = SignalContext(project_root=isolated_project)

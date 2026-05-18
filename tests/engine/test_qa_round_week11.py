@@ -33,14 +33,13 @@ K9-K10: End-to-end Claude Code wiring with various intent shapes
 K11:    Hero 9 doesn't fire on prompts that miss prompt_text (None / empty)
 K12:    Multi-policy crash isolation across all 8 heroes simultaneously
 """
+
 from __future__ import annotations
 
 import io
 import json
-import os
 import sys
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -66,6 +65,7 @@ def isolated_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 @pytest.fixture(autouse=True)
 def _isolate_engine(monkeypatch: pytest.MonkeyPatch):
     from mcp_server.engine.runner import reset_policies
+
     reset_policies()
     for env in (
         "CODEVIRA_ENGINE",
@@ -86,6 +86,7 @@ def _isolate_engine(monkeypatch: pytest.MonkeyPatch):
 
 def _set_project(monkeypatch: pytest.MonkeyPatch, project: Path) -> None:
     import mcp_server.paths as paths_mod
+
     paths_mod.set_project_dir(project)
     paths_mod.invalidate_data_dir_cache()
 
@@ -93,6 +94,7 @@ def _set_project(monkeypatch: pytest.MonkeyPatch, project: Path) -> None:
 def _open_graph(project: Path):
     from mcp_server.paths import get_data_dir
     from indexer.sqlite_graph import SQLiteGraph
+
     graph_db = get_data_dir() / "graph" / "graph.db"
     graph_db.parent.mkdir(parents=True, exist_ok=True)
     return SQLiteGraph(graph_db)
@@ -111,12 +113,14 @@ def _ensure_session(g, session_id: str = "s1") -> None:
 
 
 class TestK1_DefaultRegistration:
-
     def test_default_heroes_after_week_12(self):
-        """Updated for Week 12: Hero 3 added to the default set (off-by-default)."""
+        """Updated for Week 12: Hero 3 added to the default set.
+        v2.1.2 Item 4: post_edit_graph_refresh added."""
         from mcp_server.engine import (
-            register_default_policies, registered_policies,
+            register_default_policies,
+            registered_policies,
         )
+
         register_default_policies()
         names = {p.name for p in registered_policies()}
         expected = {
@@ -129,10 +133,11 @@ class TestK1_DefaultRegistration:
             "ai_promotion_score",
             "intent_inference",
             "scope_contract_lock",
+            "post_edit_graph_refresh",  # v2.1.2 Item 4
         }
-        assert names == expected, (
-            f"9-hero set drift: got {sorted(names)}, expected {sorted(expected)}"
-        )
+        assert (
+            names == expected
+        ), f"Default hero set drift: got {sorted(names)}, expected {sorted(expected)}"
 
     def test_user_prompt_submit_eligibility(self):
         """Hero 5 + Hero 9 + Hero 3 all fire on UserPromptSubmit
@@ -140,9 +145,11 @@ class TestK1_DefaultRegistration:
         — drift in either direction must update the test explicitly."""
         from mcp_server.engine import register_default_policies, registered_policies
         from mcp_server.engine.events import EventType
+
         register_default_policies()
         ups = {
-            p.name for p in registered_policies()
+            p.name
+            for p in registered_policies()
             if EventType.USER_PROMPT_SUBMIT in set(p.handles)
         }
         assert ups == {
@@ -157,6 +164,7 @@ class TestK1_DefaultRegistration:
         of sections changes — test must update explicitly."""
         from mcp_server.engine.policies.cross_session import CrossSessionConsistency
         from mcp_server.engine.policies.intent_inference import ProactiveIntentInference
+
         assert CrossSessionConsistency.priority > ProactiveIntentInference.priority
 
 
@@ -166,14 +174,16 @@ class TestK1_DefaultRegistration:
 
 
 class TestK4_DualInject:
-
     def test_both_h5_and_h9_inject_concatenated_in_priority_order(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         from indexer.fix_history import record_fix
-        from indexer.sqlite_graph import SQLiteGraph
         from mcp_server.engine import (
-            register_default_policies, reset_policies, dispatch,
+            register_default_policies,
+            reset_policies,
+            dispatch,
         )
         from mcp_server.engine.events import EventType, HookEvent
 
@@ -182,8 +192,10 @@ class TestK4_DualInject:
         # Plant a fix (Hero 9's fix-bug intent will surface this)
         (isolated_project / "auth.py").write_text("def login(): pass")
         record_fix(
-            isolated_project, file_path="auth.py",
-            line_start=0, line_end=0,
+            isolated_project,
+            file_path="auth.py",
+            line_start=0,
+            line_end=0,
             description="fix: regex didn't escape special chars",
             source="manual",
         )
@@ -213,17 +225,15 @@ class TestK4_DualInject:
         ctx = v.inject_context or ""
 
         # Both sections present
-        assert "Prior decisions" in ctx, (
-            "Hero 5's section missing — combiner failed?"
-        )
-        assert "Codevira pre-fetch" in ctx, (
-            "Hero 9's section missing — combiner failed?"
-        )
+        assert "Prior decisions" in ctx, "Hero 5's section missing — combiner failed?"
+        assert (
+            "Codevira pre-fetch" in ctx
+        ), "Hero 9's section missing — combiner failed?"
 
         # Order: Hero 5's section first (priority 30 > Hero 9's 20)
-        assert ctx.index("Prior decisions") < ctx.index("Codevira pre-fetch"), (
-            f"Inject order broken — Hero 5 should come first. ctx:\n{ctx}"
-        )
+        assert ctx.index("Prior decisions") < ctx.index(
+            "Codevira pre-fetch"
+        ), f"Inject order broken — Hero 5 should come first. ctx:\n{ctx}"
 
         # Both policies recorded in metadata
         ip = v.metadata.get("inject_policies", [])
@@ -237,21 +247,26 @@ class TestK4_DualInject:
 
 
 class TestK5_KillSwitchOnPromptSubmit:
-
     def test_engine_disabled_short_circuits_user_prompt_submit(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         from indexer.fix_history import record_fix
         from mcp_server.engine import (
-            register_default_policies, reset_policies, dispatch,
+            register_default_policies,
+            reset_policies,
+            dispatch,
         )
         from mcp_server.engine.events import EventType, HookEvent
 
         _set_project(monkeypatch, isolated_project)
         (isolated_project / "auth.py").write_text("")
         record_fix(
-            isolated_project, file_path="auth.py",
-            line_start=0, line_end=0,
+            isolated_project,
+            file_path="auth.py",
+            line_start=0,
+            line_end=0,
             description="fix: bug",
             source="manual",
         )
@@ -267,9 +282,9 @@ class TestK5_KillSwitchOnPromptSubmit:
         )
         v = dispatch(event)
         assert v.action == "allow"
-        assert v.metadata.get("engine_disabled") is True, (
-            f"Kill-switch metadata missing on UserPromptSubmit: {v.metadata}"
-        )
+        assert (
+            v.metadata.get("engine_disabled") is True
+        ), f"Kill-switch metadata missing on UserPromptSubmit: {v.metadata}"
 
 
 # =====================================================================
@@ -278,14 +293,17 @@ class TestK5_KillSwitchOnPromptSubmit:
 
 
 class TestK6_CrashIsolationAcrossInject:
-
     def test_h9_crash_does_not_break_h5_inject(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """Hero 9 raising must be isolated. Hero 5's inject still gets
         through via the combiner."""
         from mcp_server.engine import (
-            register_default_policies, reset_policies, dispatch,
+            register_default_policies,
+            reset_policies,
+            dispatch,
         )
         from mcp_server.engine.events import EventType, HookEvent
         from mcp_server.engine.policies.intent_inference import (
@@ -307,8 +325,11 @@ class TestK6_CrashIsolationAcrossInject:
         # Sabotage Hero 9
         def crashing_evaluate(self, event, signals=None):
             raise RuntimeError("intentional H9 crash")
+
         monkeypatch.setattr(
-            ProactiveIntentInference, "evaluate", crashing_evaluate,
+            ProactiveIntentInference,
+            "evaluate",
+            crashing_evaluate,
         )
 
         reset_policies()
@@ -321,13 +342,11 @@ class TestK6_CrashIsolationAcrossInject:
         )
         v = dispatch(event)
         # Hero 5 still injects despite Hero 9 crashing
-        assert v.action == "inject", (
-            f"Hero 9 crash poisoned Hero 5: {v.action} / {v.message}"
-        )
+        assert (
+            v.action == "inject"
+        ), f"Hero 9 crash poisoned Hero 5: {v.action} / {v.message}"
         ctx = v.inject_context or ""
-        assert "Prior decisions" in ctx, (
-            "Hero 5's section missing after Hero 9 crash"
-        )
+        assert "Prior decisions" in ctx, "Hero 5's section missing after Hero 9 crash"
         assert "Codevira pre-fetch" not in ctx, (
             "Hero 9's section appeared despite the crash — "
             "isolation wasn't actually applied"
@@ -340,27 +359,31 @@ class TestK6_CrashIsolationAcrossInject:
 
 
 class TestK7_Bug3RegressionForHero9:
-
     def test_h9_enabled_by_default_false_excludes_it(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         from mcp_server.engine import (
-            register_default_policies, registered_policies,
+            register_default_policies,
+            registered_policies,
         )
         from mcp_server.engine.policies.intent_inference import (
             ProactiveIntentInference,
         )
+
         monkeypatch.setattr(
-            ProactiveIntentInference, "enabled_by_default", False,
+            ProactiveIntentInference,
+            "enabled_by_default",
+            False,
         )
         register_default_policies()
         names = {p.name for p in registered_policies()}
-        assert "intent_inference" not in names, (
-            "Bug 3 regression for Hero 9: enabled_by_default=False ignored"
-        )
-        # Other 8 heroes still register (post-Week-12 = 9 default; minus
-        # Hero 9 = 8)
-        assert len(names) == 8
+        assert (
+            "intent_inference" not in names
+        ), "Bug 3 regression for Hero 9: enabled_by_default=False ignored"
+        # Other heroes still register: 10 v2.1.2 default (incl post_edit_
+        # graph_refresh) minus Hero 9 = 9
+        assert len(names) == 9
 
 
 # =====================================================================
@@ -369,9 +392,10 @@ class TestK7_Bug3RegressionForHero9:
 
 
 class TestK8_OutcomesCacheSharing:
-
     def test_h9_and_h10_share_same_outcomes_results(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """Hero 9 (intent=add-feature) calls signals.outcomes. Hero 10
         (SessionStart) also calls signals.outcomes. They fire on
@@ -382,12 +406,12 @@ class TestK8_OutcomesCacheSharing:
         from mcp_server.engine import register_policy, reset_policies, dispatch
         from mcp_server.engine.events import EventType, HookEvent
         from mcp_server.engine.policy import Policy, PolicyVerdict
-        from mcp_server.engine.signals import SignalContext
 
         _set_project(monkeypatch, isolated_project)
         # Plant outcomes data
         from indexer.sqlite_graph import SQLiteGraph
         from mcp_server.paths import get_data_dir
+
         graph_db = get_data_dir() / "graph" / "graph.db"
         graph_db.parent.mkdir(parents=True, exist_ok=True)
         g = SQLiteGraph(graph_db)
@@ -400,8 +424,10 @@ class TestK8_OutcomesCacheSharing:
         did = cur.lastrowid
         for _ in range(3):
             g.record_outcome(
-                session_id="s1", file_path="f.py",
-                outcome_type="kept", decision_id=did,
+                session_id="s1",
+                file_path="f.py",
+                outcome_type="kept",
+                decision_id=did,
             )
         g.conn.commit()
         g.close()
@@ -410,6 +436,7 @@ class TestK8_OutcomesCacheSharing:
         sql_calls = {"n": 0}
 
         from mcp_server.engine import promotion_score
+
         original_aggregate = promotion_score.aggregate_decision_outcomes
 
         def counting_aggregate(*args, **kwargs):
@@ -417,13 +444,16 @@ class TestK8_OutcomesCacheSharing:
             return original_aggregate(*args, **kwargs)
 
         monkeypatch.setattr(
-            promotion_score, "aggregate_decision_outcomes", counting_aggregate,
+            promotion_score,
+            "aggregate_decision_outcomes",
+            counting_aggregate,
         )
 
         class ReaderA(Policy):
             name = "reader_a"
             handles = (EventType.USER_PROMPT_SUBMIT,)
             priority = 100
+
             def evaluate(self, event, signals=None):
                 signals.outcomes(since_days=30, min_outcomes=2)
                 return PolicyVerdict.allow()
@@ -432,6 +462,7 @@ class TestK8_OutcomesCacheSharing:
             name = "reader_b"
             handles = (EventType.USER_PROMPT_SUBMIT,)
             priority = 50
+
             def evaluate(self, event, signals=None):
                 signals.outcomes(since_days=30, min_outcomes=2)  # same args
                 return PolicyVerdict.allow()
@@ -461,9 +492,10 @@ class TestK8_OutcomesCacheSharing:
 
 
 class TestK9_WiringRefactorIntent:
-
     def test_refactor_intent_through_wiring_emits_impact_section(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """The wiring path was tested for fix-bug in test_intent_inference.
         Cover refactor too — different signal set (impact instead of fixes).
@@ -478,9 +510,9 @@ class TestK9_WiringRefactorIntent:
         non-zero impact data (file-level node + dependent file-level node
         + edge between them).
         """
-        from indexer.sqlite_graph import SQLiteGraph
         from mcp_server.engine import (
-            register_default_policies, reset_policies,
+            register_default_policies,
+            reset_policies,
         )
         from mcp_server.engine.wiring import claude_code_hooks
 
@@ -489,13 +521,11 @@ class TestK9_WiringRefactorIntent:
         # ``get_impact`` requires kind="file" nodes (Week-11 QA finding).
         g = _open_graph(isolated_project)
         g.conn.execute(
-            "INSERT INTO nodes (id, kind, name, file_path) "
-            "VALUES (?, ?, ?, ?)",
+            "INSERT INTO nodes (id, kind, name, file_path) " "VALUES (?, ?, ?, ?)",
             ("auth.py", "file", "auth.py", "auth.py"),
         )
         g.conn.execute(
-            "INSERT INTO nodes (id, kind, name, file_path) "
-            "VALUES (?, ?, ?, ?)",
+            "INSERT INTO nodes (id, kind, name, file_path) " "VALUES (?, ?, ?, ?)",
             ("api.py", "file", "api.py", "api.py"),
         )
         g.conn.execute(
@@ -524,12 +554,10 @@ class TestK9_WiringRefactorIntent:
         emitted = json.loads(stdout_buf.getvalue())
         ctx = emitted.get("hookSpecificOutput", {}).get("additionalContext", "")
         # Hero 9's pre-fetch must be present
-        assert "Codevira pre-fetch" in ctx, (
-            f"Hero 9's pre-fetch missing on refactor intent: {emitted}"
-        )
-        assert "refactor" in ctx, (
-            f"Intent label missing in Hero 9 inject: {ctx}"
-        )
+        assert (
+            "Codevira pre-fetch" in ctx
+        ), f"Hero 9's pre-fetch missing on refactor intent: {emitted}"
+        assert "refactor" in ctx, f"Intent label missing in Hero 9 inject: {ctx}"
         # Bug-6 lock-in: the Blast radius section must have ACTUAL CONTENT
         # (a file count), not just an empty header. Pre-fix this passed
         # vacuously because the empty header was emitted.
@@ -549,15 +577,17 @@ class TestK9_WiringRefactorIntent:
 
 
 class TestK10_WiringEmptyPrompt:
-
     def test_wiring_with_missing_prompt_text_does_not_inject_h9(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """If the wiring layer can't extract a prompt (e.g., the JSON
         payload is malformed or missing the 'prompt' field), Hero 9
         must silently allow. NO crash, NO partial inject."""
         from mcp_server.engine import (
-            register_default_policies, reset_policies,
+            register_default_policies,
+            reset_policies,
         )
         from mcp_server.engine.wiring import claude_code_hooks
 
@@ -582,9 +612,9 @@ class TestK10_WiringEmptyPrompt:
         emitted = json.loads(stdout_buf.getvalue())
         # Either no inject at all, OR an inject without Hero 9's section
         ctx = emitted.get("hookSpecificOutput", {}).get("additionalContext", "")
-        assert "Codevira pre-fetch" not in ctx, (
-            f"Hero 9 injected on empty prompt: {emitted}"
-        )
+        assert (
+            "Codevira pre-fetch" not in ctx
+        ), f"Hero 9 injected on empty prompt: {emitted}"
 
 
 # =====================================================================
@@ -593,12 +623,12 @@ class TestK10_WiringEmptyPrompt:
 
 
 class TestK11_NonePromptText:
-
     def test_h9_silent_on_none_prompt_text(self, isolated_project: Path):
         from mcp_server.engine.events import EventType, HookEvent
         from mcp_server.engine.policies.intent_inference import (
             ProactiveIntentInference,
         )
+
         policy = ProactiveIntentInference()
         event = HookEvent(
             event_type=EventType.USER_PROMPT_SUBMIT,
@@ -664,7 +694,9 @@ class TestK15_Bug7HeroSevenAllEditTools:
         return json.loads(stdout_buf.getvalue())
 
     def _setup_with_pref(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> Path:
         """Plant a snake_case preference and register the default policies."""
         from indexer.sqlite_graph import SQLiteGraph
@@ -675,6 +707,7 @@ class TestK15_Bug7HeroSevenAllEditTools:
         target.write_text("")
 
         from mcp_server.paths import get_data_dir
+
         graph_db = get_data_dir() / "graph" / "graph.db"
         graph_db.parent.mkdir(parents=True, exist_ok=True)
         g = SQLiteGraph(graph_db)
@@ -691,7 +724,9 @@ class TestK15_Bug7HeroSevenAllEditTools:
         return target
 
     def test_hero_7_fires_on_edit_through_wiring(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """Positive control — Edit was already working post-Bug-4 fix."""
         target = self._setup_with_pref(isolated_project, monkeypatch)
@@ -702,16 +737,17 @@ class TestK15_Bug7HeroSevenAllEditTools:
                 "old_string": "old",
                 "new_string": "def fetchUserMetadata(): pass",
             },
-            isolated_project, monkeypatch,
+            isolated_project,
+            monkeypatch,
         )
         sysmsg = emitted.get("systemMessage", "")
-        assert "snake_case" in sysmsg, (
-            f"Edit positive control failed: {emitted}"
-        )
+        assert "snake_case" in sysmsg, f"Edit positive control failed: {emitted}"
         assert "fetchUserMetadata" in sysmsg
 
     def test_hero_7_fires_on_write_through_wiring(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """Positive control — Write was Bug 4's fix."""
         target = self._setup_with_pref(isolated_project, monkeypatch)
@@ -721,15 +757,16 @@ class TestK15_Bug7HeroSevenAllEditTools:
                 "file_path": str(target),
                 "content": "def fetchUserMetadata(): pass\n",
             },
-            isolated_project, monkeypatch,
+            isolated_project,
+            monkeypatch,
         )
         sysmsg = emitted.get("systemMessage", "")
-        assert "snake_case" in sysmsg, (
-            f"Write (Bug 4) regression: {emitted}"
-        )
+        assert "snake_case" in sysmsg, f"Write (Bug 4) regression: {emitted}"
 
     def test_bug7_hero_7_fires_on_multiedit_through_wiring(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """Bug 7: MultiEdit was silently bypassed before the wiring fix.
         The wiring now constructs proposed_diff from the edits[] list."""
@@ -743,23 +780,25 @@ class TestK15_Bug7HeroSevenAllEditTools:
                     {"old_string": "y", "new_string": "def anotherCamelCase(): pass"},
                 ],
             },
-            isolated_project, monkeypatch,
+            isolated_project,
+            monkeypatch,
         )
         sysmsg = emitted.get("systemMessage", "")
-        assert "snake_case" in sysmsg, (
-            f"Bug 7 regression: Hero 7 silent on MultiEdit. Emitted: {emitted}"
-        )
+        assert (
+            "snake_case" in sysmsg
+        ), f"Bug 7 regression: Hero 7 silent on MultiEdit. Emitted: {emitted}"
         # Both camelCase identifiers should be detected (or at least one).
         # Hero 7 reports up to 3 violations, so both showing is the stronger
         # assertion if we want to catch a regression where only the first
         # edit's content reaches the detector.
         assert (
-            "fetchUserMetadata" in sysmsg
-            or "anotherCamelCase" in sysmsg
+            "fetchUserMetadata" in sysmsg or "anotherCamelCase" in sysmsg
         ), f"Bug 7 partial: no specific identifier in warn. {sysmsg}"
 
     def test_bug7_hero_7_fires_on_notebookedit_through_wiring(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """Bug 7: NotebookEdit was silently bypassed. Now treated as raw
         content like Write (cell source = ``new_source``)."""
@@ -770,15 +809,18 @@ class TestK15_Bug7HeroSevenAllEditTools:
                 "notebook_path": str(target),
                 "new_source": "def fetchUserMetadata(): pass",
             },
-            isolated_project, monkeypatch,
+            isolated_project,
+            monkeypatch,
         )
         sysmsg = emitted.get("systemMessage", "")
-        assert "snake_case" in sysmsg, (
-            f"Bug 7 regression: Hero 7 silent on NotebookEdit. Emitted: {emitted}"
-        )
+        assert (
+            "snake_case" in sysmsg
+        ), f"Bug 7 regression: Hero 7 silent on NotebookEdit. Emitted: {emitted}"
 
     def test_multiedit_with_empty_edits_list_does_not_crash(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """Defensive: MultiEdit with empty edits list (legal Claude Code
         payload) must not crash the wiring."""
@@ -786,7 +828,8 @@ class TestK15_Bug7HeroSevenAllEditTools:
         emitted = self._fire_hook(
             "MultiEdit",
             {"file_path": str(target), "edits": []},
-            isolated_project, monkeypatch,
+            isolated_project,
+            monkeypatch,
         )
         # No content → no warn; just continue
         assert emitted.get("continue") is True
@@ -815,6 +858,7 @@ class TestK16_Bug8CLIInvalidProjectRoot:
         # Use the user's HOME (or a stand-in). is_invalid_project_root
         # checks against $HOME directly via os.path.expanduser.
         from pathlib import Path as P
+
         home = P("~").expanduser()
         out_buf = io.StringIO()
         rc = cmd_insights(
@@ -825,16 +869,17 @@ class TestK16_Bug8CLIInvalidProjectRoot:
         )
         assert rc == 1, f"Expected rc=1 on invalid project; got {rc}"
         out = out_buf.getvalue()
-        assert "not a valid project root" in out, (
-            f"CLI should explain WHY $HOME is rejected; got: {out!r}"
-        )
+        assert (
+            "not a valid project root" in out
+        ), f"CLI should explain WHY $HOME is rejected; got: {out!r}"
         assert "No codevira data" not in out, (
             "CLI should NOT fall through to the slug-sanitized lookup "
             f"when project is invalid; got: {out!r}"
         )
 
     def test_cli_accepts_valid_project_root(
-        self, isolated_project: Path,
+        self,
+        isolated_project: Path,
     ):
         """Positive control: a directory with pyproject.toml IS valid."""
         from mcp_server.cli_insights import cmd_insights
@@ -863,26 +908,33 @@ class TestK13_Bug5PathTraversalDefense:
     """
 
     def test_path_traversal_mention_skipped_in_signals_calls(
-        self, isolated_project: Path,
+        self,
+        isolated_project: Path,
     ):
         from mcp_server.engine.policies.intent_inference import (
-            _fetch_signals_for_intent, INTENT_FIX_BUG,
+            _fetch_signals_for_intent,
+            INTENT_FIX_BUG,
         )
 
         class _Spy:
             def __init__(self):
                 self.fixes_calls = []
                 self.impact_calls = []
+
             def fixes(self, p):
                 self.fixes_calls.append(p)
                 return []
+
             def decisions(self, **k):
                 return []
+
             def impact(self, p):
                 self.impact_calls.append(p)
                 return {}
+
             def outcomes(self, **k):
                 return []
+
             def learned_rules(self, **k):
                 return []
 
@@ -893,8 +945,10 @@ class TestK13_Bug5PathTraversalDefense:
             project_root=isolated_project,
             signals=spy,
             config={
-                "max_files": 3, "max_fixes_per_file": 3,
-                "max_decisions_per_file": 3, "max_outcomes": 3,
+                "max_files": 3,
+                "max_fixes_per_file": 3,
+                "max_decisions_per_file": 3,
+                "max_outcomes": 3,
                 "include_impact": True,
             },
         )
@@ -904,15 +958,16 @@ class TestK13_Bug5PathTraversalDefense:
             f"Bug 5 regression: out-of-project mention reached signals.fixes "
             f"({spy.fixes_calls})"
         )
-        assert not any("passwd" in str(p) for p in spy.fixes_calls), (
-            f"Bug 5 regression: passwd path leaked into signals.fixes calls"
-        )
-        assert not any("passwd" in str(p) for p in spy.impact_calls), (
-            f"Bug 5 regression: passwd path leaked into signals.impact calls"
-        )
+        assert not any(
+            "passwd" in str(p) for p in spy.fixes_calls
+        ), "Bug 5 regression: passwd path leaked into signals.fixes calls"
+        assert not any(
+            "passwd" in str(p) for p in spy.impact_calls
+        ), "Bug 5 regression: passwd path leaked into signals.impact calls"
 
     def test_absolute_path_outside_project_skipped(
-        self, isolated_project: Path,
+        self,
+        isolated_project: Path,
     ):
         """Defense-in-depth case: an absolute file mention OUTSIDE
         project_root must also be skipped. The regex extractor doesn't
@@ -920,21 +975,27 @@ class TestK13_Bug5PathTraversalDefense:
         but if a future change loosens the regex, this test catches it.
         """
         from mcp_server.engine.policies.intent_inference import (
-            _fetch_signals_for_intent, INTENT_FIX_BUG,
+            _fetch_signals_for_intent,
+            INTENT_FIX_BUG,
         )
 
         class _Spy:
             def __init__(self):
                 self.fixes_calls = []
+
             def fixes(self, p):
                 self.fixes_calls.append(p)
                 return []
+
             def decisions(self, **k):
                 return []
+
             def impact(self, p):
                 return {}
+
             def outcomes(self, **k):
                 return []
+
             def learned_rules(self, **k):
                 return []
 
@@ -946,8 +1007,10 @@ class TestK13_Bug5PathTraversalDefense:
             project_root=isolated_project,
             signals=spy,
             config={
-                "max_files": 3, "max_fixes_per_file": 3,
-                "max_decisions_per_file": 3, "max_outcomes": 3,
+                "max_files": 3,
+                "max_fixes_per_file": 3,
+                "max_decisions_per_file": 3,
+                "max_outcomes": 3,
                 "include_impact": True,
             },
         )
@@ -968,23 +1031,30 @@ class TestK14_Bug6EmptySectionSuppression:
     """
 
     def test_zero_count_impact_filtered_at_fetcher(
-        self, isolated_project: Path,
+        self,
+        isolated_project: Path,
     ):
         from mcp_server.engine.policies.intent_inference import (
-            _fetch_signals_for_intent, INTENT_REFACTOR,
+            _fetch_signals_for_intent,
+            INTENT_REFACTOR,
         )
 
         class _Spy:
             def __init__(self, impact_for):
                 self._impact_for = impact_for
+
             def fixes(self, p):
                 return []
+
             def decisions(self, **k):
                 return []
+
             def impact(self, p):
                 return dict(self._impact_for.get(p, {}))
+
             def outcomes(self, **k):
                 return []
+
             def learned_rules(self, **k):
                 return []
 
@@ -998,14 +1068,16 @@ class TestK14_Bug6EmptySectionSuppression:
             project_root=isolated_project,
             signals=spy,
             config={
-                "max_files": 3, "max_fixes_per_file": 3,
-                "max_decisions_per_file": 3, "max_outcomes": 3,
+                "max_files": 3,
+                "max_fixes_per_file": 3,
+                "max_decisions_per_file": 3,
+                "max_outcomes": 3,
                 "include_impact": True,
             },
         )
-        assert fetched.get("impact") == {}, (
-            f"Bug 6 regression: zero-count impact retained: {fetched['impact']}"
-        )
+        assert (
+            fetched.get("impact") == {}
+        ), f"Bug 6 regression: zero-count impact retained: {fetched['impact']}"
 
     def test_format_inject_no_empty_blast_radius_header(self):
         """Even if a stale code path planted a zero-count entry into
@@ -1018,7 +1090,9 @@ class TestK14_Bug6EmptySectionSuppression:
             file_mentions=["auth.py"],
             fetched={
                 "fixes": {},
-                "decisions": {"auth.py": [{"decision": "x", "timestamp": "2025-01-01"}]},
+                "decisions": {
+                    "auth.py": [{"decision": "x", "timestamp": "2025-01-01"}]
+                },
                 # Pretend a stale path planted zero-count entry
                 "impact": {"auth.py": {"affected_count": 0, "affected_files": []}},
                 "outcomes": [],
@@ -1038,13 +1112,16 @@ class TestK14_Bug6EmptySectionSuppression:
 
 
 class TestK12_AllHeroCrashIsolation:
-
     def test_one_random_policy_crash_doesnt_break_others(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """Sabotage Hero 5's evaluate. Verify Hero 9 still injects."""
         from mcp_server.engine import (
-            register_default_policies, reset_policies, dispatch,
+            register_default_policies,
+            reset_policies,
+            dispatch,
         )
         from mcp_server.engine.events import EventType, HookEvent
         from mcp_server.engine.policies.cross_session import (
@@ -1055,8 +1132,11 @@ class TestK12_AllHeroCrashIsolation:
 
         def crashing_evaluate(self, event, signals=None):
             raise RuntimeError("intentional H5 crash for K12")
+
         monkeypatch.setattr(
-            CrossSessionConsistency, "evaluate", crashing_evaluate,
+            CrossSessionConsistency,
+            "evaluate",
+            crashing_evaluate,
         )
 
         reset_policies()
@@ -1074,6 +1154,6 @@ class TestK12_AllHeroCrashIsolation:
         assert v.action in ("allow", "inject")
         # And: Hero 5 was NOT in the inject_policies list (it crashed)
         ip = v.metadata.get("inject_policies", [])
-        assert "cross_session_consistency" not in ip, (
-            f"Hero 5 appeared in inject metadata despite crashing: {ip}"
-        )
+        assert (
+            "cross_session_consistency" not in ip
+        ), f"Hero 5 appeared in inject metadata despite crashing: {ip}"

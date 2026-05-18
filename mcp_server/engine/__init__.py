@@ -17,11 +17,17 @@ The engine is invisible to users; heroes are the visible outcome.
 
 See docs/heroes/00-engine.md for the full design.
 """
+
 from __future__ import annotations
 
 from mcp_server.engine.events import EventType, HookEvent
 from mcp_server.engine.policy import Policy, PolicyVerdict
-from mcp_server.engine.runner import dispatch, register_policy, registered_policies, reset_policies
+from mcp_server.engine.runner import (
+    dispatch,
+    register_policy,
+    registered_policies,
+    reset_policies,
+)
 
 
 def register_default_policies() -> None:
@@ -46,25 +52,28 @@ def register_default_policies() -> None:
     from mcp_server.engine.policies.decision_lock import DecisionLock
     from mcp_server.engine.policies.intent_inference import ProactiveIntentInference
     from mcp_server.engine.policies.live_style import LiveStyleEnforcement
+    from mcp_server.engine.policies.post_edit_refresh import PostEditGraphRefresh
     from mcp_server.engine.policies.scope_contract import ProactiveScopeContractLock
     from mcp_server.engine.policies.token_budget import TokenBudgetPersist
 
     for policy_cls in (
-        BlastRadiusVeto,             # Hero 4 (Week 4)
-        DecisionLock,                # Hero 1 (Week 5)
-        CrossSessionConsistency,     # Hero 5 (Week 6)
-        TokenBudgetPersist,          # Hero 6 (Week 7)
-        AntiRegression,              # Hero 2 (Week 8)
-        LiveStyleEnforcement,        # Hero 7 (Week 9)
-        AIPromotionScore,            # Hero 10 (Week 10)
-        ProactiveIntentInference,    # Hero 9 (Week 11)
+        BlastRadiusVeto,  # Hero 4 (Week 4)
+        DecisionLock,  # Hero 1 (Week 5)
+        CrossSessionConsistency,  # Hero 5 (Week 6)
+        TokenBudgetPersist,  # Hero 6 (Week 7)
+        AntiRegression,  # Hero 2 (Week 8)
+        LiveStyleEnforcement,  # Hero 7 (Week 9)
+        AIPromotionScore,  # Hero 10 (Week 10)
+        ProactiveIntentInference,  # Hero 9 (Week 11)
         ProactiveScopeContractLock,  # Hero 3 (Week 12) — off-by-default
+        PostEditGraphRefresh,  # v2.1.2 Item 4
     ):
         if not policy_cls.enabled_by_default:
             continue  # opt-in only — caller registers manually
         if any(p.name == policy_cls.name for p in registered_policies()):
             continue  # already registered (idempotent)
         register_policy(policy_cls())
+
 
 __all__ = [
     # Event types

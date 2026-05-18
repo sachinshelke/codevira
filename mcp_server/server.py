@@ -461,22 +461,58 @@ async def list_tools() -> list[Tool]:
             name="complete_phase",
             description=(
                 "Mark the current phase as complete and advance to the next upcoming phase. "
-                "Records key_decisions permanently. Requires phase_number to match current phase (safety check)."
+                "Records key_decisions permanently. Requires phase_number to match current phase (safety check). "
+                "v2.1.2 Item 10: pass backfill=True + completed_at='YYYY-MM-DD' to retroactively "
+                "mark a historical phase done without advancing the queue. "
+                "v2.1.2 Item 12: pass git_ref to link a commit sha or PR ref to the completion."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "phase_number": {
                         "type": ["integer", "string"],
-                        "description": "Must match current phase",
+                        "description": "Must match current phase (unless backfill=True)",
                     },
                     "key_decisions": {
                         "type": "array",
                         "items": {"type": "string"},
                         "description": "Decisions made — preserved for all future agents",
                     },
+                    "backfill": {
+                        "type": "boolean",
+                        "description": "v2.1.2: allow marking any phase done without advancing the queue",
+                    },
+                    "completed_at": {
+                        "type": "string",
+                        "description": "v2.1.2: ISO date for backfill (defaults to today)",
+                    },
+                    "git_ref": {
+                        "type": "string",
+                        "description": "v2.1.2: optional commit sha / PR ref the phase shipped at",
+                    },
                 },
                 "required": ["phase_number", "key_decisions"],
+            },
+        ),
+        Tool(
+            name="bulk_import_phases",
+            description=(
+                "v2.1.2 Item 29: backfill multiple historical phases at once. "
+                "Each item: {number, name, status?='done', completed_at?, "
+                "key_decisions?, git_ref?, description?}. Idempotent. Useful "
+                "for adopting codevira on a project that already shipped N "
+                "phases in git."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "phases": {
+                        "type": "array",
+                        "items": {"type": "object"},
+                        "description": "List of phase dicts to import",
+                    },
+                },
+                "required": ["phases"],
             },
         ),
         Tool(
@@ -1382,7 +1418,15 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             result = complete_phase(
                 phase_number=arguments["phase_number"],
                 key_decisions=arguments["key_decisions"],
+                backfill=arguments.get("backfill", False),
+                completed_at=arguments.get("completed_at"),
+                git_ref=arguments.get("git_ref"),
             )
+        elif name == "bulk_import_phases":
+            # v2.1.2 Item 29.
+            from mcp_server.tools.roadmap import bulk_import_phases
+
+            result = bulk_import_phases(phases=arguments["phases"])
         elif name == "search_codebase":
             result = search_codebase(
                 arguments["query"],

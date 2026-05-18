@@ -21,12 +21,12 @@ Chaos tests:
   - Concurrent access patterns
   - Fresh database schema creation
 """
+
 from __future__ import annotations
 
 import json
 import sqlite3
 import threading
-from pathlib import Path
 
 import pytest
 
@@ -37,6 +37,7 @@ from indexer.global_db import GlobalDB
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_db(tmp_path, name="global.db") -> GlobalDB:
     """Create a fresh GlobalDB instance."""
     return GlobalDB(tmp_path / name)
@@ -46,14 +47,18 @@ def _make_db(tmp_path, name="global.db") -> GlobalDB:
 # Schema creation
 # ===================================================================
 
+
 class TestSchemaCreation:
     """Test that fresh databases get correct schema."""
 
     def test_creates_all_tables(self, tmp_path):
         db = _make_db(tmp_path)
-        tables = {row[0] for row in db.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()}
+        tables = {
+            row[0]
+            for row in db.conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
         assert "projects" in tables
         assert "global_preferences" in tables
         assert "global_rules" in tables
@@ -73,7 +78,9 @@ class TestSchemaCreation:
 
     def test_projects_table_columns(self, tmp_path):
         db = _make_db(tmp_path)
-        cols = {row[1] for row in db.conn.execute("PRAGMA table_info(projects)").fetchall()}
+        cols = {
+            row[1] for row in db.conn.execute("PRAGMA table_info(projects)").fetchall()
+        }
         assert "path" in cols
         assert "name" in cols
         assert "language" in cols
@@ -83,7 +90,12 @@ class TestSchemaCreation:
 
     def test_global_preferences_table_columns(self, tmp_path):
         db = _make_db(tmp_path)
-        cols = {row[1] for row in db.conn.execute("PRAGMA table_info(global_preferences)").fetchall()}
+        cols = {
+            row[1]
+            for row in db.conn.execute(
+                "PRAGMA table_info(global_preferences)"
+            ).fetchall()
+        }
         assert "category" in cols
         assert "signal" in cols
         assert "example" in cols
@@ -93,7 +105,10 @@ class TestSchemaCreation:
 
     def test_global_rules_table_columns(self, tmp_path):
         db = _make_db(tmp_path)
-        cols = {row[1] for row in db.conn.execute("PRAGMA table_info(global_rules)").fetchall()}
+        cols = {
+            row[1]
+            for row in db.conn.execute("PRAGMA table_info(global_rules)").fetchall()
+        }
         assert "rule_text" in cols
         assert "confidence" in cols
         assert "source_projects" in cols
@@ -122,6 +137,7 @@ class TestSchemaCreation:
 # ===================================================================
 # register_project
 # ===================================================================
+
 
 class TestRegisterProject:
     """Test project registration."""
@@ -171,7 +187,9 @@ class TestRegisterProject:
             git_remote="git@github.com:org/full.git",
         )
 
-        row = db.conn.execute("SELECT * FROM projects WHERE path = '/full/path'").fetchone()
+        row = db.conn.execute(
+            "SELECT * FROM projects WHERE path = '/full/path'"
+        ).fetchone()
         assert row["name"] == "FullProject"
         assert row["language"] == "typescript"
         assert row["git_remote"] == "git@github.com:org/full.git"
@@ -182,7 +200,9 @@ class TestRegisterProject:
         """Registering the same path twice updates (INSERT OR REPLACE)."""
         db = _make_db(tmp_path)
         db.register_project("/proj", "Original", "python")
-        db.register_project("/proj", "Updated", "typescript", git_remote="https://new.git")
+        db.register_project(
+            "/proj", "Updated", "typescript", git_remote="https://new.git"
+        )
 
         assert db.get_project_count() == 1
         row = db.conn.execute("SELECT * FROM projects WHERE path = '/proj'").fetchone()
@@ -202,6 +222,7 @@ class TestRegisterProject:
 # ===================================================================
 # get_project_count
 # ===================================================================
+
 
 class TestGetProjectCount:
     def test_empty_database(self, tmp_path):
@@ -226,6 +247,7 @@ class TestGetProjectCount:
 # ===================================================================
 # upsert_preference
 # ===================================================================
+
 
 class TestUpsertPreference:
     def test_insert_new(self, tmp_path):
@@ -298,6 +320,7 @@ class TestUpsertPreference:
 # get_preferences
 # ===================================================================
 
+
 class TestGetPreferences:
     def test_min_frequency_filter(self, tmp_path):
         db = _make_db(tmp_path)
@@ -342,6 +365,7 @@ class TestGetPreferences:
 # ===================================================================
 # upsert_rule
 # ===================================================================
+
 
 class TestUpsertRule:
     def test_insert_new(self, tmp_path):
@@ -405,6 +429,7 @@ class TestUpsertRule:
 # get_rules
 # ===================================================================
 
+
 class TestGetRules:
     def test_confidence_filter(self, tmp_path):
         db = _make_db(tmp_path)
@@ -416,13 +441,38 @@ class TestGetRules:
         assert rules[0]["rule_text"] == "High conf"
         db.close()
 
-    def test_language_filter(self, tmp_path):
+    def test_language_filter_strict_excludes_null_language(self, tmp_path):
+        """2026-05-18 v2.1.2 Item 9: when a language is supplied to
+        get_rules(), STRICT match is the default. Rules without a
+        language (NULL) no longer leak across projects.
+
+        Report 1 §3.3 caught a Go-project rule (NULL language) appearing
+        in a Python project — this test guards against that regression.
+        """
         db = _make_db(tmp_path)
         db.upsert_rule("Go exported names capitalized", 0.9, "/a", "naming", "go")
         db.upsert_rule("Universal early returns", 0.9, "/b", "patterns", None)
 
-        # Python query: gets universal but not Go-specific
         rules = db.get_rules(min_confidence=0.5, language="python")
+        names = [r["rule_text"] for r in rules]
+        assert (
+            "Universal early returns" not in names
+        ), "Item 9 regression: NULL-language rule leaked across languages."
+        assert "Go exported names capitalized" not in names
+        db.close()
+
+    def test_language_filter_loose_includes_null_language(self, tmp_path):
+        """Item 9: pass strict_language=False to opt back into the legacy
+        cross-language fan-out (rule with NULL language matches every
+        language query). Provided for backward compat.
+        """
+        db = _make_db(tmp_path)
+        db.upsert_rule("Go exported names capitalized", 0.9, "/a", "naming", "go")
+        db.upsert_rule("Universal early returns", 0.9, "/b", "patterns", None)
+
+        rules = db.get_rules(
+            min_confidence=0.5, language="python", strict_language=False
+        )
         names = [r["rule_text"] for r in rules]
         assert "Universal early returns" in names
         assert "Go exported names capitalized" not in names
@@ -483,6 +533,7 @@ class TestGetRules:
 # get_stats
 # ===================================================================
 
+
 class TestGetStats:
     def test_empty_stats(self, tmp_path):
         db = _make_db(tmp_path)
@@ -513,6 +564,7 @@ class TestGetStats:
 # close
 # ===================================================================
 
+
 class TestClose:
     def test_close_closes_connection(self, tmp_path):
         db = _make_db(tmp_path)
@@ -535,6 +587,7 @@ class TestClose:
 # ===================================================================
 # Git remote column upgrade
 # ===================================================================
+
 
 class TestGitRemoteColumnUpgrade:
     """Test that register_project auto-adds git_remote column for old schemas."""
@@ -572,7 +625,9 @@ class TestGitRemoteColumnUpgrade:
         # GlobalDB _init_schema uses CREATE TABLE IF NOT EXISTS, so it
         # should not fail on existing tables. register_project handles the upgrade.
         db = GlobalDB(db_path)
-        db.register_project("/proj", "Test", "python", git_remote="https://git.example.com/repo")
+        db.register_project(
+            "/proj", "Test", "python", git_remote="https://git.example.com/repo"
+        )
 
         # Verify the column was added and the value persisted
         row = db.conn.execute(
@@ -587,6 +642,7 @@ class TestGitRemoteColumnUpgrade:
 # CHAOS Tests
 # ===================================================================
 
+
 class TestGlobalDBChaos:
     """Edge cases, corruptions, and adversarial inputs."""
 
@@ -597,7 +653,9 @@ class TestGlobalDBChaos:
         db.register_project("/p", "Replaced", "go", git_remote="https://new.git")
 
         assert db.get_project_count() == 1
-        row = db.conn.execute("SELECT name, language FROM projects WHERE path='/p'").fetchone()
+        row = db.conn.execute(
+            "SELECT name, language FROM projects WHERE path='/p'"
+        ).fetchone()
         assert row["name"] == "Replaced"
         assert row["language"] == "go"
         db.close()
@@ -637,7 +695,11 @@ class TestGlobalDBChaos:
     def test_unicode_project_names(self, tmp_path):
         """Unicode in project names is handled correctly."""
         db = _make_db(tmp_path)
-        db.register_project("/home/user/\u30d7\u30ed\u30b8\u30a7\u30af\u30c8", "\u30c6\u30b9\u30c8", "python")
+        db.register_project(
+            "/home/user/\u30d7\u30ed\u30b8\u30a7\u30af\u30c8",
+            "\u30c6\u30b9\u30c8",
+            "python",
+        )
         db.register_project("/home/user/cafe\u0301", "Caf\u00e9 App", "typescript")
         db.register_project("/home/user/\U0001f680-app", "Rocket App", "go")
 
@@ -653,7 +715,12 @@ class TestGlobalDBChaos:
 
     def test_unicode_in_preferences(self, tmp_path):
         db = _make_db(tmp_path)
-        db.upsert_preference("\u547d\u540d\u898f\u5247", "\u30b9\u30cd\u30fc\u30af\u30b1\u30fc\u30b9", "\u4f8b\u3048\u3070_\u5909\u6570", "/\u30d7\u30ed\u30b8\u30a7\u30af\u30c8")
+        db.upsert_preference(
+            "\u547d\u540d\u898f\u5247",
+            "\u30b9\u30cd\u30fc\u30af\u30b1\u30fc\u30b9",
+            "\u4f8b\u3048\u3070_\u5909\u6570",
+            "/\u30d7\u30ed\u30b8\u30a7\u30af\u30c8",
+        )
         prefs = db.get_preferences(min_frequency=1)
         assert len(prefs) == 1
         assert prefs[0]["category"] == "\u547d\u540d\u898f\u5247"
@@ -661,10 +728,19 @@ class TestGlobalDBChaos:
 
     def test_unicode_in_rules(self, tmp_path):
         db = _make_db(tmp_path)
-        db.upsert_rule("\u65e9\u671f\u30ea\u30bf\u30fc\u30f3\u3092\u4f7f\u3046\u3053\u3068", 0.9, "/\u30d7\u30ed\u30b8\u30a7\u30af\u30c8", "\u30d1\u30bf\u30fc\u30f3", "python")
+        db.upsert_rule(
+            "\u65e9\u671f\u30ea\u30bf\u30fc\u30f3\u3092\u4f7f\u3046\u3053\u3068",
+            0.9,
+            "/\u30d7\u30ed\u30b8\u30a7\u30af\u30c8",
+            "\u30d1\u30bf\u30fc\u30f3",
+            "python",
+        )
         rules = db.get_rules(min_confidence=0.0)
         assert len(rules) == 1
-        assert rules[0]["rule_text"] == "\u65e9\u671f\u30ea\u30bf\u30fc\u30f3\u3092\u4f7f\u3046\u3053\u3068"
+        assert (
+            rules[0]["rule_text"]
+            == "\u65e9\u671f\u30ea\u30bf\u30fc\u30f3\u3092\u4f7f\u3046\u3053\u3068"
+        )
         db.close()
 
     def test_concurrent_access_from_threads(self, tmp_path):
@@ -676,7 +752,9 @@ class TestGlobalDBChaos:
             try:
                 db = GlobalDB(db_path)
                 for i in range(10):
-                    db.register_project(f"/t{thread_id}/p{i}", f"proj-{thread_id}-{i}", "python")
+                    db.register_project(
+                        f"/t{thread_id}/p{i}", f"proj-{thread_id}-{i}", "python"
+                    )
                 db.close()
             except Exception as e:
                 errors.append(e)
@@ -746,4 +824,3 @@ class TestGlobalDBChaos:
         assert rules[0]["category"] is None
         assert rules[0]["language"] is None
         db.close()
-

@@ -381,6 +381,51 @@ def add_phase(
     data = _load_roadmap()
     upcoming = data.get("upcoming_phases", [])
 
+    # 2026-05-18 v2.1.2 Item 18: auto-clear bootstrap placeholder when
+    # the user is adding a real phase with the SAME number as the
+    # placeholder. Report 4 §6: "Empty projects have a default 'Phase 1:
+    # Initial Development' entry that blocks adding a real Phase 1
+    # until you 'complete' it." The fix is narrow: if add_phase(phase=1, ...)
+    # is called and the current placeholder occupies that number AND is
+    # pristine (status=pending, no changesets, still the auto-generated
+    # stub description), silently REPLACE it. Calls with any other phase
+    # number flow through the normal "is the number free?" check.
+    current = data.get("current_phase", {}) or {}
+    placeholder_signals = (
+        current.get("status") == "pending"
+        and current.get("name") in ("Getting Started", "Initial Development")
+        and not (current.get("open_changesets") or [])
+        and "Auto-generated stub" in str(current.get("description", ""))
+    )
+    if placeholder_signals and str(current.get("number")) == str(phase):
+        # Replace the placeholder with the real phase at the same number.
+        data["current_phase"] = {
+            "number": phase,
+            "name": name,
+            "status": "active",
+            "priority": priority,
+            "description": description,
+            "goal": description,
+            "open_changesets": [],
+            "next_action": f"Start work on phase {phase}: {name}",
+            **({"files": files} if files else {}),
+            **({"effort": effort} if effort else {}),
+            **({"depends_on": depends_on} if depends_on else {}),
+        }
+        _save_roadmap(data)
+        return {
+            "success": True,
+            "phase": phase,
+            "name": name,
+            "position_in_queue": 0,
+            "promoted_to_current": True,
+            "placeholder_cleared": True,
+            "note": (
+                "Bootstrap placeholder phase was auto-cleared (Item 18). "
+                f"Phase {phase!r} is now the current_phase."
+            ),
+        }
+
     # Check if phase number already exists
     existing_phases = {str(p.get("phase")) for p in upcoming}
     existing_phases.add(str(data.get("current_phase", {}).get("number")))
@@ -544,24 +589,123 @@ def defer_phase(
 # ─────────────────────────────────────────────
 
 
-def complete_phase(phase_number: int | str, key_decisions: list[str]) -> dict[str, Any]:
+def complete_phase(
+    phase_number: int | str,
+    key_decisions: list[str],
+    *,
+    backfill: bool = False,
+    completed_at: str | None = None,
+    git_ref: str | None = None,
+) -> dict[str, Any]:
     """
     Mark the current phase as complete and advance to the next upcoming phase.
 
     Args:
-        phase_number: Must match the current phase number (safety check)
+        phase_number: Must match the current phase number (unless backfill=True)
         key_decisions: List of decisions made — preserved for all future agents
+        backfill: 2026-05-18 v2.1.2 Item 10 — when True, allow marking ANY phase
+            (current, upcoming, OR a synthetic historical one) as completed
+            without advancing the queue. Used to retroactively record phases
+            that shipped in git before codevira tracked them. The `completed_at`
+            arg lets you supply the historical date.
+        completed_at: ISO 8601 date (or YYYY-MM-DD). Defaults to today.
+            Only meaningful when backfill=True.
+        git_ref: 2026-05-18 v2.1.2 Item 12 — optional commit sha or PR
+            reference (e.g. "abc123def" or "PR #42") that this phase
+            shipped at. Persisted on the completed_phases entry; if it
+            looks like a git sha, get_phase later surfaces a
+            ``git_show_command`` hint.
 
     Returns:
-        success, completed phase, advanced_to phase number.
+        success, completed phase, advanced_to phase number (None if backfill).
     """
     data = _load_roadmap()
     current = data.get("current_phase", {})
 
+    # 2026-05-18 v2.1.2 Item 10: backfill path — accept ANY phase number,
+    # don't advance the queue. Useful for adopters whose first N phases
+    # already shipped in git history before codevira tracked them.
+    if backfill:
+        ts = completed_at or date.today().isoformat()
+        # Find the source phase (current, upcoming, or synthesize).
+        if str(current.get("number")) == str(phase_number):
+            source = current
+            advance_after = True  # we WILL advance the queue
+        else:
+            source = None
+            for p in data.get("upcoming_phases", []) or []:
+                if str(p.get("phase")) == str(phase_number) or str(
+                    p.get("number")
+                ) == str(phase_number):
+                    source = p
+                    break
+            advance_after = False
+        if source is None:
+            # Pure backfill — synthesize a minimal entry.
+            source = {
+                "number": phase_number,
+                "name": f"Phase {phase_number} (backfilled)",
+                "description": "",
+            }
+        completed_entry = {
+            "phase": source.get("number", source.get("phase", phase_number)),
+            "number": source.get("number", source.get("phase", phase_number)),
+            "name": source.get("name", f"Phase {phase_number}"),
+            "completed": ts,
+            "key_decisions": key_decisions,
+            "goal": source.get("goal", source.get("description", "")),
+            "description": source.get("description", source.get("goal", "")),
+            "backfilled": True,
+        }
+        if git_ref:
+            completed_entry["git_ref"] = str(git_ref).strip()
+        data.setdefault("completed_phases", []).append(completed_entry)
+        # If backfilling the CURRENT phase, also advance.
+        if advance_after:
+            upcoming = data.get("upcoming_phases", [])
+            if upcoming:
+                next_phase = upcoming.pop(0)
+                data["current_phase"] = {
+                    "number": next_phase["phase"],
+                    "name": next_phase["name"],
+                    "status": "pending",
+                    "next_action": f"Begin {next_phase['name']}: {next_phase.get('description', '')}".strip(
+                        ": "
+                    ),
+                    "open_changesets": [],
+                    "description": next_phase.get("description", ""),
+                    "goal": next_phase.get("goal", next_phase.get("description", "")),
+                }
+                data["upcoming_phases"] = upcoming
+        # If backfilling an UPCOMING phase, remove it from the queue
+        # (it's now in completed_phases).
+        else:
+            data["upcoming_phases"] = [
+                p
+                for p in (data.get("upcoming_phases") or [])
+                if str(p.get("phase")) != str(phase_number)
+                and str(p.get("number")) != str(phase_number)
+            ]
+        _save_roadmap(data)
+        return {
+            "success": True,
+            "completed_phase": phase_number,
+            "completed_at": ts,
+            "key_decisions_recorded": len(key_decisions),
+            "backfilled": True,
+            "git_ref": git_ref,
+            "note": "Backfill mode: queue not advanced unless the backfilled phase was the current phase.",
+        }
+
     if str(current.get("number")) != str(phase_number):
         return {
             "success": False,
-            "message": f"Current phase is {current.get('number')}, not {phase_number}. Cannot complete.",
+            "message": (
+                f"Current phase is {current.get('number')}, not {phase_number}. "
+                f"Cannot complete. Pass backfill=True (+ optional completed_at='YYYY-MM-DD') "
+                f"to retroactively mark a historical phase done without "
+                f"advancing the current-phase pointer."
+            ),
         }
 
     completed_entry = {
@@ -575,6 +719,9 @@ def complete_phase(phase_number: int | str, key_decisions: list[str]) -> dict[st
     }
     if current.get("started"):
         completed_entry["started"] = current["started"]
+    # 2026-05-18 v2.1.2 Item 12: optional git ref linkage.
+    if git_ref:
+        completed_entry["git_ref"] = str(git_ref).strip()
 
     data.setdefault("completed_phases", []).append(completed_entry)
 
@@ -611,6 +758,85 @@ def complete_phase(phase_number: int | str, key_decisions: list[str]) -> dict[st
         "completed_phase": phase_number,
         "key_decisions_recorded": len(key_decisions),
         "advanced_to": advanced_to,
+        "git_ref": git_ref,
+    }
+
+
+def bulk_import_phases(phases: list[dict[str, Any]]) -> dict[str, Any]:
+    """2026-05-18 v2.1.2 Item 29: backfill multiple historical phases at once.
+
+    Each item in ``phases`` is a dict with keys: ``number`` (required),
+    ``name`` (required), ``status`` (``done`` / ``active`` / ``upcoming``,
+    default ``done``), optional ``completed_at`` / ``key_decisions`` /
+    ``git_ref`` / ``description``.
+
+    Idempotent: re-running with the same phases is a no-op (existing
+    completed-phase entries with the same number are not duplicated).
+
+    Returns: {"imported": N, "skipped_existing": M, "errors": [...]}
+    """
+    data = _load_roadmap()
+    completed = data.setdefault("completed_phases", []) or []
+    upcoming = data.setdefault("upcoming_phases", []) or []
+    existing_numbers = {str(p.get("number") or p.get("phase")) for p in completed}
+    existing_numbers.update(str(p.get("number") or p.get("phase")) for p in upcoming)
+    current_number = str(data.get("current_phase", {}).get("number"))
+    existing_numbers.add(current_number)
+
+    imported = 0
+    skipped = 0
+    errors: list[dict[str, Any]] = []
+
+    for raw in phases:
+        try:
+            num = raw.get("number")
+            if num is None:
+                errors.append({"phase": raw, "error": "missing 'number'"})
+                continue
+            if str(num) in existing_numbers:
+                skipped += 1
+                continue
+            status = (raw.get("status") or "done").lower()
+            entry: dict[str, Any] = {
+                "phase": num,
+                "number": num,
+                "name": raw.get("name") or f"Phase {num}",
+                "description": raw.get("description", ""),
+                "goal": raw.get("description", ""),
+            }
+            if raw.get("git_ref"):
+                entry["git_ref"] = str(raw["git_ref"]).strip()
+            if status == "done":
+                entry["completed"] = raw.get("completed_at") or date.today().isoformat()
+                entry["key_decisions"] = raw.get("key_decisions") or []
+                entry["bulk_imported"] = True
+                completed.append(entry)
+            else:
+                # active / upcoming → queue as upcoming
+                upcoming.append(
+                    {
+                        "phase": num,
+                        "number": num,
+                        "name": entry["name"],
+                        "priority": raw.get("priority", "medium"),
+                        "description": entry["description"],
+                        "goal": entry["goal"],
+                        **({"git_ref": entry["git_ref"]} if "git_ref" in entry else {}),
+                    }
+                )
+            existing_numbers.add(str(num))
+            imported += 1
+        except Exception as exc:  # noqa: BLE001
+            errors.append({"phase": raw, "error": str(exc)})
+
+    data["completed_phases"] = completed
+    data["upcoming_phases"] = upcoming
+    _save_roadmap(data)
+    return {
+        "success": True,
+        "imported": imported,
+        "skipped_existing": skipped,
+        "errors": errors,
     }
 
 

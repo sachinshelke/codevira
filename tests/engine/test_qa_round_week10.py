@@ -41,14 +41,13 @@ J12-J14: CLI parse_since + locked-decision-no-suggestion
 J15:    promotion_score graceful failure on schema mismatch
 M11-M15: Manual mutations on the new seams
 """
+
 from __future__ import annotations
 
 import io
 import json
-import os
 import sys
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -68,7 +67,8 @@ def isolated_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     project.mkdir()
     (project / "pyproject.toml").write_text("")
     monkeypatch.setattr(
-        "mcp_server.paths.get_global_home", lambda: cv_data,
+        "mcp_server.paths.get_global_home",
+        lambda: cv_data,
     )
     return project
 
@@ -76,6 +76,7 @@ def isolated_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 @pytest.fixture(autouse=True)
 def _isolate_engine(monkeypatch: pytest.MonkeyPatch):
     from mcp_server.engine.runner import reset_policies
+
     reset_policies()
     for env in (
         "CODEVIRA_ENGINE",
@@ -97,6 +98,7 @@ def _isolate_engine(monkeypatch: pytest.MonkeyPatch):
 
 def _set_project(monkeypatch: pytest.MonkeyPatch, project: Path) -> None:
     import mcp_server.paths as paths_mod
+
     paths_mod.set_project_dir(project)
     paths_mod.invalidate_data_dir_cache()
 
@@ -104,6 +106,7 @@ def _set_project(monkeypatch: pytest.MonkeyPatch, project: Path) -> None:
 def _open_graph(project: Path):
     from mcp_server.paths import get_data_dir
     from indexer.sqlite_graph import SQLiteGraph
+
     graph_db = get_data_dir() / "graph" / "graph.db"
     graph_db.parent.mkdir(parents=True, exist_ok=True)
     return SQLiteGraph(graph_db)
@@ -116,8 +119,9 @@ def _ensure_session(g, session_id: str = "s1") -> None:
     )
 
 
-def _plant_stable_decision(g, file_path: str, decision_text: str,
-                            kept: int = 5, locked: int = 0) -> int:
+def _plant_stable_decision(
+    g, file_path: str, decision_text: str, kept: int = 5, locked: int = 0
+) -> int:
     """Plant a decision + N kept outcomes. Returns decision id."""
     _ensure_session(g)
     cur = g.conn.execute(
@@ -134,8 +138,10 @@ def _plant_stable_decision(g, file_path: str, decision_text: str,
         )
     for _ in range(kept):
         g.record_outcome(
-            session_id="s1", file_path=file_path,
-            outcome_type="kept", decision_id=did,
+            session_id="s1",
+            file_path=file_path,
+            outcome_type="kept",
+            decision_id=did,
         )
     g.conn.commit()
     return did
@@ -147,30 +153,32 @@ def _plant_stable_decision(g, file_path: str, decision_text: str,
 
 
 class TestJ1_DefaultRegistration:
-
     def test_default_heroes_registered_after_week_11(self):
         """As of Week 11, the default set is 8 heroes. Future heroes
         must update this assertion explicitly — drift in either direction
         (missing or unexpected) is a bug.
         """
         from mcp_server.engine import (
-            register_default_policies, registered_policies,
+            register_default_policies,
+            registered_policies,
         )
+
         register_default_policies()
         names = {p.name for p in registered_policies()}
         expected = {
-            "blast_radius_veto",         # Hero 4 (Week 4)
-            "decision_lock",             # Hero 1 (Week 5)
-            "cross_session_consistency", # Hero 5 (Week 6)
-            "token_budget_persist",      # Hero 6 (Week 7)
-            "anti_regression",           # Hero 2 (Week 8)
-            "live_style_enforcement",    # Hero 7 (Week 9)
-            "ai_promotion_score",        # Hero 10 (Week 10)
-            "intent_inference",          # Hero 9 (Week 11)
-            "scope_contract_lock",       # Hero 3 (Week 12)
+            "blast_radius_veto",  # Hero 4 (Week 4)
+            "decision_lock",  # Hero 1 (Week 5)
+            "cross_session_consistency",  # Hero 5 (Week 6)
+            "token_budget_persist",  # Hero 6 (Week 7)
+            "anti_regression",  # Hero 2 (Week 8)
+            "live_style_enforcement",  # Hero 7 (Week 9)
+            "ai_promotion_score",  # Hero 10 (Week 10)
+            "intent_inference",  # Hero 9 (Week 11)
+            "scope_contract_lock",  # Hero 3 (Week 12)
+            "post_edit_graph_refresh",  # v2.1.2 Item 4
         }
         assert names == expected, (
-            f"9-hero set drift — got {sorted(names)}, "
+            f"Default hero set drift — got {sorted(names)}, "
             f"expected {sorted(expected)}"
         )
 
@@ -180,17 +188,21 @@ class TestJ1_DefaultRegistration:
         — not silently."""
         from mcp_server.engine import register_default_policies, registered_policies
         from mcp_server.engine.events import EventType
+
         register_default_policies()
         ss_eligible = {
-            p.name for p in registered_policies()
+            p.name
+            for p in registered_policies()
             if EventType.SESSION_START in set(p.handles)
         }
-        assert ss_eligible == {"ai_promotion_score"}, (
-            f"SessionStart eligibility drift: {ss_eligible}"
-        )
+        assert ss_eligible == {
+            "ai_promotion_score"
+        }, f"SessionStart eligibility drift: {ss_eligible}"
 
     def test_hero_10_silent_on_pre_post_user_prompt_stop(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """Hero 10 must NOT fire on PRE_TOOL_USE / POST_TOOL_USE /
         USER_PROMPT_SUBMIT / STOP — even with rich outcomes data planted.
@@ -198,7 +210,9 @@ class TestJ1_DefaultRegistration:
         to fire on Write but didn't; here we ensure Hero 10 is supposed
         NOT to fire on these and indeed doesn't)."""
         from mcp_server.engine import (
-            register_default_policies, reset_policies, dispatch,
+            register_default_policies,
+            reset_policies,
+            dispatch,
         )
         from mcp_server.engine.events import EventType, HookEvent
 
@@ -211,22 +225,26 @@ class TestJ1_DefaultRegistration:
         register_default_policies()
 
         for evt_type in (
-            EventType.PRE_TOOL_USE, EventType.POST_TOOL_USE,
-            EventType.USER_PROMPT_SUBMIT, EventType.STOP,
+            EventType.PRE_TOOL_USE,
+            EventType.POST_TOOL_USE,
+            EventType.USER_PROMPT_SUBMIT,
+            EventType.STOP,
         ):
             event = HookEvent(
                 event_type=evt_type,
                 project_root=isolated_project,
                 tool_name="Edit" if "TOOL" in evt_type.name else "",
-                target_file=isolated_project / "auth.py" if "TOOL" in evt_type.name else None,
+                target_file=isolated_project / "auth.py"
+                if "TOOL" in evt_type.name
+                else None,
             )
             v = dispatch(event)
             # Hero 10 must NOT inject on these. Other heroes may allow,
             # warn, or block — but Hero 10's contribution should be NONE.
             inject_policies = v.metadata.get("inject_policies", [])
-            assert "ai_promotion_score" not in inject_policies, (
-                f"Hero 10 fired on {evt_type} — handles drift!"
-            )
+            assert (
+                "ai_promotion_score" not in inject_policies
+            ), f"Hero 10 fired on {evt_type} — handles drift!"
 
 
 # =====================================================================
@@ -235,14 +253,17 @@ class TestJ1_DefaultRegistration:
 
 
 class TestJ4_KillSwitchHonorsSessionStart:
-
     def test_engine_disabled_short_circuits_session_start(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """The kill switch was tested with PRE_TOOL_USE in Week-9 round
         but not with SESSION_START. Lock it in for the new event type."""
         from mcp_server.engine import (
-            register_default_policies, reset_policies, dispatch,
+            register_default_policies,
+            reset_policies,
+            dispatch,
         )
         from mcp_server.engine.events import EventType, HookEvent
 
@@ -273,9 +294,10 @@ class TestJ4_KillSwitchHonorsSessionStart:
 
 
 class TestJ5_CrashIsolation:
-
     def test_crashing_h10_does_not_break_session_start_dispatch(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """If Hero 10 raises, the engine must log + treat as allow,
         and OTHER SessionStart policies (when they ship) must still run.
@@ -289,8 +311,10 @@ class TestJ5_CrashIsolation:
 
         # Sabotage Hero 10's evaluate to raise.
         _orig = AIPromotionScore.evaluate
+
         def crashing_evaluate(self, event, signals=None):
             raise RuntimeError("intentional Hero 10 crash for crash-isolation test")
+
         monkeypatch.setattr(AIPromotionScore, "evaluate", crashing_evaluate)
 
         sentinel_called = {"n": 0}
@@ -328,20 +352,23 @@ class TestJ5_CrashIsolation:
 
 
 class TestJ6_Bug3RegressionForHero10:
-
     def test_setting_h10_disabled_excludes_it(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """Bug 3 was: enabled_by_default=False had zero effect; the
         register_default_policies helper ignored it. The fix landed in
         Week 7. Re-verify it still works for the newest hero."""
         from mcp_server.engine import (
-            register_default_policies, registered_policies,
+            register_default_policies,
+            registered_policies,
         )
         from mcp_server.engine.policies.ai_promotion import AIPromotionScore
 
         monkeypatch.setattr(
-            AIPromotionScore, "enabled_by_default", False,
+            AIPromotionScore,
+            "enabled_by_default",
+            False,
         )
         register_default_policies()
         names = {p.name for p in registered_policies()}
@@ -360,9 +387,10 @@ class TestJ6_Bug3RegressionForHero10:
 
 
 class TestJ7_CacheNonCollision:
-
     def test_outcomes_and_decisions_caches_do_not_collide(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """The Week-10 commit reused _decisions_cache for outcomes() and
         learned_rules() — flagged in execution log as a "Surprise" but
@@ -387,8 +415,10 @@ class TestJ7_CacheNonCollision:
         did = cur.lastrowid
         for _ in range(3):
             g.record_outcome(
-                session_id="s1", file_path="outcomes",
-                outcome_type="kept", decision_id=did,
+                session_id="s1",
+                file_path="outcomes",
+                outcome_type="kept",
+                decision_id=did,
             )
         g.conn.commit()
         g.close()
@@ -400,17 +430,17 @@ class TestJ7_CacheNonCollision:
         assert len(decs) == 1
         assert "decision" in decs[0]
         # Decisions row should NOT have outcome-aggregation keys.
-        assert "kept" not in decs[0], (
-            "decisions() returned outcome-shape row — cache collision!"
-        )
+        assert (
+            "kept" not in decs[0]
+        ), "decisions() returned outcome-shape row — cache collision!"
 
         # Now: get aggregated outcomes (4-tuple key starting with 'outcomes').
         outs = ctx.outcomes(since_days=30, min_outcomes=2)
         assert len(outs) == 1
         assert outs[0]["kept"] == 3
-        assert "score" in outs[0], (
-            "outcomes() returned plain decision row — cache collision!"
-        )
+        assert (
+            "score" in outs[0]
+        ), "outcomes() returned plain decision row — cache collision!"
 
         # And: same calls again hit the cache (verify by checking we got
         # the SAME list object).
@@ -420,16 +450,19 @@ class TestJ7_CacheNonCollision:
         assert outs2 is outs, "outcomes cache not hit on second call"
 
     def test_search_decisions_and_outcomes_caches_do_not_collide(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """search_decisions uses key ('search', query, limit). outcomes
         uses key ('outcomes', ...). learned_rules uses ('rules', ...).
         Different namespaces → no collision. Verify in-process."""
         from mcp_server.engine.signals import SignalContext
+
         _set_project(monkeypatch, isolated_project)
         g = _open_graph(isolated_project)
         _ensure_session(g)
-        cur = g.conn.execute(
+        g.conn.execute(
             "INSERT INTO decisions (session_id, decision, file_path, "
             "context, created_at) VALUES (?, ?, ?, ?, datetime('now'))",
             ("s1", "search-test pattern", "f.py", "ctx"),
@@ -446,9 +479,9 @@ class TestJ7_CacheNonCollision:
         assert isinstance(outs, list)
         assert isinstance(rules, list)
         # search_decisions found our planted row by its decision text
-        assert any("search-test" in (d.get("decision") or "") for d in sd), (
-            f"search_decisions didn't return planted row: {sd}"
-        )
+        assert any(
+            "search-test" in (d.get("decision") or "") for d in sd
+        ), f"search_decisions didn't return planted row: {sd}"
 
 
 # =====================================================================
@@ -457,9 +490,10 @@ class TestJ7_CacheNonCollision:
 
 
 class TestJ8_WiringPathEdgeCases:
-
     def test_session_start_with_no_outcomes_emits_no_inject(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """End-to-end through claude_code_hooks.handle("SessionStart")
         on a project with NO outcomes. Hero 10 should silently allow —
@@ -500,7 +534,9 @@ class TestJ8_WiringPathEdgeCases:
         )
 
     def test_session_start_with_mode_off_emits_no_inject(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """End-to-end through wiring with CODEVIRA_AI_PROMOTION_MODE=off.
         Even with high-score outcomes planted, no inject is emitted."""
@@ -534,12 +570,14 @@ class TestJ8_WiringPathEdgeCases:
         assert emitted.get("continue") is True
         # Even with planted high-score data, mode=off means no inject.
         ctx = emitted.get("hookSpecificOutput", {}).get("additionalContext", "")
-        assert "bcrypt" not in ctx, (
-            f"mode=off didn't suppress Hero 10 inject. Emitted: {emitted}"
-        )
+        assert (
+            "bcrypt" not in ctx
+        ), f"mode=off didn't suppress Hero 10 inject. Emitted: {emitted}"
 
     def test_session_start_with_outcomes_emits_inject(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """Positive control for J8 + J9 — verify our wiring path actually
         produces an inject when conditions are met."""
@@ -576,13 +614,17 @@ class TestJ8_WiringPathEdgeCases:
         )
 
     def test_multiple_inject_policies_concatenate_in_priority_order(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """Verify the inject combiner concatenates by priority DESC.
         Today only Hero 10 fires on SessionStart, but a future hero may
         also be inject-on-SessionStart. Lock the contract now."""
         from mcp_server.engine import (
-            register_policy, reset_policies, dispatch,
+            register_policy,
+            reset_policies,
+            dispatch,
         )
         from mcp_server.engine.events import EventType, HookEvent
         from mcp_server.engine.policy import Policy, PolicyVerdict
@@ -593,8 +635,9 @@ class TestJ8_WiringPathEdgeCases:
             priority = 200
 
             def evaluate(self, event, signals=None):
-                return PolicyVerdict(action="inject", inject_context="HIGH-CTX",
-                                      policy=self.name)
+                return PolicyVerdict(
+                    action="inject", inject_context="HIGH-CTX", policy=self.name
+                )
 
         class LowPriorityInject(Policy):
             name = "low_inject"
@@ -602,8 +645,9 @@ class TestJ8_WiringPathEdgeCases:
             priority = 1
 
             def evaluate(self, event, signals=None):
-                return PolicyVerdict(action="inject", inject_context="LOW-CTX",
-                                      policy=self.name)
+                return PolicyVerdict(
+                    action="inject", inject_context="LOW-CTX", policy=self.name
+                )
 
         reset_policies()
         register_policy(HighPriorityInject())
@@ -621,9 +665,10 @@ class TestJ8_WiringPathEdgeCases:
         assert v.inject_context.index("HIGH-CTX") < v.inject_context.index("LOW-CTX")
         # Metadata records both inject policies in priority order
         ip = v.metadata.get("inject_policies", [])
-        assert ip == ["high_inject", "low_inject"], (
-            f"inject_policies metadata order wrong: {ip}"
-        )
+        assert ip == [
+            "high_inject",
+            "low_inject",
+        ], f"inject_policies metadata order wrong: {ip}"
 
 
 # =====================================================================
@@ -632,29 +677,33 @@ class TestJ8_WiringPathEdgeCases:
 
 
 class TestJ12_CLIParseSince:
-
     def test_parse_since_warns_on_malformed_input(
-        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture,
     ):
         """Silent fallback would be a Bug-3-shape failure: user thinks
         their --since=garbage is honored; actually it's silently 7d.
         Lock that there's a stderr warning."""
         from mcp_server.cli_insights import _parse_since
+
         result = _parse_since("garbage")
         captured = capsys.readouterr()
         assert result == 7, f"Expected default 7, got {result}"
-        assert "warning" in captured.err.lower() or "ignoring" in captured.err.lower(), (
-            f"Malformed --since must warn on stderr; got stderr={captured.err!r}"
-        )
+        assert (
+            "warning" in captured.err.lower() or "ignoring" in captured.err.lower()
+        ), f"Malformed --since must warn on stderr; got stderr={captured.err!r}"
 
     def test_parse_since_clamps_huge_values(self):
         from mcp_server.cli_insights import _parse_since
+
         assert _parse_since("999d") == 365  # ceiling
-        assert _parse_since("0d") == 1     # floor
-        assert _parse_since("-5d") == 7    # negative falls through regex → default
+        assert _parse_since("0d") == 1  # floor
+        assert _parse_since("-5d") == 7  # negative falls through regex → default
 
     def test_parse_since_handles_valid_units(self):
         from mcp_server.cli_insights import _parse_since
+
         assert _parse_since("7d") == 7
         assert _parse_since("30") == 30  # bare number
         assert _parse_since("14days") == 14
@@ -663,15 +712,17 @@ class TestJ12_CLIParseSince:
 
 
 class TestJ13_LockedDecisionNoSuggestion:
-
     def test_cli_omits_locking_suggestion_for_already_locked_reverted(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """A decision that's both reverted AND already locked should NOT
         get the "consider locking" suggestion — that would be useless
         noise. Tests the `if not locked:` branch in _fmt_reverted_section.
         """
         from mcp_server.cli_insights import cmd_insights
+
         _set_project(monkeypatch, isolated_project)
         g = _open_graph(isolated_project)
         _ensure_session(g)
@@ -689,32 +740,41 @@ class TestJ13_LockedDecisionNoSuggestion:
         did = cur.lastrowid
         for _ in range(4):
             g.record_outcome(
-                session_id="s1", file_path="style.css",
-                outcome_type="reverted", decision_id=did,
+                session_id="s1",
+                file_path="style.css",
+                outcome_type="reverted",
+                decision_id=did,
             )
         g.conn.commit()
         g.close()
 
         out_buf = io.StringIO()
         rc = cmd_insights(
-            since="30d", top=5, project=isolated_project,
-            min_outcomes=1, ascii_mode=True, out=out_buf,
+            since="30d",
+            top=5,
+            project=isolated_project,
+            min_outcomes=1,
+            ascii_mode=True,
+            out=out_buf,
         )
         assert rc == 0
         out = out_buf.getvalue()
         # The reverted decision IS shown
         assert "Bootstrap not Tailwind" in out
         # But NO suggestion to lock (it's already locked)
-        assert "consider locking" not in out.lower(), (
-            f"CLI suggested locking an already-locked decision (noise): {out}"
-        )
+        assert (
+            "consider locking" not in out.lower()
+        ), f"CLI suggested locking an already-locked decision (noise): {out}"
 
     def test_cli_suggestion_appears_for_unlocked_reverted(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """Positive control for J13 — the suggestion DOES appear when
         the reverted decision is unlocked."""
         from mcp_server.cli_insights import cmd_insights
+
         _set_project(monkeypatch, isolated_project)
         g = _open_graph(isolated_project)
         _ensure_session(g)
@@ -726,16 +786,22 @@ class TestJ13_LockedDecisionNoSuggestion:
         did = cur.lastrowid
         for _ in range(4):
             g.record_outcome(
-                session_id="s1", file_path="style.css",
-                outcome_type="reverted", decision_id=did,
+                session_id="s1",
+                file_path="style.css",
+                outcome_type="reverted",
+                decision_id=did,
             )
         g.conn.commit()
         g.close()
 
         out_buf = io.StringIO()
         rc = cmd_insights(
-            since="30d", top=5, project=isolated_project,
-            min_outcomes=1, ascii_mode=True, out=out_buf,
+            since="30d",
+            top=5,
+            project=isolated_project,
+            min_outcomes=1,
+            ascii_mode=True,
+            out=out_buf,
         )
         assert rc == 0
         out = out_buf.getvalue()
@@ -746,15 +812,17 @@ class TestJ13_LockedDecisionNoSuggestion:
 
 
 class TestJ14_PromotionScoreGracefulFailure:
-
     def test_aggregate_returns_empty_on_schema_mismatch(self, tmp_path: Path):
         """Bug-1-shape defense: if the SQL hits a missing column, the
         aggregator must return [] (silent), not raise. Hero 10 is
         advisory; data layer flakiness must not break SessionStart."""
         import sqlite3
         from mcp_server.engine.promotion_score import (
-            aggregate_decision_outcomes, top_stable_decisions, top_rules,
+            aggregate_decision_outcomes,
+            top_stable_decisions,
+            top_rules,
         )
+
         # Build a deliberately-incompatible schema
         bad_db = tmp_path / "bad.db"
         conn = sqlite3.connect(str(bad_db))
@@ -765,8 +833,9 @@ class TestJ14_PromotionScoreGracefulFailure:
         rows = aggregate_decision_outcomes(conn, since_days=30, min_outcomes=2)
         assert rows == [], "aggregate should return [] on schema mismatch"
 
-        stable = top_stable_decisions(conn, since_days=30, min_outcomes=2,
-                                       min_score=0.7, max_items=5)
+        stable = top_stable_decisions(
+            conn, since_days=30, min_outcomes=2, min_score=0.7, max_items=5
+        )
         assert stable == [], "top_stable should return [] on schema mismatch"
 
         rules = top_rules(conn, min_confidence=0.7, max_items=5)
@@ -781,7 +850,6 @@ class TestJ14_PromotionScoreGracefulFailure:
 
 
 class TestJ15_Hero7Bug4FixStillCorrect:
-
     def test_hero_7_still_extracts_edit_after_block(self):
         """Re-verify Bug 4 fix didn't break Edit format parsing.
         The fix made _extract_after_block handle BOTH formats:
@@ -794,9 +862,9 @@ class TestJ15_Hero7Bug4FixStillCorrect:
         edit = "--- before\nold_text\nmore_old\n--- after\ndef new_fn(): pass\n"
         out = _extract_after_block(edit)
         assert "def new_fn" in out, "Edit-format AFTER block missing"
-        assert "old_text" not in out, (
-            "Bug 4 fix regression: Edit-format BEFORE block leaked into AFTER"
-        )
+        assert (
+            "old_text" not in out
+        ), "Bug 4 fix regression: Edit-format BEFORE block leaked into AFTER"
         assert "--- before" not in out
         assert "--- after" not in out
 

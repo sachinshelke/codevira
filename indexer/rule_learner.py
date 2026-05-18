@@ -27,12 +27,33 @@ def run_rule_inference():
     """
     Main entry point: analyze all decisions and outcomes,
     detect patterns, and create or update learned rules.
+
+    2026-05-18 v2.1.2 Item 17: skip the n-gram-prone
+    ``_infer_decision_pattern_rules`` pass entirely for pre-code
+    projects (zero indexed source files). On those projects the
+    extractor was running over prose / filenames only and emitting
+    sliding-window n-grams as fake "patterns" — trust-poisoning.
+    Test pairing, import pattern, and co-change rules still run since
+    they need actual file_path data, which already gates them.
     """
     db = SQLiteGraph(get_data_dir() / "graph" / "graph.db")
     try:
         _infer_test_pairing_rules(db)
         _infer_import_pattern_rules(db)
-        _infer_decision_pattern_rules(db)
+        # Item 17 pre-code guard
+        try:
+            file_count = db.conn.execute(
+                'SELECT COUNT(*) AS c FROM nodes WHERE kind = "file"'
+            ).fetchone()["c"]
+        except Exception:
+            file_count = 0
+        if file_count > 0:
+            _infer_decision_pattern_rules(db)
+        else:
+            logger.debug(
+                "rule_learner: skipping decision_pattern_rules — 0 indexed source "
+                "files (pre-code project; n-gram extractor would emit noise)"
+            )
         _infer_file_co_change_rules(db)
     finally:
         db.close()
@@ -166,8 +187,99 @@ def _infer_file_co_change_rules(db: SQLiteGraph):
             _upsert_rule(db, rule_text, confidence, category="structure")
 
 
+# 2026-05-18 v2.1.2 Item 17: stopword set used to suppress n-gram noise
+# in the rule extractor. Report 4 §7 flagged "recurring pattern — system
+# foundation md", "recurring pattern — is a projection", etc. as
+# trust-poisoning fake patterns. Filtering common English stop-words
+# before grouping kills most of the noise; the density check below
+# kills the rest.
+_RULE_STOPWORDS: frozenset[str] = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "are",
+        "as",
+        "at",
+        "be",
+        "by",
+        "for",
+        "from",
+        "has",
+        "have",
+        "in",
+        "is",
+        "it",
+        "its",
+        "of",
+        "on",
+        "or",
+        "that",
+        "the",
+        "this",
+        "to",
+        "was",
+        "were",
+        "will",
+        "with",
+        "we",
+        "you",
+        "i",
+        "it's",
+        "do",
+        "if",
+        "but",
+        "not",
+        "no",
+        "yes",
+        "so",
+        "than",
+        "then",
+        "when",
+        "where",
+        "what",
+        "who",
+        "how",
+        "why",
+        "into",
+        "onto",
+        "md",
+        "txt",
+        "py",
+        "json",
+        "yaml",
+        "yml",  # common file-ext n-gram noise
+    }
+)
+
+
+def _phrase_is_real_pattern(phrase: str, min_content_words: int = 2) -> bool:
+    """v2.1.2 Item 17: gate against n-gram noise in the rule extractor.
+
+    A "real pattern" must:
+      1. contain ≥ ``min_content_words`` tokens that are NOT in the
+         stopword list (Report 4 example: ``"is a projection"`` has 0
+         content words → reject)
+      2. have at least one content token that's ≥ 4 chars AND contains
+         a letter (filters out short connectors like ``a``, ``the``,
+         numbers, single-char glyphs)
+    """
+    tokens = phrase.split()
+    content_tokens = [t for t in tokens if t.lower() not in _RULE_STOPWORDS]
+    if len(content_tokens) < min_content_words:
+        return False
+    return any(len(t) >= 4 and any(c.isalpha() for c in t) for t in content_tokens)
+
+
 def _find_common_phrases(texts: list[str], min_words: int = 3) -> list[tuple[str, int]]:
-    """Find common multi-word phrases across a list of texts."""
+    """Find common multi-word phrases across a list of texts.
+
+    2026-05-18 v2.1.2 Item 17: stopword + density filter applied so the
+    rule extractor doesn't emit n-gram fragments like
+    ``"recurring pattern — is a projection"``. Substring suppression
+    also drops candidates that are substrings of higher-support
+    candidates (so we don't ride along a sliding window).
+    """
     phrase_counts: Counter = Counter()
     for text in texts:
         words = re.findall(r"\b\w+\b", text.lower())
@@ -176,10 +288,25 @@ def _find_common_phrases(texts: list[str], min_words: int = 3) -> list[tuple[str
                 phrase = " ".join(words[i : i + length])
                 phrase_counts[phrase] += 1
 
-    # Return phrases that appear in multiple texts
-    return [
-        (phrase, count) for phrase, count in phrase_counts.most_common(10) if count >= 2
+    # Density gate: only keep phrases with ≥2 content tokens.
+    candidates = [
+        (phrase, count)
+        for phrase, count in phrase_counts.most_common(30)
+        if count >= 2 and _phrase_is_real_pattern(phrase)
     ]
+
+    # Substring suppression: drop any candidate that is a substring of an
+    # already-accepted higher-support candidate (so "foundation md" doesn't
+    # ride along with "system foundation md").
+    kept: list[tuple[str, int]] = []
+    for phrase, count in candidates:
+        if any(phrase in stronger and phrase != stronger for stronger, _c in kept):
+            continue
+        kept.append((phrase, count))
+        if len(kept) >= 10:
+            break
+
+    return kept
 
 
 def _upsert_rule(

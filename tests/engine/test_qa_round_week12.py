@@ -25,15 +25,14 @@ master plan. This round verifies:
   - All 4 _EDIT_TOOLS enforced equally through wiring
   - The wiring path for BOTH events (Bug-4 lesson)
 """
+
 from __future__ import annotations
 
 import io
 import json
-import os
 import sys
 import time
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -60,6 +59,7 @@ def isolated_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def _isolate_engine_and_storage(monkeypatch: pytest.MonkeyPatch):
     from mcp_server.engine.runner import reset_policies
     from mcp_server.engine.scope_contract import clear_all
+
     reset_policies()
     clear_all()
     for env in (
@@ -83,6 +83,7 @@ def _isolate_engine_and_storage(monkeypatch: pytest.MonkeyPatch):
 
 def _set_project(monkeypatch: pytest.MonkeyPatch, project: Path) -> None:
     import mcp_server.paths as paths_mod
+
     paths_mod.set_project_dir(project)
     paths_mod.invalidate_data_dir_cache()
 
@@ -93,24 +94,29 @@ def _set_project(monkeypatch: pytest.MonkeyPatch, project: Path) -> None:
 
 
 class TestL1_RegistrationAndEligibility:
-
     def test_nine_heroes_registered_default(self):
         from mcp_server.engine import (
-            register_default_policies, registered_policies,
+            register_default_policies,
+            registered_policies,
         )
+
         register_default_policies()
         names = {p.name for p in registered_policies()}
         assert "scope_contract_lock" in names
-        assert len(names) == 9
+        # v2.1.2 Item 4: post_edit_graph_refresh raises the count to 10.
+        assert "post_edit_graph_refresh" in names
+        assert len(names) == 10
 
     def test_pre_tool_use_eligibility_includes_hero_3(self):
         """Hero 3 enforces on PreToolUse alongside Hero 1 (decision_lock),
         Hero 2 (anti_regression), Hero 4 (blast_radius). Lock the set."""
         from mcp_server.engine import register_default_policies, registered_policies
         from mcp_server.engine.events import EventType
+
         register_default_policies()
         pre = {
-            p.name for p in registered_policies()
+            p.name
+            for p in registered_policies()
             if EventType.PRE_TOOL_USE in set(p.handles)
         }
         # Bug-3-shape lock-in: explicit set, not loose >= check
@@ -122,13 +128,16 @@ class TestL1_RegistrationAndEligibility:
         }, f"PRE_TOOL_USE eligibility drift: {pre}"
 
     def test_hero_3_off_by_default(
-        self, isolated_project: Path,
+        self,
+        isolated_project: Path,
     ):
         """No env override → mode=off → silent allow on EVERY event.
         Confirms Hero 3 is opt-in. Stays out of the way unless user
         explicitly enables."""
         from mcp_server.engine import (
-            register_default_policies, reset_policies, dispatch,
+            register_default_policies,
+            reset_policies,
+            dispatch,
         )
         from mcp_server.engine.events import EventType, HookEvent
         from mcp_server.engine.scope_contract import _stored_count
@@ -137,25 +146,29 @@ class TestL1_RegistrationAndEligibility:
         register_default_policies()
 
         # Build phase
-        dispatch(HookEvent(
-            event_type=EventType.USER_PROMPT_SUBMIT,
-            project_root=isolated_project,
-            session_id="off-test",
-            prompt_text="fix auth.py",
-        ))
+        dispatch(
+            HookEvent(
+                event_type=EventType.USER_PROMPT_SUBMIT,
+                project_root=isolated_project,
+                session_id="off-test",
+                prompt_text="fix auth.py",
+            )
+        )
         # No contract built (mode=off)
         assert _stored_count() == 0
 
         # Enforce phase
         target = isolated_project / "users.py"
         target.write_text("")
-        v = dispatch(HookEvent(
-            event_type=EventType.PRE_TOOL_USE,
-            project_root=isolated_project,
-            session_id="off-test",
-            tool_name="Edit",
-            target_file=target,
-        ))
+        v = dispatch(
+            HookEvent(
+                event_type=EventType.PRE_TOOL_USE,
+                project_root=isolated_project,
+                session_id="off-test",
+                tool_name="Edit",
+                target_file=target,
+            )
+        )
         assert v.action != "block" or v.policy != "scope_contract_lock"
 
 
@@ -165,9 +178,10 @@ class TestL1_RegistrationAndEligibility:
 
 
 class TestL2_MultiPolicyOnPreToolUse:
-
     def test_decision_lock_blocks_first_when_both_could_fire(
-        self, monkeypatch: pytest.MonkeyPatch, isolated_project: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_project: Path,
     ):
         """Decision Lock (priority 100) > Hero 3 (priority 90). When both
         would block on the same Edit, Decision Lock's message is primary;
@@ -175,14 +189,18 @@ class TestL2_MultiPolicyOnPreToolUse:
         """
         monkeypatch.setenv("CODEVIRA_SCOPE_LOCK_MODE", "block")
         from mcp_server.engine import (
-            register_default_policies, reset_policies, dispatch,
+            register_default_policies,
+            reset_policies,
+            dispatch,
         )
         from mcp_server.engine.events import EventType, HookEvent
         from indexer.sqlite_graph import SQLiteGraph
+
         _set_project(monkeypatch, isolated_project)
 
         # Plant a locked decision on a file users.py
         from mcp_server.paths import get_data_dir
+
         graph_db = get_data_dir() / "graph" / "graph.db"
         graph_db.parent.mkdir(parents=True, exist_ok=True)
         g = SQLiteGraph(graph_db)
@@ -207,33 +225,37 @@ class TestL2_MultiPolicyOnPreToolUse:
         register_default_policies()
 
         # Build a Hero 3 contract that EXCLUDES users.py
-        dispatch(HookEvent(
-            event_type=EventType.USER_PROMPT_SUBMIT,
-            project_root=isolated_project,
-            session_id="s-multi",
-            prompt_text="fix the null check in auth.py",
-        ))
+        dispatch(
+            HookEvent(
+                event_type=EventType.USER_PROMPT_SUBMIT,
+                project_root=isolated_project,
+                session_id="s-multi",
+                prompt_text="fix the null check in auth.py",
+            )
+        )
 
         # Edit on users.py would trigger BOTH:
         #  - Decision Lock: users.py is do_not_revert
         #  - Hero 3: users.py is out of contract scope
         target = isolated_project / "users.py"
         target.write_text("")
-        v = dispatch(HookEvent(
-            event_type=EventType.PRE_TOOL_USE,
-            project_root=isolated_project,
-            session_id="s-multi",
-            tool_name="Edit",
-            target_file=target,
-        ))
+        v = dispatch(
+            HookEvent(
+                event_type=EventType.PRE_TOOL_USE,
+                project_root=isolated_project,
+                session_id="s-multi",
+                tool_name="Edit",
+                target_file=target,
+            )
+        )
         assert v.is_blocking()
         # Decision Lock wins (priority 100 > 90)
         assert v.policy == "decision_lock"
         # Hero 3 is recorded as a co-blocker
         others = v.metadata.get("other_blocking_policies", [])
-        assert "scope_contract_lock" in others, (
-            f"Hero 3 should appear in other_blocking_policies. Got: {others}"
-        )
+        assert (
+            "scope_contract_lock" in others
+        ), f"Hero 3 should appear in other_blocking_policies. Got: {others}"
 
 
 # =====================================================================
@@ -242,9 +264,10 @@ class TestL2_MultiPolicyOnPreToolUse:
 
 
 class TestL3_KillSwitch:
-
     def test_engine_disabled_skips_hero_3_build(
-        self, monkeypatch: pytest.MonkeyPatch, isolated_project: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_project: Path,
     ):
         """CODEVIRA_ENGINE=0 short-circuits dispatch entirely. Even
         though Hero 3 is mode=block (would otherwise build), the kill
@@ -253,7 +276,9 @@ class TestL3_KillSwitch:
         monkeypatch.setenv("CODEVIRA_SCOPE_LOCK_MODE", "block")
         monkeypatch.setenv("CODEVIRA_ENGINE", "0")
         from mcp_server.engine import (
-            register_default_policies, reset_policies, dispatch,
+            register_default_policies,
+            reset_policies,
+            dispatch,
         )
         from mcp_server.engine.events import EventType, HookEvent
         from mcp_server.engine.scope_contract import _stored_count
@@ -262,12 +287,14 @@ class TestL3_KillSwitch:
         reset_policies()
         register_default_policies()
 
-        dispatch(HookEvent(
-            event_type=EventType.USER_PROMPT_SUBMIT,
-            project_root=isolated_project,
-            session_id="kill",
-            prompt_text="fix auth.py",
-        ))
+        dispatch(
+            HookEvent(
+                event_type=EventType.USER_PROMPT_SUBMIT,
+                project_root=isolated_project,
+                session_id="kill",
+                prompt_text="fix auth.py",
+            )
+        )
         # Nothing built
         assert _stored_count() == 0
 
@@ -278,15 +305,18 @@ class TestL3_KillSwitch:
 
 
 class TestL4_CrashIsolation:
-
     def test_h3_crash_on_prompt_does_not_break_h5_inject(
-        self, monkeypatch: pytest.MonkeyPatch, isolated_project: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_project: Path,
     ):
         """Hero 3 raising on UserPromptSubmit must not break Hero 5
         (which injects on the same event)."""
         monkeypatch.setenv("CODEVIRA_SCOPE_LOCK_MODE", "block")
         from mcp_server.engine import (
-            register_default_policies, reset_policies, dispatch,
+            register_default_policies,
+            reset_policies,
+            dispatch,
         )
         from mcp_server.engine.events import EventType, HookEvent
         from mcp_server.engine.policies.scope_contract import (
@@ -297,6 +327,7 @@ class TestL4_CrashIsolation:
         _set_project(monkeypatch, isolated_project)
         # Plant a decision so Hero 5 has something to surface
         from mcp_server.paths import get_data_dir
+
         graph_db = get_data_dir() / "graph" / "graph.db"
         graph_db.parent.mkdir(parents=True, exist_ok=True)
         g = SQLiteGraph(graph_db)
@@ -315,19 +346,24 @@ class TestL4_CrashIsolation:
         # Sabotage Hero 3
         def crashing_evaluate(self, event, signals=None):
             raise RuntimeError("intentional H3 crash for L4")
+
         monkeypatch.setattr(
-            ProactiveScopeContractLock, "evaluate", crashing_evaluate,
+            ProactiveScopeContractLock,
+            "evaluate",
+            crashing_evaluate,
         )
 
         reset_policies()
         register_default_policies()
 
-        v = dispatch(HookEvent(
-            event_type=EventType.USER_PROMPT_SUBMIT,
-            project_root=isolated_project,
-            session_id="s-crash",
-            prompt_text="tell me about bcrypt usage",
-        ))
+        v = dispatch(
+            HookEvent(
+                event_type=EventType.USER_PROMPT_SUBMIT,
+                project_root=isolated_project,
+                session_id="s-crash",
+                prompt_text="tell me about bcrypt usage",
+            )
+        )
         # Hero 5 still injects (priority 30 > Hero 3's 90 was for PreToolUse;
         # Hero 5 is on UserPromptSubmit independently)
         assert v.action == "inject", (
@@ -342,9 +378,10 @@ class TestL4_CrashIsolation:
 
 
 class TestL5_PathTraversalThroughWiring:
-
     def test_path_traversal_in_prompt_does_not_build_dangerous_contract(
-        self, monkeypatch: pytest.MonkeyPatch, isolated_project: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_project: Path,
     ):
         """End-to-end through claude_code_hooks: a prompt with a path-
         traversal mention must not produce a contract whose allowed_files
@@ -356,11 +393,12 @@ class TestL5_PathTraversalThroughWiring:
         Week 11 retrospective."""
         monkeypatch.setenv("CODEVIRA_SCOPE_LOCK_MODE", "block")
         from mcp_server.engine import (
-            register_default_policies, reset_policies,
+            register_default_policies,
+            reset_policies,
         )
         from mcp_server.engine.wiring import claude_code_hooks
         from mcp_server.engine.scope_contract import (
-            get_session_contract, _stored_count,
+            get_session_contract,
         )
 
         _set_project(monkeypatch, isolated_project)
@@ -394,18 +432,21 @@ class TestL5_PathTraversalThroughWiring:
 
 
 class TestL6_AllEditToolsThroughWiring:
-
     def _setup(
-        self, monkeypatch: pytest.MonkeyPatch, isolated_project: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_project: Path,
     ):
         monkeypatch.setenv("CODEVIRA_SCOPE_LOCK_MODE", "block")
         _set_project(monkeypatch, isolated_project)
         from mcp_server.engine import register_default_policies, reset_policies
+
         reset_policies()
         register_default_policies()
 
         # Build the contract: scope = auth.py
         from mcp_server.engine.wiring import claude_code_hooks
+
         raw = {
             "session_id": "all-tools",
             "cwd": str(isolated_project),
@@ -419,11 +460,14 @@ class TestL6_AllEditToolsThroughWiring:
         claude_code_hooks.handle("UserPromptSubmit")
 
     def _fire_pretool(
-        self, tool_name: str, tool_input: dict,
+        self,
+        tool_name: str,
+        tool_input: dict,
         isolated_project: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> tuple[int, dict]:
         from mcp_server.engine.wiring import claude_code_hooks
+
         raw = {
             "session_id": "all-tools",
             "cwd": str(isolated_project),
@@ -439,7 +483,9 @@ class TestL6_AllEditToolsThroughWiring:
         return rc, json.loads(stdout_buf.getvalue())
 
     def test_all_four_edit_tools_blocked_for_out_of_scope_target(
-        self, monkeypatch: pytest.MonkeyPatch, isolated_project: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_project: Path,
     ):
         """Bug-7 lesson: enforcement applies equally across all 4
         _EDIT_TOOLS through the wiring layer."""
@@ -448,34 +494,47 @@ class TestL6_AllEditToolsThroughWiring:
         out.write_text("")
 
         for tool_name, tool_input in [
-            ("Edit", {
-                "file_path": str(out),
-                "old_string": "x", "new_string": "y",
-            }),
+            (
+                "Edit",
+                {
+                    "file_path": str(out),
+                    "old_string": "x",
+                    "new_string": "y",
+                },
+            ),
             ("Write", {"file_path": str(out), "content": "x = 1"}),
-            ("MultiEdit", {
-                "file_path": str(out),
-                "edits": [{"old_string": "x", "new_string": "y"}],
-            }),
-            ("NotebookEdit", {
-                "notebook_path": str(out),
-                "new_source": "x = 1",
-            }),
+            (
+                "MultiEdit",
+                {
+                    "file_path": str(out),
+                    "edits": [{"old_string": "x", "new_string": "y"}],
+                },
+            ),
+            (
+                "NotebookEdit",
+                {
+                    "notebook_path": str(out),
+                    "new_source": "x = 1",
+                },
+            ),
         ]:
             rc, emitted = self._fire_pretool(
-                tool_name, tool_input, isolated_project, monkeypatch,
+                tool_name,
+                tool_input,
+                isolated_project,
+                monkeypatch,
             )
-            assert rc == 2, (
-                f"{tool_name}: expected block (rc=2). Got: {rc}, {emitted}"
-            )
+            assert rc == 2, f"{tool_name}: expected block (rc=2). Got: {rc}, {emitted}"
             # Lesson #19: block message must contain the offending file
             stop = emitted.get("stopReason", "")
-            assert "users.py" in stop, (
-                f"{tool_name}: block message missing offending file: {emitted}"
-            )
+            assert (
+                "users.py" in stop
+            ), f"{tool_name}: block message missing offending file: {emitted}"
 
     def test_in_scope_edit_allowed_for_all_four_tools(
-        self, monkeypatch: pytest.MonkeyPatch, isolated_project: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_project: Path,
     ):
         """Positive control: in-scope file passes through all 4 tools."""
         self._setup(monkeypatch, isolated_project)
@@ -483,22 +542,35 @@ class TestL6_AllEditToolsThroughWiring:
         target.write_text("def login(): pass")
 
         for tool_name, tool_input in [
-            ("Edit", {
-                "file_path": str(target),
-                "old_string": "pass", "new_string": "return None",
-            }),
+            (
+                "Edit",
+                {
+                    "file_path": str(target),
+                    "old_string": "pass",
+                    "new_string": "return None",
+                },
+            ),
             ("Write", {"file_path": str(target), "content": "x = 1"}),
-            ("MultiEdit", {
-                "file_path": str(target),
-                "edits": [{"old_string": "pass", "new_string": "return None"}],
-            }),
-            ("NotebookEdit", {
-                "notebook_path": str(target),
-                "new_source": "x = 1",
-            }),
+            (
+                "MultiEdit",
+                {
+                    "file_path": str(target),
+                    "edits": [{"old_string": "pass", "new_string": "return None"}],
+                },
+            ),
+            (
+                "NotebookEdit",
+                {
+                    "notebook_path": str(target),
+                    "new_source": "x = 1",
+                },
+            ),
         ]:
             rc, emitted = self._fire_pretool(
-                tool_name, tool_input, isolated_project, monkeypatch,
+                tool_name,
+                tool_input,
+                isolated_project,
+                monkeypatch,
             )
             assert rc == 0, (
                 f"In-scope {tool_name}: expected allow (rc=0). "
@@ -512,19 +584,23 @@ class TestL6_AllEditToolsThroughWiring:
 
 
 class TestL7_TTLAcrossEvents:
-
     def test_old_contract_does_not_block_new_session(
-        self, monkeypatch: pytest.MonkeyPatch, isolated_project: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_project: Path,
     ):
         """A stale contract for session A must not interfere with
         session B. Tests the per-session keying explicitly."""
         monkeypatch.setenv("CODEVIRA_SCOPE_LOCK_MODE", "block")
         from mcp_server.engine import (
-            register_default_policies, reset_policies, dispatch,
+            register_default_policies,
+            reset_policies,
+            dispatch,
         )
         from mcp_server.engine.events import EventType, HookEvent
         from mcp_server.engine.scope_contract import (
-            set_session_contract, ScopeContract,
+            set_session_contract,
+            ScopeContract,
         )
 
         _set_project(monkeypatch, isolated_project)
@@ -542,27 +618,31 @@ class TestL7_TTLAcrossEvents:
         set_session_contract("ghost", old_contract)
 
         # Now session "live" submits a prompt that builds its own contract
-        dispatch(HookEvent(
-            event_type=EventType.USER_PROMPT_SUBMIT,
-            project_root=isolated_project,
-            session_id="live",
-            prompt_text="fix users.py",
-        ))
+        dispatch(
+            HookEvent(
+                event_type=EventType.USER_PROMPT_SUBMIT,
+                project_root=isolated_project,
+                session_id="live",
+                prompt_text="fix users.py",
+            )
+        )
 
         # Edit users.py from session "live" → in scope → allow
         target = isolated_project / "users.py"
         target.write_text("")
-        v = dispatch(HookEvent(
-            event_type=EventType.PRE_TOOL_USE,
-            project_root=isolated_project,
-            session_id="live",
-            tool_name="Edit",
-            target_file=target,
-        ))
-        # Hero 3 must NOT block (live's contract has users.py).
-        assert v.action != "block" or v.policy != "scope_contract_lock", (
-            f"Hero 3 cross-session bleed: {v.action} from {v.policy}"
+        v = dispatch(
+            HookEvent(
+                event_type=EventType.PRE_TOOL_USE,
+                project_root=isolated_project,
+                session_id="live",
+                tool_name="Edit",
+                target_file=target,
+            )
         )
+        # Hero 3 must NOT block (live's contract has users.py).
+        assert (
+            v.action != "block" or v.policy != "scope_contract_lock"
+        ), f"Hero 3 cross-session bleed: {v.action} from {v.policy}"
 
 
 # =====================================================================
@@ -576,14 +656,17 @@ class TestL8_BlockMessageSemantics:
     multi-section), so we verify EVERY required field appears."""
 
     def test_block_message_contains_all_required_fields(
-        self, monkeypatch: pytest.MonkeyPatch, isolated_project: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_project: Path,
     ):
         from mcp_server.engine.policies.scope_contract import (
             ProactiveScopeContractLock,
         )
         from mcp_server.engine.events import EventType, HookEvent
         from mcp_server.engine.scope_contract import (
-            set_session_contract, ScopeContract,
+            set_session_contract,
+            ScopeContract,
         )
 
         monkeypatch.setenv("CODEVIRA_SCOPE_LOCK_MODE", "block")
@@ -600,25 +683,27 @@ class TestL8_BlockMessageSemantics:
         target.write_text("")
 
         policy = ProactiveScopeContractLock()
-        v = policy.evaluate(HookEvent(
-            event_type=EventType.PRE_TOOL_USE,
-            project_root=isolated_project,
-            session_id="msg-test",
-            tool_name="Edit",
-            target_file=target,
-        ))
+        v = policy.evaluate(
+            HookEvent(
+                event_type=EventType.PRE_TOOL_USE,
+                project_root=isolated_project,
+                session_id="msg-test",
+                tool_name="Edit",
+                target_file=target,
+            )
+        )
         assert v.is_blocking()
         msg = v.message or ""
 
         # Lesson #19: every required field must appear (no header-only)
         required = [
-            "wallet.py",                  # offending file
-            "fix the null check",         # original prompt
-            "fix-bug",                    # intent
-            "auth.py",                    # allowed file
-            "auth_helpers.py",            # second allowed file
-            "CODEVIRA_SCOPE_LOCK_MODE",   # how to override
-            "scope-lock veto",            # action label
+            "wallet.py",  # offending file
+            "fix the null check",  # original prompt
+            "fix-bug",  # intent
+            "auth.py",  # allowed file
+            "auth_helpers.py",  # second allowed file
+            "CODEVIRA_SCOPE_LOCK_MODE",  # how to override
+            "scope-lock veto",  # action label
         ]
         missing = [s for s in required if s not in msg.lower() and s not in msg]
         assert not missing, (

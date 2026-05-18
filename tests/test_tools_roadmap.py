@@ -12,6 +12,7 @@ Covers:
   - Full lifecycle: add -> start -> complete -> advance -> defer
   - Edge cases: corrupt YAML, empty roadmap, wrong phase number, etc.
 """
+
 from __future__ import annotations
 
 import yaml
@@ -24,6 +25,7 @@ from mcp_server.tools import roadmap
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _setup_project(tmp_path, monkeypatch) -> tuple[Path, Path]:
     """Create a temp project with a .codevira data dir and monkeypatch paths."""
@@ -52,12 +54,14 @@ def _read_roadmap(data_dir: Path) -> dict:
 # add_phase
 # =====================================================================
 
+
 class TestAddPhase:
     def test_add_phase_basic(self, tmp_path, monkeypatch):
         """Adding a basic phase should succeed and appear in upcoming."""
         _, data_dir = _setup_project(tmp_path, monkeypatch)
         result = roadmap.add_phase(
-            phase=10, name="Schema Versioning",
+            phase=10,
+            name="Schema Versioning",
             description="Add schema migration support",
         )
         assert result["success"] is True
@@ -70,7 +74,8 @@ class TestAddPhase:
         """Adding a phase with effort, files, priority, depends_on should persist."""
         _, data_dir = _setup_project(tmp_path, monkeypatch)
         result = roadmap.add_phase(
-            phase=20, name="API Refactor",
+            phase=20,
+            name="API Refactor",
             description="Refactor API endpoints",
             priority="high",
             depends_on=[10],
@@ -94,19 +99,46 @@ class TestAddPhase:
         assert result["success"] is False
         assert "already exists" in result["message"]
 
-    def test_add_phase_duplicate_current_rejected(self, tmp_path, monkeypatch):
-        """Adding a phase whose number matches current_phase should fail."""
+    def test_add_phase_replaces_pristine_placeholder(self, tmp_path, monkeypatch):
+        """2026-05-18 v2.1.2 Item 18: adding a phase with the same number
+        as the bootstrap placeholder (phase=1, name='Getting Started',
+        status='pending', untouched description) silently REPLACES the
+        placeholder. Report 4 §6 friction fix.
+        """
         _, data_dir = _setup_project(tmp_path, monkeypatch)
-        # Stub roadmap starts with current_phase number = 1
+        # Stub roadmap starts with current_phase number = 1 (placeholder)
+        result = roadmap.add_phase(
+            phase=1, name="Real Phase 1", description="real work"
+        )
+        assert result["success"] is True
+        assert result.get("placeholder_cleared") is True
+        full = roadmap.get_full_roadmap()
+        assert full["current_phase"]["name"] == "Real Phase 1"
+        assert full["current_phase"]["status"] == "active"
+
+    def test_add_phase_duplicate_current_rejected_when_not_placeholder(
+        self, tmp_path, monkeypatch
+    ):
+        """After the placeholder is gone, duplicate-number adds are rejected."""
+        _, data_dir = _setup_project(tmp_path, monkeypatch)
+        # Replace placeholder first
+        roadmap.add_phase(phase=1, name="Real Phase 1", description="real work")
+        # Now duplicate-number add must be rejected
         result = roadmap.add_phase(phase=1, name="Duplicate", description="dup")
         assert result["success"] is False
 
     def test_add_phase_high_priority_front_of_queue(self, tmp_path, monkeypatch):
         """High-priority phases should be inserted at the front of the queue."""
         _, data_dir = _setup_project(tmp_path, monkeypatch)
-        roadmap.add_phase(phase=10, name="Medium A", description="m-a", priority="medium")
-        roadmap.add_phase(phase=11, name="Medium B", description="m-b", priority="medium")
-        result = roadmap.add_phase(phase=12, name="Urgent", description="urgent!", priority="high")
+        roadmap.add_phase(
+            phase=10, name="Medium A", description="m-a", priority="medium"
+        )
+        roadmap.add_phase(
+            phase=11, name="Medium B", description="m-b", priority="medium"
+        )
+        result = roadmap.add_phase(
+            phase=12, name="Urgent", description="urgent!", priority="high"
+        )
         assert result["position_in_queue"] == 1  # front
 
     def test_add_phase_multiple_high_priority_ordering(self, tmp_path, monkeypatch):
@@ -130,6 +162,7 @@ class TestAddPhase:
 # =====================================================================
 # complete_phase
 # =====================================================================
+
 
 class TestCompletePhase:
     def test_complete_current_phase(self, tmp_path, monkeypatch):
@@ -192,6 +225,7 @@ class TestCompletePhase:
 # update_phase_status
 # =====================================================================
 
+
 class TestUpdatePhaseStatus:
     def test_set_in_progress(self, tmp_path, monkeypatch):
         _, data_dir = _setup_project(tmp_path, monkeypatch)
@@ -207,7 +241,9 @@ class TestUpdatePhaseStatus:
 
     def test_set_blocked_with_blocker(self, tmp_path, monkeypatch):
         _, data_dir = _setup_project(tmp_path, monkeypatch)
-        result = roadmap.update_phase_status("blocked", blocker="Waiting on API design review")
+        result = roadmap.update_phase_status(
+            "blocked", blocker="Waiting on API design review"
+        )
         assert result["success"] is True
         assert result["blocker"] == "Waiting on API design review"
 
@@ -249,6 +285,7 @@ class TestUpdatePhaseStatus:
 # defer_phase
 # =====================================================================
 
+
 class TestDeferPhase:
     def test_defer_upcoming_phase(self, tmp_path, monkeypatch):
         _, data_dir = _setup_project(tmp_path, monkeypatch)
@@ -268,7 +305,9 @@ class TestDeferPhase:
     def test_defer_preserves_original_metadata(self, tmp_path, monkeypatch):
         """Deferred phase should retain original_priority, goal, and deferred_date."""
         _, data_dir = _setup_project(tmp_path, monkeypatch)
-        roadmap.add_phase(phase=10, name="Deferred Work", description="def-desc", priority="high")
+        roadmap.add_phase(
+            phase=10, name="Deferred Work", description="def-desc", priority="high"
+        )
         roadmap.defer_phase(phase_number=10, reason="Shifted priorities")
         full = roadmap.get_full_roadmap()
         deferred = full["deferred"]
@@ -292,6 +331,7 @@ class TestDeferPhase:
 # =====================================================================
 # get_phase
 # =====================================================================
+
 
 class TestGetPhase:
     def test_get_current_phase(self, tmp_path, monkeypatch):
@@ -326,6 +366,7 @@ class TestGetPhase:
 # update_next_action
 # =====================================================================
 
+
 class TestUpdateNextAction:
     def test_update_next_action(self, tmp_path, monkeypatch):
         _, data_dir = _setup_project(tmp_path, monkeypatch)
@@ -347,6 +388,7 @@ class TestUpdateNextAction:
 # =====================================================================
 # Full Lifecycle Test
 # =====================================================================
+
 
 class TestLifecycle:
     def test_full_lifecycle(self, tmp_path, monkeypatch):
@@ -398,6 +440,7 @@ class TestLifecycle:
 # =====================================================================
 # Edge Cases
 # =====================================================================
+
 
 class TestEdgeCases:
     def test_empty_roadmap_auto_creates_stub(self, tmp_path, monkeypatch):
@@ -451,6 +494,7 @@ class TestEdgeCases:
 # =====================================================================
 # Ported from test_stability.py: legacy migration
 # =====================================================================
+
 
 class TestLegacyMigration:
     def test_get_roadmap_migrates_legacy_current_phase(self, tmp_path, monkeypatch):
@@ -506,39 +550,50 @@ class TestLegacyMigration:
 # _normalize_current_phase edge cases (lines 65-71)
 # =====================================================================
 
+
 class TestNormalizeCurrentPhaseEdgeCases:
-    def test_finds_in_progress_phase_when_current_number_missing(self, tmp_path, monkeypatch):
+    def test_finds_in_progress_phase_when_current_number_missing(
+        self, tmp_path, monkeypatch
+    ):
         """When current_phase dict has no number, _normalize_current_phase picks the
         first in_progress phase from the phases list (line 66-69)."""
         _, data_dir = _setup_project(tmp_path, monkeypatch)
-        _write_roadmap(data_dir, {
-            "current_phase": {"status": "in_progress"},
-            "phases": [
-                {"phase": 2, "name": "Phase 2", "status": "in_progress"},
-                {"phase": 3, "name": "Phase 3", "status": "pending"},
-            ],
-            "upcoming_phases": [],
-            "deferred": [],
-            "completed_phases": [],
-        })
+        _write_roadmap(
+            data_dir,
+            {
+                "current_phase": {"status": "in_progress"},
+                "phases": [
+                    {"phase": 2, "name": "Phase 2", "status": "in_progress"},
+                    {"phase": 3, "name": "Phase 3", "status": "pending"},
+                ],
+                "upcoming_phases": [],
+                "deferred": [],
+                "completed_phases": [],
+            },
+        )
         result = roadmap.get_roadmap()
         assert result is not None
         assert result["current_phase"]["number"] == 2
 
-    def test_falls_back_to_first_phase_when_none_in_progress(self, tmp_path, monkeypatch):
+    def test_falls_back_to_first_phase_when_none_in_progress(
+        self, tmp_path, monkeypatch
+    ):
         """When current_phase has no number and no phases are in_progress, falls back
         to the first phase in the list (line 70-71)."""
         _, data_dir = _setup_project(tmp_path, monkeypatch)
-        _write_roadmap(data_dir, {
-            "current_phase": {"name": "Unspecified"},
-            "phases": [
-                {"phase": 5, "name": "Phase 5", "status": "pending"},
-                {"phase": 6, "name": "Phase 6", "status": "pending"},
-            ],
-            "upcoming_phases": [],
-            "deferred": [],
-            "completed_phases": [],
-        })
+        _write_roadmap(
+            data_dir,
+            {
+                "current_phase": {"name": "Unspecified"},
+                "phases": [
+                    {"phase": 5, "name": "Phase 5", "status": "pending"},
+                    {"phase": 6, "name": "Phase 6", "status": "pending"},
+                ],
+                "upcoming_phases": [],
+                "deferred": [],
+                "completed_phases": [],
+            },
+        )
         result = roadmap.get_roadmap()
         assert result is not None
         assert result["current_phase"]["number"] == 5
@@ -548,18 +603,28 @@ class TestNormalizeCurrentPhaseEdgeCases:
 # _normalize_roadmap deferred_phases fallback key (line 147)
 # =====================================================================
 
+
 class TestDeferredPhasesFallback:
-    def test_deferred_phases_key_used_when_deferred_missing(self, tmp_path, monkeypatch):
+    def test_deferred_phases_key_used_when_deferred_missing(
+        self, tmp_path, monkeypatch
+    ):
         """_normalize_roadmap falls back to 'deferred_phases' when 'deferred' is absent."""
         _, data_dir = _setup_project(tmp_path, monkeypatch)
-        _write_roadmap(data_dir, {
-            "current_phase": {"number": 1, "name": "Setup", "status": "in_progress"},
-            "upcoming_phases": [],
-            "deferred_phases": [
-                {"phase": 5, "name": "Future Work", "status": "deferred"},
-            ],
-            "completed_phases": [],
-        })
+        _write_roadmap(
+            data_dir,
+            {
+                "current_phase": {
+                    "number": 1,
+                    "name": "Setup",
+                    "status": "in_progress",
+                },
+                "upcoming_phases": [],
+                "deferred_phases": [
+                    {"phase": 5, "name": "Future Work", "status": "deferred"},
+                ],
+                "completed_phases": [],
+            },
+        )
         result = roadmap.get_full_roadmap()
         assert result is not None
         deferred = result.get("deferred", [])
@@ -571,21 +636,33 @@ class TestDeferredPhasesFallback:
 # add_phase — phase already in completed_phases (line 351)
 # =====================================================================
 
+
 class TestAddPhaseAlreadyInCompleted:
-    def test_add_phase_fails_when_number_in_completed_phases(self, tmp_path, monkeypatch):
+    def test_add_phase_fails_when_number_in_completed_phases(
+        self, tmp_path, monkeypatch
+    ):
         """add_phase returns success=False when the phase number already exists in
         completed_phases (line 350-351)."""
         _, data_dir = _setup_project(tmp_path, monkeypatch)
-        _write_roadmap(data_dir, {
-            "current_phase": {"number": 3, "name": "Current", "status": "in_progress"},
-            "upcoming_phases": [],
-            "deferred": [],
-            "completed_phases": [
-                {"phase": 1, "name": "Done Phase", "status": "completed"},
-            ],
-        })
+        _write_roadmap(
+            data_dir,
+            {
+                "current_phase": {
+                    "number": 3,
+                    "name": "Current",
+                    "status": "in_progress",
+                },
+                "upcoming_phases": [],
+                "deferred": [],
+                "completed_phases": [
+                    {"phase": 1, "name": "Done Phase", "status": "completed"},
+                ],
+            },
+        )
         result = roadmap.add_phase(
-            phase=1, name="Redo Phase 1", description="Trying to re-add a completed phase"
+            phase=1,
+            name="Redo Phase 1",
+            description="Trying to re-add a completed phase",
         )
         assert result.get("success") is False
         assert "already exists" in result.get("message", "").lower()

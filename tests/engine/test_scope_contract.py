@@ -12,15 +12,14 @@ Discipline applied from start:
   - Bug-X-shape audit: every contract field exercised; off-by-default
     truly silences; TTL works
 """
+
 from __future__ import annotations
 
 import io
 import json
-import os
 import sys
 import time
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -30,14 +29,15 @@ from mcp_server.engine.policies.scope_contract import (
     _resolve_in_project_files,
     _target_in_scope,
     _format_block_message,
-    _LOC_BUDGET_BY_INTENT,
-    _NO_BUILD_INTENTS,
 )
 from mcp_server.engine import scope_contract as sc_mod
 from mcp_server.engine.scope_contract import (
     ScopeContract,
-    set_session_contract, get_session_contract, clear_all,
-    _stored_count, _all_session_ids,
+    set_session_contract,
+    get_session_contract,
+    clear_all,
+    _stored_count,
+    _all_session_ids,
 )
 
 
@@ -111,9 +111,10 @@ def _isolate_env_and_storage(monkeypatch: pytest.MonkeyPatch):
 
 
 class TestAcceptance:
-
     def test_1_off_mode_disables_policy(
-        self, monkeypatch: pytest.MonkeyPatch, isolated_project: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_project: Path,
     ):
         """Off (default) means: NO contract built on UserPromptSubmit,
         NO enforcement on PreToolUse."""
@@ -128,12 +129,13 @@ class TestAcceptance:
         assert v.is_allowing()
         # Storage should be empty
         assert _stored_count() == 0, (
-            "off mode must NOT build contracts; got "
-            f"{_all_session_ids()}"
+            "off mode must NOT build contracts; got " f"{_all_session_ids()}"
         )
 
     def test_2_no_file_mentions_no_contract_built(
-        self, monkeypatch: pytest.MonkeyPatch, isolated_project: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_project: Path,
     ):
         """Prompt with intent=fix-bug but NO file mentions → no scope to
         enforce → no contract stored."""
@@ -149,7 +151,9 @@ class TestAcceptance:
         assert _stored_count() == 0
 
     def test_3_test_intent_no_contract_built(
-        self, monkeypatch: pytest.MonkeyPatch, isolated_project: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_project: Path,
     ):
         """Intent=test → no contract (test/docs/explain/other are
         deliberately NOT scoped)."""
@@ -165,7 +169,9 @@ class TestAcceptance:
         assert _stored_count() == 0
 
     def test_4_fix_bug_with_file_mention_builds_contract(
-        self, monkeypatch: pytest.MonkeyPatch, isolated_project: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_project: Path,
     ):
         """Happy build path: fix-bug + auth.py mentioned → contract stored."""
         monkeypatch.setenv("CODEVIRA_SCOPE_LOCK_MODE", "block")
@@ -184,16 +190,20 @@ class TestAcceptance:
         assert "fix the null check" in c.original_prompt
 
     def test_5_in_scope_edit_allowed(
-        self, monkeypatch: pytest.MonkeyPatch, isolated_project: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_project: Path,
     ):
         """Edit on a file IN the contract's allowed_files → allow."""
         monkeypatch.setenv("CODEVIRA_SCOPE_LOCK_MODE", "block")
         policy = ProactiveScopeContractLock()
         # Build contract
-        policy.evaluate(_make_prompt_event(
-            prompt="fix the null check in auth.py",
-            project_root=isolated_project,
-        ))
+        policy.evaluate(
+            _make_prompt_event(
+                prompt="fix the null check in auth.py",
+                project_root=isolated_project,
+            )
+        )
         # Enforce: Edit on auth.py
         target = isolated_project / "auth.py"
         target.write_text("")
@@ -203,7 +213,9 @@ class TestAcceptance:
         assert v.is_allowing()
 
     def test_6_out_of_scope_edit_blocked(
-        self, monkeypatch: pytest.MonkeyPatch, isolated_project: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_project: Path,
     ):
         """Edit on a file NOT in scope (mode=block) → block + helpful message.
 
@@ -212,10 +224,12 @@ class TestAcceptance:
         """
         monkeypatch.setenv("CODEVIRA_SCOPE_LOCK_MODE", "block")
         policy = ProactiveScopeContractLock()
-        policy.evaluate(_make_prompt_event(
-            prompt="fix the null check in auth.py",
-            project_root=isolated_project,
-        ))
+        policy.evaluate(
+            _make_prompt_event(
+                prompt="fix the null check in auth.py",
+                project_root=isolated_project,
+            )
+        )
         target = isolated_project / "users.py"
         target.write_text("")
         v = policy.evaluate(
@@ -224,9 +238,9 @@ class TestAcceptance:
         assert v.is_blocking()
         msg = v.message or ""
         # Lesson #19: content-verifying assertions
-        assert "users.py" in msg, (
-            f"Block message must name the offending file. Got: {msg!r}"
-        )
+        assert (
+            "users.py" in msg
+        ), f"Block message must name the offending file. Got: {msg!r}"
         assert "fix the null check" in msg, (
             f"Block message must include the original prompt (so the AI "
             f"sees WHY). Got: {msg!r}"
@@ -235,15 +249,19 @@ class TestAcceptance:
         assert "CODEVIRA_SCOPE_LOCK_MODE" in msg
 
     def test_7_out_of_scope_edit_warn_mode(
-        self, monkeypatch: pytest.MonkeyPatch, isolated_project: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_project: Path,
     ):
         """mode=warn → warn (not block) on out-of-scope edit."""
         monkeypatch.setenv("CODEVIRA_SCOPE_LOCK_MODE", "warn")
         policy = ProactiveScopeContractLock()
-        policy.evaluate(_make_prompt_event(
-            prompt="fix auth.py",
-            project_root=isolated_project,
-        ))
+        policy.evaluate(
+            _make_prompt_event(
+                prompt="fix auth.py",
+                project_root=isolated_project,
+            )
+        )
         target = isolated_project / "users.py"
         target.write_text("")
         v = policy.evaluate(
@@ -253,7 +271,9 @@ class TestAcceptance:
         assert "users.py" in (v.message or "")
 
     def test_8_pretool_without_prior_prompt_allows(
-        self, monkeypatch: pytest.MonkeyPatch, isolated_project: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_project: Path,
     ):
         """No contract for this session → allow."""
         monkeypatch.setenv("CODEVIRA_SCOPE_LOCK_MODE", "block")
@@ -267,7 +287,9 @@ class TestAcceptance:
         assert v.is_allowing()
 
     def test_9_path_traversal_mention_not_in_scope(
-        self, monkeypatch: pytest.MonkeyPatch, isolated_project: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_project: Path,
     ):
         """Bug-5 lesson: a prompt mentioning '../../etc/passwd.py' must
         NOT end up in the contract's allowed_files. The traversal
@@ -275,10 +297,12 @@ class TestAcceptance:
         in-project files → no contract built."""
         monkeypatch.setenv("CODEVIRA_SCOPE_LOCK_MODE", "block")
         policy = ProactiveScopeContractLock()
-        v = policy.evaluate(_make_prompt_event(
-            prompt='fix "../../etc/passwd.py" — security issue',
-            project_root=isolated_project,
-        ))
+        v = policy.evaluate(
+            _make_prompt_event(
+                prompt='fix "../../etc/passwd.py" — security issue',
+                project_root=isolated_project,
+            )
+        )
         assert v.is_allowing()
         c = get_session_contract("s-test")
         assert c is None, (
@@ -288,7 +312,9 @@ class TestAcceptance:
         )
 
     def test_10_all_four_edit_tools_enforced(
-        self, monkeypatch: pytest.MonkeyPatch, isolated_project: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_project: Path,
     ):
         """Bug-7 lesson: enforcement must work for Edit, Write, MultiEdit,
         AND NotebookEdit equally. Hero 3 uses event.is_edit() to gate, so
@@ -296,10 +322,12 @@ class TestAcceptance:
         """
         monkeypatch.setenv("CODEVIRA_SCOPE_LOCK_MODE", "block")
         policy = ProactiveScopeContractLock()
-        policy.evaluate(_make_prompt_event(
-            prompt="fix auth.py",
-            project_root=isolated_project,
-        ))
+        policy.evaluate(
+            _make_prompt_event(
+                prompt="fix auth.py",
+                project_root=isolated_project,
+            )
+        )
         out_of_scope_target = isolated_project / "users.py"
         out_of_scope_target.write_text("")
         for tool_name in ("Edit", "Write", "MultiEdit", "NotebookEdit"):
@@ -310,22 +338,26 @@ class TestAcceptance:
                     tool_name=tool_name,
                 ),
             )
-            assert v.is_blocking(), (
-                f"Hero 3 must block out-of-scope on {tool_name} (Bug-7 shape)"
-            )
+            assert (
+                v.is_blocking()
+            ), f"Hero 3 must block out-of-scope on {tool_name} (Bug-7 shape)"
 
     def test_12_contract_ttl_expires(
-        self, monkeypatch: pytest.MonkeyPatch, isolated_project: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_project: Path,
     ):
         """Contract older than TTL → not enforced."""
         monkeypatch.setenv("CODEVIRA_SCOPE_LOCK_MODE", "block")
         # TTL of 1 second (clamped to 60)
         monkeypatch.setenv("CODEVIRA_SCOPE_LOCK_MAX_AGE_SECONDS", "60")
         policy = ProactiveScopeContractLock()
-        policy.evaluate(_make_prompt_event(
-            prompt="fix auth.py",
-            project_root=isolated_project,
-        ))
+        policy.evaluate(
+            _make_prompt_event(
+                prompt="fix auth.py",
+                project_root=isolated_project,
+            )
+        )
         # Manually age the stored contract beyond TTL
         c = get_session_contract("s-test")
         assert c is not None
@@ -345,8 +377,7 @@ class TestAcceptance:
             _make_edit_event(target=target, project_root=isolated_project),
         )
         assert v.is_allowing(), (
-            "Expired contract must be evicted → allow. Got: "
-            f"{v.action}: {v.message}"
+            "Expired contract must be evicted → allow. Got: " f"{v.action}: {v.message}"
         )
 
 
@@ -356,23 +387,24 @@ class TestAcceptance:
 
 
 class TestBehavioralGates:
-
     def test_non_handled_event_allowed(self, isolated_project: Path):
         """Non-prompt-non-edit events must short-circuit before any
         contract operation."""
         policy = ProactiveScopeContractLock()
-        for evt in (EventType.SESSION_START, EventType.POST_TOOL_USE,
-                    EventType.STOP):
+        for evt in (EventType.SESSION_START, EventType.POST_TOOL_USE, EventType.STOP):
             event = HookEvent(event_type=evt, project_root=isolated_project)
             v = policy.evaluate(event)
             assert v.is_allowing()
 
     def test_off_mode_short_circuits_before_classify(
-        self, monkeypatch: pytest.MonkeyPatch, isolated_project: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_project: Path,
     ):
         """mode=off must short-circuit BEFORE classify_intent runs.
         Use a behavioral spy on classify_intent."""
         from mcp_server.engine import intent_classifier as ic
+
         calls = {"n": 0}
         original = ic.classify_intent
 
@@ -386,12 +418,13 @@ class TestBehavioralGates:
         )
         # Default is off
         policy = ProactiveScopeContractLock()
-        policy.evaluate(_make_prompt_event(
-            prompt="fix auth.py", project_root=isolated_project,
-        ))
-        assert calls["n"] == 0, (
-            "mode=off must short-circuit BEFORE classify_intent"
+        policy.evaluate(
+            _make_prompt_event(
+                prompt="fix auth.py",
+                project_root=isolated_project,
+            )
         )
+        assert calls["n"] == 0, "mode=off must short-circuit BEFORE classify_intent"
 
     def test_priority_value_stable(self):
         assert ProactiveScopeContractLock().priority == 90
@@ -406,7 +439,8 @@ class TestBehavioralGates:
         assert ProactiveScopeContractLock.enabled_by_default is True
 
     def test_invalid_mode_falls_back_to_default(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """Garbage mode → silently fall back to off (the safe default)."""
         monkeypatch.setenv("CODEVIRA_SCOPE_LOCK_MODE", "block_or_warn")
@@ -414,7 +448,9 @@ class TestBehavioralGates:
         assert cfg["mode"] == "off"
 
     def test_read_tool_never_blocked_even_out_of_scope(
-        self, monkeypatch: pytest.MonkeyPatch, isolated_project: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_project: Path,
     ):
         """Mutation gap (M3): Hero 3 must NOT block non-Edit tools (Read,
         Glob, Grep) — even if target_file is "out of scope". Dropping
@@ -428,11 +464,13 @@ class TestBehavioralGates:
         monkeypatch.setenv("CODEVIRA_SCOPE_LOCK_MODE", "block")
         policy = ProactiveScopeContractLock()
         # Build contract: only auth.py in scope
-        policy.evaluate(_make_prompt_event(
-            prompt="fix auth.py",
-            project_root=isolated_project,
-            session_id="s-read",
-        ))
+        policy.evaluate(
+            _make_prompt_event(
+                prompt="fix auth.py",
+                project_root=isolated_project,
+                session_id="s-read",
+            )
+        )
         # Read on users.py (out of scope, but it's a Read not an Edit)
         users = isolated_project / "users.py"
         users.write_text("")
@@ -451,7 +489,9 @@ class TestBehavioralGates:
             )
 
     def test_no_session_id_silently_allows(
-        self, monkeypatch: pytest.MonkeyPatch, isolated_project: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_project: Path,
     ):
         """Both build + enforce must short-circuit silently when
         session_id is None."""
@@ -488,9 +528,9 @@ class TestBehavioralGates:
 
 
 class TestHelpers:
-
     def test_resolve_in_project_files_drops_traversal(
-        self, isolated_project: Path,
+        self,
+        isolated_project: Path,
     ):
         """Bug-5 defense unit-tested directly."""
         out = _resolve_in_project_files(
@@ -502,7 +542,8 @@ class TestHelpers:
         assert not any("passwd" in p for p in out)
 
     def test_resolve_handles_macos_symlink(
-        self, isolated_project: Path,
+        self,
+        isolated_project: Path,
     ):
         """Project root on /tmp resolves to /private/tmp on macOS.
         The helper must use resolve()-vs-resolve() comparison."""
@@ -512,27 +553,44 @@ class TestHelpers:
     def test_target_in_scope_basic(self, isolated_project: Path):
         target = isolated_project / "auth.py"
         target.write_text("")
-        assert _target_in_scope(
-            target, isolated_project, frozenset({"auth.py"}),
-        ) is True
-        assert _target_in_scope(
-            target, isolated_project, frozenset({"users.py"}),
-        ) is False
+        assert (
+            _target_in_scope(
+                target,
+                isolated_project,
+                frozenset({"auth.py"}),
+            )
+            is True
+        )
+        assert (
+            _target_in_scope(
+                target,
+                isolated_project,
+                frozenset({"users.py"}),
+            )
+            is False
+        )
 
     def test_target_in_scope_empty_allowed_returns_true(
-        self, isolated_project: Path,
+        self,
+        isolated_project: Path,
     ):
         """Empty allowed_files = no narrowing = always in scope.
         (Caller's enforce phase short-circuits earlier; this is
         belt-and-suspenders.)"""
         target = isolated_project / "auth.py"
         target.write_text("")
-        assert _target_in_scope(
-            target, isolated_project, frozenset(),
-        ) is True
+        assert (
+            _target_in_scope(
+                target,
+                isolated_project,
+                frozenset(),
+            )
+            is True
+        )
 
     def test_format_block_message_contains_file_and_prompt(
-        self, isolated_project: Path,
+        self,
+        isolated_project: Path,
     ):
         target = isolated_project / "users.py"
         target.write_text("")
@@ -561,7 +619,6 @@ class TestHelpers:
 
 
 class TestTTL:
-
     def test_ttl_clamping(self, monkeypatch: pytest.MonkeyPatch):
         """TTL is clamped to [60, 86400]."""
         monkeypatch.setenv("CODEVIRA_SCOPE_LOCK_MAX_AGE_SECONDS", "0")
@@ -603,16 +660,20 @@ class TestTTL:
 
 
 class TestEngineDispatch:
-
     def test_build_then_enforce_through_dispatch_block(
-        self, monkeypatch: pytest.MonkeyPatch, isolated_project: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_project: Path,
     ):
         """Register all 9 heroes, fire UserPromptSubmit (build) then
         PreToolUse on out-of-scope file (enforce) → block."""
         monkeypatch.setenv("CODEVIRA_SCOPE_LOCK_MODE", "block")
         from mcp_server.engine import (
-            register_default_policies, reset_policies, dispatch,
+            register_default_policies,
+            reset_policies,
+            dispatch,
         )
+
         reset_policies()
         register_default_policies()
 
@@ -649,33 +710,42 @@ class TestEngineDispatch:
         reset_policies()
 
     def test_in_scope_edit_through_dispatch_allowed(
-        self, monkeypatch: pytest.MonkeyPatch, isolated_project: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_project: Path,
     ):
         """Edit on the in-scope file must allow through dispatch
         (Hero 3 doesn't trigger; other heroes might allow / warn / inject
         but no scope-related block)."""
         monkeypatch.setenv("CODEVIRA_SCOPE_LOCK_MODE", "block")
         from mcp_server.engine import (
-            register_default_policies, reset_policies, dispatch,
+            register_default_policies,
+            reset_policies,
+            dispatch,
         )
+
         reset_policies()
         register_default_policies()
 
-        dispatch(HookEvent(
-            event_type=EventType.USER_PROMPT_SUBMIT,
-            project_root=isolated_project,
-            session_id="dispatch-s2",
-            prompt_text="fix the null check in auth.py",
-        ))
+        dispatch(
+            HookEvent(
+                event_type=EventType.USER_PROMPT_SUBMIT,
+                project_root=isolated_project,
+                session_id="dispatch-s2",
+                prompt_text="fix the null check in auth.py",
+            )
+        )
         target = isolated_project / "auth.py"
         target.write_text("def login(): pass")
-        v = dispatch(HookEvent(
-            event_type=EventType.PRE_TOOL_USE,
-            project_root=isolated_project,
-            session_id="dispatch-s2",
-            tool_name="Edit",
-            target_file=target,
-        ))
+        v = dispatch(
+            HookEvent(
+                event_type=EventType.PRE_TOOL_USE,
+                project_root=isolated_project,
+                session_id="dispatch-s2",
+                tool_name="Edit",
+                target_file=target,
+            )
+        )
         # No Hero 3 block. Other heroes shouldn't block either on this
         # clean event (no decision lock, no fix history).
         assert v.action != "block" or v.policy != "scope_contract_lock"
@@ -688,24 +758,30 @@ class TestEngineDispatch:
 
 
 class TestClaudeCodeWiring:
-
     def _setup(
-        self, monkeypatch: pytest.MonkeyPatch, isolated_project: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_project: Path,
     ):
         """Standard wiring setup: register policies + set CWD."""
         monkeypatch.setenv("CODEVIRA_SCOPE_LOCK_MODE", "block")
         import mcp_server.paths as paths_mod
+
         paths_mod.set_project_dir(isolated_project)
         paths_mod.invalidate_data_dir_cache()
         from mcp_server.engine import register_default_policies, reset_policies
+
         reset_policies()
         register_default_policies()
 
     def _fire(
-        self, event_name: str, raw: dict,
+        self,
+        event_name: str,
+        raw: dict,
         monkeypatch: pytest.MonkeyPatch,
     ) -> tuple[int, dict]:
         from mcp_server.engine.wiring import claude_code_hooks
+
         stdin_buf = io.StringIO(json.dumps(raw))
         stdin_buf.isatty = lambda: False  # type: ignore[method-assign]
         monkeypatch.setattr(sys, "stdin", stdin_buf)
@@ -715,7 +791,9 @@ class TestClaudeCodeWiring:
         return rc, json.loads(stdout_buf.getvalue())
 
     def test_build_then_enforce_through_wiring(
-        self, monkeypatch: pytest.MonkeyPatch, isolated_project: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_project: Path,
     ):
         """Bug-4 lesson: end-to-end through claude_code_hooks.handle()
         for BOTH events. UserPromptSubmit then PreToolUse, real JSON,
@@ -748,7 +826,8 @@ class TestClaudeCodeWiring:
                 "tool_name": "Edit",
                 "tool_input": {
                     "file_path": str(target),
-                    "old_string": "x", "new_string": "y",
+                    "old_string": "x",
+                    "new_string": "y",
                 },
             },
             monkeypatch,
@@ -756,15 +835,17 @@ class TestClaudeCodeWiring:
         assert rc == 2, f"Expected block (rc=2); got rc={rc}, emitted={emitted}"
         stop = emitted.get("stopReason", "")
         # Lesson #19 lock-in through wiring
-        assert "users.py" in stop, (
-            f"Wiring didn't carry the file name through: {emitted}"
-        )
-        assert "fix the null check" in stop, (
-            f"Wiring didn't carry the original prompt through: {emitted}"
-        )
+        assert (
+            "users.py" in stop
+        ), f"Wiring didn't carry the file name through: {emitted}"
+        assert (
+            "fix the null check" in stop
+        ), f"Wiring didn't carry the original prompt through: {emitted}"
 
     def test_all_four_edit_tools_blocked_through_wiring(
-        self, monkeypatch: pytest.MonkeyPatch, isolated_project: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_project: Path,
     ):
         """Bug-7 lesson: all 4 _EDIT_TOOLS must trigger enforcement
         equally THROUGH the wiring (not just direct policy.evaluate)."""
@@ -784,22 +865,35 @@ class TestClaudeCodeWiring:
         out_target = isolated_project / "users.py"
         out_target.write_text("")
         for tool_name, tool_input in [
-            ("Edit", {
-                "file_path": str(out_target),
-                "old_string": "x", "new_string": "y",
-            }),
-            ("Write", {
-                "file_path": str(out_target),
-                "content": "x = 1",
-            }),
-            ("MultiEdit", {
-                "file_path": str(out_target),
-                "edits": [{"old_string": "x", "new_string": "y"}],
-            }),
-            ("NotebookEdit", {
-                "notebook_path": str(out_target),
-                "new_source": "x = 1",
-            }),
+            (
+                "Edit",
+                {
+                    "file_path": str(out_target),
+                    "old_string": "x",
+                    "new_string": "y",
+                },
+            ),
+            (
+                "Write",
+                {
+                    "file_path": str(out_target),
+                    "content": "x = 1",
+                },
+            ),
+            (
+                "MultiEdit",
+                {
+                    "file_path": str(out_target),
+                    "edits": [{"old_string": "x", "new_string": "y"}],
+                },
+            ),
+            (
+                "NotebookEdit",
+                {
+                    "notebook_path": str(out_target),
+                    "new_source": "x = 1",
+                },
+            ),
         ]:
             rc, emitted = self._fire(
                 "PreToolUse",
@@ -823,22 +917,28 @@ class TestClaudeCodeWiring:
 
 
 class TestRegistration:
-
     def test_register_default_policies_includes_hero_3(self):
         from mcp_server.engine import (
-            register_default_policies, registered_policies, reset_policies,
+            register_default_policies,
+            registered_policies,
+            reset_policies,
         )
+
         reset_policies()
         register_default_policies()
         names = {p.name for p in registered_policies()}
         assert "scope_contract_lock" in names
-        # Total = 9 heroes after Week 12
-        assert len(names) == 9, f"Hero count drift: {sorted(names)}"
+        # v2.1.2 Item 4 added post_edit_graph_refresh → total 10
+        assert "post_edit_graph_refresh" in names
+        assert len(names) == 10, f"Hero count drift: {sorted(names)}"
 
     def test_idempotent_registration(self):
         from mcp_server.engine import (
-            register_default_policies, registered_policies, reset_policies,
+            register_default_policies,
+            registered_policies,
+            reset_policies,
         )
+
         reset_policies()
         register_default_policies()
         register_default_policies()
@@ -852,25 +952,30 @@ class TestRegistration:
 
 
 class TestEdgeCases:
-
     def test_two_sessions_isolated(
-        self, monkeypatch: pytest.MonkeyPatch, isolated_project: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_project: Path,
     ):
         """Two sessions in parallel must have isolated contracts."""
         monkeypatch.setenv("CODEVIRA_SCOPE_LOCK_MODE", "block")
         policy = ProactiveScopeContractLock()
         # Session A: fix auth.py
-        policy.evaluate(_make_prompt_event(
-            prompt="fix auth.py",
-            project_root=isolated_project,
-            session_id="A",
-        ))
+        policy.evaluate(
+            _make_prompt_event(
+                prompt="fix auth.py",
+                project_root=isolated_project,
+                session_id="A",
+            )
+        )
         # Session B: fix users.py
-        policy.evaluate(_make_prompt_event(
-            prompt="fix users.py",
-            project_root=isolated_project,
-            session_id="B",
-        ))
+        policy.evaluate(
+            _make_prompt_event(
+                prompt="fix users.py",
+                project_root=isolated_project,
+                session_id="B",
+            )
+        )
         # A's contract has auth.py only; B's has users.py only
         a_contract = get_session_contract("A")
         b_contract = get_session_contract("B")
@@ -882,30 +987,38 @@ class TestEdgeCases:
         # Edit auth.py from session B → blocked (B's scope is users.py)
         auth = isolated_project / "auth.py"
         auth.write_text("")
-        v = policy.evaluate(_make_edit_event(
-            target=auth,
-            project_root=isolated_project,
-            session_id="B",
-        ))
+        v = policy.evaluate(
+            _make_edit_event(
+                target=auth,
+                project_root=isolated_project,
+                session_id="B",
+            )
+        )
         assert v.is_blocking()
 
     def test_followup_prompt_replaces_contract(
-        self, monkeypatch: pytest.MonkeyPatch, isolated_project: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_project: Path,
     ):
         """A second UserPromptSubmit replaces the contract."""
         monkeypatch.setenv("CODEVIRA_SCOPE_LOCK_MODE", "block")
         policy = ProactiveScopeContractLock()
-        policy.evaluate(_make_prompt_event(
-            prompt="fix auth.py",
-            project_root=isolated_project,
-            session_id="s-follow",
-        ))
+        policy.evaluate(
+            _make_prompt_event(
+                prompt="fix auth.py",
+                project_root=isolated_project,
+                session_id="s-follow",
+            )
+        )
         # Then a different prompt
-        policy.evaluate(_make_prompt_event(
-            prompt="fix users.py instead",
-            project_root=isolated_project,
-            session_id="s-follow",
-        ))
+        policy.evaluate(
+            _make_prompt_event(
+                prompt="fix users.py instead",
+                project_root=isolated_project,
+                session_id="s-follow",
+            )
+        )
         c = get_session_contract("s-follow")
         assert c is not None
         assert "users.py" in c.allowed_files
@@ -918,23 +1031,28 @@ class TestEdgeCases:
 
 
 class TestPerformance:
-
     def test_enforce_p50_under_1ms(
-        self, monkeypatch: pytest.MonkeyPatch, isolated_project: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_project: Path,
     ):
         """Enforce path is dict-lookup + set membership; should be sub-ms."""
         import time as _t
+
         monkeypatch.setenv("CODEVIRA_SCOPE_LOCK_MODE", "block")
         policy = ProactiveScopeContractLock()
-        policy.evaluate(_make_prompt_event(
-            prompt="fix auth.py",
-            project_root=isolated_project,
-            session_id="perf-s",
-        ))
+        policy.evaluate(
+            _make_prompt_event(
+                prompt="fix auth.py",
+                project_root=isolated_project,
+                session_id="perf-s",
+            )
+        )
         target = isolated_project / "users.py"
         target.write_text("")
         event = _make_edit_event(
-            target=target, project_root=isolated_project,
+            target=target,
+            project_root=isolated_project,
             session_id="perf-s",
         )
         durations = []

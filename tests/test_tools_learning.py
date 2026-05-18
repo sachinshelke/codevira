@@ -749,6 +749,56 @@ class TestGetSessionContext:
                     f"got {d}"
                 )
 
+    def test_session_context_recent_decisions_preserve_file_path(
+        self, tmp_path, monkeypatch
+    ):
+        """2026-05-18 v2.1.2 Item 19: a decision recorded WITH file_path
+        must round-trip through get_session_context with file_path intact
+        (not silently coerced to None). Field-test Report 4 #8 flagged
+        the serialization quirk; this test guards against regression.
+        """
+        project, data_dir, db = _setup_project(tmp_path, monkeypatch)
+        db.log_session(
+            "s-fp",
+            "file_path round-trip session",
+            "1",
+            [
+                {
+                    "file_path": "src/widgets.py",
+                    "decision": "Use vue3 composables",
+                    "context": "",
+                },
+                {
+                    "file_path": "src/api.py",
+                    "decision": "REST not GraphQL",
+                    "context": "",
+                },
+            ],
+        )
+        db.close()
+
+        with patch(
+            "mcp_server.tools.changesets.list_open_changesets",
+            return_value={"open_changesets": [], "count": 0, "warning": None},
+        ):
+            result = learning.get_session_context()
+
+        recent = result["recent_decisions"]
+        assert recent, "expected recent_decisions to be non-empty after log_session"
+        paths_returned = {d.get("file_path") for d in recent}
+        assert "src/widgets.py" in paths_returned or "src/api.py" in paths_returned, (
+            f"Item 19 regression: file_path lost in serialization. "
+            f"recent_decisions = {recent}"
+        )
+        # No entry should silently drop file_path → None when the underlying
+        # decision had one.
+        for d in recent:
+            if d.get("decision") in ("Use vue3 composables", "REST not GraphQL"):
+                assert d.get("file_path") is not None, (
+                    f"Item 19 regression: file_path is None for decision "
+                    f"{d.get('decision')!r} that was recorded with a path."
+                )
+
 
 # =====================================================================
 # get_session_context exception branches (lines 171-173, 180-182)

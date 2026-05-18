@@ -5,6 +5,7 @@ Stores aggregated preferences, learned rules, and project registry in
 ~/.codevira/global.db. Enables new projects to inherit intelligence from
 all past projects on day 1.
 """
+
 from __future__ import annotations
 
 import json
@@ -45,11 +46,14 @@ class GlobalDB:
         # out of this hot file to minimise blast radius.
         try:
             from indexer._dedupe_migration import dedupe_projects_by_git_remote
+
             dedupe_projects_by_git_remote(self.conn)
         except Exception as e:
             logger.warning("Bug 20 dedupe migration failed (continuing): %s", e)
 
-    def _enable_wal_with_retry(self, attempts: int = 10, initial_delay: float = 0.02) -> None:
+    def _enable_wal_with_retry(
+        self, attempts: int = 10, initial_delay: float = 0.02
+    ) -> None:
         """Best-effort enable of WAL journal mode.
 
         Pillar 3.3 (v2.0-rc.1): the implementation moved to the shared
@@ -58,9 +62,12 @@ class GlobalDB:
         code should call the shared helper directly.
         """
         from indexer._sqlite_util import enable_wal_with_retry
+
         enable_wal_with_retry(
-            self.conn, self.db_path,
-            attempts=attempts, initial_delay=initial_delay,
+            self.conn,
+            self.db_path,
+            attempts=attempts,
+            initial_delay=initial_delay,
         )
 
     def _init_schema(self) -> None:
@@ -103,11 +110,15 @@ class GlobalDB:
     # Project registry
     # ------------------------------------------------------------------
 
-    def register_project(self, path: str, name: str, language: str,
-                         git_remote: str | None = None) -> None:
+    def register_project(
+        self, path: str, name: str, language: str, git_remote: str | None = None
+    ) -> None:
         # Ensure git_remote column exists (handles DBs created before v1.6)
         try:
-            cols = [row[1] for row in self.conn.execute("PRAGMA table_info(projects)").fetchall()]
+            cols = [
+                row[1]
+                for row in self.conn.execute("PRAGMA table_info(projects)").fetchall()
+            ]
             if "git_remote" not in cols:
                 self.conn.execute("ALTER TABLE projects ADD COLUMN git_remote TEXT")
                 self.conn.commit()
@@ -142,8 +153,14 @@ class GlobalDB:
     # Preferences
     # ------------------------------------------------------------------
 
-    def upsert_preference(self, category: str, signal: str, example: str | None,
-                          source_project: str, frequency: int = 1) -> None:
+    def upsert_preference(
+        self,
+        category: str,
+        signal: str,
+        example: str | None,
+        source_project: str,
+        frequency: int = 1,
+    ) -> None:
         """Insert or update a global preference. Aggregates frequency across projects."""
         existing = self.conn.execute(
             "SELECT id, frequency, source_projects FROM global_preferences WHERE category = ? AND signal = ?",
@@ -168,7 +185,9 @@ class GlobalDB:
             )
         self.conn.commit()
 
-    def get_preferences(self, min_frequency: int = 3, language: str | None = None) -> list[dict]:
+    def get_preferences(
+        self, min_frequency: int = 3, language: str | None = None
+    ) -> list[dict]:
         """Get global preferences above the frequency threshold."""
         rows = self.conn.execute(
             "SELECT category, signal, example, frequency, source_projects FROM global_preferences "
@@ -181,8 +200,14 @@ class GlobalDB:
     # Rules
     # ------------------------------------------------------------------
 
-    def upsert_rule(self, rule_text: str, confidence: float, source_project: str,
-                    category: str | None = None, language: str | None = None) -> None:
+    def upsert_rule(
+        self,
+        rule_text: str,
+        confidence: float,
+        source_project: str,
+        category: str | None = None,
+        language: str | None = None,
+    ) -> None:
         """Insert or update a global rule. Merges confidence via weighted average."""
         existing = self.conn.execute(
             "SELECT id, confidence, source_projects FROM global_rules WHERE rule_text = ?",
@@ -203,18 +228,46 @@ class GlobalDB:
             self.conn.execute(
                 "INSERT INTO global_rules (rule_text, confidence, source_projects, category, language) "
                 "VALUES (?, ?, ?, ?, ?)",
-                (rule_text, confidence, json.dumps([source_project]), category, language),
+                (
+                    rule_text,
+                    confidence,
+                    json.dumps([source_project]),
+                    category,
+                    language,
+                ),
             )
         self.conn.commit()
 
-    def get_rules(self, min_confidence: float = 0.6, language: str | None = None) -> list[dict]:
-        """Get global rules above confidence threshold, optionally filtered by language."""
+    def get_rules(
+        self,
+        min_confidence: float = 0.6,
+        language: str | None = None,
+        *,
+        strict_language: bool = True,
+    ) -> list[dict]:
+        """Get global rules above confidence threshold, optionally filtered by language.
+
+        2026-05-18 v2.1.2 Item 9 (cross-project rules leak fix): when
+        ``language`` is supplied, we now STRICTLY require a match. The
+        prior behavior (``language = ? OR language IS NULL``) leaked
+        rules from projects that had no language set into every other
+        project — Report 1 §3.3 caught a Go-project rule appearing in
+        a Python project. Set ``strict_language=False`` to opt back into
+        the loose behavior for legacy callers (none exist in v2.1.2).
+        """
         if language:
-            rows = self.conn.execute(
-                "SELECT rule_text, confidence, source_projects, category, language FROM global_rules "
-                "WHERE confidence >= ? AND (language = ? OR language IS NULL) ORDER BY confidence DESC",
-                (min_confidence, language),
-            ).fetchall()
+            if strict_language:
+                rows = self.conn.execute(
+                    "SELECT rule_text, confidence, source_projects, category, language FROM global_rules "
+                    "WHERE confidence >= ? AND language = ? ORDER BY confidence DESC",
+                    (min_confidence, language),
+                ).fetchall()
+            else:
+                rows = self.conn.execute(
+                    "SELECT rule_text, confidence, source_projects, category, language FROM global_rules "
+                    "WHERE confidence >= ? AND (language = ? OR language IS NULL) ORDER BY confidence DESC",
+                    (min_confidence, language),
+                ).fetchall()
         else:
             rows = self.conn.execute(
                 "SELECT rule_text, confidence, source_projects, category, language FROM global_rules "
@@ -231,6 +284,10 @@ class GlobalDB:
         """Return summary stats for the global database."""
         return {
             "project_count": self.get_project_count(),
-            "total_preferences": self.conn.execute("SELECT COUNT(*) FROM global_preferences").fetchone()[0],
-            "total_rules": self.conn.execute("SELECT COUNT(*) FROM global_rules").fetchone()[0],
+            "total_preferences": self.conn.execute(
+                "SELECT COUNT(*) FROM global_preferences"
+            ).fetchone()[0],
+            "total_rules": self.conn.execute(
+                "SELECT COUNT(*) FROM global_rules"
+            ).fetchone()[0],
         }

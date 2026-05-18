@@ -18,6 +18,7 @@ Step 3 ensures that a TypeScript project asking for ``commit`` no longer
 silently gets Python-flavoured rules. Instead it gets either the user's
 own playbook or a clear empty-but-actionable response.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -34,6 +35,7 @@ def _project_playbook_dirs() -> list[Path]:
     dirs: list[Path] = []
     try:
         from mcp_server.paths import get_data_dir, get_project_root
+
         dirs.append(get_data_dir() / "playbooks")
         dirs.append(get_project_root() / ".codevira" / "playbooks")
     except Exception:
@@ -46,6 +48,7 @@ def _detect_project_language() -> str | None:
     try:
         from mcp_server.paths import get_data_dir
         import yaml
+
         cfg_path = get_data_dir() / "config.yaml"
         if not cfg_path.is_file():
             return None
@@ -136,15 +139,22 @@ def get_playbook(task_type: str) -> dict:
                 if md.name in seen_filenames:
                     continue
                 seen_filenames.add(md.name)
-                rules.append({
-                    "file": md.name,
-                    "source": "project_override",
-                    "content": md.read_text().strip(),
-                })
+                rules.append(
+                    {
+                        "file": md.name,
+                        "source": "project_override",
+                        "content": md.read_text().strip(),
+                    }
+                )
             sources.append(f"project_override({task_dir})")
 
     # 2. Bundled defaults — but filter out language-specific rules when the
     #    project's detected language doesn't match.
+    # 2026-05-18 v2.1.2 Item 31: per-language variants. For each
+    # language-specific rule file (e.g. coding-standards.md), we now look
+    # for `<stem>-<language>.md` (e.g. coding-standards-typescript.md)
+    # first when the project's language matches. Falls through to the
+    # Python-flavoured default for backward compat.
     project_language = _detect_project_language() or "unknown"
     rule_files = PLAYBOOKS[task_type]
     skipped: list[str] = []
@@ -152,19 +162,51 @@ def get_playbook(task_type: str) -> dict:
         if filename in seen_filenames:
             continue
         is_agnostic = filename in _LANGUAGE_AGNOSTIC_RULES
+
+        # Try the language-suffixed variant first.
+        if not is_agnostic and project_language not in (None, "unknown", "python"):
+            stem, _dot, ext = filename.rpartition(".")
+            if stem and ext:
+                suffixed = f"{stem}-{project_language}.{ext}"
+                suffixed_path = _rules_dir() / suffixed
+                if suffixed_path.exists():
+                    rules.append(
+                        {
+                            "file": suffixed,
+                            "source": "bundled_default_per_language",
+                            "content": suffixed_path.read_text().strip(),
+                        }
+                    )
+                    seen_filenames.add(filename)  # mark Python default as covered
+                    continue
+                # Fall back to the generic variant if it exists.
+                generic_path = _rules_dir() / f"{stem}-generic.{ext}"
+                if generic_path.exists():
+                    rules.append(
+                        {
+                            "file": f"{stem}-generic.{ext}",
+                            "source": "bundled_default_generic",
+                            "content": generic_path.read_text().strip(),
+                        }
+                    )
+                    seen_filenames.add(filename)
+                    continue
+
         # Language tagging: assume bundled defaults are Python-shaped unless
         # explicitly marked agnostic. Skip with a clear note when the project
-        # isn't Python.
+        # isn't Python AND no per-language / generic variant was found above.
         if not is_agnostic and project_language not in (None, "unknown", "python"):
             skipped.append(filename)
             continue
         path = _rules_dir() / filename
         if path.exists():
-            rules.append({
-                "file": filename,
-                "source": "bundled_default",
-                "content": path.read_text().strip(),
-            })
+            rules.append(
+                {
+                    "file": filename,
+                    "source": "bundled_default",
+                    "content": path.read_text().strip(),
+                }
+            )
             seen_filenames.add(filename)
 
     response: dict = {

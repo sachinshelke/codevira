@@ -66,10 +66,21 @@ dev:
 test: test-unit
 
 test-unit:
-	$(PYTHON) -m pytest tests/ -q --ignore=tests/e2e
+	$(PYTHON) -m pytest tests/ -q --ignore=tests/e2e --ignore=tests/integration
 
 test-e2e:
 	$(PYTHON) -m pytest tests/e2e/test_first_contact.py tests/e2e/test_product_invariants.py -v
+
+# v2.1.2 hardening — integration suite (slower; runs in gauntlet):
+#   MCP round-trip, help-text linter, sandboxed-parent. Skipped from
+#   `make test-unit` so the fast loop stays fast.
+test-integration:
+	PYTHONPATH=. $(PYTHON) -m pytest tests/integration/ -v --timeout=60
+
+# v2.1.2 hardening — cold-install smoke (builds wheel + fresh venv +
+# every subcommand --help). Runs in gauntlet too.
+smoke-install:
+	bash scripts/cold_install_smoke.sh
 
 lint:
 	$(PYTHON) -m ruff check mcp_server indexer
@@ -98,6 +109,10 @@ PYTHON ?= $(shell command -v python3 2>/dev/null || command -v python 2>/dev/nul
 VERSION := $(shell $(PYTHON) -c "import re; print(re.search(r'version\s*=\s*\"([^\"]+)\"', open('pyproject.toml').read()).group(1))")
 EVIDENCE_FILE := .release-evidence/$(VERSION).json
 
+# 2026-05-19 v2.1.2 hardening: G1.5 + G1.6 + G1.7 added to catch the
+# classes of bug that slipped through v2.1.2 (bulk_import placeholder
+# skip, calibrate doc drift, Antigravity dlopen). See
+# tests/integration/ + scripts/cold_install_smoke.sh.
 release-gauntlet:
 	@mkdir -p .release-evidence
 	@echo "Running release gauntlet for v$(VERSION) ..."
@@ -105,8 +120,37 @@ release-gauntlet:
 	@echo "▸ G1 — Unit tests"
 	@$(MAKE) test-unit && echo "  ✓ G1 passed" || (echo "  ✗ G1 FAILED — release blocked"; exit 1)
 	@echo ""
+	@echo "▸ G1.5 — MCP round-trip integration (tests/integration/test_mcp_roundtrip.py)"
+	@PYTHONPATH=. $(PYTHON) -m pytest tests/integration/test_mcp_roundtrip.py -q --timeout=60 \
+		&& echo "  ✓ G1.5 passed" \
+		|| (echo "  ✗ G1.5 FAILED — release blocked (catches Item-23/27/29/etc. drift)"; exit 1)
+	@echo ""
+	@echo "▸ G1.6 — Help-text vs constants linter (tests/integration/test_help_text_consistency.py)"
+	@PYTHONPATH=. $(PYTHON) -m pytest tests/integration/test_help_text_consistency.py -q --timeout=30 \
+		&& echo "  ✓ G1.6 passed" \
+		|| (echo "  ✗ G1.6 FAILED — release blocked (doc-drift like calibrate clamp range)"; exit 1)
+	@echo ""
+	@echo "▸ G1.7 — Sandboxed-parent MCP test (tests/integration/test_sandboxed_parent.py)"
+	@PYTHONPATH=. $(PYTHON) -m pytest tests/integration/test_sandboxed_parent.py -q --timeout=60 \
+		&& echo "  ✓ G1.7 passed" \
+		|| (echo "  ✗ G1.7 FAILED — release blocked (Antigravity-class regression — issue #10)"; exit 1)
+	@echo ""
 	@echo "▸ G2 — First-contact e2e"
 	@$(MAKE) test-e2e && echo "  ✓ G2 passed" || (echo "  ✗ G2 FAILED — release blocked"; exit 1)
+	@echo ""
+	@echo "▸ G2.5 — Cold-install wheel smoke (scripts/cold_install_smoke.sh)"
+	@bash scripts/cold_install_smoke.sh > /tmp/.g25_output 2>&1; \
+		G25_EXIT=$$?; \
+		if [ "$$G25_EXIT" = "0" ]; then \
+			tail -10 /tmp/.g25_output; \
+			echo "  ✓ G2.5 passed (wheel installs cleanly, all subcommands work)"; \
+		else \
+			echo "  ✗ G2.5 FAILED — release blocked (wheel packaging or subcommand regression)"; \
+			cat /tmp/.g25_output; \
+			rm -f /tmp/.g25_output; \
+			exit 1; \
+		fi; \
+		rm -f /tmp/.g25_output
 	@echo ""
 	@echo "▸ G3 — Real-IDE smoke"
 	@if [ -x scripts/check_real_ide_smoke.sh ]; then \
@@ -143,7 +187,7 @@ release-gauntlet:
 	@echo "Writing evidence to $(EVIDENCE_FILE) ..."
 	@G3_RESULT=$$(cat .release-evidence/.g3.tmp); \
 	G4_RESULT=$$(cat .release-evidence/.g4.tmp); \
-	printf '{\n  "version": "%s",\n  "timestamp": "%s",\n  "G1_unit_tests": true,\n  "G2_first_contact": true,\n  "G3_real_ide_smoke": %s,\n  "G4_crash_log_clean": %s,\n  "G5_human_confirmed": false,\n  "note": "G5 must be set true by hand after maintainer verification on a real machine."\n}\n' "$(VERSION)" "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$$G3_RESULT" "$$G4_RESULT" > $(EVIDENCE_FILE)
+	printf '{\n  "version": "%s",\n  "timestamp": "%s",\n  "G1_unit_tests": true,\n  "G1_5_mcp_roundtrip": true,\n  "G1_6_help_text_consistency": true,\n  "G1_7_sandboxed_parent": true,\n  "G2_first_contact": true,\n  "G2_5_cold_install_smoke": true,\n  "G3_real_ide_smoke": %s,\n  "G4_crash_log_clean": %s,\n  "G5_human_confirmed": false,\n  "note": "G5 must be set true by hand after maintainer verification on a real machine."\n}\n' "$(VERSION)" "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$$G3_RESULT" "$$G4_RESULT" > $(EVIDENCE_FILE)
 	@rm -f .release-evidence/.g3.tmp .release-evidence/.g4.tmp
 	@echo ""
 	@echo "✓ Gauntlet complete for v$(VERSION)"

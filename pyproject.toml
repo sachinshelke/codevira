@@ -93,3 +93,13 @@ include = ["mcp_server*", "indexer*"]
 
 [tool.setuptools.package-data]
 mcp_server = ["data/**/*", "data/*"]
+
+[tool.pytest.ini_options]
+# v2.1.2 hardening: register custom markers so pytest doesn't emit
+# UnknownMarkWarning. `integration` is for the post-release-style
+# round-trip / cold-install / sandboxed-parent suites under
+# tests/integration — they're slower than unit tests and use real
+# fixtures (graph.db, MCP dispatcher, subprocess).
+markers = [
+    "integration: end-to-end / dispatcher / wheel-install tests (slower; opt-in)",
+]

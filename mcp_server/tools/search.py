@@ -17,63 +17,10 @@ def _get_db() -> SQLiteGraph:
 # delegate functions below.
 
 
-def write_session_logs(logs: list[dict]) -> dict[str, Any]:
-    """v2.1.2 Item 24: batch variant of write_session_log (in v2.2.0 backend).
-
-    Each item: ``{session_id, task, phase, files_changed?, decisions?,
-    next_steps?}``. Independent per-item; partial failure surfaced.
-
-    Returns ``{count, session_ids, errors}``.
-    """
-    if not isinstance(logs, list):
-        return {
-            "count": 0,
-            "session_ids": [],
-            "errors": [{"idx": 0, "error": "logs must be a list"}],
-        }
-
-    from mcp_server.storage import sessions_store
-
-    # sessions_store.write_many returns the GENERATED log ids (S000NNN).
-    # The integration test contract expects the SESSION ID the caller
-    # passed (or batch-N as fallback). So we map item.session_id through
-    # while still calling write_many for the persistence side-effect.
-    ids: list[str] = []
-    errors: list[dict] = []
-    valid_logs: list[dict] = []
-    requested_session_ids: list[str] = []
-    for idx, item in enumerate(logs):
-        if not isinstance(item, dict):
-            errors.append({"idx": idx, "error": "item must be a dict"})
-            continue
-        sid = item.get("session_id") or f"batch-{idx}"
-        valid_logs.append(
-            {
-                "session_id": sid,
-                "task": item.get("task"),
-                "phase": str(item.get("phase", ""))
-                if item.get("phase") is not None
-                else None,
-                "decisions": item.get("decisions") or [],
-                "summary": item.get("summary"),
-            }
-        )
-        requested_session_ids.append(sid)
-
-    if valid_logs:
-        try:
-            _, batch_errors = sessions_store.write_many(valid_logs)
-            ids = requested_session_ids
-            for be in batch_errors:
-                errors.append({"idx": be.get("index", -1), "error": be.get("error")})
-        except Exception as exc:  # noqa: BLE001
-            errors.append({"idx": -1, "error": str(exc)})
-
-    return {
-        "count": len(ids),
-        "session_ids": ids,
-        "errors": errors,
-    }
+# v2.2.0+ (2026-05-22 surface-cut audit batch 6): write_session_logs
+# (batch endpoint) deleted. Agents called single-record write_session_log
+# in practice; the batch saved round-trips that never happened in real
+# data. Use write_session_log directly.
 
 
 def write_session_log(
@@ -314,60 +261,7 @@ def get_history(
     }
 
 
-def refresh_index(file_paths: list[str]) -> dict:
-    """Trigger an incremental reindex of changed files (non-blocking).
-
-    Returns immediately with a "started" status. The actual work (graph
-    update + optional semantic indexing) runs in a background thread.
-
-    For large projects, semantic reindexing can take minutes. If this ran
-    synchronously, the MCP tool call would hang the calling AI agent.
-    Use get_session_context() to check progress via indexing_progress field.
-    """
-    import threading
-    from indexer.index_codebase import _check_search_deps
-
-    requested_files = file_paths or None
-
-    def _background_refresh():
-        try:
-            from mcp_server.tools.graph import refresh_graph
-
-            refresh_graph(file_paths=file_paths if file_paths else None)
-        except Exception as e:
-            try:
-                from mcp_server.crash_logger import log_crash
-
-                log_crash(e, context="refresh_index: graph refresh (background)")
-            except Exception:
-                pass
-
-        if _check_search_deps():
-            try:
-                from indexer.index_codebase import cmd_incremental
-
-                cmd_incremental(quiet=True, file_paths=requested_files)
-            except Exception as e:
-                try:
-                    from mcp_server.crash_logger import log_crash
-
-                    log_crash(e, context="refresh_index: semantic index (background)")
-                except Exception:
-                    pass
-
-    t = threading.Thread(
-        target=_background_refresh, daemon=True, name="codevira-refresh-index"
-    )
-    t.start()
-
-    mode = "targeted" if requested_files else "incremental"
-    note = "Search index will update in background."
-    if not _check_search_deps():
-        note = "Graph only (semantic search not installed)."
-
-    return {
-        "status": "Refresh started in background.",
-        "mode": mode,
-        "note": note,
-        **({"file_paths": requested_files} if requested_files else {}),
-    }
+# v2.2.0+ (2026-05-22 surface-cut audit batch 6): refresh_index
+# deleted. It existed to refresh the chromadb semantic index that no
+# longer exists. Callers wanting the code graph refreshed should call
+# `refresh_graph(file_paths=...)` directly (separate MCP tool).

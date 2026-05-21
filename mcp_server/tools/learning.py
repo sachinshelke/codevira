@@ -214,8 +214,10 @@ def record_decision(
         "hint": (
             "Decision recorded as protected. Future search_decisions() "
             "calls in this OR other AI tools will surface "
-            "do_not_revert=true. Use mark_decision_protected(decision_id, "
-            "do_not_revert=false) to unprotect later."
+            "do_not_revert=true. To later change this decision (text "
+            "or flag), use `supersede_decision(old_id=<this id>, "
+            "new_decision=<text>, reason=<why>)` — that preserves "
+            "the audit trail."
             if do_not_revert
             else "Decision recorded. Pass do_not_revert=true if it should "
             "be locked against future revert."
@@ -270,97 +272,14 @@ def supersede_decision(
     )
 
 
-def record_decisions(decisions: list[dict]) -> dict:
-    """v2.1.2 Item 23: batch variant of record_decision (in v2.2.0 backend).
-
-    Each item accepts the same keys as record_decision: ``decision``
-    (required), ``file_path``, ``context``, ``do_not_revert``,
-    ``session_id``, ``tags``, ``force``.
-
-    Returns ``{count, recorded, errors, hint}``. Best-effort — one
-    bad item doesn't reject the rest.
-    """
-    if not isinstance(decisions, list):
-        return {
-            "recorded": [],
-            "count": 0,
-            "errors": [{"idx": 0, "error": "decisions must be a list"}],
-        }
-
-    out_ids: list[str] = []
-    errors: list[dict] = []
-    for idx, item in enumerate(decisions):
-        if not isinstance(item, dict):
-            errors.append({"idx": idx, "error": "item must be a dict"})
-            continue
-        try:
-            r = record_decision(
-                decision=item.get("decision", ""),
-                file_path=item.get("file_path"),
-                context=item.get("context"),
-                do_not_revert=bool(item.get("do_not_revert", False)),
-                session_id=item.get("session_id"),
-                tags=item.get("tags"),
-                force=bool(item.get("force", False)),
-            )
-            if r.get("recorded"):
-                out_ids.append(r["decision_id"])
-            else:
-                errors.append({"idx": idx, "error": r.get("error") or "unknown"})
-        except Exception as exc:  # noqa: BLE001
-            errors.append({"idx": idx, "error": str(exc)})
-    return {
-        "count": len(out_ids),
-        "recorded": out_ids,
-        "errors": errors,
-        "hint": (
-            f"Recorded {len(out_ids)} of {len(decisions)} decisions. "
-            f"Each shows up in subsequent search_decisions / list_decisions."
-        ),
-    }
-
-
-def mark_decision_protected(
-    decision_id: int | str,
-    do_not_revert: bool,
-) -> dict:
-    """Flip the do_not_revert flag on an existing decision.
-
-    v2.2.0: appends an amendment line to decisions.jsonl; rebuilds the
-    manifest + digest + FTS5 indexes. ``do_not_revert=False`` is not
-    yet supported (the only mutation is mark-as-protected); a future
-    release will add the unprotect path via amendment.
-    """
-    if not do_not_revert:
-        # In v2.2.0 we only support marking-as-protected via amendment.
-        # Unprotect would need a separate amendment shape (negation);
-        # add it when there's a real use case. Not asserted by the
-        # integration test contract.
-        return {
-            "updated": False,
-            "decision_id": decision_id,
-            "error": (
-                "v2.2.0 only supports do_not_revert=True; "
-                "unprotect not yet implemented"
-            ),
-        }
-
-    from mcp_server.storage import decisions_store
-
-    res = decisions_store.mark_protected(str(decision_id))
-    if not res.get("success"):
-        return {
-            "updated": False,
-            "decision_id": decision_id,
-            "error": res.get("error"),
-        }
-    return {
-        "updated": True,
-        "decision_id": decision_id,
-        "do_not_revert": True,
-    }
-
-
+# v2.2.0+ (2026-05-22 surface-cut audit batch 6):
+#   - record_decisions (batch) deleted: agents called single endpoints
+#     in practice; batch saved theoretical round-trips that never
+#     happened in real data. Use record_decision directly.
+#   - mark_decision_protected deleted: redundant with
+#     supersede_decision(old_id, new_decision, reason,
+#     do_not_revert=True) which gives an audit trail for free.
+#
 # v2.2.0+: retire_rule removed along with get_learned_rules. The
 # learned-rules surface is gone from the MCP tool list.
 

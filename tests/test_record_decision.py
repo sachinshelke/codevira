@@ -214,25 +214,17 @@ class TestRecordDecisionTool:
 
 
 class TestMarkDecisionProtectedTool:
-    def test_flips_an_existing_decision(self, project_env):
-        from mcp_server.tools.learning import (
-            record_decision,
-            mark_decision_protected,
-        )
+    """v2.2.0+ (2026-05-22 surface-cut audit batch 6): the standalone
+    ``mark_decision_protected`` MCP tool was deleted because the audit
+    found zero real-world calls. The "retroactively flip do_not_revert"
+    use case is now served by ``supersede_decision(old_id,
+    new_decision, reason, do_not_revert=True)`` — that gives the audit
+    trail (supersession reason) for free.
 
-        rec = record_decision(decision="something", do_not_revert=False)
-        did = rec["decision_id"]
-
-        result = mark_decision_protected(decision_id=did, do_not_revert=True)
-        assert result["updated"] is True
-        assert result["do_not_revert"] is True
-
-    def test_returns_error_on_missing_id(self, project_env):
-        from mcp_server.tools.learning import mark_decision_protected
-
-        result = mark_decision_protected(decision_id=99999, do_not_revert=True)
-        assert result["updated"] is False
-        assert "error" in result
+    Tests intentionally left empty; the supersede path has its own
+    coverage in tests/test_supersede.py and tests/integration/
+    test_mcp_roundtrip.py::test_supersede_decision_hides_old_surfaces_new.
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -250,14 +242,17 @@ class TestMCPToolRegistration:
         assert 'name="record_decision"' in content
         assert 'elif name == "record_decision"' in content
 
-    def test_mark_decision_protected_tool_registered(self):
+    def test_mark_decision_protected_tool_deregistered(self):
+        """v2.2.0+: the registration assertion was inverted in the
+        2026-05-22 surface-cut audit. We now check that the tool is
+        ABSENT from server.py — its presence would be a regression."""
         import mcp_server
         from pathlib import Path
 
         server_path = Path(mcp_server.__file__).parent / "server.py"
         content = server_path.read_text(encoding="utf-8")
-        assert 'name="mark_decision_protected"' in content
-        assert 'elif name == "mark_decision_protected"' in content
+        assert 'name="mark_decision_protected"' not in content
+        assert 'elif name == "mark_decision_protected"' not in content
 
     def test_update_node_description_mentions_record_decision(self):
         """v2.2.0+: update_node tool was deleted per surface-cut audit.

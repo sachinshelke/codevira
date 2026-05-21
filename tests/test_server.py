@@ -503,27 +503,10 @@ class TestCallToolAdditionalRoutes:
 
     # v2.2.0+: get_decision_confidence dispatch tests removed (tool deleted).
 
-    def test_dispatch_refresh_index(self):
-        """refresh_index dispatches with file_paths."""
-        sentinel = {"reindexed": 3}
-        with patch(
-            "mcp_server.server.refresh_index", return_value=sentinel
-        ) as mock_fn, patch("mcp_server.auto_init.ensure_project_initialized"):
-            result = _run(call_tool("refresh_index", {"file_paths": ["a.py", "b.py"]}))
-        mock_fn.assert_called_once_with(file_paths=["a.py", "b.py"])
-        assert len(result) == 1
-        parsed = json.loads(result[0].text)
-        assert parsed["reindexed"] == 3
-
-    def test_dispatch_refresh_index_no_args(self):
-        """refresh_index dispatches with empty list when no file_paths provided."""
-        sentinel = {"reindexed": 0}
-        with patch(
-            "mcp_server.server.refresh_index", return_value=sentinel
-        ) as mock_fn, patch("mcp_server.auto_init.ensure_project_initialized"):
-            result = _run(call_tool("refresh_index", {}))
-        mock_fn.assert_called_once_with(file_paths=[])
-        assert len(result) == 1
+    # v2.2.0+: test_dispatch_refresh_index removed. The tool was
+    # deleted in the 2026-05-22 surface-cut audit (chromadb-era; v2.2.0
+    # has no semantic index to refresh — refresh_graph is the separate
+    # tool callers actually want).
 
     def test_dispatch_refresh_graph(self):
         """refresh_graph dispatches with file_paths."""
@@ -603,14 +586,10 @@ class TestCallToolAdditionalRoutes:
 
 
 class TestCallToolMissingDispatches:
-    def test_dispatch_get_full_roadmap(self):
-        sentinel = {"phases": []}
-        with patch("mcp_server.server.get_full_roadmap", return_value=sentinel), patch(
-            "mcp_server.auto_init.ensure_project_initialized"
-        ):
-            result = _run(call_tool("get_full_roadmap", {}))
-        parsed = json.loads(result[0].text)
-        assert parsed == sentinel
+    # v2.2.0+: test_dispatch_get_full_roadmap removed. The tool was
+    # deleted in the 2026-05-22 surface-cut audit — `get_roadmap`
+    # covers the 95% case and `get_phase(n)` covers full per-phase
+    # detail when needed.
 
     def test_dispatch_update_phase_status(self):
         sentinel = {"status": "updated"}

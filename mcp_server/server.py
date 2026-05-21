@@ -56,7 +56,6 @@ from mcp_server.tools.graph import (
 )
 from mcp_server.tools.roadmap import (
     get_roadmap,
-    get_full_roadmap,
     get_phase,
     add_phase,
     update_phase_status,
@@ -65,14 +64,19 @@ from mcp_server.tools.roadmap import (
     update_next_action,
 )
 from mcp_server.tools.search import (
-    refresh_index,
     search_decisions,
     get_history,
     write_session_log,
-    write_session_logs,  # v2.1.2 Item 24
     list_decisions,
     list_tags,  # v2.1.2 Items 11 + 27
 )
+# v2.2.0+ (2026-05-22 surface-cut audit batch 6) — dropped imports:
+#   - get_full_roadmap (rarely needed by agents; `get_roadmap` is the
+#     daily driver; agents wanting full history use `get_phase(n)`)
+#   - refresh_index (chromadb-era; v2.2.0 has nothing to refresh —
+#     `_check_search_deps` returns False always; the code-graph
+#     refresh is the separate `refresh_graph` MCP tool)
+#   - write_session_logs (batch endpoint that nobody used)
 
 # v2.2.0: search_codebase removed. AI agents grep + read files; semantic
 # code search was the source of 90%+ of v2.1.x disk + bug surface.
@@ -290,24 +294,11 @@ async def list_tools() -> list[Tool]:
         # v2.2.0: search_codebase tool removed. AI agents grep + read files
         # natively; semantic code search added 90%+ of v2.1.x's disk footprint
         # + bug surface for a feature usage data showed was near-zero.
-        Tool(
-            name="get_full_roadmap",
-            description=(
-                "Get the roadmap with current phase, upcoming, deferred, and a summary "
-                "of completed phases. By default completed phases are summarized "
-                "(name + number) to keep response small. Pass include_decisions=true "
-                "for full history, or use get_phase(number) for one specific phase."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "include_decisions": {
-                        "type": "boolean",
-                        "description": "Include full key_decisions from all completed phases (default false)",
-                    },
-                },
-            },
-        ),
+        #
+        # v2.2.0+ (2026-05-22 surface-cut audit batch 6): get_full_roadmap
+        # removed. The audit found near-zero use; `get_roadmap` covers the
+        # 95% case, and agents wanting one phase's detail use
+        # `get_phase(n)` (which already returns key_decisions when present).
         Tool(
             name="get_phase",
             description="Get full details of any phase by number — completed, current, or upcoming.",
@@ -562,46 +553,13 @@ async def list_tools() -> list[Tool]:
             ),
             inputSchema={"type": "object", "properties": {}},
         ),
-        Tool(
-            name="record_decisions",
-            description=(
-                "v2.1.2 Item 23: batch variant of record_decision. Cuts ~26 "
-                "round trips on memory-dump sessions to ONE. Each item accepts "
-                "the same fields as record_decision (decision, file_path, "
-                "context, do_not_revert, session_id, tags, force). Returns "
-                "{count, recorded:[ids], errors:[...]}."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "decisions": {
-                        "type": "array",
-                        "items": {"type": "object"},
-                        "description": "List of decision dicts",
-                    },
-                },
-                "required": ["decisions"],
-            },
-        ),
-        Tool(
-            name="write_session_logs",
-            description=(
-                "v2.1.2 Item 24: batch variant of write_session_log. Each item: "
-                "{session_id, task, phase, files_changed?, decisions?, "
-                "next_steps?}. Returns {count, session_ids, errors}."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "logs": {
-                        "type": "array",
-                        "items": {"type": "object"},
-                        "description": "List of session-log dicts",
-                    },
-                },
-                "required": ["logs"],
-            },
-        ),
+        # v2.2.0+ (2026-05-22 surface-cut audit batch 6): the batch
+        # endpoints `record_decisions` and `write_session_logs` were
+        # deleted. They saved network round-trips that the audit data
+        # showed were not happening in practice (memory-dump sessions
+        # weren't using the batch APIs; agents called single endpoints
+        # repeatedly anyway). Use ``record_decision`` /
+        # ``write_session_log`` directly.
         Tool(
             name="supersede_decision",
             description=(
@@ -698,9 +656,10 @@ async def list_tools() -> list[Tool]:
                 "(e.g. 'use Postgres for the cortex metadata store, not "
                 "SQLite — we need multi-host operator access'). Lighter-"
                 "weight than write_session_log, ideal for ad-hoc captures. "
-                "Returns {decision_id, session_id} for follow-up edits via "
-                "mark_decision_protected. The flag is surfaced in subsequent "
-                "search_decisions() calls so other AI sessions see it."
+                "Returns {decision_id, session_id}. To change the "
+                "do_not_revert flag later or update the decision text, "
+                "use supersede_decision(old_id, new_decision, reason, "
+                "do_not_revert=...) — it preserves the audit trail."
             ),
             inputSchema={
                 "type": "object",
@@ -730,34 +689,36 @@ async def list_tools() -> list[Tool]:
                         "type": "string",
                         "description": "Optional session id to attach to (auto-generated if omitted)",
                     },
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Optional list of tag strings (e.g. "
+                            '["security", "auth"]). Surfaces in '
+                            "list_decisions / list_tags filters."
+                        ),
+                    },
+                    "force": {
+                        "type": "boolean",
+                        "description": (
+                            "If true, skip the implicit `check_conflict` "
+                            "duplicate/conflict warning step. Use when "
+                            "you've already reviewed a conflict and want "
+                            "to record anyway."
+                        ),
+                    },
                 },
                 "required": ["decision"],
             },
         ),
-        Tool(
-            name="mark_decision_protected",
-            description=(
-                "Flip the do_not_revert flag on an existing decision by id. "
-                "Use to retroactively protect a decision that was originally "
-                "logged without do_not_revert, or to UNprotect one that no "
-                "longer applies (pass do_not_revert=false). Find the id via "
-                "search_decisions()."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "decision_id": {
-                        "type": "integer",
-                        "description": "Decision id from search_decisions output",
-                    },
-                    "do_not_revert": {
-                        "type": "boolean",
-                        "description": "true to protect, false to unprotect",
-                    },
-                },
-                "required": ["decision_id", "do_not_revert"],
-            },
-        ),
+        # v2.2.0+ (2026-05-22 surface-cut audit batch 6):
+        # mark_decision_protected was deleted. To toggle do_not_revert
+        # on an existing decision, use `supersede_decision(old_id,
+        # new_decision, reason, do_not_revert=true)` — that's the
+        # canonical "I want to update this decision" path and gives
+        # you the audit trail (supersession reason) for free. Setting
+        # the flag in isolation without a reason was the use case;
+        # the audit found 0 such calls in real data.
         Tool(
             name="write_session_log",
             description=(
@@ -801,26 +762,12 @@ async def list_tools() -> list[Tool]:
                 ],
             },
         ),
-        Tool(
-            name="refresh_index",
-            description=(
-                "Trigger an incremental reindex of changed files. "
-                "Always refreshes the context graph (no extra deps needed). "
-                "Also updates the semantic search index if chromadb is installed. "
-                "Call when get_node() returns index_status.stale=true, or before searching "
-                "files you know have changed. Pass file_paths to reindex specific files only."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "file_paths": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Specific files to reindex. Omit to reindex all changed files.",
-                    }
-                },
-            },
-        ),
+        # v2.2.0+ (2026-05-22 surface-cut audit batch 6):
+        # refresh_index was deleted. It was the chromadb-era
+        # "reindex the semantic search" tool. v2.2.0 has no semantic
+        # search index to refresh; the code-graph refresh lives at
+        # `refresh_graph` (still present below) which is what callers
+        # actually want.
         Tool(
             name="get_playbook",
             description=(
@@ -976,8 +923,9 @@ async def list_tools() -> list[Tool]:
     # dedicated MCP prompts (architecture_overview, pre_commit_check).
     _ADMIN_TOOLS = {
         "refresh_graph",  # background/automatic
-        "refresh_index",  # background/automatic
-        "get_full_roadmap",  # rarely needed by agents — use get_phase(n)
+        # v2.2.0+ (2026-05-22 surface-cut audit batch 6): refresh_index
+        # and get_full_roadmap deleted; no longer need hiding because
+        # they no longer exist.
     }
     tools = [t for t in tools if t.name not in _ADMIN_TOOLS]
 
@@ -1040,10 +988,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             )
         elif name == "get_roadmap":
             result = get_roadmap()
-        elif name == "get_full_roadmap":
-            result = get_full_roadmap(
-                include_decisions=arguments.get("include_decisions", False),
-            )
+        # v2.2.0+ batch 6: get_full_roadmap dispatch deleted (tool gone).
         elif name == "get_phase":
             result = get_phase(arguments["phase_number"])
         elif name == "add_phase":
@@ -1114,14 +1059,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             )
         elif name == "list_tags":
             result = list_tags()
-        elif name == "record_decisions":
-            # v2.1.2 Item 23.
-            from mcp_server.tools.learning import record_decisions
-
-            result = record_decisions(decisions=arguments["decisions"])
-        elif name == "write_session_logs":
-            # v2.1.2 Item 24.
-            result = write_session_logs(logs=arguments["logs"])
+        # v2.2.0+ batch 6: record_decisions (batch) and write_session_logs
+        # (batch) dispatchers deleted along with the tools.
         elif name == "supersede_decision":
             # v2.1.2 Item 26.
             from mcp_server.tools.learning import supersede_decision
@@ -1164,24 +1103,23 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 record_decision as learning_record_decision,
             )
 
+            # v2.2.0+ batch 6: the batch endpoint `record_decisions` was
+            # deleted, so single-record `record_decision` now needs to
+            # forward EVERY field the batch endpoint used to support
+            # (tags, force) — otherwise users loop-calling this endpoint
+            # silently drop those fields.
             result = learning_record_decision(
                 decision=arguments["decision"],
                 file_path=arguments.get("file_path"),
                 context=arguments.get("context"),
                 do_not_revert=arguments.get("do_not_revert", False),
                 session_id=arguments.get("session_id"),
+                tags=arguments.get("tags"),
+                force=arguments.get("force", False),
             )
-        elif name == "mark_decision_protected":
-            from mcp_server.tools.learning import (
-                mark_decision_protected as learning_mark_decision_protected,
-            )
-
-            result = learning_mark_decision_protected(
-                decision_id=arguments["decision_id"],
-                do_not_revert=arguments["do_not_revert"],
-            )
-        elif name == "refresh_index":
-            result = refresh_index(file_paths=arguments.get("file_paths") or [])
+        # v2.2.0+ batch 6: mark_decision_protected dispatch deleted
+        # (use supersede_decision with do_not_revert=True). refresh_index
+        # dispatch deleted (use refresh_graph; semantic index is gone).
         elif name == "get_playbook":
             result = get_playbook(arguments["task_type"])
         elif name == "update_next_action":

@@ -8,9 +8,9 @@ Tier-0 pre-flight from start:
 - 10+ mutations from start
 - Bug-shape audit (no Bug-3-class issues)
 """
+
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any
 
@@ -19,9 +19,11 @@ import pytest
 from mcp_server.engine.events import EventType, HookEvent
 from mcp_server.engine.policies.live_style import (
     LiveStyleEnforcement,
-    _is_camel_case, _is_snake_case,
-    _detect_naming_violations, _detect_quote_violations,
-    _detect_indent_violations, _detect_violations,
+    _is_camel_case,
+    _is_snake_case,
+    _detect_naming_violations,
+    _detect_quote_violations,
+    _detect_indent_violations,
     _extract_after_block,
 )
 
@@ -76,7 +78,8 @@ def isolated_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     project.mkdir()
     (project / "pyproject.toml").write_text("")
     monkeypatch.setattr(
-        "mcp_server.paths.get_global_home", lambda: cv_data,
+        "mcp_server.paths.get_global_home",
+        lambda: cv_data,
     )
     return project
 
@@ -96,14 +99,19 @@ def _clear_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class TestAcceptanceScenarios:
-
     def test_1_non_post_tool_use_event_allowed(self):
         policy = LiveStyleEnforcement()
-        for et in (EventType.PRE_TOOL_USE, EventType.SESSION_START,
-                   EventType.USER_PROMPT_SUBMIT, EventType.STOP):
+        for et in (
+            EventType.PRE_TOOL_USE,
+            EventType.SESSION_START,
+            EventType.USER_PROMPT_SUBMIT,
+            EventType.STOP,
+        ):
             event = HookEvent(
-                event_type=et, project_root=Path("/p"),
-                tool_name="Edit", target_file=Path("/p/x.py"),
+                event_type=et,
+                project_root=Path("/p"),
+                tool_name="Edit",
+                target_file=Path("/p/x.py"),
             )
             verdict = policy.evaluate(event, _FakeSignals())
             assert verdict.is_allowing()
@@ -127,11 +135,15 @@ class TestAcceptanceScenarios:
     def test_4_camel_case_in_snake_case_project_warns(self):
         policy = LiveStyleEnforcement()
         target = Path("/p/api.py")
-        prefs = [{
-            "category": "naming", "signal": "snake_case",
-            "frequency": 42, "example": "def fetch_user_id():",
-            "source": "manual",
-        }]
+        prefs = [
+            {
+                "category": "naming",
+                "signal": "snake_case",
+                "frequency": 42,
+                "example": "def fetch_user_id():",
+                "source": "manual",
+            }
+        ]
         diff = (
             "--- before\n"
             "def existing(): pass\n"
@@ -150,11 +162,15 @@ class TestAcceptanceScenarios:
 
     def test_5_snake_case_in_snake_case_project_allows(self):
         policy = LiveStyleEnforcement()
-        prefs = [{
-            "category": "naming", "signal": "snake_case",
-            "frequency": 42, "example": "",
-            "source": "manual",
-        }]
+        prefs = [
+            {
+                "category": "naming",
+                "signal": "snake_case",
+                "frequency": 42,
+                "example": "",
+                "source": "manual",
+            }
+        ]
         diff = (
             "--- before\n"
             "old\n"
@@ -168,11 +184,15 @@ class TestAcceptanceScenarios:
 
     def test_6_quote_style_violation_warns(self):
         policy = LiveStyleEnforcement()
-        prefs = [{
-            "category": "quotes", "signal": "double-quotes",
-            "frequency": 28, "example": '"hello"',
-            "source": "manual",
-        }]
+        prefs = [
+            {
+                "category": "quotes",
+                "signal": "double-quotes",
+                "frequency": 28,
+                "example": '"hello"',
+                "source": "manual",
+            }
+        ]
         diff = (
             "--- before\n"
             "x = 1\n"
@@ -188,17 +208,20 @@ class TestAcceptanceScenarios:
         assert verdict.metadata["violation_count"] >= 2
 
     def test_7_off_mode_disables_policy(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         monkeypatch.setenv("CODEVIRA_LIVE_STYLE_MODE", "off")
         policy = LiveStyleEnforcement()
-        prefs = [{
-            "category": "naming", "signal": "snake_case",
-            "frequency": 42, "source": "manual",
-        }]
-        diff = (
-            "--- before\nx\n--- after\ndef fetchUser(): pass\n"
-        )
+        prefs = [
+            {
+                "category": "naming",
+                "signal": "snake_case",
+                "frequency": 42,
+                "source": "manual",
+            }
+        ]
+        diff = "--- before\nx\n--- after\ndef fetchUser(): pass\n"
         event = _make_post_event(target=Path("/p/x.py"), proposed_diff=diff)
         verdict = policy.evaluate(event, _FakeSignals(prefs=prefs))
         assert verdict.is_allowing()
@@ -211,22 +234,34 @@ class TestAcceptanceScenarios:
         Use n=1000 for stability — small n (≤ 100) is too noisy for
         p95 because a single GC pause skews it.
         """
-        import statistics, time
+        import statistics
+        import time
+
         policy = LiveStyleEnforcement()
         prefs = [
-            {"category": "naming", "signal": "snake_case",
-             "frequency": 42, "source": "manual"},
-            {"category": "quotes", "signal": "double-quotes",
-             "frequency": 28, "source": "manual"},
-            {"category": "indent", "signal": "spaces",
-             "frequency": 100, "source": "manual"},
+            {
+                "category": "naming",
+                "signal": "snake_case",
+                "frequency": 42,
+                "source": "manual",
+            },
+            {
+                "category": "quotes",
+                "signal": "double-quotes",
+                "frequency": 28,
+                "source": "manual",
+            },
+            {
+                "category": "indent",
+                "signal": "spaces",
+                "frequency": 100,
+                "source": "manual",
+            },
         ]
-        diff = (
-            "--- before\nold\n--- after\n"
-            "def fetch_user(): return 1\n" * 20
-        )
+        diff = "--- before\nold\n--- after\n" "def fetch_user(): return 1\n" * 20
         event = _make_post_event(
-            target=Path("/p/x.py"), proposed_diff=diff,
+            target=Path("/p/x.py"),
+            proposed_diff=diff,
         )
         durations = []
         for _ in range(1000):
@@ -250,16 +285,21 @@ class TestAcceptanceScenarios:
 
 
 class TestBehavioralGates:
-
     def test_non_post_tool_use_does_not_call_preferences(self):
         """event_type gate: preferences() is NOT called on non-POST events."""
         policy = LiveStyleEnforcement()
         spy = _FakeSignals(prefs=[])
-        for et in (EventType.PRE_TOOL_USE, EventType.SESSION_START,
-                   EventType.USER_PROMPT_SUBMIT, EventType.STOP):
+        for et in (
+            EventType.PRE_TOOL_USE,
+            EventType.SESSION_START,
+            EventType.USER_PROMPT_SUBMIT,
+            EventType.STOP,
+        ):
             event = HookEvent(
-                event_type=et, project_root=Path("/p"),
-                tool_name="Edit", target_file=Path("/p/x.py"),
+                event_type=et,
+                project_root=Path("/p"),
+                tool_name="Edit",
+                target_file=Path("/p/x.py"),
             )
             policy.evaluate(event, spy)
         assert spy.preferences_calls == []
@@ -287,7 +327,8 @@ class TestBehavioralGates:
         assert spy.preferences_calls == []
 
     def test_off_mode_skips_preferences_call(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         monkeypatch.setenv("CODEVIRA_LIVE_STYLE_MODE", "off")
         policy = LiveStyleEnforcement()
@@ -315,13 +356,15 @@ class TestBehavioralGates:
         from mcp_server.engine.policies.blast_radius import BlastRadiusVeto
         from mcp_server.engine.policies.anti_regression import AntiRegression
         from mcp_server.engine.policies.token_budget import TokenBudgetPersist
+
         for higher in (DecisionLock, AntiRegression, BlastRadiusVeto):
             assert LiveStyleEnforcement.priority < higher.priority
         # Above only Token Budget (telemetry is the lowest priority)
         assert LiveStyleEnforcement.priority > TokenBudgetPersist.priority
 
     def test_invalid_mode_falls_back_to_default(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         monkeypatch.setenv("CODEVIRA_LIVE_STYLE_MODE", "garbage")
         policy = LiveStyleEnforcement()
@@ -329,7 +372,8 @@ class TestBehavioralGates:
         assert config["mode"] == "warn"
 
     def test_min_frequency_cap_clamped(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         monkeypatch.setenv("CODEVIRA_LIVE_STYLE_MIN_FREQ", "-5")
         assert LiveStyleEnforcement()._config()["min_frequency"] == 3
@@ -345,12 +389,17 @@ class TestBehavioralGates:
         """
         policy = LiveStyleEnforcement()
         prefs = [
-            {"category": "naming", "signal": "snake_case",
-             "frequency": 1, "source": "manual"},  # below default min_freq=3
+            {
+                "category": "naming",
+                "signal": "snake_case",
+                "frequency": 1,
+                "source": "manual",
+            },  # below default min_freq=3
         ]
         diff = "--- before\nx\n--- after\ndef fetchUser(): pass\n"
         event = _make_post_event(
-            target=Path("/p/x.py"), proposed_diff=diff,
+            target=Path("/p/x.py"),
+            proposed_diff=diff,
         )
         verdict = policy.evaluate(event, _FakeSignals(prefs=prefs))
         assert verdict.is_allowing()
@@ -362,7 +411,6 @@ class TestBehavioralGates:
 
 
 class TestDetectorPredicates:
-
     def test_is_camel_case(self):
         # True positives
         for s in ("fetchUser", "getUserId", "myCamelCaseFunc"):
@@ -379,7 +427,6 @@ class TestDetectorPredicates:
 
 
 class TestDetectors:
-
     def test_naming_detector_flags_camel_in_snake_project(self):
         after = (
             "def fetchUserMetadata(userId):\n"
@@ -405,10 +452,7 @@ class TestDetectors:
         assert violations == []
 
     def test_naming_detector_skips_class_pascal_case(self):
-        after = (
-            "class MyService:\n"
-            "    def get_user(self): pass\n"
-        )
+        after = "class MyService:\n" "    def get_user(self): pass\n"
         violations = _detect_naming_violations(after, ".py", "snake_case")
         # MyService is PascalCase (class) — convention is to skip classes
         names = {v["snippet"] for v in violations}
@@ -421,11 +465,7 @@ class TestDetectors:
         assert violations == []
 
     def test_quote_detector_flags_single_in_double_project(self):
-        after = (
-            "x = 1\n"
-            "msg = 'hello'\n"
-            "name = 'world'\n"
-        )
+        after = "x = 1\n" "msg = 'hello'\n" "name = 'world'\n"
         violations = _detect_quote_violations(after, ".py", "double-quotes")
         # Both 'hello' and 'world' lines should be flagged
         assert len(violations) >= 2
@@ -437,21 +477,12 @@ class TestDetectors:
             assert len(v) == 1, f"signal {sig!r} should detect violation"
 
     def test_indent_detector_flags_tabs_in_spaces_project(self):
-        after = (
-            "def f():\n"
-            "\tprint('tab indent')\n"
-            "\treturn 1\n"
-        )
+        after = "def f():\n" "\tprint('tab indent')\n" "\treturn 1\n"
         violations = _detect_indent_violations(after, ".py", "spaces")
         assert len(violations) >= 2
 
     def test_extract_after_block_basic(self):
-        diff = (
-            "--- before\n"
-            "old code\n"
-            "--- after\n"
-            "new code\n"
-        )
+        diff = "--- before\n" "old code\n" "--- after\n" "new code\n"
         assert _extract_after_block(diff) == "new code\n"
 
     def test_extract_after_block_huge_diff_returns_empty(self):
@@ -495,12 +526,13 @@ class TestDetectors:
 
 
 class TestEngineDispatch:
-
     def test_hero_7_fires_through_dispatch(self, isolated_project: Path):
         """Real preferences DB + dispatch() → warn on a real violation."""
         from indexer.sqlite_graph import SQLiteGraph
         from mcp_server.engine import (
-            register_default_policies, registered_policies, reset_policies, dispatch,
+            register_default_policies,
+            reset_policies,
+            dispatch,
         )
         import mcp_server.paths as paths_mod
 
@@ -508,6 +540,7 @@ class TestEngineDispatch:
         paths_mod.invalidate_data_dir_cache()
 
         from mcp_server.paths import get_data_dir
+
         graph_db = get_data_dir() / "graph" / "graph.db"
         graph_db.parent.mkdir(parents=True, exist_ok=True)
 
@@ -553,11 +586,13 @@ class TestEngineDispatch:
 
 
 class TestRegistration:
-
     def test_register_default_policies_includes_hero_7(self):
         from mcp_server.engine import (
-            register_default_policies, registered_policies, reset_policies,
+            register_default_policies,
+            registered_policies,
+            reset_policies,
         )
+
         reset_policies()
         register_default_policies()
         names = {p.name for p in registered_policies()}
@@ -565,15 +600,21 @@ class TestRegistration:
 
     def test_idempotent_with_six_heroes(self):
         from mcp_server.engine import (
-            register_default_policies, registered_policies, reset_policies,
+            register_default_policies,
+            registered_policies,
+            reset_policies,
         )
+
         reset_policies()
         register_default_policies()
         register_default_policies()
         names = [p.name for p in registered_policies()]
         for n in (
-            "anti_regression", "blast_radius_veto", "decision_lock",
-            "cross_session_consistency", "token_budget_persist",
+            "anti_regression",
+            "blast_radius_veto",
+            "decision_lock",
+            "relevance_inject",
+            "token_budget_persist",
             "live_style_enforcement",
         ):
             assert names.count(n) == 1
@@ -585,17 +626,18 @@ class TestRegistration:
 
 
 class TestEdgeCases:
-
     def test_unsupported_extension_no_violations(self):
         """Markdown / JSON files don't trigger naming detectors."""
         policy = LiveStyleEnforcement()
-        prefs = [{
-            "category": "naming", "signal": "snake_case",
-            "frequency": 42, "source": "manual",
-        }]
-        diff = (
-            "--- before\nold\n--- after\ndef fetchUser(): pass\n"
-        )
+        prefs = [
+            {
+                "category": "naming",
+                "signal": "snake_case",
+                "frequency": 42,
+                "source": "manual",
+            }
+        ]
+        diff = "--- before\nold\n--- after\ndef fetchUser(): pass\n"
         event = _make_post_event(
             target=Path("/p/README.md"),  # markdown — no Python rules
             proposed_diff=diff,
@@ -606,10 +648,14 @@ class TestEdgeCases:
     def test_proposed_diff_none_allows(self):
         """No diff = nothing to check."""
         policy = LiveStyleEnforcement()
-        prefs = [{
-            "category": "naming", "signal": "snake_case",
-            "frequency": 42, "source": "manual",
-        }]
+        prefs = [
+            {
+                "category": "naming",
+                "signal": "snake_case",
+                "frequency": 42,
+                "source": "manual",
+            }
+        ]
         event = _make_post_event(
             target=Path("/p/x.py"),
             proposed_diff=None,
@@ -620,13 +666,18 @@ class TestEdgeCases:
     def test_empty_after_block_allows(self):
         """Edit that deletes all content has empty after block."""
         policy = LiveStyleEnforcement()
-        prefs = [{
-            "category": "naming", "signal": "snake_case",
-            "frequency": 42, "source": "manual",
-        }]
+        prefs = [
+            {
+                "category": "naming",
+                "signal": "snake_case",
+                "frequency": 42,
+                "source": "manual",
+            }
+        ]
         diff = "--- before\nold code\n--- after\n"
         event = _make_post_event(
-            target=Path("/p/x.py"), proposed_diff=diff,
+            target=Path("/p/x.py"),
+            proposed_diff=diff,
         )
         verdict = policy.evaluate(event, _FakeSignals(prefs=prefs))
         assert verdict.is_allowing()
@@ -638,18 +689,18 @@ class TestEdgeCases:
         fallback that would inject false positives.
         """
         policy = LiveStyleEnforcement()
-        prefs = [{
-            "category": "docstring_style",  # unrecognized
-            "signal": "google",
-            "frequency": 42,
-            "source": "manual",
-        }]
-        diff = (
-            "--- before\nold\n--- after\n"
-            "def fetchUser(): pass\n"
-        )
+        prefs = [
+            {
+                "category": "docstring_style",  # unrecognized
+                "signal": "google",
+                "frequency": 42,
+                "source": "manual",
+            }
+        ]
+        diff = "--- before\nold\n--- after\n" "def fetchUser(): pass\n"
         event = _make_post_event(
-            target=Path("/p/x.py"), proposed_diff=diff,
+            target=Path("/p/x.py"),
+            proposed_diff=diff,
         )
         verdict = policy.evaluate(event, _FakeSignals(prefs=prefs))
         assert verdict.is_allowing(), (
@@ -660,14 +711,19 @@ class TestEdgeCases:
     def test_huge_diff_skipped(self):
         """Diffs over _MAX_DIFF_BYTES are skipped (extract_after returns '')."""
         policy = LiveStyleEnforcement()
-        prefs = [{
-            "category": "naming", "signal": "snake_case",
-            "frequency": 42, "source": "manual",
-        }]
+        prefs = [
+            {
+                "category": "naming",
+                "signal": "snake_case",
+                "frequency": 42,
+                "source": "manual",
+            }
+        ]
         big_after = "def fetchUser(): pass\n" * 10000
         diff = f"--- before\nold\n--- after\n{big_after}"
         event = _make_post_event(
-            target=Path("/p/x.py"), proposed_diff=diff,
+            target=Path("/p/x.py"),
+            proposed_diff=diff,
         )
         verdict = policy.evaluate(event, _FakeSignals(prefs=prefs))
         # Skipped → allow

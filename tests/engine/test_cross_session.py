@@ -644,6 +644,16 @@ class TestBehavioralGates:
         )
 
 
+@pytest.mark.xfail(
+    reason=(
+        "v2.2.0 Phase C: CrossSessionConsistency was replaced by "
+        "RelevanceInject in register_default_policies(). The class still "
+        "exists as dead code; Phase E deletes both cross_session.py and "
+        "this test file entirely. See tests/engine/test_relevance_inject.py "
+        "for the v2.2.0 equivalent registration tests."
+    ),
+    strict=True,
+)
 class TestRegistration:
     def test_register_default_policies_includes_hero_5(self):
         from mcp_server.engine import (
@@ -659,6 +669,14 @@ class TestRegistration:
         assert "decision_lock" in names
         assert "blast_radius_veto" in names
 
+    @pytest.mark.xfail(
+        reason=(
+            "v2.2.0 Phase C: CrossSessionConsistency is no longer in "
+            "register_default_policies; RelevanceInject replaces it. "
+            "Phase E deletes this whole test file."
+        ),
+        strict=False,
+    )
     def test_hero_5_fires_through_engine_dispatch(self, tmp_path):
         """Week-5 R5-redo regression test for Hero 5 specifically:
         Hero 5 takes ``signals`` as a kwarg with default None. If the

@@ -8,9 +8,9 @@ Tier-0 pre-flight from start:
   - 10+ mutations from start
   - Bug-shape audit during R8 (no Bug-3-class issues)
 """
+
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any
 
@@ -73,7 +73,8 @@ def isolated_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     project.mkdir()
     (project / "pyproject.toml").write_text("")
     monkeypatch.setattr(
-        "mcp_server.paths.get_global_home", lambda: cv_data,
+        "mcp_server.paths.get_global_home",
+        lambda: cv_data,
     )
     return project
 
@@ -89,20 +90,22 @@ def _clear_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class TestAcceptanceScenarios:
-
     def test_1_non_edit_event_allowed(self):
         policy = AntiRegression()
         for tool in ("Read", "Bash", "Glob", "Grep"):
             verdict = policy.evaluate(
-                _make_event(tool_name=tool), _FakeSignals(),
+                _make_event(tool_name=tool),
+                _FakeSignals(),
             )
             assert verdict.is_allowing()
 
     def test_2_no_fixes_recorded_allowed(self):
         policy = AntiRegression()
         verdict = policy.evaluate(
-            _make_event(target=Path("/p/x.py"),
-                        proposed_diff="--- before\nold\n--- after\nnew\n"),
+            _make_event(
+                target=Path("/p/x.py"),
+                proposed_diff="--- before\nold\n--- after\nnew\n",
+            ),
             _FakeSignals(fixes_for={}),  # no fixes
         )
         assert verdict.is_allowing()
@@ -117,14 +120,22 @@ class TestAcceptanceScenarios:
         policy = AntiRegression()
         target = Path("/p/x.py")
         # Fix on lines 10-20 with description containing "race"
-        signals = _FakeSignals(fixes_for={
-            target: [{
-                "id": 1, "file_path": "x.py", "description": "fix: race in cache",
-                "source": "git", "commit_sha": "abc12345abc",
-                "line_start": 10, "line_end": 20,
-                "recorded_at": 1730764800.0,
-            }],
-        })
+        signals = _FakeSignals(
+            fixes_for={
+                target: [
+                    {
+                        "id": 1,
+                        "file_path": "x.py",
+                        "description": "fix: race in cache",
+                        "source": "git",
+                        "commit_sha": "abc12345abc",
+                        "line_start": 10,
+                        "line_end": 20,
+                        "recorded_at": 1730764800.0,
+                    }
+                ],
+            }
+        )
         # Diff modifies a completely different region with no "race" keywords
         diff = (
             "--- before\n"
@@ -152,17 +163,24 @@ class TestAcceptanceScenarios:
         """
         policy = AntiRegression()
         target = Path("/p/x.py")
-        signals = _FakeSignals(fixes_for={
-            target: [{
-                "id": 1, "file_path": "x.py",
-                # Description keywords (after stop-word filter):
-                #   infinite, deadlock, race, condition
-                "description": "fix: infinite deadlock race condition",
-                "source": "git", "commit_sha": "abc12345abc",
-                "line_start": 0, "line_end": 0,  # whole-file marker
-                "recorded_at": 1730764800.0,
-            }],
-        })
+        signals = _FakeSignals(
+            fixes_for={
+                target: [
+                    {
+                        "id": 1,
+                        "file_path": "x.py",
+                        # Description keywords (after stop-word filter):
+                        #   infinite, deadlock, race, condition
+                        "description": "fix: infinite deadlock race condition",
+                        "source": "git",
+                        "commit_sha": "abc12345abc",
+                        "line_start": 0,
+                        "line_end": 0,  # whole-file marker
+                        "recorded_at": 1730764800.0,
+                    }
+                ],
+            }
+        )
         # before: clean code, no bug keywords
         # after: re-introduces "infinite" and "race" keywords
         diff = (
@@ -175,31 +193,36 @@ class TestAcceptanceScenarios:
         )
         event = _make_event(target=target, proposed_diff=diff)
         verdict = policy.evaluate(event, signals)
-        assert verdict.is_blocking(), (
-            f"expected block, got {verdict.action}"
-        )
+        assert verdict.is_blocking(), f"expected block, got {verdict.action}"
         # Message mentions the description text
         msg_lower = (verdict.message or "").lower()
-        assert "infinite" in msg_lower or "race" in msg_lower or \
-               "deadlock" in msg_lower
+        assert "infinite" in msg_lower or "race" in msg_lower or "deadlock" in msg_lower
         assert verdict.metadata["reverting_count"] == 1
         assert "abc12345abc" in verdict.metadata["reverting_commit_shas"]
 
     def test_5_warn_mode_produces_warn(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         monkeypatch.setenv("CODEVIRA_ANTI_REGRESSION_MODE", "warn")
         policy = AntiRegression()
         target = Path("/p/x.py")
-        signals = _FakeSignals(fixes_for={
-            target: [{
-                "id": 1, "file_path": "x.py",
-                "description": "fix: infinite deadlock race condition",
-                "source": "git", "commit_sha": "deadbeefdead",
-                "line_start": 0, "line_end": 0,
-                "recorded_at": 1.0,
-            }],
-        })
+        signals = _FakeSignals(
+            fixes_for={
+                target: [
+                    {
+                        "id": 1,
+                        "file_path": "x.py",
+                        "description": "fix: infinite deadlock race condition",
+                        "source": "git",
+                        "commit_sha": "deadbeefdead",
+                        "line_start": 0,
+                        "line_end": 0,
+                        "recorded_at": 1.0,
+                    }
+                ],
+            }
+        )
         diff = (
             "--- before\n    with self._lock:\n        attempt()\n"
             "--- after\n    # infinite race condition\n    attempt()\n"
@@ -210,25 +233,35 @@ class TestAcceptanceScenarios:
         assert verdict.metadata["mode"] == "warn"
 
     def test_6_off_mode_disables_policy(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         monkeypatch.setenv("CODEVIRA_ANTI_REGRESSION_MODE", "off")
         policy = AntiRegression()
         target = Path("/p/x.py")
-        signals = _FakeSignals(fixes_for={
-            target: [{"id": 1, "file_path": "x.py",
-                       "description": "fix: x", "source": "manual",
-                       "line_start": 0, "line_end": 0, "recorded_at": 1.0}],
-        })
-        diff = (
-            "--- before\nfor _ in range(N):\n--- after\nwhile True:  # infinite\n"
+        signals = _FakeSignals(
+            fixes_for={
+                target: [
+                    {
+                        "id": 1,
+                        "file_path": "x.py",
+                        "description": "fix: x",
+                        "source": "manual",
+                        "line_start": 0,
+                        "line_end": 0,
+                        "recorded_at": 1.0,
+                    }
+                ],
+            }
         )
+        diff = "--- before\nfor _ in range(N):\n--- after\nwhile True:  # infinite\n"
         event = _make_event(target=target, proposed_diff=diff)
         verdict = policy.evaluate(event, signals)
         assert verdict.is_allowing()
 
     def test_7_hero_2_plus_hero_1_simultaneous_fire(
-        self, isolated_project: Path,
+        self,
+        isolated_project: Path,
     ):
         """Real-graph end-to-end: a file is BOTH locked (Hero 1
         applicable) AND has a fix history that the proposed diff
@@ -238,7 +271,9 @@ class TestAcceptanceScenarios:
         from indexer.sqlite_graph import SQLiteGraph
         from indexer.fix_history import record_fix
         from mcp_server.engine import (
-            register_default_policies, registered_policies, reset_policies, dispatch,
+            register_default_policies,
+            reset_policies,
+            dispatch,
         )
         import mcp_server.paths as paths_mod
 
@@ -246,11 +281,14 @@ class TestAcceptanceScenarios:
         paths_mod.invalidate_data_dir_cache()
 
         from mcp_server.paths import get_data_dir
+
         graph_db = get_data_dir() / "graph" / "graph.db"
         graph_db.parent.mkdir(parents=True, exist_ok=True)
         g = SQLiteGraph(graph_db)
         g.add_node("auth", "file", "auth.py", "auth.py", do_not_revert=True)
-        g.conn.execute("INSERT INTO sessions (session_id, summary) VALUES (?, ?)", ("s1", "x"))
+        g.conn.execute(
+            "INSERT INTO sessions (session_id, summary) VALUES (?, ?)", ("s1", "x")
+        )
         g.conn.execute(
             "INSERT INTO decisions (session_id, decision, file_path, context, created_at) "
             "VALUES (?, ?, ?, ?, ?)",
@@ -263,7 +301,8 @@ class TestAcceptanceScenarios:
         record_fix(
             isolated_project,
             file_path="auth.py",
-            line_start=0, line_end=0,
+            line_start=0,
+            line_end=0,
             description="fix: infinite deadlock race condition",
             source="manual",
         )
@@ -285,33 +324,40 @@ class TestAcceptanceScenarios:
         verdict = dispatch(event)
         assert verdict.is_blocking()
         # Decision Lock (priority=100) wins as primary
-        assert verdict.policy == "decision_lock", (
-            f"expected decision_lock to be primary; got {verdict.policy}"
-        )
+        assert (
+            verdict.policy == "decision_lock"
+        ), f"expected decision_lock to be primary; got {verdict.policy}"
         # Anti-regression should appear in other_blocking_policies
         others = verdict.metadata.get("other_blocking_policies", [])
-        assert "anti_regression" in others, (
-            f"anti_regression should be in others; got {others}"
-        )
+        assert (
+            "anti_regression" in others
+        ), f"anti_regression should be in others; got {others}"
         reset_policies()
 
     def test_8_evaluate_under_5ms_p95(self):
-        import statistics, time
+        import time
+
         policy = AntiRegression()
         target = Path("/p/x.py")
         # 5 fixes — realistic-ish
-        signals = _FakeSignals(fixes_for={
-            target: [{
-                "id": i, "file_path": "x.py",
-                "description": f"fix: bug {i}",
-                "source": "manual",
-                "line_start": 0, "line_end": 0,
-                "recorded_at": float(i),
-            } for i in range(1, 6)],
-        })
+        signals = _FakeSignals(
+            fixes_for={
+                target: [
+                    {
+                        "id": i,
+                        "file_path": "x.py",
+                        "description": f"fix: bug {i}",
+                        "source": "manual",
+                        "line_start": 0,
+                        "line_end": 0,
+                        "recorded_at": float(i),
+                    }
+                    for i in range(1, 6)
+                ],
+            }
+        )
         diff = (
-            "--- before\ndef f():\n    return 1\n"
-            "--- after\ndef f():\n    return 2\n"
+            "--- before\ndef f():\n    return 1\n" "--- after\ndef f():\n    return 2\n"
         )
         event = _make_event(target=target, proposed_diff=diff)
         durations = []
@@ -329,16 +375,15 @@ class TestAcceptanceScenarios:
 
 
 class TestBehavioralGates:
-
     def test_non_edit_does_not_call_signals_fixes(self):
         """is_edit gate: spy on signals.fixes calls."""
         policy = AntiRegression()
         spy = _FakeSignals()
         for tool in ("Read", "Bash", "Glob", "Grep"):
             policy.evaluate(_make_event(tool_name=tool), spy)
-        assert spy.fixes_calls == [], (
-            f"is_edit gate degraded: signals.fixes called: {spy.fixes_calls}"
-        )
+        assert (
+            spy.fixes_calls == []
+        ), f"is_edit gate degraded: signals.fixes called: {spy.fixes_calls}"
 
     def test_target_none_does_not_call_signals_fixes(self):
         policy = AntiRegression()
@@ -352,9 +397,9 @@ class TestBehavioralGates:
         )
         verdict = policy.evaluate(event, spy)
         assert verdict.is_allowing()
-        assert spy.fixes_calls == [], (
-            f"target_file None gate degraded: {spy.fixes_calls}"
-        )
+        assert (
+            spy.fixes_calls == []
+        ), f"target_file None gate degraded: {spy.fixes_calls}"
 
     def test_signals_none_does_not_crash(self):
         policy = AntiRegression()
@@ -366,21 +411,20 @@ class TestBehavioralGates:
         assert verdict.is_allowing()
 
     def test_off_mode_skips_signals_fixes(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         monkeypatch.setenv("CODEVIRA_ANTI_REGRESSION_MODE", "off")
         policy = AntiRegression()
-        spy = _FakeSignals(fixes_for={
-            Path("/p/x.py"): [{"id": 1, "description": "fix: x"}]
-        })
+        spy = _FakeSignals(
+            fixes_for={Path("/p/x.py"): [{"id": 1, "description": "fix: x"}]}
+        )
         event = _make_event(
             target=Path("/p/x.py"),
             proposed_diff="--- before\nx\n--- after\ny\n",
         )
         policy.evaluate(event, spy)
-        assert spy.fixes_calls == [], (
-            f"mode=off gate degraded: {spy.fixes_calls}"
-        )
+        assert spy.fixes_calls == [], f"mode=off gate degraded: {spy.fixes_calls}"
 
     def test_priority_value_stable(self):
         """Hero 2 priority=80. Below Decision Lock (100) but ABOVE
@@ -389,13 +433,15 @@ class TestBehavioralGates:
         from mcp_server.engine.policies.blast_radius import BlastRadiusVeto
         from mcp_server.engine.policies.cross_session import CrossSessionConsistency
         from mcp_server.engine.policies.token_budget import TokenBudgetPersist
+
         assert DecisionLock.priority > AntiRegression.priority
         assert AntiRegression.priority > BlastRadiusVeto.priority
         assert AntiRegression.priority > CrossSessionConsistency.priority
         assert AntiRegression.priority > TokenBudgetPersist.priority
 
     def test_invalid_mode_falls_back_to_default(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """Garbage mode env var falls back to 'block'. Catches mutations
         that remove the validation."""
@@ -405,21 +451,24 @@ class TestBehavioralGates:
         assert config["mode"] == "block"
 
     def test_empty_fixes_skips_is_revert(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """Empty-fixes gate: if signals.fixes returns [], the policy
         must NOT call is_revert. Output-only tests can't catch the
         gate (empty fix list iterates zero times anyway). Spy on
         is_revert to verify zero calls.
         """
-        from mcp_server.engine.policies import anti_regression as ar_mod
 
         is_revert_calls: list[tuple] = []
+
         def spy_is_revert(diff, fix):
             is_revert_calls.append((diff, fix))
             return False
+
         monkeypatch.setattr(
-            "indexer.fix_history.is_revert", spy_is_revert,
+            "indexer.fix_history.is_revert",
+            spy_is_revert,
         )
 
         policy = AntiRegression()
@@ -429,51 +478,63 @@ class TestBehavioralGates:
             proposed_diff="--- before\nx\n--- after\ny\n",
         )
         policy.evaluate(event, spy_signals)
-        assert is_revert_calls == [], (
-            f"empty-fixes gate degraded: is_revert called: {is_revert_calls}"
-        )
+        assert (
+            is_revert_calls == []
+        ), f"empty-fixes gate degraded: is_revert called: {is_revert_calls}"
 
     def test_none_diff_skips_is_revert(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """None-diff gate: when proposed_diff is None (full Write),
         the policy must NOT call is_revert (it has nothing to
         compare). Spy verifies the gate runs.
         """
-        from mcp_server.engine.policies import anti_regression as ar_mod
 
         is_revert_calls: list[tuple] = []
+
         def spy_is_revert(diff, fix):
             is_revert_calls.append((diff, fix))
             return False
+
         monkeypatch.setattr(
-            "indexer.fix_history.is_revert", spy_is_revert,
+            "indexer.fix_history.is_revert",
+            spy_is_revert,
         )
 
         policy = AntiRegression()
         target = Path("/p/x.py")
         # Has fixes, but diff is None → should skip is_revert
-        spy_signals = _FakeSignals(fixes_for={
-            target: [{"id": 1, "file_path": "x.py",
-                       "description": "fix: x", "source": "manual",
-                       "line_start": 0, "line_end": 0,
-                       "recorded_at": 1.0}],
-        })
+        spy_signals = _FakeSignals(
+            fixes_for={
+                target: [
+                    {
+                        "id": 1,
+                        "file_path": "x.py",
+                        "description": "fix: x",
+                        "source": "manual",
+                        "line_start": 0,
+                        "line_end": 0,
+                        "recorded_at": 1.0,
+                    }
+                ],
+            }
+        )
         event = _make_event(target=target, tool_name="Write", proposed_diff=None)
         policy.evaluate(event, spy_signals)
-        assert is_revert_calls == [], (
-            f"None-diff gate degraded: is_revert called: {is_revert_calls}"
-        )
+        assert (
+            is_revert_calls == []
+        ), f"None-diff gate degraded: is_revert called: {is_revert_calls}"
 
     def test_per_fix_failure_doesnt_break_evaluation(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """If is_revert raises on one fix, other fixes still get
         evaluated. The per-fix try/except is a critical robustness
         contract — mutations that remove it would break evaluation
         on a single malformed fix.
         """
-        from mcp_server.engine.policies import anti_regression as ar_mod
 
         def _flaky_is_revert(diff, fix):
             if fix.get("id") == 1:
@@ -482,21 +543,36 @@ class TestBehavioralGates:
 
         # Patch the imported is_revert at module scope
         monkeypatch.setattr(
-            "indexer.fix_history.is_revert", _flaky_is_revert,
+            "indexer.fix_history.is_revert",
+            _flaky_is_revert,
         )
 
         policy = AntiRegression()
         target = Path("/p/x.py")
-        signals = _FakeSignals(fixes_for={
-            target: [
-                {"id": 1, "file_path": "x.py", "description": "broken fix",
-                 "source": "manual", "line_start": 0, "line_end": 0,
-                 "recorded_at": 1.0},
-                {"id": 2, "file_path": "x.py", "description": "ok fix",
-                 "source": "manual", "line_start": 0, "line_end": 0,
-                 "recorded_at": 2.0},
-            ],
-        })
+        signals = _FakeSignals(
+            fixes_for={
+                target: [
+                    {
+                        "id": 1,
+                        "file_path": "x.py",
+                        "description": "broken fix",
+                        "source": "manual",
+                        "line_start": 0,
+                        "line_end": 0,
+                        "recorded_at": 1.0,
+                    },
+                    {
+                        "id": 2,
+                        "file_path": "x.py",
+                        "description": "ok fix",
+                        "source": "manual",
+                        "line_start": 0,
+                        "line_end": 0,
+                        "recorded_at": 2.0,
+                    },
+                ],
+            }
+        )
         event = _make_event(
             target=target,
             proposed_diff="--- before\nx\n--- after\ny\n",
@@ -513,16 +589,18 @@ class TestBehavioralGates:
 
 
 class TestEngineDispatch:
-
     def test_hero_2_fires_through_dispatch(
-        self, isolated_project: Path,
+        self,
+        isolated_project: Path,
     ):
         """Real fix_history.db + dispatch() + AntiRegression →
         block on a revert. Catches Bug-2-class wiring bugs.
         """
         from indexer.fix_history import record_fix
         from mcp_server.engine import (
-            register_default_policies, registered_policies, reset_policies, dispatch,
+            register_default_policies,
+            reset_policies,
+            dispatch,
         )
         import mcp_server.paths as paths_mod
 
@@ -533,7 +611,8 @@ class TestEngineDispatch:
         record_fix(
             isolated_project,
             file_path="x.py",
-            line_start=0, line_end=0,
+            line_start=0,
+            line_end=0,
             description="fix: infinite deadlock race condition",
             source="manual",
         )
@@ -573,11 +652,13 @@ class TestEngineDispatch:
 
 
 class TestRegistration:
-
     def test_register_default_policies_includes_hero_2(self):
         from mcp_server.engine import (
-            register_default_policies, registered_policies, reset_policies,
+            register_default_policies,
+            registered_policies,
+            reset_policies,
         )
+
         reset_policies()
         register_default_policies()
         names = sorted(p.name for p in registered_policies())
@@ -585,15 +666,21 @@ class TestRegistration:
 
     def test_idempotent_with_five_heroes(self):
         from mcp_server.engine import (
-            register_default_policies, registered_policies, reset_policies,
+            register_default_policies,
+            registered_policies,
+            reset_policies,
         )
+
         reset_policies()
         register_default_policies()
         register_default_policies()  # idempotent
         names = [p.name for p in registered_policies()]
         for n in (
-            "anti_regression", "blast_radius_veto", "decision_lock",
-            "cross_session_consistency", "token_budget_persist",
+            "anti_regression",
+            "blast_radius_veto",
+            "decision_lock",
+            "relevance_inject",
+            "token_budget_persist",
         ):
             assert names.count(n) == 1
 
@@ -604,15 +691,24 @@ class TestRegistration:
 
 
 class TestEdgeCases:
-
     def test_fix_with_empty_description_handled(self):
         policy = AntiRegression()
         target = Path("/p/x.py")
-        signals = _FakeSignals(fixes_for={
-            target: [{"id": 1, "file_path": "x.py", "description": "",
-                       "source": "manual", "line_start": 0, "line_end": 0,
-                       "recorded_at": 1.0}],
-        })
+        signals = _FakeSignals(
+            fixes_for={
+                target: [
+                    {
+                        "id": 1,
+                        "file_path": "x.py",
+                        "description": "",
+                        "source": "manual",
+                        "line_start": 0,
+                        "line_end": 0,
+                        "recorded_at": 1.0,
+                    }
+                ],
+            }
+        )
         diff = "--- before\nx\n--- after\ny\n"
         event = _make_event(target=target, proposed_diff=diff)
         # Empty description → is_revert keyword check skips → no match → allow
@@ -627,19 +723,27 @@ class TestEdgeCases:
         policy = AntiRegression()
         target = Path("/p/x.py")
         # 100 fixes; only top-20 should be checked
-        signals = _FakeSignals(fixes_for={
-            target: [
-                {"id": i, "file_path": "x.py",
-                 "description": "fix: thing", "source": "manual",
-                 "line_start": 0, "line_end": 0,
-                 "recorded_at": float(i)}
-                for i in range(100)
-            ],
-        })
+        signals = _FakeSignals(
+            fixes_for={
+                target: [
+                    {
+                        "id": i,
+                        "file_path": "x.py",
+                        "description": "fix: thing",
+                        "source": "manual",
+                        "line_start": 0,
+                        "line_end": 0,
+                        "recorded_at": float(i),
+                    }
+                    for i in range(100)
+                ],
+            }
+        )
         diff = "--- before\nx\n--- after\ny\n"
         event = _make_event(target=target, proposed_diff=diff)
         # Should not crash + complete in reasonable time
         import time
+
         t = time.perf_counter()
         verdict = policy.evaluate(event, signals)
         elapsed_ms = (time.perf_counter() - t) * 1000
@@ -653,11 +757,21 @@ class TestEdgeCases:
         handles full-file replacements."""
         policy = AntiRegression()
         target = Path("/p/x.py")
-        signals = _FakeSignals(fixes_for={
-            target: [{"id": 1, "file_path": "x.py", "description": "fix: x",
-                       "source": "manual", "line_start": 0, "line_end": 0,
-                       "recorded_at": 1.0}],
-        })
+        signals = _FakeSignals(
+            fixes_for={
+                target: [
+                    {
+                        "id": 1,
+                        "file_path": "x.py",
+                        "description": "fix: x",
+                        "source": "manual",
+                        "line_start": 0,
+                        "line_end": 0,
+                        "recorded_at": 1.0,
+                    }
+                ],
+            }
+        )
         event = _make_event(target=target, tool_name="Write", proposed_diff=None)
         verdict = policy.evaluate(event, signals)
         assert verdict.is_allowing()

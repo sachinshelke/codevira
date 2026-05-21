@@ -126,7 +126,7 @@ class TestK1_DefaultRegistration:
         expected = {
             "blast_radius_veto",
             "decision_lock",
-            "cross_session_consistency",
+            "relevance_inject",
             "token_budget_persist",
             "anti_regression",
             "live_style_enforcement",
@@ -153,7 +153,7 @@ class TestK1_DefaultRegistration:
             if EventType.USER_PROMPT_SUBMIT in set(p.handles)
         }
         assert ups == {
-            "cross_session_consistency",
+            "relevance_inject",
             "intent_inference",
             "scope_contract_lock",
         }, f"UserPromptSubmit eligibility drift: {ups}"
@@ -173,6 +173,12 @@ class TestK1_DefaultRegistration:
 # =====================================================================
 
 
+@pytest.mark.xfail(
+    reason=(
+        "v2.2.0 Phase C: cross_session.CrossSessionConsistency was replaced by relevance_inject.RelevanceInject in register_default_policies(). This test asserts behavior specific to the deprecated h5 policy. Phase E deletes cross_session.py + this test entirely."
+    ),
+    strict=True,
+)
 class TestK4_DualInject:
     def test_both_h5_and_h9_inject_concatenated_in_priority_order(
         self,
@@ -237,7 +243,7 @@ class TestK4_DualInject:
 
         # Both policies recorded in metadata
         ip = v.metadata.get("inject_policies", [])
-        assert "cross_session_consistency" in ip
+        assert "relevance_inject" in ip
         assert "intent_inference" in ip
 
 
@@ -292,6 +298,12 @@ class TestK5_KillSwitchOnPromptSubmit:
 # =====================================================================
 
 
+@pytest.mark.xfail(
+    reason=(
+        "v2.2.0 Phase C: CrossSessionConsistency replaced by RelevanceInject. Phase E deletes this test."
+    ),
+    strict=True,
+)
 class TestK6_CrashIsolationAcrossInject:
     def test_h9_crash_does_not_break_h5_inject(
         self,
@@ -1155,5 +1167,5 @@ class TestK12_AllHeroCrashIsolation:
         # And: Hero 5 was NOT in the inject_policies list (it crashed)
         ip = v.metadata.get("inject_policies", [])
         assert (
-            "cross_session_consistency" not in ip
+            "relevance_inject" not in ip
         ), f"Hero 5 appeared in inject metadata despite crashing: {ip}"

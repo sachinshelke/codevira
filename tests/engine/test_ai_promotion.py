@@ -11,11 +11,11 @@ Tier-0 pre-flight from start (post-Bug-4 reinforcement):
   - 10+ mutations from start
   - Bug-shape audit (no Bug-3-class dead fields)
 """
+
 from __future__ import annotations
 
 import io
 import json
-import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -27,15 +27,10 @@ from mcp_server.engine.policies.ai_promotion import (
     AIPromotionScore,
     _format_inject,
     _truncate,
-    _coerce_float,
-    _coerce_int,
 )
 from mcp_server.engine.promotion_score import (
     score_decision,
     aggregate_decision_outcomes,
-    top_stable_decisions,
-    top_reverted_decisions,
-    top_rules,
 )
 
 
@@ -73,28 +68,38 @@ class _FakeSignals:
         self.rules_calls: list[dict[str, Any]] = []
 
     def outcomes(
-        self, *, since_days: int = 30, min_outcomes: int = 2, limit: int = 100,
+        self,
+        *,
+        since_days: int = 30,
+        min_outcomes: int = 2,
+        limit: int = 100,
     ) -> list[dict[str, Any]]:
-        self.outcomes_calls.append({
-            "since_days": since_days, "min_outcomes": min_outcomes, "limit": limit,
-        })
+        self.outcomes_calls.append(
+            {
+                "since_days": since_days,
+                "min_outcomes": min_outcomes,
+                "limit": limit,
+            }
+        )
         # Honor min_outcomes filter on the fake too — test code can plant
         # below-threshold rows and verify they get filtered.
-        return [
-            d for d in self._outcomes
-            if d.get("total", 0) >= min_outcomes
-        ][:limit]
+        return [d for d in self._outcomes if d.get("total", 0) >= min_outcomes][:limit]
 
     def learned_rules(
-        self, *, min_confidence: float = 0.7, max_items: int = 3,
+        self,
+        *,
+        min_confidence: float = 0.7,
+        max_items: int = 3,
     ) -> list[dict[str, Any]]:
-        self.rules_calls.append({
-            "min_confidence": min_confidence, "max_items": max_items,
-        })
-        return [
-            r for r in self._rules
-            if r.get("confidence", 0.0) >= min_confidence
-        ][:max_items]
+        self.rules_calls.append(
+            {
+                "min_confidence": min_confidence,
+                "max_items": max_items,
+            }
+        )
+        return [r for r in self._rules if r.get("confidence", 0.0) >= min_confidence][
+            :max_items
+        ]
 
 
 @pytest.fixture
@@ -107,7 +112,8 @@ def isolated_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     project.mkdir()
     (project / "pyproject.toml").write_text("")
     monkeypatch.setattr(
-        "mcp_server.paths.get_global_home", lambda: cv_data,
+        "mcp_server.paths.get_global_home",
+        lambda: cv_data,
     )
     return project
 
@@ -130,7 +136,6 @@ def _clear_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class TestAcceptance:
-
     def test_1_non_session_start_event_allowed(self):
         """Non-SessionStart events pass through; outcomes() NOT called."""
         policy = AIPromotionScore()
@@ -142,9 +147,9 @@ class TestAcceptance:
         )
         verdict = policy.evaluate(event, signals=spy)
         assert verdict.is_allowing()
-        assert spy.outcomes_calls == [], (
-            "outcomes() must NOT be called for non-SessionStart events"
-        )
+        assert (
+            spy.outcomes_calls == []
+        ), "outcomes() must NOT be called for non-SessionStart events"
 
     def test_2_session_start_no_decisions_allow(self):
         """Cold project — no outcomes → allow."""
@@ -158,8 +163,16 @@ class TestAcceptance:
         policy = AIPromotionScore()
         spy = _FakeSignals(
             outcomes_data=[
-                {"id": 1, "decision": "x", "file_path": "a.py",
-                 "kept": 1, "modified": 0, "reverted": 0, "total": 1, "score": 1.0},
+                {
+                    "id": 1,
+                    "decision": "x",
+                    "file_path": "a.py",
+                    "kept": 1,
+                    "modified": 0,
+                    "reverted": 0,
+                    "total": 1,
+                    "score": 1.0,
+                },
             ],
         )
         verdict = policy.evaluate(_make_session_start_event(), signals=spy)
@@ -172,9 +185,17 @@ class TestAcceptance:
         policy = AIPromotionScore()
         spy = _FakeSignals(
             outcomes_data=[
-                {"id": 1, "decision": "use bcrypt over argon2",
-                 "file_path": "auth.py", "kept": 5, "modified": 0,
-                 "reverted": 0, "total": 5, "score": 1.0, "locked": 0},
+                {
+                    "id": 1,
+                    "decision": "use bcrypt over argon2",
+                    "file_path": "auth.py",
+                    "kept": 5,
+                    "modified": 0,
+                    "reverted": 0,
+                    "total": 5,
+                    "score": 1.0,
+                    "locked": 0,
+                },
             ],
         )
         verdict = policy.evaluate(_make_session_start_event(), signals=spy)
@@ -190,9 +211,17 @@ class TestAcceptance:
         policy = AIPromotionScore()
         spy = _FakeSignals(
             outcomes_data=[
-                {"id": i, "decision": f"decision_{i}",
-                 "file_path": f"f{i}.py", "kept": 5, "modified": 0,
-                 "reverted": 0, "total": 5, "score": 1.0, "locked": 0}
+                {
+                    "id": i,
+                    "decision": f"decision_{i}",
+                    "file_path": f"f{i}.py",
+                    "kept": 5,
+                    "modified": 0,
+                    "reverted": 0,
+                    "total": 5,
+                    "score": 1.0,
+                    "locked": 0,
+                }
                 for i in range(10)
             ],
         )
@@ -210,39 +239,64 @@ class TestAcceptance:
         policy = AIPromotionScore()
         spy = _FakeSignals(
             outcomes_data=[
-                {"id": 1, "decision": "x", "file_path": "a.py",
-                 "kept": 5, "modified": 0, "reverted": 0, "total": 5,
-                 "score": 1.0, "locked": 0},
+                {
+                    "id": 1,
+                    "decision": "x",
+                    "file_path": "a.py",
+                    "kept": 5,
+                    "modified": 0,
+                    "reverted": 0,
+                    "total": 5,
+                    "score": 1.0,
+                    "locked": 0,
+                },
             ],
         )
         verdict = policy.evaluate(_make_session_start_event(), signals=spy)
         assert verdict.is_allowing()
-        assert spy.outcomes_calls == [], (
-            "mode=off must short-circuit before outcomes() (perf + privacy)"
-        )
+        assert (
+            spy.outcomes_calls == []
+        ), "mode=off must short-circuit before outcomes() (perf + privacy)"
 
     def test_7_min_score_filter_excludes_below_threshold(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """A decision with score=0.5 is excluded when min_score=0.7."""
         policy = AIPromotionScore()
         spy = _FakeSignals(
             outcomes_data=[
-                {"id": 1, "decision": "stable_x", "file_path": "a.py",
-                 "kept": 5, "modified": 0, "reverted": 0, "total": 5,
-                 "score": 1.0, "locked": 0},
-                {"id": 2, "decision": "midstable_y", "file_path": "b.py",
-                 "kept": 1, "modified": 0, "reverted": 1, "total": 2,
-                 "score": 0.5, "locked": 0},
+                {
+                    "id": 1,
+                    "decision": "stable_x",
+                    "file_path": "a.py",
+                    "kept": 5,
+                    "modified": 0,
+                    "reverted": 0,
+                    "total": 5,
+                    "score": 1.0,
+                    "locked": 0,
+                },
+                {
+                    "id": 2,
+                    "decision": "midstable_y",
+                    "file_path": "b.py",
+                    "kept": 1,
+                    "modified": 0,
+                    "reverted": 1,
+                    "total": 2,
+                    "score": 0.5,
+                    "locked": 0,
+                },
             ],
         )
         verdict = policy.evaluate(_make_session_start_event(), signals=spy)
         assert verdict.action == "inject"
         ctx = verdict.inject_context or ""
         assert "stable_x" in ctx
-        assert "midstable_y" not in ctx, (
-            "min_score=0.7 should exclude score=0.5 decision"
-        )
+        assert (
+            "midstable_y" not in ctx
+        ), "min_score=0.7 should exclude score=0.5 decision"
 
     def test_8_high_confidence_rules_in_inject(self):
         """Rules above min_confidence appear in the inject."""
@@ -250,8 +304,12 @@ class TestAcceptance:
         spy = _FakeSignals(
             outcomes_data=[],  # no decisions
             rules_data=[
-                {"id": 1, "rule_text": "Tests live in tests/ mirror layout",
-                 "confidence": 0.85, "category": "testing"},
+                {
+                    "id": 1,
+                    "rule_text": "Tests live in tests/ mirror layout",
+                    "confidence": 0.85,
+                    "category": "testing",
+                },
             ],
         )
         verdict = policy.evaluate(_make_session_start_event(), signals=spy)
@@ -268,21 +326,22 @@ class TestAcceptance:
 
 
 class TestBehavioralGates:
-
     def test_event_type_gate_short_circuits_signals(self):
         """PreToolUse arriving at the policy must NOT touch signals."""
         policy = AIPromotionScore()
         spy = _FakeSignals()
         for evt_type in (
-            EventType.PRE_TOOL_USE, EventType.POST_TOOL_USE,
-            EventType.USER_PROMPT_SUBMIT, EventType.STOP,
+            EventType.PRE_TOOL_USE,
+            EventType.POST_TOOL_USE,
+            EventType.USER_PROMPT_SUBMIT,
+            EventType.STOP,
         ):
             spy.outcomes_calls.clear()
             event = HookEvent(event_type=evt_type, project_root=Path("/p"))
             policy.evaluate(event, signals=spy)
-            assert spy.outcomes_calls == [], (
-                f"{evt_type} must NOT trigger outcomes() call"
-            )
+            assert (
+                spy.outcomes_calls == []
+            ), f"{evt_type} must NOT trigger outcomes() call"
 
     def test_signals_none_gate(self):
         """signals=None → allow (defensive; runner should always pass them
@@ -304,7 +363,8 @@ class TestBehavioralGates:
         assert AIPromotionScore.enabled_by_default is True
 
     def test_invalid_mode_falls_back_to_default(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         monkeypatch.setenv("CODEVIRA_AI_PROMOTION_MODE", "block")  # invalid
         cfg = AIPromotionScore()._config()
@@ -336,7 +396,6 @@ class TestBehavioralGates:
 
 
 class TestScoreFunctions:
-
     def test_score_all_kept(self):
         assert score_decision(kept=5, modified=0, reverted=0) == 1.0
 
@@ -365,18 +424,21 @@ class TestScoreFunctions:
 
 
 class TestRealDBIntegration:
-
     def test_aggregate_returns_correct_scores_from_real_outcomes(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """Plant decisions + outcomes via the actual DB methods, query
         through aggregate_decision_outcomes, verify the score formula
         runs against real schema (catches Bug-1-class column drift)."""
         from indexer.sqlite_graph import SQLiteGraph
         import mcp_server.paths as paths_mod
+
         paths_mod.set_project_dir(isolated_project)
         paths_mod.invalidate_data_dir_cache()
         from mcp_server.paths import get_data_dir
+
         graph_db = get_data_dir() / "graph" / "graph.db"
         graph_db.parent.mkdir(parents=True, exist_ok=True)
 
@@ -395,17 +457,24 @@ class TestRealDBIntegration:
         # Plant outcomes via the DB method (same path outcome_tracker uses)
         for _ in range(3):
             g.record_outcome(
-                session_id="s1", file_path="auth.py",
-                outcome_type="kept", decision_id=decision_id,
+                session_id="s1",
+                file_path="auth.py",
+                outcome_type="kept",
+                decision_id=decision_id,
             )
         g.record_outcome(
-            session_id="s1", file_path="auth.py",
-            outcome_type="reverted", decision_id=decision_id,
+            session_id="s1",
+            file_path="auth.py",
+            outcome_type="reverted",
+            decision_id=decision_id,
         )
         g.conn.commit()
 
         rows = aggregate_decision_outcomes(
-            g.conn, since_days=30, min_outcomes=2, limit=10,
+            g.conn,
+            since_days=30,
+            min_outcomes=2,
+            limit=10,
         )
         g.close()
         assert len(rows) == 1
@@ -417,16 +486,20 @@ class TestRealDBIntegration:
         assert abs(d["score"] - 0.75) < 1e-9
 
     def test_signals_outcomes_returns_rows_from_real_db(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """Bug-1-class regression check: signals.outcomes() through real
         SignalContext + real graph returns scored rows (not silently [])."""
         from indexer.sqlite_graph import SQLiteGraph
         from mcp_server.engine.signals import SignalContext
         import mcp_server.paths as paths_mod
+
         paths_mod.set_project_dir(isolated_project)
         paths_mod.invalidate_data_dir_cache()
         from mcp_server.paths import get_data_dir
+
         graph_db = get_data_dir() / "graph" / "graph.db"
         graph_db.parent.mkdir(parents=True, exist_ok=True)
 
@@ -443,8 +516,10 @@ class TestRealDBIntegration:
         did = cur.lastrowid
         for _ in range(3):
             g.record_outcome(
-                session_id="s1", file_path="f.py",
-                outcome_type="kept", decision_id=did,
+                session_id="s1",
+                file_path="f.py",
+                outcome_type="kept",
+                decision_id=did,
             )
         g.conn.commit()
         g.close()
@@ -464,20 +539,25 @@ class TestRealDBIntegration:
 
 
 class TestEngineDispatch:
-
     def test_hero_10_fires_through_dispatch(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """Real outcomes DB + dispatch() → inject. Catches Bug-2-class
         wiring bugs and Bug-4-class wiring path mismatches."""
         from indexer.sqlite_graph import SQLiteGraph
         from mcp_server.engine import (
-            register_default_policies, reset_policies, dispatch,
+            register_default_policies,
+            reset_policies,
+            dispatch,
         )
         import mcp_server.paths as paths_mod
+
         paths_mod.set_project_dir(isolated_project)
         paths_mod.invalidate_data_dir_cache()
         from mcp_server.paths import get_data_dir
+
         graph_db = get_data_dir() / "graph" / "graph.db"
         graph_db.parent.mkdir(parents=True, exist_ok=True)
 
@@ -494,8 +574,10 @@ class TestEngineDispatch:
         did = cur.lastrowid
         for _ in range(5):
             g.record_outcome(
-                session_id="s1", file_path="auth.py",
-                outcome_type="kept", decision_id=did,
+                session_id="s1",
+                file_path="auth.py",
+                outcome_type="kept",
+                decision_id=did,
             )
         g.conn.commit()
         g.close()
@@ -518,7 +600,9 @@ class TestEngineDispatch:
         reset_policies()
 
     def test_hero_10_fires_through_claude_code_wiring(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """End-to-end through claude_code_hooks.handle("SessionStart").
 
@@ -529,13 +613,16 @@ class TestEngineDispatch:
         """
         from indexer.sqlite_graph import SQLiteGraph
         from mcp_server.engine import (
-            register_default_policies, reset_policies,
+            register_default_policies,
+            reset_policies,
         )
         from mcp_server.engine.wiring import claude_code_hooks
         import mcp_server.paths as paths_mod
+
         paths_mod.set_project_dir(isolated_project)
         paths_mod.invalidate_data_dir_cache()
         from mcp_server.paths import get_data_dir
+
         graph_db = get_data_dir() / "graph" / "graph.db"
         graph_db.parent.mkdir(parents=True, exist_ok=True)
 
@@ -552,8 +639,10 @@ class TestEngineDispatch:
         did = cur.lastrowid
         for _ in range(5):
             g.record_outcome(
-                session_id="s1", file_path="auth.py",
-                outcome_type="kept", decision_id=did,
+                session_id="s1",
+                file_path="auth.py",
+                outcome_type="kept",
+                decision_id=did,
             )
         g.conn.commit()
         g.close()
@@ -594,11 +683,13 @@ class TestEngineDispatch:
 
 
 class TestRegistration:
-
     def test_register_default_policies_includes_hero_10(self):
         from mcp_server.engine import (
-            register_default_policies, registered_policies, reset_policies,
+            register_default_policies,
+            registered_policies,
+            reset_policies,
         )
+
         reset_policies()
         register_default_policies()
         names = {p.name for p in registered_policies()}
@@ -606,20 +697,27 @@ class TestRegistration:
 
     def test_idempotent_with_seven_heroes(self):
         from mcp_server.engine import (
-            register_default_policies, registered_policies, reset_policies,
+            register_default_policies,
+            registered_policies,
+            reset_policies,
         )
+
         reset_policies()
         register_default_policies()
         register_default_policies()  # idempotent
         names = [p.name for p in registered_policies()]
         for n in (
-            "ai_promotion_score", "anti_regression", "blast_radius_veto",
-            "cross_session_consistency", "decision_lock",
-            "live_style_enforcement", "token_budget_persist",
+            "ai_promotion_score",
+            "anti_regression",
+            "blast_radius_veto",
+            "relevance_inject",
+            "decision_lock",
+            "live_style_enforcement",
+            "token_budget_persist",
         ):
-            assert names.count(n) == 1, (
-                f"Idempotency broken — {n!r} appears {names.count(n)} times"
-            )
+            assert (
+                names.count(n) == 1
+            ), f"Idempotency broken — {n!r} appears {names.count(n)} times"
 
 
 # =====================================================================
@@ -628,7 +726,6 @@ class TestRegistration:
 
 
 class TestEdgeCases:
-
     def test_empty_outcomes_and_empty_rules_returns_allow(self):
         """If both signals are empty, no inject — silent (no noise)."""
         policy = AIPromotionScore()
@@ -638,15 +735,18 @@ class TestEdgeCases:
 
     def test_signals_outcomes_raises_does_not_break_policy(self):
         """signals.outcomes raising must not propagate — log + treat as []."""
+
         class CrashingSignals:
             def outcomes(self, **k):
                 raise RuntimeError("DB locked")
+
             def learned_rules(self, **k):
                 return []
 
         policy = AIPromotionScore()
         verdict = policy.evaluate(
-            _make_session_start_event(), signals=CrashingSignals(),
+            _make_session_start_event(),
+            signals=CrashingSignals(),
         )
         assert verdict.is_allowing()
 
@@ -654,12 +754,14 @@ class TestEdgeCases:
         class CrashingRules:
             def outcomes(self, **k):
                 return []
+
             def learned_rules(self, **k):
                 raise RuntimeError("rules DB corrupted")
 
         policy = AIPromotionScore()
         verdict = policy.evaluate(
-            _make_session_start_event(), signals=CrashingRules(),
+            _make_session_start_event(),
+            signals=CrashingRules(),
         )
         assert verdict.is_allowing()
 
@@ -681,9 +783,17 @@ class TestEdgeCases:
         """Decisions with locked=1 should display a 🔒 marker."""
         ctx = _format_inject(
             stable=[
-                {"id": 1, "decision": "x", "file_path": "a.py",
-                 "kept": 5, "modified": 0, "reverted": 0, "total": 5,
-                 "score": 1.0, "locked": 1},
+                {
+                    "id": 1,
+                    "decision": "x",
+                    "file_path": "a.py",
+                    "kept": 5,
+                    "modified": 0,
+                    "reverted": 0,
+                    "total": 5,
+                    "score": 1.0,
+                    "locked": 1,
+                },
             ],
             rules=[],
         )
@@ -696,18 +806,21 @@ class TestEdgeCases:
 
 
 class TestPerformance:
-
     def test_evaluate_session_start_with_100_decisions_under_10ms(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """End-to-end perf check with realistic data volume."""
         import time
         from indexer.sqlite_graph import SQLiteGraph
         from mcp_server.engine.signals import SignalContext
         import mcp_server.paths as paths_mod
+
         paths_mod.set_project_dir(isolated_project)
         paths_mod.invalidate_data_dir_cache()
         from mcp_server.paths import get_data_dir
+
         graph_db = get_data_dir() / "graph" / "graph.db"
         graph_db.parent.mkdir(parents=True, exist_ok=True)
 
@@ -726,8 +839,10 @@ class TestPerformance:
             # 5 outcomes per decision = 500 outcomes total
             for _ in range(5):
                 g.record_outcome(
-                    session_id="s1", file_path=f"f{i}.py",
-                    outcome_type="kept", decision_id=did,
+                    session_id="s1",
+                    file_path=f"f{i}.py",
+                    outcome_type="kept",
+                    decision_id=did,
                 )
         g.conn.commit()
         g.close()

@@ -152,7 +152,7 @@ class TestI1_DefaultRegistration:
         assert names == {
             "blast_radius_veto",  # Hero 4 (Week 4)
             "decision_lock",  # Hero 1 (Week 5)
-            "cross_session_consistency",  # Hero 5 (Week 6)
+            "relevance_inject",  # Hero 5 (Week 6)
             "token_budget_persist",  # Hero 6 (Week 7)
             "anti_regression",  # Hero 2 (Week 8)
             "live_style_enforcement",  # Hero 7 (Week 9)
@@ -835,7 +835,7 @@ class TestI9_Idempotency:
         for n in (
             "blast_radius_veto",
             "decision_lock",
-            "cross_session_consistency",
+            "relevance_inject",
             "token_budget_persist",
             "anti_regression",
             "live_style_enforcement",

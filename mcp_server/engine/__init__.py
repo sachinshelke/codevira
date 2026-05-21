@@ -48,18 +48,22 @@ def register_default_policies() -> None:
     from mcp_server.engine.policies.ai_promotion import AIPromotionScore
     from mcp_server.engine.policies.anti_regression import AntiRegression
     from mcp_server.engine.policies.blast_radius import BlastRadiusVeto
-    from mcp_server.engine.policies.cross_session import CrossSessionConsistency
     from mcp_server.engine.policies.decision_lock import DecisionLock
     from mcp_server.engine.policies.intent_inference import ProactiveIntentInference
     from mcp_server.engine.policies.live_style import LiveStyleEnforcement
     from mcp_server.engine.policies.post_edit_refresh import PostEditGraphRefresh
+    from mcp_server.engine.policies.relevance_inject import RelevanceInject
     from mcp_server.engine.policies.scope_contract import ProactiveScopeContractLock
     from mcp_server.engine.policies.token_budget import TokenBudgetPersist
+
+    # v2.2.0: RelevanceInject replaces cross_session.CrossSessionConsistency.
+    # Both fire on USER_PROMPT_SUBMIT; we register only one. cross_session.py
+    # is unregistered (kept as dead code for Phase E to delete).
 
     for policy_cls in (
         BlastRadiusVeto,  # Hero 4 (Week 4)
         DecisionLock,  # Hero 1 (Week 5)
-        CrossSessionConsistency,  # Hero 5 (Week 6)
+        RelevanceInject,  # v2.2.0 — replaces CrossSessionConsistency
         TokenBudgetPersist,  # Hero 6 (Week 7)
         AntiRegression,  # Hero 2 (Week 8)
         LiveStyleEnforcement,  # Hero 7 (Week 9)

@@ -304,6 +304,12 @@ class TestL3_KillSwitch:
 # =====================================================================
 
 
+@pytest.mark.xfail(
+    reason=(
+        "v2.2.0 Phase C: cross_session.CrossSessionConsistency was replaced by relevance_inject.RelevanceInject in register_default_policies(). This test asserts behavior specific to the deprecated h5 policy. Phase E deletes cross_session.py + this test entirely."
+    ),
+    strict=True,
+)
 class TestL4_CrashIsolation:
     def test_h3_crash_on_prompt_does_not_break_h5_inject(
         self,

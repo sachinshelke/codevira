@@ -11,6 +11,7 @@ Key behaviors:
 - Partial-migration recovery: if metadata.json is missing from centralized dir,
   migration is re-run from scratch.
 """
+
 from __future__ import annotations
 
 import json
@@ -22,9 +23,11 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+
 def _codevira_version() -> str:
     try:
         from mcp_server import __version__
+
         return __version__
     except Exception:
         return "unknown"
@@ -69,7 +72,12 @@ def migrate_to_centralized(project_root: Path) -> dict:
       6. Update global.db project registry
       7. Rename old .codevira/ → .codevira.migrated/ (safety net)
     """
-    from mcp_server.paths import _sanitize_path_key, _get_git_remote_url, get_global_home, get_global_db_path
+    from mcp_server.paths import (
+        _sanitize_path_key,
+        _get_git_remote_url,
+        get_global_home,
+        get_global_db_path,
+    )
 
     legacy = project_root / ".codevira"
     if not (legacy / "config.yaml").is_file():
@@ -85,7 +93,7 @@ def migrate_to_centralized(project_root: Path) -> dict:
     logger.info("Migrating %s → %s", legacy, centralized)
 
     # Create directory structure
-    (centralized / "graph" / "changesets").mkdir(parents=True, exist_ok=True)
+    (centralized / "graph").mkdir(parents=True, exist_ok=True)
     (centralized / "codeindex").mkdir(parents=True, exist_ok=True)
     (centralized / "logs").mkdir(parents=True, exist_ok=True)
 
@@ -115,7 +123,9 @@ def migrate_to_centralized(project_root: Path) -> dict:
             src_conn.backup(dst_conn)
             files_copied += 1
         except Exception as e:
-            logger.warning("Could not backup graph.db via API, falling back to copy: %s", e)
+            logger.warning(
+                "Could not backup graph.db via API, falling back to copy: %s", e
+            )
             # Fallback: copy main db + WAL/SHM files if present
             shutil.copy2(src_db, dst_db)
             for suffix in ("-wal", "-shm"):
@@ -153,6 +163,7 @@ def migrate_to_centralized(project_root: Path) -> dict:
     gdb = None
     try:
         from indexer.global_db import GlobalDB
+
         gdb = GlobalDB(get_global_db_path())
         _ensure_git_remote_column(gdb)
         gdb.register_project(
@@ -171,6 +182,7 @@ def migrate_to_centralized(project_root: Path) -> dict:
     # populated centralized directory, not the old legacy path.
     try:
         from mcp_server.paths import invalidate_data_dir_cache
+
         invalidate_data_dir_cache(project_root)
     except Exception:
         pass  # Cache invalidation is best-effort; migration proceeds regardless
@@ -212,7 +224,9 @@ def cleanup_legacy_dir(project_root: Path) -> bool:
 def _ensure_git_remote_column(gdb) -> None:
     """Add git_remote column to global_db.projects if not present (v1.6 schema upgrade)."""
     try:
-        cols = [row[1] for row in gdb.conn.execute("PRAGMA table_info(projects)").fetchall()]
+        cols = [
+            row[1] for row in gdb.conn.execute("PRAGMA table_info(projects)").fetchall()
+        ]
         if "git_remote" not in cols:
             gdb.conn.execute("ALTER TABLE projects ADD COLUMN git_remote TEXT")
             gdb.conn.commit()

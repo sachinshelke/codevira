@@ -149,7 +149,6 @@ def project_env(tmp_path, monkeypatch):
         "project:\n  name: test\n  language: python\n  watched_dirs:\n    - src\n  file_extensions:\n    - .py\n"
     )
     (data_dir / "graph").mkdir(parents=True)
-    (data_dir / "graph" / "changesets").mkdir(parents=True)
 
     monkeypatch.setattr(paths, "_project_dir_override", None)
     monkeypatch.chdir(project.resolve())

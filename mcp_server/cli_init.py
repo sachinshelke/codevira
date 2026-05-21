@@ -9,7 +9,6 @@ Scaffolds the in-repo storage layer for a new (or existing) project:
     manifest.yaml                 ← regenerated
     outcomes.jsonl                ← empty
     sessions.jsonl                ← empty
-    changesets.jsonl              ← empty
     preferences.jsonl             ← empty
     learned_rules.jsonl           ← empty
     config.yaml                   ← project settings
@@ -33,7 +32,6 @@ afterwards to preserve those decisions as a read-only reference at
 
 from __future__ import annotations
 
-import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -54,7 +52,7 @@ def cmd_init(*, yes: bool = False, dry_run: bool = False) -> int:
     print()
     print("  Codevira — Init")
     print(f"  Project: {project}")
-    print(f"  " + "─" * 60)
+    print("  " + "─" * 60)
     print()
 
     # Detect existing state.
@@ -69,7 +67,7 @@ def cmd_init(*, yes: bool = False, dry_run: bool = False) -> int:
 
     if cv_exists:
         print(f"  ⚠ .codevira/ already exists at {cv_dir}")
-        print(f"    Init is idempotent — will preserve all existing data.")
+        print("    Init is idempotent — will preserve all existing data.")
         print()
 
     # Plan
@@ -80,7 +78,6 @@ def cmd_init(*, yes: bool = False, dry_run: bool = False) -> int:
         "decisions.jsonl",
         "outcomes.jsonl",
         "sessions.jsonl",
-        "changesets.jsonl",
         "preferences.jsonl",
         "learned_rules.jsonl",
     ]
@@ -139,6 +136,7 @@ def cmd_init(*, yes: bool = False, dry_run: bool = False) -> int:
     if not cfg_path.is_file():
         project_name = _detect_project_name(project)
         import yaml
+
         cfg = {
             "schema_version": 1,
             "project_name": project_name,
@@ -171,7 +169,9 @@ def cmd_init(*, yes: bool = False, dry_run: bool = False) -> int:
     # Step 5: update .gitignore (idempotent).
     if not gitignore_has_cache:
         existing = (
-            gitignore_path.read_text(encoding="utf-8") if gitignore_path.is_file() else ""
+            gitignore_path.read_text(encoding="utf-8")
+            if gitignore_path.is_file()
+            else ""
         )
         addition = (
             "\n# Codevira cache (gitignored; rebuilt by `codevira sync`)\n"
@@ -183,10 +183,12 @@ def cmd_init(*, yes: bool = False, dry_run: bool = False) -> int:
 
     # Step 6: regenerate AGENTS.md (creates the marker block if missing).
     from mcp_server.storage import agents_md_generator
+
     agents_md_generator.regenerate()
 
     # Step 7: regenerate manifest + digest + FTS5 from (possibly empty) decisions.
     from mcp_server.storage import decisions_store
+
     decisions_store.rebuild_indexes()
 
     # Success summary
@@ -217,6 +219,7 @@ def _detect_project_name(project_root: Path) -> str:
         py = project_root / "pyproject.toml"
         if py.is_file():
             import tomllib
+
             data = tomllib.loads(py.read_text())
             name = data.get("project", {}).get("name")
             if name:
@@ -228,6 +231,7 @@ def _detect_project_name(project_root: Path) -> str:
         pkg = project_root / "package.json"
         if pkg.is_file():
             import json
+
             data = json.loads(pkg.read_text())
             name = data.get("name")
             if name:
@@ -241,6 +245,7 @@ def _detect_project_name(project_root: Path) -> str:
 def _codevira_version() -> str:
     try:
         from mcp_server import __version__
+
         return __version__
     except Exception:
         return "2.2.0"

@@ -4,6 +4,7 @@ Tests for mcp_server/auto_init.py — auto-initialization on first tool call.
 Standalone replacement for the auto_init portion of test_playbook_and_auto_init.py.
 Resets module globals between tests via autouse fixture.
 """
+
 from __future__ import annotations
 
 import json
@@ -33,6 +34,7 @@ from mcp_server.auto_init import (
 # ---------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------
+
 
 def _reset_ai_globals():
     ai._init_started = False
@@ -126,20 +128,38 @@ DEFAULT_DETECTED = {
 }
 
 
-def _bg_init_patches(detected, graph_side_effect=None, discover_return=None,
-                     index_side_effect=ImportError):
+def _bg_init_patches(
+    detected,
+    graph_side_effect=None,
+    discover_return=None,
+    index_side_effect=ImportError,
+):
     """Return a combined context manager for background init patches."""
     stack = ExitStack()
-    stack.enter_context(patch("mcp_server.detect.auto_detect_project", return_value=detected))
+    stack.enter_context(
+        patch("mcp_server.detect.auto_detect_project", return_value=detected)
+    )
     if graph_side_effect:
-        stack.enter_context(patch("indexer.graph_generator.generate_graph_sqlite",
-                                  side_effect=graph_side_effect))
+        stack.enter_context(
+            patch(
+                "indexer.graph_generator.generate_graph_sqlite",
+                side_effect=graph_side_effect,
+            )
+        )
     else:
         stack.enter_context(patch("indexer.graph_generator.generate_graph_sqlite"))
-    stack.enter_context(patch("mcp_server.gitignore.discover_source_files",
-                              return_value=discover_return or []))
-    stack.enter_context(patch("indexer.index_codebase.start_background_full_index",
-                              side_effect=index_side_effect))
+    stack.enter_context(
+        patch(
+            "mcp_server.gitignore.discover_source_files",
+            return_value=discover_return or [],
+        )
+    )
+    stack.enter_context(
+        patch(
+            "indexer.index_codebase.start_background_full_index",
+            side_effect=index_side_effect,
+        )
+    )
     stack.enter_context(patch("mcp_server.auto_init._register_global"))
     return stack
 
@@ -147,6 +167,7 @@ def _bg_init_patches(detected, graph_side_effect=None, discover_return=None,
 # ---------------------------------------------------------------
 # ensure_project_initialized()
 # ---------------------------------------------------------------
+
 
 class TestEnsureProjectInitialized:
     def test_first_call_triggers_init(self, tmp_path):
@@ -156,9 +177,11 @@ class TestEnsureProjectInitialized:
         data_dir = tmp_path / "data"
         data_dir.mkdir()
 
-        with patch("mcp_server.paths.get_project_root", return_value=project_root), \
-             patch("mcp_server.paths.get_data_dir", return_value=data_dir), \
-             _bg_init_patches(DEFAULT_DETECTED):
+        with patch(
+            "mcp_server.paths.get_project_root", return_value=project_root
+        ), patch(
+            "mcp_server.paths.get_data_dir", return_value=data_dir
+        ), _bg_init_patches(DEFAULT_DETECTED):
             status = ensure_project_initialized(project_root)
 
         assert isinstance(status, InitStatus)
@@ -191,6 +214,7 @@ class TestEnsureProjectInitialized:
         populate it.
         """
         import sqlite3 as _sqlite3
+
         project_root = tmp_path / "proj"
         project_root.mkdir()
         data_dir = tmp_path / "data"
@@ -199,13 +223,18 @@ class TestEnsureProjectInitialized:
         # Create a real graph.db with a populated nodes table.
         graph_db = data_dir / "graph" / "graph.db"
         conn = _sqlite3.connect(str(graph_db))
-        conn.execute("CREATE TABLE nodes (id TEXT PRIMARY KEY, kind TEXT, name TEXT, file_path TEXT)")
-        conn.execute("INSERT INTO nodes VALUES ('n1', 'file', 'main.py', 'src/main.py')")
+        conn.execute(
+            "CREATE TABLE nodes (id TEXT PRIMARY KEY, kind TEXT, name TEXT, file_path TEXT)"
+        )
+        conn.execute(
+            "INSERT INTO nodes VALUES ('n1', 'file', 'main.py', 'src/main.py')"
+        )
         conn.commit()
         conn.close()
 
-        with patch("mcp_server.paths.get_project_root", return_value=project_root), \
-             patch("mcp_server.paths.get_data_dir", return_value=data_dir):
+        with patch(
+            "mcp_server.paths.get_project_root", return_value=project_root
+        ), patch("mcp_server.paths.get_data_dir", return_value=data_dir):
             status = ensure_project_initialized(project_root)
 
         assert status.ready is True
@@ -233,9 +262,11 @@ class TestEnsureProjectInitialized:
         data_dir = tmp_path / "data"
         data_dir.mkdir()
 
-        with patch("mcp_server.paths.get_project_root", return_value=project_root), \
-             patch("mcp_server.paths.get_data_dir", return_value=data_dir), \
-             _bg_init_patches(DEFAULT_DETECTED):
+        with patch(
+            "mcp_server.paths.get_project_root", return_value=project_root
+        ), patch(
+            "mcp_server.paths.get_data_dir", return_value=data_dir
+        ), _bg_init_patches(DEFAULT_DETECTED):
             s1 = ensure_project_initialized(project_root)
             s2 = ensure_project_initialized(project_root)
             s3 = ensure_project_initialized(project_root)
@@ -251,6 +282,7 @@ class TestEnsureProjectInitialized:
 # ---------------------------------------------------------------
 # get_init_progress()
 # ---------------------------------------------------------------
+
 
 class TestGetInitProgress:
     def test_default_state(self):
@@ -287,6 +319,7 @@ class TestGetInitProgress:
 # ---------------------------------------------------------------
 # _write_config()
 # ---------------------------------------------------------------
+
 
 class TestWriteConfig:
     def test_writes_valid_yaml(self, tmp_path):
@@ -326,6 +359,7 @@ class TestWriteConfig:
 # _write_metadata()
 # ---------------------------------------------------------------
 
+
 class TestWriteMetadata:
     def test_writes_valid_json_with_required_fields(self, tmp_path):
         data_dir = tmp_path / "data"
@@ -333,8 +367,12 @@ class TestWriteMetadata:
         project_root = tmp_path / "my-project"
         project_root.mkdir()
 
-        with patch("mcp_server.paths._sanitize_path_key", return_value="test_key"), \
-             patch("mcp_server.paths._get_git_remote_url", return_value="git@github.com:test/repo.git"):
+        with patch(
+            "mcp_server.paths._sanitize_path_key", return_value="test_key"
+        ), patch(
+            "mcp_server.paths._get_git_remote_url",
+            return_value="git@github.com:test/repo.git",
+        ):
             _write_metadata(data_dir, project_root)
 
         meta_path = data_dir / "metadata.json"
@@ -346,6 +384,7 @@ class TestWriteMetadata:
         assert meta["git_remote"] == "git@github.com:test/repo.git"
         assert meta["original_path"] == str(project_root)
         from mcp_server import __version__
+
         assert meta["version"] == __version__
         assert meta["auto_initialized"] is True
         assert "created_at" in meta
@@ -356,8 +395,9 @@ class TestWriteMetadata:
         project_root = tmp_path / "proj"
         project_root.mkdir()
 
-        with patch("mcp_server.paths._sanitize_path_key", return_value="k"), \
-             patch("mcp_server.paths._get_git_remote_url", return_value=""):
+        with patch("mcp_server.paths._sanitize_path_key", return_value="k"), patch(
+            "mcp_server.paths._get_git_remote_url", return_value=""
+        ):
             _write_metadata(data_dir, project_root)
 
         raw = (data_dir / "metadata.json").read_text()
@@ -368,6 +408,7 @@ class TestWriteMetadata:
 # ---------------------------------------------------------------
 # _register_global()
 # ---------------------------------------------------------------
+
 
 class TestRegisterGlobal:
     def test_registers_in_global_db(self, tmp_path):
@@ -383,9 +424,9 @@ class TestRegisterGlobal:
         project_root.mkdir()
 
         mock_gdb = MagicMock()
-        with patch("indexer.global_db.GlobalDB", return_value=mock_gdb), \
-             patch("mcp_server.paths.get_global_db_path", return_value=tmp_path / "global.db"), \
-             patch("mcp_server.paths._get_git_remote_url", return_value="git@host:r.git"):
+        with patch("indexer.global_db.GlobalDB", return_value=mock_gdb), patch(
+            "mcp_server.paths.get_global_db_path", return_value=tmp_path / "global.db"
+        ), patch("mcp_server.paths._get_git_remote_url", return_value="git@host:r.git"):
             _register_global(data_dir, project_root, DEFAULT_DETECTED)
 
         mock_gdb.register_project.assert_called_once_with(
@@ -411,9 +452,11 @@ class TestRegisterGlobal:
         project_root = tmp_path / "proj"
         project_root.mkdir()
 
-        with patch("indexer.global_db.GlobalDB", side_effect=RuntimeError("DB error")), \
-             patch("mcp_server.paths.get_global_db_path", return_value=tmp_path / "g.db"), \
-             patch("mcp_server.paths._get_git_remote_url", return_value=""):
+        with patch(
+            "indexer.global_db.GlobalDB", side_effect=RuntimeError("DB error")
+        ), patch(
+            "mcp_server.paths.get_global_db_path", return_value=tmp_path / "g.db"
+        ), patch("mcp_server.paths._get_git_remote_url", return_value=""):
             # Should NOT raise
             _register_global(data_dir, project_root, DEFAULT_DETECTED)
 
@@ -421,6 +464,7 @@ class TestRegisterGlobal:
 # ---------------------------------------------------------------
 # Background thread lifecycle
 # ---------------------------------------------------------------
+
 
 class TestBackgroundThread:
     def test_thread_is_daemon(self, tmp_path):
@@ -430,9 +474,11 @@ class TestBackgroundThread:
         data_dir = tmp_path / "data"
         data_dir.mkdir()
 
-        with patch("mcp_server.paths.get_project_root", return_value=project_root), \
-             patch("mcp_server.paths.get_data_dir", return_value=data_dir), \
-             _bg_init_patches(DEFAULT_DETECTED):
+        with patch(
+            "mcp_server.paths.get_project_root", return_value=project_root
+        ), patch(
+            "mcp_server.paths.get_data_dir", return_value=data_dir
+        ), _bg_init_patches(DEFAULT_DETECTED):
             ensure_project_initialized(project_root)
 
         assert ai._indexing_thread is not None
@@ -453,7 +499,10 @@ class TestBackgroundThread:
         assert ai._progress["status"] == "ready"
 
     def test_creates_directory_structure(self, tmp_path):
-        """Background init creates graph/changesets, codeindex, and logs dirs."""
+        """Background init creates graph, codeindex, and logs dirs.
+
+        v2.2.0+: changesets sub-dir no longer created (feature removed).
+        """
         project_root = tmp_path / "proj"
         project_root.mkdir()
         data_dir = tmp_path / "data"
@@ -463,7 +512,7 @@ class TestBackgroundThread:
             ai._start_time = time.monotonic()
             _run_background_init(project_root, data_dir)
 
-        assert (data_dir / "graph" / "changesets").is_dir()
+        assert (data_dir / "graph").is_dir()
         assert (data_dir / "codeindex").is_dir()
         assert (data_dir / "logs").is_dir()
 
@@ -471,6 +520,7 @@ class TestBackgroundThread:
 # ---------------------------------------------------------------
 # ChromaDB not installed -> skips semantic index
 # ---------------------------------------------------------------
+
 
 class TestChromaDBNotInstalled:
     def test_import_error_skips_gracefully(self, tmp_path):
@@ -481,8 +531,11 @@ class TestChromaDBNotInstalled:
         data_dir.mkdir()
 
         fake_files = [Path("a.py"), Path("b.py")]
-        with _bg_init_patches(DEFAULT_DETECTED, discover_return=fake_files,
-                              index_side_effect=ImportError("No chromadb")):
+        with _bg_init_patches(
+            DEFAULT_DETECTED,
+            discover_return=fake_files,
+            index_side_effect=ImportError("No chromadb"),
+        ):
             ai._start_time = time.monotonic()
             _run_background_init(project_root, data_dir)
 
@@ -494,6 +547,7 @@ class TestChromaDBNotInstalled:
 # Graph generation failure -> still marks ready
 # ---------------------------------------------------------------
 
+
 class TestGraphGenerationFailure:
     def test_graph_failure_still_reaches_ready(self, tmp_path):
         """If graph generation throws, the init still completes with status=ready."""
@@ -502,8 +556,9 @@ class TestGraphGenerationFailure:
         data_dir = tmp_path / "data"
         data_dir.mkdir()
 
-        with _bg_init_patches(DEFAULT_DETECTED,
-                              graph_side_effect=RuntimeError("Graph failed")):
+        with _bg_init_patches(
+            DEFAULT_DETECTED, graph_side_effect=RuntimeError("Graph failed")
+        ):
             ai._start_time = time.monotonic()
             _run_background_init(project_root, data_dir)
 
@@ -515,6 +570,7 @@ class TestGraphGenerationFailure:
 # ---------------------------------------------------------------
 # Progress updates from background thread
 # ---------------------------------------------------------------
+
 
 class TestProgressUpdates:
     def test_not_started_to_initializing(self):
@@ -563,8 +619,10 @@ class TestProgressUpdates:
         data_dir = tmp_path / "data"
         data_dir.mkdir()
 
-        with patch("mcp_server.detect.auto_detect_project",
-                   side_effect=RuntimeError("Detect failed")):
+        with patch(
+            "mcp_server.detect.auto_detect_project",
+            side_effect=RuntimeError("Detect failed"),
+        ):
             ai._start_time = time.monotonic()
             _run_background_init(project_root, data_dir)
 
@@ -575,6 +633,7 @@ class TestProgressUpdates:
 # ---------------------------------------------------------------
 # InitStatus dataclass
 # ---------------------------------------------------------------
+
 
 class TestInitStatusDataclass:
     def test_defaults(self):
@@ -593,6 +652,7 @@ class TestInitStatusDataclass:
 # exception branches (lines 164-165, 176-181)
 # ---------------------------------------------------------------
 
+
 class TestBackgroundInitExceptionBranches:
     def test_discover_source_files_exception_continues(self, tmp_path):
         """When discover_source_files raises, init uses empty file list and
@@ -602,11 +662,14 @@ class TestBackgroundInitExceptionBranches:
         data_dir = tmp_path / "data"
         data_dir.mkdir()
 
-        with _bg_init_patches(DEFAULT_DETECTED,
-                              discover_return=None,
-                              index_side_effect=ImportError("no chromadb")), \
-             patch("mcp_server.gitignore.discover_source_files",
-                   side_effect=Exception("discover failed")):
+        with _bg_init_patches(
+            DEFAULT_DETECTED,
+            discover_return=None,
+            index_side_effect=ImportError("no chromadb"),
+        ), patch(
+            "mcp_server.gitignore.discover_source_files",
+            side_effect=Exception("discover failed"),
+        ):
             ai._start_time = time.monotonic()
             _run_background_init(project_root, data_dir)
 
@@ -622,9 +685,11 @@ class TestBackgroundInitExceptionBranches:
         data_dir.mkdir()
 
         fake_files = [Path("src/a.py"), Path("src/b.py")]
-        with _bg_init_patches(DEFAULT_DETECTED,
-                              discover_return=fake_files,
-                              index_side_effect=ImportError("No chromadb")):
+        with _bg_init_patches(
+            DEFAULT_DETECTED,
+            discover_return=fake_files,
+            index_side_effect=ImportError("No chromadb"),
+        ):
             ai._start_time = time.monotonic()
             _run_background_init(project_root, data_dir)
 
@@ -641,9 +706,11 @@ class TestBackgroundInitExceptionBranches:
         data_dir.mkdir()
 
         fake_files = [Path("src/a.py")]
-        with _bg_init_patches(DEFAULT_DETECTED,
-                              discover_return=fake_files,
-                              index_side_effect=RuntimeError("unexpected error")):
+        with _bg_init_patches(
+            DEFAULT_DETECTED,
+            discover_return=fake_files,
+            index_side_effect=RuntimeError("unexpected error"),
+        ):
             ai._start_time = time.monotonic()
             _run_background_init(project_root, data_dir)
 
@@ -654,6 +721,7 @@ class TestBackgroundInitExceptionBranches:
 # ---------------------------------------------------------------
 # v1.8.1 — _run_background_init refuses $HOME / system dirs
 # ---------------------------------------------------------------
+
 
 class TestRunBackgroundInitRefusesInvalidRoots:
     """Regression for the v1.8.0 production crash: an MCP tool call from

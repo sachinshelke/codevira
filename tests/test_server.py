@@ -571,7 +571,7 @@ class TestCallToolAdditionalRoutes:
 
     def test_dispatch_get_session_context(self):
         """get_session_context dispatches with no arguments."""
-        sentinel = {"roadmap": {}, "changesets": [], "rules": []}
+        sentinel = {"roadmap": {}, "rules": []}
         with patch(
             "mcp_server.server.learning_get_session_context", return_value=sentinel
         ) as mock_fn, patch("mcp_server.auto_init.ensure_project_initialized"):
@@ -605,124 +605,8 @@ class TestCallToolAdditionalRoutes:
         mock_fn.assert_called_once_with(format="dot", scope="src/services/")
         assert len(result) == 1
 
-    def test_dispatch_start_changeset(self):
-        """start_changeset dispatches with all required args."""
-        sentinel = {"changeset_id": "auth-refactor", "status": "open"}
-        with patch(
-            "mcp_server.server.start_changeset", return_value=sentinel
-        ) as mock_fn, patch("mcp_server.auto_init.ensure_project_initialized"):
-            result = _run(
-                call_tool(
-                    "start_changeset",
-                    {
-                        "changeset_id": "auth-refactor",
-                        "description": "Refactor auth module",
-                        "files": ["src/auth.py", "src/middleware.py"],
-                    },
-                )
-            )
-        mock_fn.assert_called_once_with(
-            "auth-refactor",
-            "Refactor auth module",
-            ["src/auth.py", "src/middleware.py"],
-            trigger="medium_change",
-        )
-        assert len(result) == 1
-        parsed = json.loads(result[0].text)
-        assert parsed["changeset_id"] == "auth-refactor"
-
-    def test_dispatch_start_changeset_with_trigger(self):
-        """start_changeset passes trigger when provided."""
-        sentinel = {"changeset_id": "fix", "status": "open"}
-        with patch(
-            "mcp_server.server.start_changeset", return_value=sentinel
-        ) as mock_fn, patch("mcp_server.auto_init.ensure_project_initialized"):
-            _run(
-                call_tool(
-                    "start_changeset",
-                    {
-                        "changeset_id": "fix",
-                        "description": "Small fix",
-                        "files": ["a.py"],
-                        "trigger": "small_fix",
-                    },
-                )
-            )
-        mock_fn.assert_called_once_with(
-            "fix", "Small fix", ["a.py"], trigger="small_fix"
-        )
-
-    def test_dispatch_complete_changeset(self):
-        """complete_changeset dispatches with changeset_id and decisions."""
-        sentinel = {"status": "completed"}
-        with patch(
-            "mcp_server.server.complete_changeset", return_value=sentinel
-        ) as mock_fn, patch("mcp_server.auto_init.ensure_project_initialized"):
-            result = _run(
-                call_tool(
-                    "complete_changeset",
-                    {
-                        "changeset_id": "auth-refactor",
-                        "decisions": ["Kept retry logic", "Added timeout"],
-                    },
-                )
-            )
-        mock_fn.assert_called_once_with(
-            "auth-refactor", ["Kept retry logic", "Added timeout"]
-        )
-        assert len(result) == 1
-        parsed = json.loads(result[0].text)
-        assert parsed["status"] == "completed"
-
-    def test_dispatch_update_changeset_progress(self):
-        """update_changeset_progress dispatches with changeset_id and file_done."""
-        sentinel = {"status": "updated"}
-        with patch(
-            "mcp_server.server.update_changeset_progress", return_value=sentinel
-        ) as mock_fn, patch("mcp_server.auto_init.ensure_project_initialized"):
-            result = _run(
-                call_tool(
-                    "update_changeset_progress",
-                    {
-                        "changeset_id": "auth-refactor",
-                        "file_done": "src/auth.py",
-                    },
-                )
-            )
-        mock_fn.assert_called_once_with("auth-refactor", "src/auth.py", blocker=None)
-        assert len(result) == 1
-
-    def test_dispatch_update_changeset_progress_with_blocker(self):
-        """update_changeset_progress passes blocker when provided."""
-        sentinel = {"status": "blocked"}
-        with patch(
-            "mcp_server.server.update_changeset_progress", return_value=sentinel
-        ) as mock_fn, patch("mcp_server.auto_init.ensure_project_initialized"):
-            _run(
-                call_tool(
-                    "update_changeset_progress",
-                    {
-                        "changeset_id": "auth-refactor",
-                        "file_done": "src/auth.py",
-                        "blocker": "Needs API review",
-                    },
-                )
-            )
-        mock_fn.assert_called_once_with(
-            "auth-refactor", "src/auth.py", blocker="Needs API review"
-        )
-
-    def test_dispatch_list_open_changesets(self):
-        """list_open_changesets dispatches with no arguments."""
-        sentinel = {"changesets": []}
-        with patch(
-            "mcp_server.server.list_open_changesets", return_value=sentinel
-        ) as mock_fn, patch("mcp_server.auto_init.ensure_project_initialized"):
-            result = _run(call_tool("list_open_changesets", {}))
-        mock_fn.assert_called_once()
-        assert len(result) == 1
-        parsed = json.loads(result[0].text)
-        assert parsed == sentinel
+    # v2.2.0+: changeset dispatch tests removed (whole feature deleted —
+    # never reached real usage per the 2026-05-22 audit).
 
     def test_dispatch_get_playbook(self):
         """get_playbook dispatches with task_type."""

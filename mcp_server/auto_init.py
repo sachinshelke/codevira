@@ -12,6 +12,7 @@ initialized yet, this module:
 Tools check ensure_project_initialized() before dispatching. If already
 initialized, the call is a no-op (< 1ms overhead via a flag).
 """
+
 from __future__ import annotations
 
 import logging
@@ -30,7 +31,7 @@ _init_lock = threading.Lock()
 _init_started: bool = False
 _indexing_thread: threading.Thread | None = None
 _progress: dict = {
-    "status": "not_started",   # not_started | initializing | indexing | ready | error
+    "status": "not_started",  # not_started | initializing | indexing | ready | error
     "files_indexed": 0,
     "total_files": 0,
     "elapsed_seconds": 0.0,
@@ -43,8 +44,9 @@ _start_time: float | None = None
 @dataclass
 class InitStatus:
     """Result of ensure_project_initialized()."""
-    ready: bool           # True if the project was already initialized
-    indexing: bool        # True if background indexing is running now
+
+    ready: bool  # True if the project was already initialized
+    indexing: bool  # True if background indexing is running now
     files_indexed: int = 0
     total_files: int = 0
 
@@ -96,7 +98,12 @@ def ensure_project_initialized(project_root: Path | None = None) -> InitStatus:
                     total_files=_progress["total_files"],
                 )
 
-        from mcp_server.paths import get_project_root, get_data_dir, is_invalid_project_root
+        from mcp_server.paths import (
+            get_project_root,
+            get_data_dir,
+            is_invalid_project_root,
+        )
+
         root = project_root or get_project_root()
         data_dir = get_data_dir()
 
@@ -114,6 +121,7 @@ def ensure_project_initialized(project_root: Path | None = None) -> InitStatus:
         if not rejection:
             try:
                 from mcp_server._repair_init import repair_incomplete_init
+
                 repair_incomplete_init(data_dir, root)
             except Exception as e:
                 logger.warning("Bug 21a self-heal skipped: %s", e)
@@ -130,6 +138,7 @@ def ensure_project_initialized(project_root: Path | None = None) -> InitStatus:
         if graph_db.is_file():
             try:
                 import sqlite3 as _sqlite3
+
                 _conn = _sqlite3.connect(str(graph_db))
                 try:
                     row = _conn.execute("SELECT COUNT(*) FROM nodes").fetchone()
@@ -162,7 +171,7 @@ def ensure_project_initialized(project_root: Path | None = None) -> InitStatus:
         )
         _indexing_thread.start()
         _init_started = True  # Prevent duplicate init threads — thread completion
-                               # is tracked via _progress["status"], not this flag.
+        # is tracked via _progress["status"], not this flag.
 
         return InitStatus(ready=False, indexing=True)
 
@@ -179,6 +188,7 @@ def _run_background_init(project_root: Path, data_dir: Path) -> None:
         # and return early — the MCP server's fast path checks the flag and
         # won't loop on retries.
         from mcp_server.paths import is_invalid_project_root
+
         rejection = is_invalid_project_root(project_root)
         if rejection:
             logger.warning("Auto-init refused: %s", rejection)
@@ -189,10 +199,11 @@ def _run_background_init(project_root: Path, data_dir: Path) -> None:
 
         # Step 1: Auto-detect project settings
         from mcp_server.detect import auto_detect_project
+
         detected = auto_detect_project(project_root)
 
         # Step 2: Create data directory structure
-        (data_dir / "graph" / "changesets").mkdir(parents=True, exist_ok=True)
+        (data_dir / "graph").mkdir(parents=True, exist_ok=True)
         (data_dir / "codeindex").mkdir(parents=True, exist_ok=True)
         (data_dir / "logs").mkdir(parents=True, exist_ok=True)
 
@@ -205,6 +216,7 @@ def _run_background_init(project_root: Path, data_dir: Path) -> None:
         # Invalidate the data-dir cache so get_data_dir() now returns the newly
         # created centralized directory instead of the pre-init default path.
         from mcp_server.paths import invalidate_data_dir_cache
+
         invalidate_data_dir_cache(project_root)
 
         # Step 5: Register in global.db
@@ -214,7 +226,10 @@ def _run_background_init(project_root: Path, data_dir: Path) -> None:
         _update_progress(status="indexing")
         try:
             from indexer.graph_generator import generate_graph_sqlite
-            generate_graph_sqlite(str(project_root), str(data_dir / "graph" / "graph.db"))
+
+            generate_graph_sqlite(
+                str(project_root), str(data_dir / "graph" / "graph.db")
+            )
             logger.info("Auto-init: graph generated for %s", project_root)
         except Exception as e:
             logger.warning("Auto-init: graph generation failed: %s", e)
@@ -222,6 +237,7 @@ def _run_background_init(project_root: Path, data_dir: Path) -> None:
         # Step 7: Count source files for progress tracking
         try:
             from mcp_server.gitignore import discover_source_files
+
             files = discover_source_files(project_root)
             _update_progress(total_files=len(files))
         except Exception:
@@ -232,14 +248,17 @@ def _run_background_init(project_root: Path, data_dir: Path) -> None:
         # race conditions with the file watcher.
         try:
             from indexer.index_codebase import start_background_full_index
+
             _update_progress(status="indexing")
             idx_thread = start_background_full_index()
             # Wait up to 5 minutes; if ChromaDB or embedding model hangs we still
             # surface "ready" so tool calls aren't blocked indefinitely.
             idx_thread.join(timeout=300)
             if idx_thread.is_alive():
-                logger.warning("Auto-init: semantic indexing timed out after 5 min; "
-                               "continuing in graph-only mode")
+                logger.warning(
+                    "Auto-init: semantic indexing timed out after 5 min; "
+                    "continuing in graph-only mode"
+                )
             _update_progress(files_indexed=len(files), status="ready")
         except ImportError:
             # ChromaDB not installed — graph-only mode is fine
@@ -248,8 +267,11 @@ def _run_background_init(project_root: Path, data_dir: Path) -> None:
             logger.warning("Auto-init: semantic indexing failed (non-fatal): %s", e)
             _update_progress(status="ready")
 
-        logger.info("Auto-init complete for %s (%.1fs)", project_root,
-                    time.monotonic() - (_start_time or 0))
+        logger.info(
+            "Auto-init complete for %s (%.1fs)",
+            project_root,
+            time.monotonic() - (_start_time or 0),
+        )
 
     except Exception as e:
         logger.error("Auto-init failed: %s", e)
@@ -264,6 +286,7 @@ def _update_progress(**kwargs) -> None:
 def _write_config(data_dir: Path, detected: dict, project_root: Path) -> None:
     """Write .codevira/config.yaml (or centralized equivalent)."""
     import yaml
+
     config = {
         "project": {
             "name": detected["name"],
@@ -280,6 +303,7 @@ def _write_config(data_dir: Path, detected: dict, project_root: Path) -> None:
 def _codevira_version() -> str:
     try:
         from mcp_server import __version__
+
         return __version__
     except Exception:
         return "unknown"
@@ -316,6 +340,7 @@ def _register_global(data_dir: Path, project_root: Path, detected: dict) -> None
     try:
         from indexer.global_db import GlobalDB
         from mcp_server.paths import get_global_db_path, _get_git_remote_url
+
         gdb = GlobalDB(get_global_db_path())
         gdb.register_project(
             path=str(project_root),

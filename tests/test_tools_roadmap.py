@@ -510,7 +510,6 @@ class TestLegacyMigration:
         legacy_roadmap = {
             "current_phase": 1,
             "next_action": "Finish bootstrapping",
-            "open_changesets": ["cs-1"],
             "phases": [
                 {
                     "number": 1,
@@ -534,7 +533,6 @@ class TestLegacyMigration:
 
         assert compact["current_phase"]["number"] == 1
         assert compact["current_phase"]["name"] == "Bootstrap"
-        assert compact["current_phase"]["open_changesets"] == ["cs-1"]
         assert compact["upcoming"][0]["phase"] == 2
         assert full["current_phase"]["number"] == 1
         assert full["upcoming_phases"][0]["number"] == 2

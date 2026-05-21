@@ -10,8 +10,6 @@ Full planning lifecycle:
   defer_phase()              → move an upcoming phase to deferred
   complete_phase()           → mark current phase done, advance to next
   update_next_action()       → update next_action at session end
-  add_open_changeset()       → register active changeset in current phase
-  remove_open_changeset()    → resolve changeset from current phase
 """
 
 from __future__ import annotations
@@ -108,10 +106,6 @@ def _normalize_current_phase(raw_current: Any, data: dict[str, Any]) -> dict[str
             "or update_next_action() to describe what needs doing next."
         ),
     )
-    normalized["open_changesets"] = _list_or_empty(
-        normalized.get("open_changesets", data.get("open_changesets", []))
-    )
-
     return normalized
 
 
@@ -199,7 +193,6 @@ def _create_stub_roadmap() -> dict:
                 "Define your first phase: use add_phase() to queue upcoming work, "
                 "or update_next_action() to describe what needs doing next."
             ),
-            "open_changesets": [],
             "description": "Auto-generated stub — update this to reflect your project.",
         },
         "upcoming_phases": [],
@@ -223,7 +216,7 @@ def _save_roadmap(data: dict) -> None:
 
 def get_roadmap() -> dict[str, Any]:
     """
-    Return current project state: phase, next action, open changesets, upcoming work.
+    Return current project state: phase, next action, upcoming work.
     Call this at the start of every session for quick orientation.
 
     Returns a compact summary — use get_full_roadmap() for planning sessions.
@@ -240,7 +233,6 @@ def get_roadmap() -> dict[str, Any]:
             "name": current.get("name"),
             "status": current.get("status"),
             "next_action": current.get("next_action"),
-            "open_changesets": current.get("open_changesets", []),
             "description": current.get("description", ""),
         },
         "upcoming": [
@@ -394,7 +386,6 @@ def add_phase(
     placeholder_signals = (
         current.get("status") == "pending"
         and current.get("name") in ("Getting Started", "Initial Development")
-        and not (current.get("open_changesets") or [])
         and "Auto-generated stub" in str(current.get("description", ""))
     )
     if placeholder_signals and str(current.get("number")) == str(phase):
@@ -406,7 +397,6 @@ def add_phase(
             "priority": priority,
             "description": description,
             "goal": description,
-            "open_changesets": [],
             "next_action": f"Start work on phase {phase}: {name}",
             **({"files": files} if files else {}),
             **({"effort": effort} if effort else {}),
@@ -672,7 +662,6 @@ def complete_phase(
                     "next_action": f"Begin {next_phase['name']}: {next_phase.get('description', '')}".strip(
                         ": "
                     ),
-                    "open_changesets": [],
                     "description": next_phase.get("description", ""),
                     "goal": next_phase.get("goal", next_phase.get("description", "")),
                 }
@@ -736,7 +725,6 @@ def complete_phase(
             "next_action": f"Begin {next_phase['name']}: {next_phase.get('description', '')}".strip(
                 ": "
             ),
-            "open_changesets": [],
             "description": next_phase.get("description", ""),
             "goal": next_phase.get("goal", next_phase.get("description", "")),
         }
@@ -748,7 +736,6 @@ def complete_phase(
             "name": "No upcoming phases",
             "status": "pending",
             "next_action": "Add new phases with add_phase() or plan the next milestone.",
-            "open_changesets": [],
         }
         advanced_to = None
 
@@ -789,7 +776,6 @@ def bulk_import_phases(phases: list[dict[str, Any]]) -> dict[str, Any]:
     placeholder_signals = (
         current.get("status") == "pending"
         and current.get("name") in ("Getting Started", "Initial Development")
-        and not (current.get("open_changesets") or [])
         and "Auto-generated stub" in str(current.get("description", ""))
     )
 
@@ -810,7 +796,6 @@ def bulk_import_phases(phases: list[dict[str, Any]]) -> dict[str, Any]:
             "number": None,
             "name": "(placeholder cleared by bulk_import_phases)",
             "status": "pending",
-            "open_changesets": [],
         }
 
     imported = 0

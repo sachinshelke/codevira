@@ -541,43 +541,21 @@ _WEAK_FOCUS_TOKENS = frozenset(
 )
 
 
-def _infer_focus(
-    open_changesets: list[dict], current_phase: dict
-) -> tuple[str | None, str | None]:
+def _infer_focus(current_phase: dict) -> tuple[str | None, str | None]:
     """Infer what the agent is currently focused on.
+
+    v2.2.0+: changesets removed. Focus inference now uses only the
+    current phase's ``next_action`` field.
 
     Returns ``(focus, focus_source)``:
       - ``focus`` is a query string suitable for ``db.search_decisions()``
-        (file path or extracted keywords), or None if no confident signal.
-      - ``focus_source`` is ``"open_changeset:<id>"``, ``"next_action"``, or
-        None — exposed to the agent so it can see *why* it got these
-        decisions and override if inference went wrong.
-
-    Priority order (first hit wins):
-      1. Open changesets with ``files_pending`` — use the first file of the
-         most recently created changeset. The list is already filtered to
-         in_progress; we sort by ``created`` desc to tie-break.
-      2. Current phase ``next_action`` with a strong signal — see
-         ``_WEAK_FOCUS_TOKENS``.
-      3. Otherwise ``(None, None)``.
+        (extracted keywords), or None if no confident signal.
+      - ``focus_source`` is ``"next_action"`` or None — exposed to the
+        agent so it can see *why* it got these decisions.
     """
-    if open_changesets:
-        # Sort by `created` (ISO string) desc. No `last_updated` field exists
-        # on the changeset payload, so `created` is the best proxy.
-        ranked = sorted(
-            open_changesets,
-            key=lambda c: c.get("created") or "",
-            reverse=True,
-        )
-        for cs in ranked:
-            pending = cs.get("files_pending") or []
-            if pending:
-                return pending[0], f"open_changeset:{cs.get('id')}"
-
     next_action = (current_phase or {}).get("next_action") or ""
     tokens = next_action.lower().split()
     if len(tokens) >= 4 and not all(t in _WEAK_FOCUS_TOKENS for t in tokens):
-        # Strong signal: extract tokens >= 4 chars as the query
         keywords = " ".join(t for t in tokens if len(t) >= 4)
         if keywords:
             return keywords, "next_action"
@@ -599,11 +577,10 @@ def get_session_context(since: str | None = None) -> dict:
 
     Fields returned:
       current_phase     - {name, next_action, status}
-      open_changesets   - up to 3 most recent, minimal fields
       recent_sessions   - up to 2 most recent, summary truncated to 100 chars
       recent_decisions  - up to 3 focus-weighted decisions (v1.8), truncated to 120 chars
       focus_source      - v1.8: why recent_decisions were chosen
-                          ("open_changeset:<id>" | "next_action" | null)
+                          ("next_action" | null)
       confidence        - {positive, negative, neutral, overall_rate}
       top_signals       - combined preferences + rules, top 3 each
       hint              - instructions for follow-up calls
@@ -635,29 +612,9 @@ def get_session_context(since: str | None = None) -> dict:
         except Exception:
             pass
 
-        # Raw changesets (full payload) — kept for focus inference.
-        # Trimmed shape (below) is what goes on the response.
-        raw_changesets: list[dict] = []
-        try:
-            from mcp_server.tools.changesets import list_open_changesets
-
-            raw_changesets = list_open_changesets().get("open_changesets", []) or []
-        except Exception:
-            pass
-
-        open_changesets = [
-            {
-                "id": c.get("id"),
-                "description": _truncate(c.get("description"), 100),
-                "files_pending_count": len(c.get("files_pending", []) or []),
-            }
-            for c in raw_changesets[:3]
-        ]
-
-        # v1.8: Focus-weighted `recent_decisions` ranking
-        # v2.1.2 Item 25: thread `since` through to db.search_decisions (server-
-        # side filter) and post-filter the chronological pad path.
-        focus, focus_source = _infer_focus(raw_changesets, current_phase)
+        # v2.2.0+: changesets removed (never reached real usage). Focus
+        # inference uses only the current phase's next_action.
+        focus, focus_source = _infer_focus(current_phase)
         recent_decisions: list[dict] = []
         if focus:
             try:
@@ -739,7 +696,6 @@ def get_session_context(since: str | None = None) -> dict:
         return {
             "current_phase": current_phase,
             "drift_warning": drift_warning,
-            "open_changesets": open_changesets,
             "recent_sessions": [
                 {
                     "session_id": s["session_id"],

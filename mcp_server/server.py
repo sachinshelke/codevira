@@ -1,18 +1,15 @@
 """
 Codevira MCP Server
 
-Exposes the project context graph, roadmap, code index, and changeset tracker
-as MCP tools — usable by any MCP-compatible AI coding tool.
+Exposes the project context graph, roadmap, and code index as MCP tools —
+usable by any MCP-compatible AI coding tool.
 
 Tools:
   get_node(file_path)                    → graph node: role, connections, rules
   get_impact(file_path)                  → blast radius before touching a file
-  get_roadmap()                          → current phase, next action, open changesets
+  get_roadmap()                          → current phase, next action, recent decisions
   # search_codebase removed in v2.2.0 — agents grep + Read directly
-  list_open_changesets()                 → check for unfinished multi-file work
-  start_changeset(id, desc, files)       → begin tracking a multi-file fix
-  update_changeset_progress(id, file)    → mark a file done within a changeset
-  complete_changeset(id, decisions)      → mark changeset done, record decisions
+  # changesets removed in v2.2.0 — never reached real usage
   update_node(file_path, changes)        → update graph node after session
   update_next_action(next_action)        → update roadmap next action
   refresh_graph(file_paths?)             → auto-generate graph nodes for new files
@@ -86,12 +83,6 @@ from mcp_server.tools.search import (
 
 # v2.2.0: search_codebase removed. AI agents grep + read files; semantic
 # code search was the source of 90%+ of v2.1.x disk + bug surface.
-from mcp_server.tools.changesets import (
-    start_changeset,
-    update_changeset_progress,
-    complete_changeset,
-    list_open_changesets,
-)
 from mcp_server.tools.playbook import get_playbook
 from mcp_server.tools.code_reader import get_signature, get_code
 from mcp_server.tools.learning import (
@@ -303,7 +294,7 @@ async def list_tools() -> list[Tool]:
             name="get_roadmap",
             description=(
                 "Get current project state: phase number, name, status, next action, "
-                "open changesets, and upcoming phases. Call at the START of every session."
+                "and upcoming phases. Call at the START of every session."
             ),
             inputSchema={"type": "object", "properties": {}},
         ),
@@ -485,80 +476,6 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
-            name="list_open_changesets",
-            description=(
-                "List all in-progress multi-file changesets. "
-                "Call at session start to check for unfinished work from previous sessions."
-            ),
-            inputSchema={"type": "object", "properties": {}},
-        ),
-        Tool(
-            name="start_changeset",
-            description=(
-                "Begin tracking a multi-file fix. Call BEFORE touching any files. "
-                "Creates a changeset record for cross-session continuity."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "changeset_id": {
-                        "type": "string",
-                        "description": "Short slug (e.g. 'auth-refactor')",
-                    },
-                    "description": {"type": "string"},
-                    "files": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "All files that will be modified",
-                    },
-                    "trigger": {
-                        "type": "string",
-                        "enum": ["small_fix", "medium_change", "large_change"],
-                        "default": "medium_change",
-                    },
-                },
-                "required": ["changeset_id", "description", "files"],
-            },
-        ),
-        Tool(
-            name="update_changeset_progress",
-            description="Mark a file as done within an active changeset.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "changeset_id": {"type": "string"},
-                    "file_done": {
-                        "type": "string",
-                        "description": "File path that was completed",
-                    },
-                    "blocker": {
-                        "type": "string",
-                        "description": "Optional blocker note if session ending early",
-                    },
-                },
-                "required": ["changeset_id", "file_done"],
-            },
-        ),
-        Tool(
-            name="complete_changeset",
-            description=(
-                "Mark a changeset as complete and record key decisions. "
-                "Call at session end after all files in the changeset are done."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "changeset_id": {"type": "string"},
-                    "decisions": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Key decisions made (preserved for future agents)",
-                    },
-                },
-                "required": ["changeset_id", "decisions"],
-            },
-        ),
-        Tool(
             name="update_node",
             description=(
                 "Update a graph node after modifying a file. "
@@ -665,7 +582,7 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="search_decisions",
             description=(
-                "Search past decisions across sessions, changesets, and roadmap phases. "
+                "Search past decisions across sessions and roadmap phases. "
                 "v2.1.1: hybrid BM25+semantic with RRF. v2.1.2 Item 1: applies a "
                 "self-calibrating similarity threshold so gibberish queries return "
                 "zero results (not 'least bad' matches). v2.1.2 Item 28: pass "
@@ -1268,7 +1185,7 @@ async def list_tools() -> list[Tool]:
             name="get_session_context",
             description=(
                 "Single 'catch me up' call for cross-tool continuity. "
-                "Returns current roadmap phase, open changesets, recent decisions with confidence, "
+                "Returns current roadmap phase, recent decisions with confidence, "
                 "learned preferences, and active rules — everything a new session needs. "
                 "Call this at the START of every session instead of multiple separate calls. "
                 "Works seamlessly across AI tools: Cursor, Claude Code, Windsurf, Antigravity."
@@ -1481,26 +1398,6 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 ),
                 "removed_in": "v2.2.0",
             }
-        elif name == "list_open_changesets":
-            result = list_open_changesets()
-        elif name == "start_changeset":
-            result = start_changeset(
-                arguments["changeset_id"],
-                arguments["description"],
-                arguments["files"],
-                trigger=arguments.get("trigger", "medium_change"),
-            )
-        elif name == "update_changeset_progress":
-            result = update_changeset_progress(
-                arguments["changeset_id"],
-                arguments["file_done"],
-                blocker=arguments.get("blocker"),
-            )
-        elif name == "complete_changeset":
-            result = complete_changeset(
-                arguments["changeset_id"],
-                arguments["decisions"],
-            )
         elif name == "update_node":
             result = update_node(
                 arguments["file_path"],

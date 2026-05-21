@@ -9,7 +9,6 @@ Single source of truth for WHERE every storage file lives:
     manifest.yaml
     outcomes.jsonl
     sessions.jsonl
-    changesets.jsonl
     preferences.jsonl
     learned_rules.jsonl
     roadmap.yaml
@@ -74,10 +73,6 @@ def outcomes_path(project_root: Path | None = None) -> Path:
 
 def sessions_path(project_root: Path | None = None) -> Path:
     return codevira_dir(project_root) / "sessions.jsonl"
-
-
-def changesets_path(project_root: Path | None = None) -> Path:
-    return codevira_dir(project_root) / "changesets.jsonl"
 
 
 def preferences_path(project_root: Path | None = None) -> Path:

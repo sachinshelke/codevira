@@ -566,26 +566,9 @@ class TestGetSessionContext:
         # On failure current_phase stays empty dict
         assert result["current_phase"] == {}
 
-    def test_session_context_changesets_failure_graceful(self, tmp_path, monkeypatch):
-        """If changesets import fails, session_context should still work."""
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        db.close()
-
-        mock_roadmap = {
-            "current_phase": {
-                "name": "Phase 1",
-                "next_action": "Do",
-                "status": "pending",
-            },
-        }
-        with patch("mcp_server.tools.roadmap.get_roadmap", return_value=mock_roadmap):
-            with patch(
-                "mcp_server.tools.changesets.list_open_changesets",
-                side_effect=Exception("broken"),
-            ):
-                result = learning.get_session_context()
-
-        assert result["open_changesets"] == []
+    # v2.2.0+: test_session_context_changesets_failure_graceful removed
+    # (the changesets feature was deleted; this test exercised the
+    # graceful-fallback for an import path that no longer exists).
 
     def test_session_context_empty_db(self, tmp_path, monkeypatch):
         _, _, db = _setup_project(tmp_path, monkeypatch)
@@ -594,11 +577,7 @@ class TestGetSessionContext:
         with patch(
             "mcp_server.tools.roadmap.get_roadmap", side_effect=Exception("no roadmap")
         ):
-            with patch(
-                "mcp_server.tools.changesets.list_open_changesets",
-                side_effect=Exception("no changesets"),
-            ):
-                result = learning.get_session_context()
+            result = learning.get_session_context()
 
         assert result["recent_sessions"] == []
         assert result["recent_decisions"] == []
@@ -817,16 +796,12 @@ class TestGetSessionContextExceptions:
 
         with patch(
             "mcp_server.tools.roadmap.get_roadmap", side_effect=Exception("no roadmap")
-        ), patch(
-            "mcp_server.tools.changesets.list_open_changesets",
-            side_effect=Exception("no changesets"),
         ):
             result = learning.get_session_context()
 
         assert result is not None
         assert "recent_sessions" in result
         assert result["current_phase"] == {}
-        assert result["open_changesets"] == []
 
 
 # =====================================================================
@@ -877,61 +852,21 @@ def _changeset(
 class TestOpenChangesetsKeyFixed:
     """Change 0: get_session_context() must read the real key."""
 
-    def test_open_changesets_key_fixed(self, tmp_path, monkeypatch):
-        """When the mock returns real shape, open_changesets is non-empty."""
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        db.close()
-
-        cs_payload = {
-            "open_changesets": [
-                _changeset("auth-refactor", ["src/auth.py", "src/user.py"]),
-            ],
-            "count": 1,
-            "warning": None,
-        }
-
-        with patch(
-            "mcp_server.tools.roadmap.get_roadmap", return_value={"current_phase": {}}
-        ), patch(
-            "mcp_server.tools.changesets.list_open_changesets", return_value=cs_payload
-        ):
-            result = learning.get_session_context()
-
-        assert len(result["open_changesets"]) == 1
-        assert result["open_changesets"][0]["id"] == "auth-refactor"
-        assert result["open_changesets"][0]["files_pending_count"] == 2
+    # v2.2.0+: test_open_changesets_key_fixed removed — the feature it
+    # tested (the open_changesets field of get_session_context) was
+    # deleted along with the rest of the changesets surface.
 
 
 class TestInferFocus:
-    """Change 1: _infer_focus priority rules."""
+    """v2.2.0+: _infer_focus uses only current_phase.next_action.
 
-    def test_focus_from_changeset(self):
-        cs = [_changeset("auth-refactor", ["src/auth.py", "src/user.py"])]
-        focus, source = learning._infer_focus(cs, {})
-        assert focus == "src/auth.py"
-        assert source == "open_changeset:auth-refactor"
-
-    def test_focus_prefers_most_recent_changeset(self):
-        cs = [
-            _changeset("old", ["src/old.py"], created="2026-01-01"),
-            _changeset("new", ["src/new.py"], created="2026-04-22"),
-        ]
-        focus, source = learning._infer_focus(cs, {})
-        assert focus == "src/new.py"
-        assert source == "open_changeset:new"
-
-    def test_focus_skips_changeset_with_no_pending_files(self):
-        cs = [
-            _changeset("empty", [], created="2026-04-22"),
-            _changeset("has-files", ["src/x.py"], created="2026-01-01"),
-        ]
-        focus, source = learning._infer_focus(cs, {})
-        assert focus == "src/x.py"
-        assert source == "open_changeset:has-files"
+    Changeset-based focus inference (priority 1 in v2.1.x) removed
+    along with the changesets feature per 2026-05-22 surface-cut audit.
+    """
 
     def test_focus_from_next_action(self):
         cp = {"next_action": "Refactor authentication middleware pipeline"}
-        focus, source = learning._infer_focus([], cp)
+        focus, source = learning._infer_focus(cp)
         assert source == "next_action"
         # All tokens >= 4 chars
         assert "refactor" in focus
@@ -941,18 +876,18 @@ class TestInferFocus:
 
     def test_focus_weak_signal_ignored_short(self):
         cp = {"next_action": "continue work"}
-        focus, source = learning._infer_focus([], cp)
+        focus, source = learning._infer_focus(cp)
         assert focus is None
         assert source is None
 
     def test_focus_weak_signal_ignored_stop_list_only(self):
         cp = {"next_action": "continue work fix todo"}
-        focus, source = learning._infer_focus([], cp)
+        focus, source = learning._infer_focus(cp)
         assert focus is None
         assert source is None
 
     def test_focus_none_when_no_signals(self):
-        focus, source = learning._infer_focus([], {})
+        focus, source = learning._infer_focus({})
         assert focus is None
         assert source is None
 
@@ -973,49 +908,9 @@ class TestSessionContextFocus:
         assert "focus_source" in result
         assert result["focus_source"] is None
 
-    def test_focus_source_reflects_changeset(self, tmp_path, monkeypatch):
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        _seed_full_project(db)
-        db.close()
-
-        cs = {
-            "open_changesets": [_changeset("api-work", ["src/api.py"])],
-            "count": 1,
-            "warning": None,
-        }
-        with patch(
-            "mcp_server.tools.roadmap.get_roadmap", return_value={"current_phase": {}}
-        ), patch("mcp_server.tools.changesets.list_open_changesets", return_value=cs):
-            result = learning.get_session_context()
-
-        assert result["focus_source"] == "open_changeset:api-work"
-        # Decisions ranked against "src/api.py" should surface api.py matches.
-        # Seed has 2 decisions touching src/api.py — both should appear.
-        api_matches = [
-            d for d in result["recent_decisions"] if d.get("file_path") == "src/api.py"
-        ]
-        assert len(api_matches) >= 1
-
-    def test_focus_pads_with_recent_when_few_matches(self, tmp_path, monkeypatch):
-        """Focus returning 0 matches → fall back to chronological 3."""
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        _seed_full_project(db)
-        db.close()
-
-        # Focus on a file that has NO decisions — should pad with recent.
-        cs = {
-            "open_changesets": [_changeset("unseen", ["src/unknown.py"])],
-            "count": 1,
-            "warning": None,
-        }
-        with patch(
-            "mcp_server.tools.roadmap.get_roadmap", return_value={"current_phase": {}}
-        ), patch("mcp_server.tools.changesets.list_open_changesets", return_value=cs):
-            result = learning.get_session_context()
-
-        # Seed has 3 decisions total → pads to 3
-        assert len(result["recent_decisions"]) == 3
-        assert result["focus_source"] == "open_changeset:unseen"
+    # v2.2.0+: test_focus_source_reflects_changeset removed
+    # (changeset-based focus inference is gone; only next_action is used).
+    # test_focus_pads_with_recent_when_few_matches: same reason.
 
     def test_focus_from_next_action_sets_source(self, tmp_path, monkeypatch):
         _, _, db = _setup_project(tmp_path, monkeypatch)

@@ -142,6 +142,11 @@ def record(
     except Exception as exc:  # noqa: BLE001
         logger.warning("decisions_store.record: FTS5 update failed: %s", exc)
 
+    # Phase D — regenerate AGENTS.md so other AI tools (Copilot, Codex,
+    # Cursor, Gemini, Factory, Amp, Windsurf, Zed, RooCode, Jules) see
+    # the new decision on their next prompt. Best-effort (P9).
+    _sync_agents_md_best_effort()
+
     return decision_id
 
 
@@ -206,6 +211,10 @@ def record_many(
                 did,
                 exc,
             )
+
+    # Phase D — single AGENTS.md regen for the whole batch (cheap; ~10ms).
+    if ids:
+        _sync_agents_md_best_effort()
 
     return ids, errors
 
@@ -419,7 +428,8 @@ def rebuild_indexes() -> None:
     """Full rebuild of manifest + digest + FTS5 from decisions.jsonl.
 
     Called after amendments (mark_protected, supersede) and on
-    ``codevira sync``.
+    ``codevira sync``. Also triggers an AGENTS.md regen so the slim
+    contract reflects the new state.
     """
     paths.ensure_dirs()
     try:
@@ -434,6 +444,20 @@ def rebuild_indexes() -> None:
         fts5_index.rebuild_from_jsonl(paths.decisions_path(), paths.fts5_path())
     except Exception as exc:  # noqa: BLE001
         logger.warning("decisions_store.rebuild_indexes: FTS5 failed: %s", exc)
+    _sync_agents_md_best_effort()
+
+
+def _sync_agents_md_best_effort() -> None:
+    """Regenerate AGENTS.md from current decisions. Never raises (P9)."""
+    try:
+        from mcp_server.storage import agents_md_generator
+
+        agents_md_generator.regenerate()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "decisions_store._sync_agents_md_best_effort: AGENTS.md regen failed: %s",
+            exc,
+        )
 
 
 # ─── Helpers ────────────────────────────────────────────────────────

@@ -1499,6 +1499,35 @@ def main() -> None:
         help="Show what would be done without writing",
     )
 
+    # 2026-05-19 v2.2.0 Phase D: `codevira sync` — regenerate AGENTS.md
+    # + manifest + digest + FTS5 from decisions.jsonl. Manual / recovery
+    # path; every record_decision triggers this synchronously by default.
+    sync_parser = subparsers.add_parser(
+        "sync",
+        help="Regenerate AGENTS.md + indexes from .codevira/decisions.jsonl",
+        description=(
+            "Regenerate derived state from the canonical "
+            "`.codevira/decisions.jsonl`: rebuilds `.codevira/manifest.yaml`, "
+            "`.codevira/digest.jsonl`, `.codevira-cache/fts5.sqlite`, and "
+            "regenerates the codevira-managed block in `AGENTS.md` (5 KB "
+            "cap, marker-bounded — content outside `<!-- codevira:begin -->` "
+            "and `<!-- codevira:end -->` is preserved). Idempotent; safe "
+            "to run any time. Normally not needed because every "
+            "record_decision triggers regen synchronously."
+        ),
+    )
+    sync_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be regenerated without writing",
+    )
+    sync_parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Print per-step counts",
+    )
+
     # 2026-05-18 v2.1.2 Item 1: `codevira calibrate` — manual re-fit of
     # similarity thresholds. Auto-recalibration also runs every 10
     # decisions added, but power users may want explicit control.
@@ -1823,6 +1852,15 @@ def main() -> None:
             fmt=getattr(args, "format", "json"),
             out=getattr(args, "out", None),
             dry_run=getattr(args, "dry_run", False),
+        )
+        sys.exit(rc)
+    elif args.command == "sync":
+        # 2026-05-19 v2.2.0 Phase D: regenerate AGENTS.md + indexes.
+        from mcp_server.cli_sync import cmd_sync
+
+        rc = cmd_sync(
+            dry_run=getattr(args, "dry_run", False),
+            verbose=getattr(args, "verbose", False),
         )
         sys.exit(rc)
     elif args.command == "calibrate":

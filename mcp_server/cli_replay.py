@@ -55,7 +55,6 @@ def cmd_replay(
     # Resolve project root + apply Bug-8 defense
     try:
         from mcp_server.paths import (
-            get_data_dir,
             get_project_root,
             set_project_dir,
             invalidate_data_dir_cache,
@@ -76,14 +75,12 @@ def cmd_replay(
             set_project_dir(resolved)
             invalidate_data_dir_cache()
         project_root = get_project_root()
-        graph_db = get_data_dir() / "graph" / "graph.db"
     except Exception as e:  # noqa: BLE001
         out.write(f"Error: could not resolve project — {e}\n")
         return 1
 
-    # v2.2.0: prefer the JSONL backend when the project has been
-    # initialized via `codevira init`. Falls back to the legacy
-    # graph.db path for v2.1.x projects.
+    # v2.2.0+: JSONL is the only storage layer. If `.codevira/` isn't
+    # initialized, surface a friendly hint pointing at `codevira init`.
     try:
         from mcp_server.storage import paths as store_paths
         from mcp_server.decision_replay import (
@@ -96,44 +93,23 @@ def cmd_replay(
         out.write(f"Error: could not import replay module — {e}\n")
         return 1
 
-    if store_paths.is_initialized():
-        try:
-            timeline = build_timeline(
-                None,
-                query=query,
-                since_days=since_days,
-                limit=top_n,
-            )
-        except Exception as e:  # noqa: BLE001
-            out.write(f"Error: could not build timeline — {e}\n")
-            return 1
-    else:
-        if not graph_db.exists():
-            out.write(
-                f"No codevira data found at {graph_db}.\n"
-                "Run `codevira init` (v2.2.0) or `codevira setup` and use codevira "
-                "for a few sessions, then try again.\n"
-            )
-            return 0
+    if not store_paths.is_initialized():
+        out.write(
+            f"No codevira data found in {project_root}.\n"
+            "Run `codevira init` to bootstrap .codevira/ in this project, "
+            "use codevira for a few sessions, then try again.\n"
+        )
+        return 0
 
-        # Legacy path: read from the v2.1.x SQLite graph.db.
-        try:
-            from indexer.sqlite_graph import SQLiteGraph
-
-            g = SQLiteGraph(graph_db)
-        except Exception as e:  # noqa: BLE001
-            out.write(f"Error: could not open project DB — {e}\n")
-            return 1
-
-        try:
-            timeline = build_timeline(
-                g.conn,
-                query=query,
-                since_days=since_days,
-                limit=top_n,
-            )
-        finally:
-            g.close()
+    try:
+        timeline = build_timeline(
+            query=query,
+            since_days=since_days,
+            limit=top_n,
+        )
+    except Exception as e:  # noqa: BLE001
+        out.write(f"Error: could not build timeline — {e}\n")
+        return 1
 
     title = f"Codevira Replay — {project_root.name}"
     if query:

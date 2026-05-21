@@ -11,10 +11,11 @@ Tier-0 + deep-audit from start (lessons #15-21):
     not just headers)
   - 10+ mutations from start
 """
+
 from __future__ import annotations
 
-import sqlite3
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -22,8 +23,13 @@ import pytest
 
 from mcp_server.decision_replay import (
     build_timeline,
-    render_terminal, render_markdown, render_html,
-    _score, _truncate, _clamp_since_days, _clamp_limit,
+    render_terminal,
+    render_markdown,
+    render_html,
+    _score,
+    _truncate,
+    _clamp_since_days,
+    _clamp_limit,
     _EMPTY_PLACEHOLDER,
 )
 
@@ -35,6 +41,7 @@ from mcp_server.decision_replay import (
 
 @pytest.fixture
 def isolated_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Set up a fresh project with an initialised .codevira/ JSONL store."""
     fake_home = tmp_path / "home"
     fake_home.mkdir()
     cv_data = fake_home / ".codevira"
@@ -43,59 +50,94 @@ def isolated_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     project.mkdir()
     (project / "pyproject.toml").write_text("")
     monkeypatch.setattr("mcp_server.paths.get_global_home", lambda: cv_data)
+
+    import mcp_server.paths as paths_mod
+
+    paths_mod.set_project_dir(project)
+    paths_mod.invalidate_data_dir_cache()
+
+    # Bootstrap the .codevira/ JSONL store so decisions_store can write to it.
+    from mcp_server.storage import paths as store_paths
+
+    store_paths.ensure_dirs()
     return project
 
 
-def _open_graph(project: Path):
-    import mcp_server.paths as paths_mod
-    paths_mod.set_project_dir(project)
-    paths_mod.invalidate_data_dir_cache()
-    from mcp_server.paths import get_data_dir
-    from indexer.sqlite_graph import SQLiteGraph
-    graph_db = get_data_dir() / "graph" / "graph.db"
-    graph_db.parent.mkdir(parents=True, exist_ok=True)
-    return SQLiteGraph(graph_db)
-
-
 def _plant_decision_with_outcomes(
-    g, *, file_path: str, decision: str,
-    session_id: str = "s-test", session_summary: str = "test session",
-    kept: int = 0, modified: int = 0, reverted: int = 0,
+    _ignored=None,
+    *,
+    file_path: str,
+    decision: str,
+    session_id: str = "s-test",
+    session_summary: str = "test session",
+    kept: int = 0,
+    modified: int = 0,
+    reverted: int = 0,
     locked: bool = False,
-) -> int:
-    g.conn.execute(
-        "INSERT OR IGNORE INTO sessions (session_id, summary) VALUES (?, ?)",
-        (session_id, session_summary),
+) -> str:
+    """v2.2.0 JSONL planter (mirrors the v2.1.x SQL planter signature).
+
+    The first positional arg is retained for back-compat with tests that
+    used to pass a SQLiteGraph instance — it's ignored. Decisions land in
+    .codevira/decisions.jsonl via the canonical decisions_store.record;
+    outcomes are appended to outcomes.jsonl; sessions to sessions.jsonl.
+    """
+    from mcp_server.storage import decisions_store, jsonl_store, paths
+
+    # Plant the session summary (writes once per session_id).
+    sessions_path = paths.sessions_path()
+    existing_sessions = jsonl_store.read_all(sessions_path)
+    if not any(s.get("session_id") == session_id for s in existing_sessions):
+        jsonl_store.append(
+            sessions_path,
+            {
+                "id": f"S-{session_id}",
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "session_id": session_id,
+                "summary": session_summary,
+            },
+        )
+
+    decision_id = decisions_store.record(
+        decision,
+        file_path=file_path,
+        do_not_revert=locked,
+        session_id=session_id,
     )
-    if locked:
-        g.conn.execute(
-            "INSERT OR IGNORE INTO nodes (id, kind, name, file_path, do_not_revert) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (f"{file_path}:locked", "function", "f", file_path, 1),
-        )
-    cur = g.conn.execute(
-        "INSERT INTO decisions (session_id, decision, file_path, "
-        "context, created_at) VALUES (?, ?, ?, ?, datetime('now'))",
-        (session_id, decision, file_path, ""),
-    )
-    did = cur.lastrowid
-    for _ in range(kept):
-        g.record_outcome(
-            session_id=session_id, file_path=file_path,
-            outcome_type="kept", decision_id=did,
-        )
-    for _ in range(modified):
-        g.record_outcome(
-            session_id=session_id, file_path=file_path,
-            outcome_type="modified", decision_id=did,
-        )
-    for _ in range(reverted):
-        g.record_outcome(
-            session_id=session_id, file_path=file_path,
-            outcome_type="reverted", decision_id=did,
-        )
-    g.conn.commit()
-    return did
+
+    # Append outcome rows so build_timeline aggregates them.
+    outcomes_path = paths.outcomes_path()
+    now_iso = datetime.now(timezone.utc).isoformat()
+    for outcome_type, count in (
+        ("kept", kept),
+        ("modified", modified),
+        ("reverted", reverted),
+    ):
+        for _ in range(count):
+            jsonl_store.append(
+                outcomes_path,
+                {
+                    "ts": now_iso,
+                    "decision_id": decision_id,
+                    "outcome_type": outcome_type,
+                    "delta_summary": f"test {outcome_type}",
+                },
+            )
+    return decision_id
+
+
+def _open_graph(project: Path):
+    """Compatibility shim — returns a no-op context object for tests
+    that still use the `with g: ...` pattern. The JSONL store needs no
+    explicit open/close; this exists only to minimise diff in the
+    planter call sites.
+    """
+
+    class _NoOpGraph:
+        def close(self) -> None:
+            pass
+
+    return _NoOpGraph()
 
 
 # =====================================================================
@@ -104,7 +146,6 @@ def _plant_decision_with_outcomes(
 
 
 class TestPureFunctions:
-
     def test_score_formula(self):
         assert _score(5, 0, 0) == 1.0
         assert _score(0, 0, 5) == 0.0
@@ -139,11 +180,10 @@ class TestPureFunctions:
 
 
 class TestBuildTimeline:
-
     def test_empty_db_returns_empty_list(self, isolated_project: Path):
         g = _open_graph(isolated_project)
         try:
-            out = build_timeline(g.conn)
+            out = build_timeline()
             assert out == []
         finally:
             g.close()
@@ -152,11 +192,13 @@ class TestBuildTimeline:
         g = _open_graph(isolated_project)
         try:
             _plant_decision_with_outcomes(
-                g, file_path="auth.py",
+                g,
+                file_path="auth.py",
                 decision="use bcrypt over argon2",
-                kept=3, reverted=1,
+                kept=3,
+                reverted=1,
             )
-            out = build_timeline(g.conn)
+            out = build_timeline()
             assert len(out) == 1
             d = out[0]
             assert d["decision"] == "use bcrypt over argon2"
@@ -175,12 +217,18 @@ class TestBuildTimeline:
         g = _open_graph(isolated_project)
         try:
             _plant_decision_with_outcomes(
-                g, file_path="auth.py", decision="use bcrypt", kept=1,
+                g,
+                file_path="auth.py",
+                decision="use bcrypt",
+                kept=1,
             )
             _plant_decision_with_outcomes(
-                g, file_path="db.py", decision="use postgres", kept=1,
+                g,
+                file_path="db.py",
+                decision="use postgres",
+                kept=1,
             )
-            out = build_timeline(g.conn, query="bcrypt")
+            out = build_timeline(query="bcrypt")
             assert len(out) == 1
             assert out[0]["decision"] == "use bcrypt"
         finally:
@@ -191,12 +239,18 @@ class TestBuildTimeline:
         g = _open_graph(isolated_project)
         try:
             _plant_decision_with_outcomes(
-                g, file_path="auth.py", decision="x", kept=1,
+                g,
+                file_path="auth.py",
+                decision="x",
+                kept=1,
             )
             _plant_decision_with_outcomes(
-                g, file_path="db.py", decision="y", kept=1,
+                g,
+                file_path="db.py",
+                decision="y",
+                kept=1,
             )
-            out = build_timeline(g.conn, query="auth")
+            out = build_timeline(query="auth")
             assert len(out) == 1
             assert out[0]["file_path"] == "auth.py"
         finally:
@@ -206,24 +260,30 @@ class TestBuildTimeline:
         g = _open_graph(isolated_project)
         try:
             _plant_decision_with_outcomes(
-                g, file_path="auth.py", decision="x",
-                kept=2, locked=True,
+                g,
+                file_path="auth.py",
+                decision="x",
+                kept=2,
+                locked=True,
             )
-            out = build_timeline(g.conn)
+            out = build_timeline()
             assert len(out) == 1
             assert out[0]["locked"] is True
         finally:
             g.close()
 
     def test_decision_with_no_outcomes_still_listed(
-        self, isolated_project: Path,
+        self,
+        isolated_project: Path,
     ):
         g = _open_graph(isolated_project)
         try:
             _plant_decision_with_outcomes(
-                g, file_path="a.py", decision="ancient decision",
+                g,
+                file_path="a.py",
+                decision="ancient decision",
             )
-            out = build_timeline(g.conn)
+            out = build_timeline()
             assert len(out) == 1
             assert out[0]["total"] == 0
             assert out[0]["score"] == 0.0
@@ -235,23 +295,40 @@ class TestBuildTimeline:
         try:
             for i in range(5):
                 _plant_decision_with_outcomes(
-                    g, file_path=f"f{i}.py", decision=f"d{i}", kept=1,
+                    g,
+                    file_path=f"f{i}.py",
+                    decision=f"d{i}",
+                    kept=1,
                 )
             # limit=2 → 2 rows
-            out = build_timeline(g.conn, limit=2)
+            out = build_timeline(limit=2)
             assert len(out) == 2
         finally:
             g.close()
 
-    def test_sql_error_returns_empty_not_raises(self, tmp_path: Path):
-        """Bug-X defense: build_timeline never raises on SQL error."""
-        bad_db = tmp_path / "bad.db"
-        conn = sqlite3.connect(str(bad_db))
-        # No tables exist → query fails
-        conn.row_factory = sqlite3.Row
-        out = build_timeline(conn)
+    def test_uninitialized_project_returns_empty_not_raises(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Bug-X defense: build_timeline never raises on missing store.
+
+        v2.2.0+: replaces the legacy "bad SQL DB" test. Behaviour is the
+        same — point at a project with no .codevira/ and verify
+        build_timeline returns [] instead of crashing.
+        """
+        import mcp_server.paths as paths_mod
+
+        bare_project = tmp_path / "bare"
+        bare_project.mkdir()
+        (bare_project / "pyproject.toml").write_text("")
+        monkeypatch.setattr(
+            "mcp_server.paths.get_global_home", lambda: tmp_path / "fake-home"
+        )
+        paths_mod.set_project_dir(bare_project)
+        paths_mod.invalidate_data_dir_cache()
+        out = build_timeline()
         assert out == []
-        conn.close()
 
 
 # =====================================================================
@@ -260,14 +337,13 @@ class TestBuildTimeline:
 
 
 class TestRenderersEmptyCase:
-
     def test_terminal_empty_shows_placeholder(self):
         out = render_terminal([])
         joined = "\n".join(out)
         # Lesson #19 lock-in: NO empty section header. Always a body.
-        assert _EMPTY_PLACEHOLDER in joined, (
-            f"Empty terminal must show placeholder, got: {joined!r}"
-        )
+        assert (
+            _EMPTY_PLACEHOLDER in joined
+        ), f"Empty terminal must show placeholder, got: {joined!r}"
 
     def test_markdown_empty_shows_placeholder(self):
         out = render_markdown([])
@@ -287,7 +363,6 @@ class TestRenderersEmptyCase:
 
 
 class TestRenderersPopulated:
-
     @pytest.fixture
     def sample_timeline(self) -> list[dict[str, Any]]:
         return [
@@ -300,7 +375,10 @@ class TestRenderersPopulated:
                 "session_id": "s_4f2a",
                 "session_summary": "Fix login flow for special-char emails",
                 "locked": True,
-                "kept": 6, "modified": 0, "reverted": 0, "total": 6,
+                "kept": 6,
+                "modified": 0,
+                "reverted": 0,
+                "total": 6,
                 "score": 1.0,
             },
             {
@@ -312,13 +390,17 @@ class TestRenderersPopulated:
                 "session_id": "s_1e7b",
                 "session_summary": "",
                 "locked": False,
-                "kept": 0, "modified": 0, "reverted": 4, "total": 4,
+                "kept": 0,
+                "modified": 0,
+                "reverted": 4,
+                "total": 4,
                 "score": 0.0,
             },
         ]
 
     def test_terminal_includes_content_not_just_header(
-        self, sample_timeline,
+        self,
+        sample_timeline,
     ):
         """Lesson #19: don't just check the title appears — check the
         decision text + file + score appear too."""
@@ -337,7 +419,8 @@ class TestRenderersPopulated:
         assert "[locked]" in joined
 
     def test_markdown_includes_decision_and_session(
-        self, sample_timeline,
+        self,
+        sample_timeline,
     ):
         out = render_markdown(sample_timeline)
         assert "use bcrypt over argon2" in out
@@ -350,7 +433,8 @@ class TestRenderersPopulated:
         assert "1.00" in out
 
     def test_html_includes_decision_and_session(
-        self, sample_timeline,
+        self,
+        sample_timeline,
     ):
         out = render_html(sample_timeline)
         assert "use bcrypt over argon2" in out
@@ -365,18 +449,23 @@ class TestRenderersPopulated:
         """Bug-X-shape audit: declared "renders decision text" must
         trace through html.escape. Adversarial decision text must NOT
         produce an executable <script> tag."""
-        adversarial = [{
-            "id": 1,
-            "decision": "<script>alert(1)</script>",
-            "file_path": "<img src=x onerror=alert(1)>",
-            "context": None,
-            "created_at": "2026-01-01",
-            "session_id": "<b>session</b>",
-            "session_summary": "</article><script>x</script>",
-            "locked": False,
-            "kept": 0, "modified": 0, "reverted": 0, "total": 0,
-            "score": 0.0,
-        }]
+        adversarial = [
+            {
+                "id": 1,
+                "decision": "<script>alert(1)</script>",
+                "file_path": "<img src=x onerror=alert(1)>",
+                "context": None,
+                "created_at": "2026-01-01",
+                "session_id": "<b>session</b>",
+                "session_summary": "</article><script>x</script>",
+                "locked": False,
+                "kept": 0,
+                "modified": 0,
+                "reverted": 0,
+                "total": 0,
+                "score": 0.0,
+            }
+        ]
         out = render_html(adversarial)
         # Raw <script> tag must NOT appear as an executable tag.
         # The escaped form ("&lt;script&gt;") IS in the output (as text).
@@ -388,12 +477,11 @@ class TestRenderersPopulated:
         assert body_start > 0, "HTML must have <body>"
         body = out[body_start:]
         assert "<script>" not in body, (
-            f"XSS bug: unescaped <script> in body. Body excerpt:\n"
-            f"{body[:500]}"
+            f"XSS bug: unescaped <script> in body. Body excerpt:\n" f"{body[:500]}"
         )
-        assert "&lt;script&gt;" in body, (
-            "Adversarial input should appear as ESCAPED text"
-        )
+        assert (
+            "&lt;script&gt;" in body
+        ), "Adversarial input should appear as ESCAPED text"
         # Adversarial img tag should also be escaped
         assert "<img src=x" not in body
         assert "&lt;img" in body
@@ -410,30 +498,33 @@ class TestRenderersPopulated:
 
 
 class TestMCPResourceHandler:
-
     def test_list_resources_exposes_decisions_uri(self):
         from mcp_server.server import handle_list_resources
         import asyncio
+
         resources = asyncio.run(handle_list_resources())
         uris = [str(r.uri) for r in resources]
-        assert any("codevira://decisions" in u for u in uris), (
-            f"list_resources must expose decisions URI; got {uris}"
-        )
+        assert any(
+            "codevira://decisions" in u for u in uris
+        ), f"list_resources must expose decisions URI; got {uris}"
 
     def test_read_resource_unknown_uri_raises(self):
         from mcp_server.server import handle_read_resource
         import asyncio
+
         with pytest.raises(ValueError):
             asyncio.run(handle_read_resource("codevira://nonsense/xxx"))
 
     def test_read_resource_decisions_returns_html(
-        self, isolated_project: Path,
+        self,
+        isolated_project: Path,
     ):
         """End-to-end: real DB, real handler, real HTML."""
         g = _open_graph(isolated_project)
         try:
             _plant_decision_with_outcomes(
-                g, file_path="auth.py",
+                g,
+                file_path="auth.py",
                 decision="use bcrypt over argon2",
                 kept=3,
             )
@@ -442,39 +533,50 @@ class TestMCPResourceHandler:
 
         from mcp_server.server import handle_read_resource
         import asyncio
+
         out = asyncio.run(handle_read_resource("codevira://decisions"))
         assert "use bcrypt over argon2" in out
         assert "auth.py" in out
         assert "<html" in out
 
     def test_read_resource_with_query_filters(
-        self, isolated_project: Path,
+        self,
+        isolated_project: Path,
     ):
         g = _open_graph(isolated_project)
         try:
             _plant_decision_with_outcomes(
-                g, file_path="auth.py", decision="use bcrypt", kept=1,
+                g,
+                file_path="auth.py",
+                decision="use bcrypt",
+                kept=1,
             )
             _plant_decision_with_outcomes(
-                g, file_path="db.py", decision="use postgres", kept=1,
+                g,
+                file_path="db.py",
+                decision="use postgres",
+                kept=1,
             )
         finally:
             g.close()
 
         from mcp_server.server import handle_read_resource
         import asyncio
+
         out = asyncio.run(handle_read_resource("codevira://decisions/bcrypt"))
         assert "use bcrypt" in out
         assert "use postgres" not in out
 
     def test_read_resource_with_url_encoded_query(
-        self, isolated_project: Path,
+        self,
+        isolated_project: Path,
     ):
         """Spaces / special chars in query should be URL-decoded."""
         g = _open_graph(isolated_project)
         try:
             _plant_decision_with_outcomes(
-                g, file_path="auth.py",
+                g,
+                file_path="auth.py",
                 decision="use bcrypt over argon2",
                 kept=1,
             )
@@ -483,21 +585,28 @@ class TestMCPResourceHandler:
 
         from mcp_server.server import handle_read_resource
         import asyncio
-        out = asyncio.run(handle_read_resource("codevira://decisions/bcrypt%20over%20argon2"))
+
+        out = asyncio.run(
+            handle_read_resource("codevira://decisions/bcrypt%20over%20argon2")
+        )
         assert "use bcrypt over argon2" in out
 
     def test_read_resource_no_db_returns_empty_html(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """If graph.db doesn't exist (cold project), return empty
         timeline HTML — NOT crash the MCP client."""
         import mcp_server.paths as paths_mod
+
         paths_mod.set_project_dir(isolated_project)
         paths_mod.invalidate_data_dir_cache()
         # No graph.db created
 
         from mcp_server.server import handle_read_resource
         import asyncio
+
         out = asyncio.run(handle_read_resource("codevira://decisions"))
         assert _EMPTY_PLACEHOLDER in out
 
@@ -513,7 +622,8 @@ class TestDeepAuditProbes:
     in here so future regressions get caught."""
 
     def test_sql_injection_via_query_param_is_safe(
-        self, isolated_project: Path,
+        self,
+        isolated_project: Path,
     ):
         """Parameterized queries must defeat SQL injection through the
         --query / URI argument. The query goes into a LIKE clause via
@@ -522,25 +632,37 @@ class TestDeepAuditProbes:
         g = _open_graph(isolated_project)
         try:
             _plant_decision_with_outcomes(
-                g, file_path="auth.py", decision="use bcrypt", kept=1,
+                g,
+                file_path="auth.py",
+                decision="use bcrypt",
+                kept=1,
             )
-            # Assorted malicious queries — ALL must return 0 rows
-            # AND leave the table intact.
+            # Assorted malicious queries — ALL must return safe results
+            # AND leave the underlying JSONL + FTS5 stores intact.
+            # v2.2.0+: substring filter happens in Python (over JSONL),
+            # so SQL injection isn't structurally possible here. FTS5
+            # ingestion of the query is also parameterized.
             for malicious in [
                 "'; DROP TABLE decisions; --",
                 "' OR 1=1 --",
                 "%' OR '1'='1",
                 "'; DELETE FROM outcomes WHERE 1=1; --",
             ]:
-                out = build_timeline(g.conn, query=malicious)
+                out = build_timeline(query=malicious)
                 assert isinstance(out, list)
-                # The table is intact (decisions count unchanged)
-                row_count = g.conn.execute(
-                    "SELECT COUNT(*) FROM decisions"
-                ).fetchone()[0]
+                # The decision is still there — count via the canonical
+                # JSONL read path (decisions_store._read_merged).
+                from mcp_server.storage import decisions_store
+
+                merged = decisions_store._read_merged()
+                row_count = sum(
+                    1
+                    for d in merged
+                    if not d.get("is_superseded") and not d.get("superseded_by")
+                )
                 assert row_count == 1, (
-                    f"SQL injection got through with query={malicious!r}: "
-                    f"decisions table now has {row_count} rows (expected 1)"
+                    f"Injection attempt got through with query={malicious!r}: "
+                    f"decisions store now has {row_count} active rows (expected 1)"
                 )
         finally:
             g.close()
@@ -562,20 +684,26 @@ class TestDeepAuditProbes:
         """A decision can be BOTH locked (do_not_revert=1) AND reverted
         (every outcome is type=reverted). The HTML article must carry
         BOTH CSS classes so users see both visual signals."""
-        weird = [{
-            "id": 1,
-            "decision": "locked decision that ALSO got reverted",
-            "file_path": "weird.py",
-            "context": None,
-            "created_at": "2026-01-01",
-            "session_id": "s1",
-            "session_summary": "test",
-            "locked": True,
-            "kept": 0, "modified": 0, "reverted": 3, "total": 3,
-            "score": 0.0,
-        }]
+        weird = [
+            {
+                "id": 1,
+                "decision": "locked decision that ALSO got reverted",
+                "file_path": "weird.py",
+                "context": None,
+                "created_at": "2026-01-01",
+                "session_id": "s1",
+                "session_summary": "test",
+                "locked": True,
+                "kept": 0,
+                "modified": 0,
+                "reverted": 3,
+                "total": 3,
+                "score": 0.0,
+            }
+        ]
         out = render_html(weird)
         import re
+
         m = re.search(r'<article class="([^"]+)"', out)
         assert m, "expected article element"
         cls = m.group(1)
@@ -590,22 +718,24 @@ class TestDeepAuditProbes:
 
 
 class TestPerformance:
-
     def test_build_timeline_100_decisions_under_50ms(
-        self, isolated_project: Path,
+        self,
+        isolated_project: Path,
     ):
         g = _open_graph(isolated_project)
         try:
             for i in range(100):
                 _plant_decision_with_outcomes(
-                    g, file_path=f"f{i}.py",
+                    g,
+                    file_path=f"f{i}.py",
                     decision=f"d{i}",
-                    kept=2, modified=1,
+                    kept=2,
+                    modified=1,
                 )
             durations = []
             for _ in range(20):
                 t = time.perf_counter()
-                build_timeline(g.conn, limit=20)
+                build_timeline(limit=20)
                 durations.append((time.perf_counter() - t) * 1000)
             durations.sort()
             p50 = durations[10]

@@ -460,15 +460,16 @@ class TestJ7_CacheNonCollision:
         from mcp_server.engine.signals import SignalContext
 
         _set_project(monkeypatch, isolated_project)
-        g = _open_graph(isolated_project)
-        _ensure_session(g)
-        g.conn.execute(
-            "INSERT INTO decisions (session_id, decision, file_path, "
-            "context, created_at) VALUES (?, ?, ?, ?, datetime('now'))",
-            ("s1", "search-test pattern", "f.py", "ctx"),
+        # v2.2.0+: search_decisions reads via the JSONL FTS5 backend.
+        from mcp_server.storage import decisions_store, paths as store_paths
+
+        store_paths.ensure_dirs()
+        decisions_store.record(
+            "search-test pattern",
+            file_path="f.py",
+            session_id="s1",
+            context="ctx",
         )
-        g.conn.commit()
-        g.close()
 
         ctx = SignalContext(project_root=isolated_project)
         sd = ctx.search_decisions("search-test")

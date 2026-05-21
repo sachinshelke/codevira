@@ -459,45 +459,49 @@ class TestB_StressTest:
         monkeypatch: pytest.MonkeyPatch,
         isolated_project: Path,
     ):
-        from indexer.sqlite_graph import SQLiteGraph
         from mcp_server.decision_replay import build_timeline
+        from mcp_server.storage import (
+            decisions_store,
+            jsonl_store,
+            paths as store_paths,
+        )
+        from datetime import datetime, timezone
 
         _set_project(monkeypatch, isolated_project)
-        from mcp_server.paths import get_data_dir
+        store_paths.ensure_dirs()
 
-        graph_db = get_data_dir() / "graph" / "graph.db"
-        graph_db.parent.mkdir(parents=True, exist_ok=True)
-
-        g = SQLiteGraph(graph_db)
-        try:
-            _ensure_session(g)
-            for i in range(100):
-                g.conn.execute(
-                    "INSERT INTO decisions (session_id, decision, file_path, "
-                    "context, created_at) VALUES (?, ?, ?, ?, datetime('now'))",
-                    ("s1", f"d{i}", f"f{i}.py", ""),
+        # Plant 100 decisions (each with 5 "kept" outcomes) into the
+        # JSONL store. The legacy SQL path was removed in v2.2.0.
+        decision_ids: list[str] = []
+        for i in range(100):
+            did = decisions_store.record(
+                f"d{i}",
+                file_path=f"f{i}.py",
+                session_id="s1",
+            )
+            decision_ids.append(did)
+        now_iso = datetime.now(timezone.utc).isoformat()
+        for did in decision_ids:
+            for _ in range(5):
+                jsonl_store.append(
+                    store_paths.outcomes_path(),
+                    {
+                        "ts": now_iso,
+                        "decision_id": did,
+                        "outcome_type": "kept",
+                        "delta_summary": "test kept",
+                    },
                 )
-                did = g.conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-                for _ in range(5):
-                    g.record_outcome(
-                        session_id="s1",
-                        file_path=f"f{i}.py",
-                        outcome_type="kept",
-                        decision_id=did,
-                    )
-            g.conn.commit()
 
-            durations = []
-            for _ in range(20):
-                t0 = time.perf_counter()
-                out = build_timeline(g.conn, limit=20)
-                durations.append((time.perf_counter() - t0) * 1000)
-                assert len(out) == 20
-            durations.sort()
-            p95 = durations[int(len(durations) * 0.95)]
-            assert p95 < 200.0, f"build_timeline p95={p95:.2f}ms exceeds 200ms"
-        finally:
-            g.close()
+        durations = []
+        for _ in range(20):
+            t0 = time.perf_counter()
+            out = build_timeline(limit=20)
+            durations.append((time.perf_counter() - t0) * 1000)
+            assert len(out) == 20
+        durations.sort()
+        p95 = durations[int(len(durations) * 0.95)]
+        assert p95 < 200.0, f"build_timeline p95={p95:.2f}ms exceeds 200ms"
 
 
 # =====================================================================
@@ -918,87 +922,65 @@ class TestF_SchemaMigration:
         monkeypatch: pytest.MonkeyPatch,
         isolated_project: Path,
     ):
-        """A v1.x project might have decisions without sessions table
-        rows linking back. Verify build_timeline + signals.decisions
-        handle this gracefully (LEFT JOINs are NULL-tolerant)."""
-        from indexer.sqlite_graph import SQLiteGraph
+        """A decision might be missing the session-link metadata (e.g.
+        recorded without a `session_id`). Verify build_timeline + the
+        renderers handle that gracefully without crashing."""
         from mcp_server.decision_replay import build_timeline
+        from mcp_server.storage import decisions_store, paths as store_paths
 
         _set_project(monkeypatch, isolated_project)
-        from mcp_server.paths import get_data_dir
+        store_paths.ensure_dirs()
+        # Record a decision but DON'T plant a corresponding session row,
+        # so session_summary stays None — the equivalent of a "missing
+        # session link" scenario.
+        decisions_store.record(
+            "use bcrypt",
+            file_path="auth.py",
+            session_id="legacy-session",
+            context=None,
+        )
 
-        graph_db = get_data_dir() / "graph" / "graph.db"
-        graph_db.parent.mkdir(parents=True, exist_ok=True)
+        out = build_timeline()
+        assert len(out) == 1
+        assert out[0]["decision"] == "use bcrypt"
+        assert out[0]["session_summary"] is None
+        from mcp_server.decision_replay import (
+            render_html,
+            render_markdown,
+            render_terminal,
+        )
 
-        g = SQLiteGraph(graph_db)
-        try:
-            # Insert decision with a session_id that has no row in sessions
-            # (FK might prevent this — check)
-            g.conn.execute(
-                "INSERT INTO sessions (session_id, summary) VALUES (?, ?)",
-                ("legacy-session", None),  # null summary, like v1.x
-            )
-            g.conn.execute(
-                "INSERT INTO decisions (session_id, decision, file_path, "
-                "context, created_at) VALUES (?, ?, ?, ?, datetime('now'))",
-                ("legacy-session", "use bcrypt", "auth.py", None),  # null context
-            )
-            g.conn.commit()
-
-            # build_timeline must handle null fields without crashing
-            out = build_timeline(g.conn)
-            assert len(out) == 1
-            assert out[0]["decision"] == "use bcrypt"
-            # session_summary is None — test renderers handle it
-            from mcp_server.decision_replay import (
-                render_html,
-                render_markdown,
-                render_terminal,
-            )
-
-            html_out = render_html(out)
-            md_out = render_markdown(out)
-            term_out = render_terminal(out)
-            assert "use bcrypt" in html_out
-            assert "use bcrypt" in md_out
-            assert "use bcrypt" in "\n".join(term_out)
-        finally:
-            g.close()
+        html_out = render_html(out)
+        md_out = render_markdown(out)
+        term_out = render_terminal(out)
+        assert "use bcrypt" in html_out
+        assert "use bcrypt" in md_out
+        assert "use bcrypt" in "\n".join(term_out)
 
     def test_decision_with_no_outcomes_renders(
         self,
         monkeypatch: pytest.MonkeyPatch,
         isolated_project: Path,
     ):
-        """v1.x decisions had no outcome tracking. Renderers must still
-        show them — without outcome counts."""
-        from indexer.sqlite_graph import SQLiteGraph
+        """A decision recorded with no outcome-tracking events must still
+        render correctly — without outcome counts."""
         from mcp_server.decision_replay import build_timeline, render_terminal
+        from mcp_server.storage import decisions_store, paths as store_paths
 
         _set_project(monkeypatch, isolated_project)
-        from mcp_server.paths import get_data_dir
+        store_paths.ensure_dirs()
+        decisions_store.record(
+            "decision with no outcomes recorded",
+            file_path="old.py",
+            session_id="no-outcome-sess",
+            context="ctx",
+        )
 
-        graph_db = get_data_dir() / "graph" / "graph.db"
-        graph_db.parent.mkdir(parents=True, exist_ok=True)
-
-        g = SQLiteGraph(graph_db)
-        try:
-            _ensure_session(g, "v1-sess")
-            g.conn.execute(
-                "INSERT INTO decisions (session_id, decision, file_path, "
-                "context, created_at) VALUES (?, ?, ?, ?, datetime('now'))",
-                ("v1-sess", "ancient v1 decision", "old.py", "ctx"),
-            )
-            g.conn.commit()
-
-            out = build_timeline(g.conn)
-            assert len(out) == 1
-            assert out[0]["total"] == 0
-            # Terminal renderer shows "no outcomes recorded yet"
-            joined = "\n".join(render_terminal(out, ascii_mode=True))
-            assert "no outcomes recorded yet" in joined
-        finally:
-            g.close()
+        out = build_timeline()
+        assert len(out) == 1
+        assert out[0]["total"] == 0
+        joined = "\n".join(render_terminal(out, ascii_mode=True))
+        assert "no outcomes recorded yet" in joined
 
 
 # =====================================================================

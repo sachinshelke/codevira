@@ -202,7 +202,6 @@ async def handle_read_resource(uri):
     yield a degraded result, not a broken client experience.
     """
     from mcp_server.decision_replay import build_timeline, render_html
-    from mcp_server.paths import get_data_dir
 
     uri_str = str(uri)
     query: str | None = None
@@ -221,25 +220,12 @@ async def handle_read_resource(uri):
         raise ValueError(f"Unknown codevira resource: {uri_str!r}")
 
     try:
-        # v2.2.0: prefer the JSONL backend when the project has been
-        # initialized via `codevira init`. Falls back to the legacy
-        # graph.db path for v2.1.x projects.
-        from mcp_server.storage import paths as store_paths
-
-        if store_paths.is_initialized():
-            timeline = build_timeline(None, query=query, since_days=30, limit=20)
-            return render_html(timeline, title=title)
-
-        from indexer.sqlite_graph import SQLiteGraph
-
-        graph_db = get_data_dir() / "graph" / "graph.db"
-        if not graph_db.exists():
-            return render_html([], title=title)
-        g = SQLiteGraph(graph_db)
-        try:
-            timeline = build_timeline(g.conn, query=query, since_days=30, limit=20)
-        finally:
-            g.close()
+        # v2.2.0+: JSONL is the only storage layer. The legacy graph.db
+        # fallback was removed once the v2.1.x carryover user base
+        # dropped to zero. If `.codevira/` isn't present, build_timeline
+        # returns an empty list and the renderer shows the friendly
+        # placeholder.
+        timeline = build_timeline(query=query, since_days=30, limit=20)
         return render_html(timeline, title=title)
     except Exception as e:  # noqa: BLE001
         # Bug-X-shape defense: never let resource-read crash the MCP

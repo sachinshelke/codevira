@@ -68,17 +68,12 @@ dependencies = [
 
 [project.optional-dependencies]
 # Kept as no-op aliases so old `pip install codevira[search]` doesn't error.
-# v2.2.0 has no optional semantic-search extras.
+# v2.2.0+ has no optional semantic-search extras and no [all-languages]
+# extra (the legacy tree-sitter-language-pack was removed along with the
+# v2.1.x carryover user base). v2.3.0 may re-introduce specific
+# long-tail grammars as individual deps if real demand emerges.
 search = []
 all = []
-# v2.2.0: opt-in extra for users who need the long-tail languages that
-# don't ship in the base install (Python via stdlib + TS/JS/Go/Rust as
-# individual grammars). Installs the same bundle that v2.1.2 shipped by
-# default. ~350 MB extra; opt-in keeps the base install under the
-# 55 MB G1 budget. Activate with: `pip install codevira[all-languages]`.
-all-languages = [
-  "tree-sitter-language-pack>=0.13.0,<1.0.0",
-]
 # Dev dependencies for contributors. Installed via: pip install -e ".[dev]"
 # Or use the Makefile target: make dev
 # These power the discipline scaffold (Pillar 3): pre-commit, lint, type-check, e2e tests.

@@ -42,24 +42,23 @@ except (ImportError, AttributeError):
 # file imports modules that depend on it. This mock provides all attributes
 # that code_reader.py, chunker.py, and graph_generator.py import.
 #
-# We only mock when the real packages are NOT installed. v2.2.0 switched
-# from `tree-sitter-language-pack` (351 MB) to individual `tree-sitter-{lang}`
-# packages for the 4 most-used non-Python languages. The legacy pack stays
-# importable when `codevira[all-languages]` is installed.
+# We only mock when the real packages are NOT installed. v2.2.0+ ships
+# 4 individual grammar packages (tree-sitter-{typescript,javascript,go,rust}).
+# The legacy tree-sitter-language-pack [all-languages] extra was removed
+# along with the v2.1.x carryover user base; tests no longer need a
+# fallback to it.
 # ---------------------------------------------------------------------------
 _ts_available = True
 try:
     import tree_sitter  # noqa: F401
 
-    # At least one grammar source must be importable. We try the v2.2.0
-    # base set first; the legacy pack is the [all-languages] opt-in.
+    # At least one of the v2.2.0 base grammar packages must be importable.
     _grammar_found = False
     for _pkg in (
         "tree_sitter_typescript",
         "tree_sitter_javascript",
         "tree_sitter_go",
         "tree_sitter_rust",
-        "tree_sitter_language_pack",
     ):
         try:
             __import__(_pkg)
@@ -73,13 +72,6 @@ except ImportError:
     _ts_available = False
 
 if not _ts_available:
-    # Stub the legacy pack name for code paths that still try to fall back
-    # via tree_sitter_language_pack (treesitter_parser._load_parser_for).
-    if "tree_sitter_language_pack" not in sys.modules:
-        _ts_lang_pack = types.ModuleType("tree_sitter_language_pack")
-        _ts_lang_pack.__dict__["__all__"] = []
-        sys.modules["tree_sitter_language_pack"] = _ts_lang_pack
-
     if "tree_sitter" not in sys.modules:
         _ts_mod = types.ModuleType("tree_sitter")
         _ts_mod.Node = MagicMock()

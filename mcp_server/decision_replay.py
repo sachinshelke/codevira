@@ -3,9 +3,9 @@ decision_replay.py — Hero 8: Decision Replay timeline + renderers.
 
 Pure data path:
   build_timeline(query, since_days, limit) -> list[dict]
-    SQL aggregation joining decisions LEFT JOIN outcomes LEFT JOIN
-    sessions LEFT JOIN nodes; returns each decision with outcome
-    counts, score (Hero 10's score_decision), session summary, and
+    Reads .codevira/decisions.jsonl + outcomes.jsonl + sessions.jsonl,
+    aggregates outcome counts per decision_id, returns each decision
+    with score (Hero 10's score_decision), session summary, and
     do_not_revert flag.
 
 Three renderers:
@@ -20,6 +20,9 @@ HTML rendering escapes every untrusted field via html.escape() —
 decision text or file paths could conceivably contain ``<script>``
 content if a user pasted adversarial input into a prompt that became
 a decision. Tested.
+
+v2.2.0: the legacy graph.db SQL backend was removed entirely. The only
+storage layer is the JSONL store under .codevira/. No fallback paths.
 """
 
 from __future__ import annotations
@@ -27,7 +30,6 @@ from __future__ import annotations
 import html
 import logging
 import shutil
-import sqlite3
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -102,7 +104,6 @@ def _score(kept: int, modified: int, reverted: int) -> float:
 
 
 def build_timeline(
-    conn: sqlite3.Connection | None,
     *,
     query: str | None = None,
     since_days: int = _DEFAULT_SINCE_DAYS,
@@ -110,16 +111,12 @@ def build_timeline(
 ) -> list[dict[str, Any]]:
     """Build a per-decision timeline with outcomes attached.
 
-    Two backends are supported:
-
-    - **v2.2.0 (JSONL)**: when ``conn`` is ``None``, reads
-      ``.codevira/decisions.jsonl`` + ``.codevira/outcomes.jsonl`` +
-      ``.codevira/sessions.jsonl`` from the active project. This is
-      the only supported path on fresh v2.2.0 installs.
-
-    - **v2.1.x (SQLite)**: when ``conn`` is a sqlite3.Connection,
-      runs the legacy LEFT-JOIN over the graph.db tables. Kept for
-      back-compat with projects that haven't migrated.
+    Reads ``.codevira/decisions.jsonl`` + ``.codevira/outcomes.jsonl``
+    + ``.codevira/sessions.jsonl`` from the active project (resolved
+    via ``mcp_server.storage.paths``). Aggregates outcome counts per
+    decision_id and applies a case-insensitive substring filter on
+    (decision | file_path | context) if ``query`` is given. Sorted
+    descending by timestamp.
 
     Used by the MCP resource handler, the CLI, and tests.
 
@@ -130,88 +127,6 @@ def build_timeline(
     since_days = _clamp_since_days(since_days)
     limit = _clamp_limit(limit)
 
-    if conn is None:
-        return _build_timeline_from_jsonl(
-            query=query,
-            since_days=since_days,
-            limit=limit,
-        )
-
-    sql_parts = [
-        """
-        SELECT
-            d.id            AS id,
-            d.decision      AS decision,
-            d.file_path     AS file_path,
-            d.context       AS context,
-            d.created_at    AS created_at,
-            d.session_id    AS session_id,
-            s.summary       AS session_summary,
-            COALESCE(n.do_not_revert, 0) AS locked,
-            COUNT(o.id)     AS total,
-            COALESCE(SUM(CASE WHEN o.outcome_type = 'kept'     THEN 1 ELSE 0 END), 0) AS kept,
-            COALESCE(SUM(CASE WHEN o.outcome_type = 'modified' THEN 1 ELSE 0 END), 0) AS modified,
-            COALESCE(SUM(CASE WHEN o.outcome_type = 'reverted' THEN 1 ELSE 0 END), 0) AS reverted
-        FROM decisions d
-        LEFT JOIN outcomes o  ON o.decision_id = d.id
-        LEFT JOIN sessions s  ON s.session_id  = d.session_id
-        LEFT JOIN nodes    n  ON n.file_path   = d.file_path
-        WHERE d.created_at >= datetime('now', ?)
-        """,
-    ]
-    params: list[Any] = [f"-{since_days} days"]
-    if query:
-        sql_parts.append(
-            " AND (d.decision LIKE ? OR d.file_path LIKE ? OR d.context LIKE ?)"
-        )
-        like = f"%{query}%"
-        params.extend([like, like, like])
-    sql_parts.append(
-        """
-        GROUP BY d.id
-        ORDER BY d.created_at DESC
-        LIMIT ?
-        """
-    )
-    params.append(limit)
-
-    sql = "".join(sql_parts)
-
-    try:
-        rows = conn.execute(sql, params).fetchall()
-    except sqlite3.Error as e:
-        logger.warning("decision_replay.build_timeline failed: %s", e)
-        return []
-
-    out: list[dict[str, Any]] = []
-    for r in rows:
-        d = dict(r)
-        d["score"] = _score(
-            d.get("kept", 0),
-            d.get("modified", 0),
-            d.get("reverted", 0),
-        )
-        d["locked"] = bool(d.get("locked"))
-        out.append(d)
-    return out
-
-
-def _build_timeline_from_jsonl(
-    *,
-    query: str | None,
-    since_days: int,
-    limit: int,
-) -> list[dict[str, Any]]:
-    """v2.2.0 JSONL-backed timeline builder.
-
-    Reads decisions + outcomes + sessions from ``.codevira/*.jsonl``,
-    aggregates outcome counts per decision_id, and applies a
-    case-insensitive substring filter on (decision | file_path | context)
-    if ``query`` is given. Sorted descending by timestamp.
-
-    Defensive: any read failure returns an empty list + warning log
-    (Hero 8 contract).
-    """
     from datetime import datetime, timedelta, timezone
 
     try:
@@ -221,9 +136,7 @@ def _build_timeline_from_jsonl(
             paths as store_paths,
         )
     except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "decision_replay._build_timeline_from_jsonl: import failed: %s", exc
-        )
+        logger.warning("decision_replay.build_timeline: import failed: %s", exc)
         return []
 
     if not store_paths.is_initialized():
@@ -237,7 +150,7 @@ def _build_timeline_from_jsonl(
         merged = decisions_store._read_merged()
     except Exception as exc:  # noqa: BLE001
         logger.warning(
-            "decision_replay._build_timeline_from_jsonl: read decisions failed: %s",
+            "decision_replay.build_timeline: read decisions failed: %s",
             exc,
         )
         return []

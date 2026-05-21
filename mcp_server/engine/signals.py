@@ -233,14 +233,13 @@ class SignalContext:
     ) -> list[dict[str, Any]]:
         """BM25-ranked FTS5 search over the JSONL decision store.
 
-        v2.2.0: uses ``mcp_server.storage.decisions_store.search()``
-        (JSONL + FTS5 backend) when the project has an initialised
-        ``.codevira/`` directory. Falls back to the legacy SQLiteGraph
-        path for projects that haven't been migrated.
+        v2.2.0+: uses ``mcp_server.storage.decisions_store.search()``
+        (JSONL + FTS5 backend). The legacy SQLiteGraph fallback was
+        removed once the v2.1.x carryover user base dropped to zero.
 
         Cached by ``(query, limit)`` so multiple policies asking the
         same question pay once. Returns empty list on any error or
-        when no storage is available.
+        when ``.codevira/`` is not initialised.
 
         Limit is clamped to [1, 20].
         """
@@ -255,17 +254,6 @@ class SignalContext:
 
             if store_paths.is_initialized():
                 result = decisions_store.search(query, limit=limit)
-                self._decisions_cache[cache_key] = result
-                return result
-        except Exception:  # noqa: BLE001
-            pass
-        # Legacy fallback: graph.db (projects not yet running v2.2.0).
-        try:
-            graph = self.graph
-            if graph is None:
-                self._decisions_cache[cache_key] = result
-                return result
-            result = graph.search_decisions(query, limit=limit)
         except Exception:  # noqa: BLE001
             result = []
         self._decisions_cache[cache_key] = result

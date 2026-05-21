@@ -187,27 +187,16 @@ class TestL3_KillSwitchDoesNotBreakBrowse:
         monkeypatch.setenv("CODEVIRA_ENGINE", "0")
 
         _set_project(monkeypatch, isolated_project)
-        g = _open_graph(isolated_project)
-        try:
-            g.conn.execute(
-                "INSERT INTO sessions (session_id, summary) VALUES (?, ?)",
-                ("s1", "test"),
-            )
-            cur = g.conn.execute(
-                "INSERT INTO decisions (session_id, decision, file_path, "
-                "context, created_at) VALUES (?, ?, ?, ?, datetime('now'))",
-                ("s1", "use bcrypt over argon2", "auth.py", ""),
-            )
-            for _ in range(3):
-                g.record_outcome(
-                    session_id="s1",
-                    file_path="auth.py",
-                    outcome_type="kept",
-                    decision_id=cur.lastrowid,
-                )
-            g.conn.commit()
-        finally:
-            g.close()
+        # v2.2.0+: write via the JSONL decisions_store so the resource
+        # handler (which is JSONL-only) sees the data.
+        from mcp_server.storage import decisions_store, paths as store_paths
+
+        store_paths.ensure_dirs()
+        decisions_store.record(
+            "use bcrypt over argon2",
+            file_path="auth.py",
+            session_id="s1",
+        )
 
         from mcp_server.server import handle_read_resource
 
@@ -231,6 +220,45 @@ class TestL4_RecordThenBrowse:
         replay surface. Verify a decision recorded one way appears in
         the replay output."""
         _set_project(monkeypatch, isolated_project)
+        # v2.2.0+: write via the canonical JSONL store (decisions_store.record).
+        # Also mirror the row into graph.db so Hero 10's promotion scorer
+        # (which still uses the SQLite graph for code-structure aggregation)
+        # has data to aggregate.
+        from mcp_server.storage import (
+            decisions_store,
+            jsonl_store,
+            paths as store_paths,
+        )
+        from datetime import datetime, timezone
+
+        store_paths.ensure_dirs()
+        jsonl_store.append(
+            store_paths.sessions_path(),
+            {
+                "id": "S-s1",
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "session_id": "s1",
+                "summary": "shared-data test",
+            },
+        )
+        new_id = decisions_store.record(
+            "End-to-end shared data check",
+            file_path="shared.py",
+            session_id="s1",
+        )
+        now_iso = datetime.now(timezone.utc).isoformat()
+        for _ in range(2):
+            jsonl_store.append(
+                store_paths.outcomes_path(),
+                {
+                    "ts": now_iso,
+                    "decision_id": new_id,
+                    "outcome_type": "kept",
+                    "delta_summary": "test kept",
+                },
+            )
+
+        # Mirror to graph.db for Hero 10's aggregator.
         g = _open_graph(isolated_project)
         try:
             g.conn.execute(
@@ -253,12 +281,12 @@ class TestL4_RecordThenBrowse:
         finally:
             g.close()
 
-        # Read via build_timeline (Hero 8's data path)
+        # Read via build_timeline (Hero 8's data path — JSONL in v2.2.0)
         from mcp_server.decision_replay import build_timeline
 
         g = _open_graph(isolated_project)
         try:
-            timeline = build_timeline(g.conn)
+            timeline = build_timeline()
             assert len(timeline) == 1
             assert timeline[0]["decision"] == "End-to-end shared data check"
 
@@ -270,13 +298,12 @@ class TestL4_RecordThenBrowse:
             assert len(decisions) == 1
             assert decisions[0]["decision"] == "End-to-end shared data check"
 
-            # Read via Hero 10's promotion scorer — same data
+            # Read via Hero 10's promotion scorer — still graph.db-backed
             from mcp_server.engine.promotion_score import (
                 aggregate_decision_outcomes,
             )
 
             agg = aggregate_decision_outcomes(g.conn, since_days=30, min_outcomes=1)
-            # Same row appears in the aggregate
             assert any(a.get("decision") == "End-to-end shared data check" for a in agg)
         finally:
             g.close()
@@ -297,25 +324,32 @@ class TestL5_XSSThroughWiring:
         verifies the FULL handler-to-output path doesn't accidentally
         un-escape (e.g., by re-rendering server-side)."""
         _set_project(monkeypatch, isolated_project)
-        g = _open_graph(isolated_project)
-        try:
-            g.conn.execute(
-                "INSERT INTO sessions (session_id, summary) VALUES (?, ?)",
-                ("s1", "<script>alert(2)</script>"),
-            )
-            g.conn.execute(
-                "INSERT INTO decisions (session_id, decision, file_path, "
-                "context, created_at) VALUES (?, ?, ?, ?, datetime('now'))",
-                (
-                    "s1",
-                    "<script>alert(1)</script>",
-                    "<img src=x>",
-                    "<svg/onload=alert(3)>",
-                ),
-            )
-            g.conn.commit()
-        finally:
-            g.close()
+        from datetime import datetime, timezone
+
+        from mcp_server.storage import (
+            decisions_store,
+            jsonl_store,
+            paths as store_paths,
+        )
+
+        store_paths.ensure_dirs()
+        # Plant adversarial session summary.
+        jsonl_store.append(
+            store_paths.sessions_path(),
+            {
+                "id": "S-s1",
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "session_id": "s1",
+                "summary": "<script>alert(2)</script>",
+            },
+        )
+        # Record adversarial decision with HTML-tag-like fields.
+        decisions_store.record(
+            "<script>alert(1)</script>",
+            file_path="<img src=x>",
+            session_id="s1",
+            context="<svg/onload=alert(3)>",
+        )
 
         from mcp_server.server import handle_read_resource
 

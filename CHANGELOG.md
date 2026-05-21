@@ -115,6 +115,31 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   passes 13/14 against new backend (the 14th is a chromadb-availability
   test, skipped permanently now)
 
+### Removed — legacy v2.1.x compatibility paths (no carryover users)
+
+Once the v2.1.x user base dropped to zero (per maintainer's
+2026-05-22 directive: "no users; go fresh"), the defensive
+SQLiteGraph fallback branches added during Phase B's incremental
+migration became dead weight. Removed:
+
+- **`build_timeline(conn=...)` SQL backend** — `build_timeline()` is
+  now JSONL-only; the `conn` parameter is gone. Resource handler,
+  CLI replay, and tests all read from `.codevira/{decisions,
+  outcomes, sessions}.jsonl` exclusively. Public API simplified.
+- **`SignalContext.search_decisions` graph.db fallback** — JSONL FTS5
+  is the only backend; the legacy `graph.search_decisions()` branch
+  is gone. Returns `[]` cleanly when `.codevira/` isn't initialised.
+- **`treesitter_parser._load_parser_for` legacy pack fallback** —
+  unsupported languages now raise ValueError immediately with an
+  actionable message. The `[all-languages]` opt-in extra is gone.
+  v2.3.0 may re-introduce specific long-tail grammars as individual
+  deps if real demand emerges.
+- **Ported tests** that exercised the SQL path (test_decision_replay,
+  test_qa_round_week10/13, test_v2_release_candidate, test_cli_replay)
+  to use the JSONL planter helper (`decisions_store.record` +
+  `jsonl_store.append(outcomes_path, ...)`). Test count unchanged at
+  2,514 passes.
+
 ### Fixed — cross-tool wedge gaps (post-Phase-G completeness)
 
 The cross-tool universality e2e tests surfaced several read paths

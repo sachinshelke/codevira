@@ -1528,6 +1528,27 @@ def main() -> None:
         help="Print per-step counts",
     )
 
+    # v2.2.0 Phase F: `codevira observe-git` — git-observed outcome tracker.
+    observe_parser = subparsers.add_parser(
+        "observe-git",
+        help="Classify decisions as kept/modified/reverted from git history",
+        description=(
+            "Scan git log since the last observation and classify each "
+            "decision against HEAD: 'kept' (file unchanged since decision), "
+            "'modified' (file changed but partial preservation), 'reverted' "
+            "(file deleted OR materially changed). Appends events to "
+            "`.codevira/outcomes.jsonl` and updates `digest.weight` so the "
+            "relevance hook deprioritizes reverted decisions. Recommended: "
+            "run after every commit batch or as a post-commit hook."
+        ),
+    )
+    observe_parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Print per-decision classifications",
+    )
+
     # 2026-05-18 v2.1.2 Item 1: `codevira calibrate` — manual re-fit of
     # similarity thresholds. Auto-recalibration also runs every 10
     # decisions added, but power users may want explicit control.
@@ -1622,8 +1643,10 @@ def main() -> None:
             pass
 
     if args.command == "init":
-        # Pass overrides via function attribute (avoids changing signature).
-        # mypy doesn't model attribute-on-function so we silence per-line.
+        # v2.2.0: init also scaffolds .codevira/ in the repo + updates
+        # AGENTS.md / .gitignore. The legacy cmd_init (project bootstrap +
+        # IDE registration) still runs first; cli_init.cmd_init adds the
+        # new in-repo storage layout on top.
         cmd_init._overrides = {  # type: ignore[attr-defined]
             "name": getattr(args, "name", None),
             "language": getattr(args, "language", None),
@@ -1633,6 +1656,12 @@ def main() -> None:
         cmd_init._no_inject = getattr(args, "no_inject", False)  # type: ignore[attr-defined]
         cmd_init._single_language = getattr(args, "single_language", False)  # type: ignore[attr-defined]
         cmd_init()
+        # v2.2.0: scaffold .codevira/ (in-repo storage layer).
+        try:
+            from mcp_server.cli_init import cmd_init as cmd_init_v22
+            cmd_init_v22(yes=True, dry_run=False)
+        except Exception as e:
+            print(f"  ⚠ v2.2.0 .codevira/ scaffold failed: {e}", file=sys.stderr)
     elif args.command == "index":
         cmd_index(full=args.full, quiet=args.quiet, verbose=args.verbose)
     elif args.command == "status":
@@ -1862,6 +1891,12 @@ def main() -> None:
             dry_run=getattr(args, "dry_run", False),
             verbose=getattr(args, "verbose", False),
         )
+        sys.exit(rc)
+    elif args.command == "observe-git":
+        # 2026-05-19 v2.2.0 Phase F: classify decision outcomes from git.
+        from mcp_server.storage.outcomes_writer import cmd_observe_git
+
+        rc = cmd_observe_git(verbose=getattr(args, "verbose", False))
         sys.exit(rc)
     elif args.command == "calibrate":
         # v2.2.0: calibrate removed (no semantic thresholds — FTS5 only).

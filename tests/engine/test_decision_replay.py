@@ -13,7 +13,6 @@ Tier-0 + deep-audit from start (lessons #15-21):
 """
 from __future__ import annotations
 
-import io
 import sqlite3
 import time
 from pathlib import Path

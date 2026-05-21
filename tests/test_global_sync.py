@@ -8,7 +8,6 @@ lazy imports from that module inside each function.
 from __future__ import annotations
 
 import yaml
-from pathlib import Path
 from unittest.mock import patch
 
 from indexer.global_db import GlobalDB

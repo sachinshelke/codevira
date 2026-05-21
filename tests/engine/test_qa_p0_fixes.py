@@ -21,9 +21,7 @@ from __future__ import annotations
 
 import threading
 import time
-from pathlib import Path
 
-import pytest
 
 from indexer.fix_history import FixRecord, is_revert, _conn_cache, _connect_locked, reset
 
@@ -466,7 +464,6 @@ class TestIsRevertSizeCap:
 
     def test_oversized_input_returns_false_quickly(self):
         """101 KB input must return False without burning CPU."""
-        import time
         big_payload = "x" * 101_000
         change = f"--- before\n{big_payload}\n--- after\ny\n"
         fix = FixRecord(

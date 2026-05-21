@@ -16,9 +16,6 @@ from indexer.treesitter_parser import (
     get_language,
     get_symbol_source,
     ParsedFile,
-    ParsedSymbol,
-    ParsedImport,
-    EXTENSION_MAP,
 )
 
 FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures")

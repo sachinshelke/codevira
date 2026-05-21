@@ -200,7 +200,43 @@ Stay local. Stay focused on the one developer working on their machine.
 
 ---
 
-## 🔜 v2.1.2 — Trust Recovery + QoL (in progress)
+## ✅ v2.2.0 — Lean (May 2026)
+
+Architectural pivot. ~3,800 LOC deleted, ~150 MB runtime deps removed.
+
+After v2.1.2's 64 GB HNSW corruption exposed ChromaDB's structural
+fragility, v2.2.0 walks back the 2022-era vector-DB bet and ships
+codevira as a **lean cross-IDE decision-enforcement layer** (~1 MB per
+project, in your repo, no cloud, no vectors).
+
+Key changes:
+
+- Decisions now in `<repo>/.codevira/decisions.jsonl` (git-tracked,
+  team-shareable, replaces graph.db SQLite).
+- AGENTS.md auto-generated with hard 5 KB cap (other AI tools read it
+  natively — decisions are portable across Copilot, Codex, Cursor,
+  Gemini, Factory, Amp, Windsurf, Zed, RooCode, Jules).
+- Relevance-gated UserPromptSubmit: off-topic → 0 tokens; on-topic →
+  ≤600 tokens / ≤3 decisions; deterministic byte output (Anthropic
+  prompt-cache friendly).
+- ChromaDB / sentence-transformers / torch / search_codebase / calibrate
+  REMOVED.
+
+| Metric | v2.1.2 | v2.2.0 |
+|---|---|---|
+| Pipx install | ~200 MB | **~50 MB** |
+| Cold start | 1-3s | **<100ms** |
+| Per-project disk | 40-80 MB | **~1-2 MB** |
+| ChromaDB bug surface | exists | **gone** |
+
+New CLI: `codevira sync`, `codevira observe-git`. `codevira init` also
+scaffolds `.codevira/`.
+
+Full plan: [`docs/plans/v2.2.0.md`](docs/plans/v2.2.0.md).
+
+---
+
+## ✅ v2.1.2 — Trust Recovery + QoL (May 2026)
 
 **Full plan:** [`docs/plans/v2.1.2.md`](docs/plans/v2.1.2.md) — 823 lines,
 16 items + per-item verification + deferred list.

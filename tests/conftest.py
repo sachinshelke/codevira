@@ -6,7 +6,6 @@ import types
 from unittest.mock import MagicMock
 
 import pytest
-from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Pre-import numpy at conftest load time.

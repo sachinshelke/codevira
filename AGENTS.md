@@ -1,3 +1,20 @@
+<!-- codevira:begin (auto-generated; do not edit) -->
+
+## Codevira-tracked project memory: codevira
+
+### Locked decisions (do_not_revert)
+
+_None yet._
+
+### Active conventions
+
+_None yet._
+
+
+For the full decision log + outcomes + reverts, see `.codevira/decisions.jsonl` or run `codevira list-decisions`.
+
+<!-- codevira:end -->
+
 <!-- codevira:start -->
 # Codevira — persistent project memory
 

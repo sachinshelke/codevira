@@ -380,7 +380,7 @@ def _plan_nudge_steps(
             target_path=target,
             target_path_existed=existed,
             will_merge=existed,
-            preview=f"Write AGENTS.md (universal fallback) → AGENTS.md",
+            preview="Write AGENTS.md (universal fallback) → AGENTS.md",
         ))
 
     return steps
@@ -403,7 +403,7 @@ def execute_plan(plan: SetupPlan, *, dry_run: bool = False) -> ExecuteResult:
         try:
             from mcp_server.ide_inject import _resolve_command
             cmd_path, python_exe = _resolve_command()
-        except Exception as e:  # noqa: BLE001 — fall through; mcp_config steps will fail individually
+        except Exception:  # noqa: BLE001 — fall through; mcp_config steps will fail individually
             cmd_path, python_exe = None, None
 
     for step in plan.steps:
@@ -577,7 +577,7 @@ def _install_hook_registrations(step: SetupStep, *, dry_run: bool) -> StepResult
         except (OSError, json.JSONDecodeError):
             # Don't clobber unreadable settings — bail out as a soft fail
             return StepResult(step, False, "failed",
-                              error=f"settings.json is not valid JSON")
+                              error="settings.json is not valid JSON")
 
     hooks = existing.setdefault("hooks", {})
     if not isinstance(hooks, dict):

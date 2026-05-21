@@ -307,7 +307,6 @@ class TestWriteConfigPatch:
         NEVER see an empty or partial config.yaml during write. Uses
         os.replace (atomic on POSIX) via _atomic_write_text."""
         import threading
-        import time
         data_dir = tmp_path / ".codevira"
         data_dir.mkdir()
         (data_dir / "config.yaml").write_text(yaml.safe_dump({

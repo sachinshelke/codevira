@@ -17,7 +17,6 @@ import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-import pytest
 
 from mcp_server.roadmap_drift import (
     DRIFT_COMMITS_THRESHOLD,
@@ -25,7 +24,6 @@ from mcp_server.roadmap_drift import (
     check_drift,
     _parse_iso,
     _resolve_reference_time,
-    _git_commits_since,
 )
 
 

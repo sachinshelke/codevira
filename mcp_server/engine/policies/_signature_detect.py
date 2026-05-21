@@ -39,7 +39,6 @@ language" (the union of all regexes), which is also conservative.
 from __future__ import annotations
 
 import re
-from typing import Iterable
 
 # ---------------------------------------------------------------------
 # Diff parsing

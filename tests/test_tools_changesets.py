@@ -7,7 +7,6 @@ Uses the `project_env` fixture from conftest.py which provides
 from __future__ import annotations
 
 import yaml
-from pathlib import Path
 
 from mcp_server.tools.changesets import (
     start_changeset,
@@ -338,7 +337,6 @@ class TestUpdateNodeAfterChange:
 class TestListOpenChangesetsCorruptYaml:
     def test_corrupt_yaml_is_skipped_and_valid_returned(self, project_env):
         """list_open_changesets skips corrupt YAML files and still returns valid ones."""
-        from unittest.mock import patch
         _project, data_dir, _db = project_env
         changesets_dir = data_dir / "graph" / "changesets"
         changesets_dir.mkdir(parents=True, exist_ok=True)

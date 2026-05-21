@@ -18,11 +18,8 @@ Tests cover:
 """
 from __future__ import annotations
 
-import sqlite3
-from datetime import datetime
 from pathlib import Path
 
-import pytest
 
 from indexer.sqlite_graph import SQLiteGraph
 
@@ -260,7 +257,6 @@ class TestMCPToolRegistration:
     def test_retire_rule_tool_exists_in_server_module(self):
         """Read mcp_server/server.py and confirm the tool is wired up."""
         import mcp_server
-        from pathlib import Path
         server_path = Path(mcp_server.__file__).parent / "server.py"
         content = server_path.read_text(encoding="utf-8")
         assert 'name="retire_rule"' in content, (

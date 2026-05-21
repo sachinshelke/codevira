@@ -355,14 +355,14 @@ def render_html(
                 css_class += " reverted"
 
             body_parts.append(f'<article class="{css_class}">')
-            body_parts.append(f'  <header>')
+            body_parts.append('  <header>')
             body_parts.append(f'    <span class="date">{date}</span>')
             body_parts.append(f'    <span class="file">{file_path}</span>')
             if locked:
                 body_parts.append(
-                    f'    <span class="lock-marker" title="locked">🔒</span>'
+                    '    <span class="lock-marker" title="locked">🔒</span>'
                 )
-            body_parts.append(f'  </header>')
+            body_parts.append('  </header>')
             body_parts.append(f'  <blockquote>{decision}</blockquote>')
             if total > 0:
                 body_parts.append(
@@ -382,7 +382,7 @@ def render_html(
                 )
             if summary:
                 body_parts.append(f'  <p class="session-summary">{summary}</p>')
-            body_parts.append(f'</article>')
+            body_parts.append('</article>')
         body_parts.append('</div>')
 
     body = "\n".join(body_parts)

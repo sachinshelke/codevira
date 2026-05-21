@@ -272,7 +272,7 @@ class TestAcceptanceScenarios:
 
     def test_8_evaluation_under_1ms_p95_warm_cache(self):
         """Warm-graph + cached signals: sub-millisecond evaluation."""
-        import statistics, time
+        import time
         policy = DecisionLock()
         target = Path("/p/auth.py")
         signals = _FakeSignals(decisions_for={
@@ -403,7 +403,6 @@ class TestRealGraphIntegration:
         from mcp_server.engine.events import EventType, HookEvent
         from mcp_server.engine.policies.decision_lock import DecisionLock
         from mcp_server.engine import register_policy, reset_policies, dispatch
-        import os
 
         project = self._setup_real_graph(tmp_path)
 
@@ -446,7 +445,7 @@ class TestCoexistenceWithHero4:
         the old test trivially. This rewrite exercises the real path.
         """
         from mcp_server.engine import (
-            register_policy, registered_policies, reset_policies, dispatch,
+            register_policy, reset_policies,
         )
         from mcp_server.engine.policies.blast_radius import BlastRadiusVeto
 

@@ -12,7 +12,6 @@ automatic rule generation.
 """
 from __future__ import annotations
 
-import difflib
 import logging
 import subprocess
 from pathlib import Path

@@ -19,7 +19,6 @@ import pytest
 
 from mcp_server import setup_wizard
 from mcp_server.setup_wizard import (
-    SetupPlan,
     SetupStep,
     build_setup_plan,
     detect_targets,
@@ -386,7 +385,7 @@ class TestExternalSchema:
         codevira's hooks fire on every Read/Bash/Glob call, costing
         ~50 ms shell startup per invocation. (Week-3 R8 finding.)
         """
-        from mcp_server.setup_wizard import _install_hook_registrations, SetupStep
+        from mcp_server.setup_wizard import _install_hook_registrations
 
         # Build a fake step pointing at a settings.json under the
         # isolated home, then run the registration installer.
@@ -427,7 +426,7 @@ class TestExternalSchema:
         """SessionStart / UserPromptSubmit / Stop have no tool name —
         a matcher would never match. They must be registered without one.
         """
-        from mcp_server.setup_wizard import _install_hook_registrations, SetupStep
+        from mcp_server.setup_wizard import _install_hook_registrations
 
         settings_path = Path.home() / ".claude" / "settings.json"
         step = SetupStep(
@@ -692,7 +691,6 @@ class TestIntegrationFindings:
         helper that calls ``write_text`` directly will skip ``os.replace``
         entirely → test fails.
         """
-        import os
         from mcp_server.agents_md import _atomic_write_text
 
         replace_calls: list[tuple[str, str]] = []
@@ -732,7 +730,6 @@ class TestIntegrationFindings:
         atomic-write helper must NOT leave temp-file litter behind.
         Verify the failure path's cleanup runs.
         """
-        import os
         from mcp_server.agents_md import _atomic_write_text
 
         def failing_replace(src, dst, *args, **kwargs):

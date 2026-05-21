@@ -12,7 +12,6 @@ from __future__ import annotations
 import subprocess
 import sys
 
-import pytest
 
 from mcp_server import __version__ as expected_version
 

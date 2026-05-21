@@ -12,7 +12,6 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-from pathlib import Path
 
 import pytest
 
@@ -164,7 +163,6 @@ class TestTokenMeterPersistence:
         assert list(fake_home.rglob("token_budget.jsonl")) == []
 
     def test_read_session_history(self, tmp_path, monkeypatch):
-        from mcp_server.paths import _sanitize_path_key
         proj = tmp_path / "myproj"
         proj.mkdir()
         fake_home = tmp_path / "global"

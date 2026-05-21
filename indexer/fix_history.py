@@ -499,7 +499,6 @@ def scan_git_log(
         and ``codevira fix-noted`` consume).
     """
     import subprocess
-    import time
 
     pr = project_root.resolve()
     summary = {

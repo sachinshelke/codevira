@@ -12,12 +12,10 @@ Covers:
 """
 from __future__ import annotations
 
-import logging
-import re
 import sys
 import threading
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import pytest
 

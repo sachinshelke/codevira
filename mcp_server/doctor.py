@@ -37,8 +37,7 @@ from __future__ import annotations
 import os
 import sys
 import sqlite3
-from dataclasses import dataclass, field
-from pathlib import Path
+from dataclasses import dataclass
 from typing import IO, Callable
 
 
@@ -668,20 +667,70 @@ def check_crash_log_size() -> CheckResult:
 # hot file's signature surface small.
 from mcp_server._ghost_check import check_ghost_projects  # noqa: E402
 
+def check_codevira_dir() -> CheckResult:
+    """v2.2.0: confirm in-repo .codevira/ exists with expected files."""
+    from mcp_server.storage import paths as storage_paths
+
+    if not storage_paths.is_initialized():
+        return CheckResult(
+            "codevira_dir", _WARN,
+            "No .codevira/ in this project — run `codevira init`",
+        )
+
+    decisions_count = 0
+    try:
+        from mcp_server.storage import jsonl_store
+        decisions_count = jsonl_store.count(storage_paths.decisions_path())
+    except Exception:
+        pass
+
+    return CheckResult(
+        "codevira_dir", _PASS,
+        f".codevira/ present ({decisions_count} decision(s))",
+    )
+
+
+def check_agents_md_size() -> CheckResult:
+    """v2.2.0: AGENTS.md is generated; warn if it exceeds the 10 KB safety
+    threshold (5 KB cap on the codevira block + reasonable user content)."""
+    from mcp_server.paths import get_project_root
+
+    agents_md = get_project_root() / "AGENTS.md"
+    if not agents_md.is_file():
+        return CheckResult(
+            "agents_md_size", _PASS,
+            "AGENTS.md not present (will be generated on first record_decision)",
+        )
+
+    size = agents_md.stat().st_size
+    if size > 10 * 1024:
+        return CheckResult(
+            "agents_md_size", _WARN,
+            f"AGENTS.md is {size:,} bytes; codevira block has a 5 KB cap, but "
+            f"user content outside markers may have grown",
+        )
+    return CheckResult(
+        "agents_md_size", _PASS,
+        f"AGENTS.md is {size:,} bytes (≤10 KB safety threshold)",
+    )
+
+
 _CHECKS: tuple[Callable[[], CheckResult], ...] = (
     check_python_version,
     check_codevira_data_dir,
     check_project_root,
+    check_codevira_dir,                # v2.2.0 — replaces check_codeindex_freshness
+    check_agents_md_size,              # v2.2.0 — new
     check_graph_db,
     check_global_db,
     check_detected_ides,
     check_nudge_files,
     check_watcher_circuit,
     check_engine_kill_switch,
-    check_claude_mcp_visibility,    # rc.4 (Bug 10)
-    check_codeindex_freshness,      # rc.4 (Bug 11)
-    check_semantic_search_health,   # rc.4 (Bug 12)
-    check_ghost_projects,           # rc.4 (Bug 21c)
+    check_claude_mcp_visibility,       # rc.4 (Bug 10)
+    # v2.2.0: check_codeindex_freshness + check_semantic_search_health
+    # removed (chromadb deleted in Phase E).
+    check_ghost_projects,              # rc.4 (Bug 21c)
     check_crash_log_size,
 )
 

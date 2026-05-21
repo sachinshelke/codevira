@@ -6,12 +6,9 @@ since it has a module-level `from indexer.treesitter_parser import ...`.
 """
 from __future__ import annotations
 
-import json
 import sys
 import types
-from pathlib import Path
 
-import pytest
 
 # ---------------------------------------------------------------------------
 # Install a fake treesitter_parser module before importing graph_generator.

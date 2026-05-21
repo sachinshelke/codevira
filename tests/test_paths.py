@@ -22,18 +22,15 @@ Chaos tests:
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-import pytest
 
 import mcp_server.paths as paths
 from mcp_server.paths import (
     _sanitize_path_key,
-    _discover_project_root,
     _get_git_remote_url,
     _find_project_by_git_remote,
     get_data_dir,

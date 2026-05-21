@@ -7,9 +7,8 @@ to avoid real system interactions.
 from __future__ import annotations
 
 import plistlib
-import subprocess
 from pathlib import Path
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import patch, MagicMock
 
 import pytest
 

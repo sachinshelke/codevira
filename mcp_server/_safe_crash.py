@@ -27,7 +27,6 @@ in broken installs, so the defensive wrap stays.
 """
 from __future__ import annotations
 
-from typing import Any
 
 
 def safe_log_crash(

@@ -40,9 +40,7 @@ from __future__ import annotations
 import io
 import os
 import subprocess
-import sqlite3
 import sys
-import threading
 from pathlib import Path
 
 import pytest

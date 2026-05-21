@@ -10,7 +10,6 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -20,7 +19,6 @@ from mcp_server.engine.policies._signature_detect import (
     change_touches_signature,
     language_for_path,
     signature_change_summary,
-    signature_lines,
 )
 
 
@@ -303,7 +301,7 @@ class TestAcceptanceScenarios:
 
     def test_10_evaluation_under_50ms_p95(self):
         """Cold-impact evaluation budget — 100 trials, p95 < 50 ms."""
-        import statistics, time
+        import time
         policy = BlastRadiusVeto()
         target = Path("/p/auth.py")
         signals = _signals_with_impact({
@@ -768,7 +766,6 @@ class TestRegistration:
         from mcp_server.engine.events import EventType, HookEvent
         from mcp_server.engine import register_policy, reset_policies, dispatch
         import mcp_server.paths as paths_mod
-        import os
 
         fake_home = tmp_path / "home"
         fake_home.mkdir()

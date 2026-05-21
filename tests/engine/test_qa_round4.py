@@ -14,8 +14,6 @@ R4 HIGH #3 — SQL DoS via ``limit``: negative or huge ``limit`` argument
 """
 from __future__ import annotations
 
-from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 

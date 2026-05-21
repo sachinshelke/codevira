@@ -130,14 +130,14 @@ def _print_recent(session: dict[str, Any], *, full: bool = False) -> None:
 
     print()
     print(f"  Session {sid}  ({ended_at})")
-    print(f"  " + "─" * 60)
+    print("  " + "─" * 60)
     print(f"  Injected:   {injected:>10,} tokens")
     print(f"  Used:       {used:>10,} tokens")
     print(f"  Efficiency: {eff_pct:>10.1f}%")
 
     if wasted_sources:
         print()
-        print(f"  Top wasted sources:")
+        print("  Top wasted sources:")
         limit = len(wasted_sources) if full else 3
         for src in wasted_sources[:limit]:
             name = src.get("source", "?")
@@ -152,7 +152,7 @@ def _print_recent(session: dict[str, Any], *, full: bool = False) -> None:
             print(f"    ... and {len(wasted_sources) - 3} more (use --full to see all)")
     else:
         print()
-        print(f"  No wasted sources recorded.")
+        print("  No wasted sources recorded.")
     print()
 
 
@@ -164,7 +164,7 @@ def _print_recent(session: dict[str, Any], *, full: bool = False) -> None:
 def _print_history(sessions: list[dict[str, Any]], *, full: bool = False) -> None:
     print()
     print(f"  Last {len(sessions)} session(s):")
-    print(f"  " + "─" * 60)
+    print("  " + "─" * 60)
     print(f"  {'Date':<19}  {'Session':<24}  {'Injected':>9}  {'Used':>9}  {'Eff':>5}")
     for s in sessions:
         ended_at = _format_timestamp(s.get("ended_at"))
@@ -180,7 +180,7 @@ def _print_history(sessions: list[dict[str, Any]], *, full: bool = False) -> Non
     if full:
         # Per-session full breakdown
         print()
-        print(f"  Per-source breakdown:")
+        print("  Per-source breakdown:")
         for s in sessions:
             wasted = s.get("top_wasted_sources", []) or []
             if not wasted:

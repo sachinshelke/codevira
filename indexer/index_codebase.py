@@ -1225,41 +1225,19 @@ def cmd_status(check_stale: bool = False, show_global: bool = False):
     except Exception:
         nodes = 0
 
-    # Count chromadb chunks — but avoid importing chromadb if no index exists.
-    # chromadb's import alone takes ~700ms cold; we don't want that cost for
-    # `codevira status` on a project that hasn't been indexed yet.
+    # v2.2.0: ChromaDB / sentence-transformers / torch were deleted in
+    # Phase E. There is no semantic chunk count to display. `chunk_count`
+    # is retained at 0 because the explanation branches below still
+    # reference it for backwards-compatible message logic.
     chunk_count = 0
-    search_available = True
-    index_dir = _index_dir()
-    chroma_db_file = index_dir / "chroma.sqlite3"
-    if chroma_db_file.exists():
-        # Index exists — read chunk count (triggers chromadb import)
-        try:
-            client = _get_chroma_client()
-            try:
-                collection = client.get_collection(COLLECTION_NAME)
-                chunk_count = collection.count()
-            except Exception:
-                chunk_count = 0
-        except ImportError:
-            search_available = False
-    else:
-        # No index yet — check if chromadb is installed (cheap — just checks
-        # for package metadata, no real import). If not, show "not installed".
-        try:
-            import importlib.util
-
-            if importlib.util.find_spec("chromadb") is None:
-                search_available = False
-        except Exception:
-            pass
 
     table = Table(show_header=False, box=None)
     table.add_row("[cyan]Graph Nodes:[/cyan]", str(nodes))
-    if search_available:
-        table.add_row("[cyan]ChromaDB Chunks:[/cyan]", str(chunk_count))
-    else:
-        table.add_row("[cyan]Semantic Search:[/cyan]", "[dim]not installed[/dim]")
+    # v2.2.0: ChromaDB / semantic code search was removed entirely
+    # (Phase E). The "ChromaDB Chunks" / "Semantic Search" row is no
+    # longer meaningful; the code graph IS the search surface now.
+    # `chunk_count` is retained at 0 because the explanation logic
+    # below still references it.
 
     # Stale file scan is slow (SHA256 every source file) — only run on demand
     if check_stale:
@@ -1310,13 +1288,18 @@ def cmd_status(check_stale: bool = False, show_global: bool = False):
             console.print()
             if chunk_count == 0:
                 console.print(
-                    "[yellow]⚠[/yellow]  Graph and semantic index are empty, "
-                    "but your project has files matching the config."
+                    "[yellow]⚠[/yellow]  Graph is empty. Either this project "
+                    "hasn't been indexed yet, OR it has no parseable source "
+                    "code in the configured extensions."
                 )
                 console.print(
-                    "  This project hasn't been indexed yet (or the index was wiped)."
+                    "  codevira indexes code, not documentation — "
+                    "markdown / YAML / text files don't produce graph nodes."
                 )
-                console.print("  Fix: run [bold]codevira index --full[/bold]")
+                console.print(
+                    "  Fix (if you expected nodes): run [bold]codevira index "
+                    "--full[/bold] and check the per-file decisions."
+                )
             else:
                 # chunks exist (markdown/text) but no graph nodes — common
                 # for docs-only repos. Explain so the user knows it's
@@ -1358,10 +1341,10 @@ def cmd_status(check_stale: bool = False, show_global: bool = False):
                 "Run [bold]codevira index --full[/bold] or [bold]codevira configure[/bold] to diagnose."
             )
 
-    if not search_available:
-        console.print(
-            "\n[dim]  Tip: reinstall with [bold]pip install --upgrade codevira[/bold] to enable semantic search[/dim]"
-        )
+    # v2.2.0: removed "reinstall to enable semantic search" tip — there
+    # is no version of codevira 2.2+ that has semantic code search. The
+    # tip pointed users at a non-existent capability and confused
+    # first-contact users.
 
     if check_stale and stale_files:
         console.print("\n[yellow]Files requiring re-indexing:[/yellow]")

@@ -499,63 +499,9 @@ class TestCallToolAdditionalRoutes:
         )
         assert len(result) == 1
 
-    def test_dispatch_get_preferences(self):
-        """get_preferences dispatches with optional category."""
-        sentinel = {"preferences": []}
-        with patch(
-            "mcp_server.server.learning_get_preferences", return_value=sentinel
-        ) as mock_fn, patch("mcp_server.auto_init.ensure_project_initialized"):
-            result = _run(call_tool("get_preferences", {"category": "naming"}))
-        mock_fn.assert_called_once_with(category="naming")
-        assert len(result) == 1
-        parsed = json.loads(result[0].text)
-        assert parsed == sentinel
-
-    def test_dispatch_get_preferences_no_category(self):
-        """get_preferences dispatches with no category."""
-        sentinel = {"preferences": ["snake_case"]}
-        with patch(
-            "mcp_server.server.learning_get_preferences", return_value=sentinel
-        ) as mock_fn, patch("mcp_server.auto_init.ensure_project_initialized"):
-            result = _run(call_tool("get_preferences", {}))
-        mock_fn.assert_called_once_with(category=None)
-        assert len(result) == 1
-
-    def test_dispatch_get_learned_rules(self):
-        """get_learned_rules dispatches with file_path and category."""
-        sentinel = {"rules": []}
-        with patch(
-            "mcp_server.server.learning_get_learned_rules", return_value=sentinel
-        ) as mock_fn, patch("mcp_server.auto_init.ensure_project_initialized"):
-            result = _run(
-                call_tool(
-                    "get_learned_rules",
-                    {"file_path": "src/api.py", "category": "testing"},
-                )
-            )
-        # v2.0-rc.3 (Bug 3): include_retired added with False default.
-        mock_fn.assert_called_once_with(
-            file_path="src/api.py",
-            category="testing",
-            include_retired=False,
-        )
-        assert len(result) == 1
-        parsed = json.loads(result[0].text)
-        assert parsed == sentinel
-
-    def test_dispatch_get_learned_rules_no_args(self):
-        """get_learned_rules dispatches with no arguments."""
-        sentinel = {"rules": []}
-        with patch(
-            "mcp_server.server.learning_get_learned_rules", return_value=sentinel
-        ) as mock_fn, patch("mcp_server.auto_init.ensure_project_initialized"):
-            result = _run(call_tool("get_learned_rules", {}))
-        mock_fn.assert_called_once_with(
-            file_path=None,
-            category=None,
-            include_retired=False,
-        )
-        assert len(result) == 1
+    # v2.2.0+: get_preferences / get_learned_rules dispatch tests removed
+    # (the tools were deleted along with the preferences + learned_rules
+    # feature per the 2026-05-22 surface-cut audit).
 
     def test_dispatch_get_project_maturity(self):
         """get_project_maturity dispatches with no arguments."""
@@ -847,26 +793,7 @@ class TestCallToolMissingDispatches:
             _run(call_tool("get_decision_confidence", {"file_path": "src/api.py"}))
         m.assert_called_once_with(file_path="src/api.py", pattern=None)
 
-    def test_dispatch_get_preferences(self):
-        sentinel = {"preferences": []}
-        with patch(
-            "mcp_server.server.learning_get_preferences", return_value=sentinel
-        ) as m, patch("mcp_server.auto_init.ensure_project_initialized"):
-            _run(call_tool("get_preferences", {}))
-        m.assert_called_once_with(category=None)
-
-    def test_dispatch_get_learned_rules(self):
-        sentinel = {"rules": []}
-        with patch(
-            "mcp_server.server.learning_get_learned_rules", return_value=sentinel
-        ) as m, patch("mcp_server.auto_init.ensure_project_initialized"):
-            _run(call_tool("get_learned_rules", {}))
-        # v2.0-rc.3 (Bug 3): dispatch now passes include_retired=False default.
-        m.assert_called_once_with(
-            file_path=None,
-            category=None,
-            include_retired=False,
-        )
+    # v2.2.0+: get_preferences / get_learned_rules removed (see above).
 
     def test_dispatch_get_project_maturity(self):
         sentinel = {"maturity": "Senior"}

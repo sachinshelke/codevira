@@ -1262,45 +1262,9 @@ def main() -> None:
         help="Write to FILE instead of stdout (e.g. --format html --out timeline.html)",
     )
 
-    # insights (v2.0 hero 10 — AI Promotion Score)
-    insights_parser = subparsers.add_parser(
-        "insights",
-        help="Show stable + reverted decisions + emerging patterns (Hero 10)",
-        description=(
-            "Show this project's promotion-score digest: top stable past "
-            "decisions, top reverted decisions (signals where the AI "
-            "keeps proposing changes you keep undoing), and high-confidence "
-            "learned rules. Reads outcomes recorded by indexer/outcome_tracker."
-        ),
-    )
-    insights_parser.add_argument(
-        "--since",
-        default="7d",
-        help="Lookback window: e.g. 7d, 30d, 90d (default 7d, max 365d)",
-    )
-    insights_parser.add_argument(
-        "--top",
-        type=int,
-        default=5,
-        help="Max items per section (clamped 1-20, default 5)",
-    )
-    insights_parser.add_argument(
-        "--project",
-        metavar="PATH",
-        default=None,
-        help="Read another project's insights instead of cwd",
-    )
-    insights_parser.add_argument(
-        "--min-outcomes",
-        type=int,
-        default=1,
-        help="Decisions with fewer outcomes are filtered (default 1)",
-    )
-    insights_parser.add_argument(
-        "--ascii",
-        action="store_true",
-        help="Use ASCII fallbacks instead of unicode badges",
-    )
+    # v2.2.0+: `insights` CLI command removed (it surfaced Hero 10's
+    # promotion score, which was deleted along with preferences /
+    # learned_rules per the 2026-05-22 surface-cut audit).
 
     # clean (P2-1 + P2-10 rc.5: added description + self-contained flag help)
     clean_parser = subparsers.add_parser(
@@ -1830,20 +1794,6 @@ def main() -> None:
             project=Path(project_arg) if project_arg else None,
             ascii_mode=getattr(args, "ascii", False),
             out_file=Path(out_arg) if out_arg else None,
-        )
-        sys.exit(rc)
-    elif args.command == "insights":
-        # Hero 10 — AI Promotion Score. Reads outcomes + learned_rules
-        # from the project's graph DB and renders the digest.
-        from mcp_server.cli_insights import cmd_insights
-
-        project_arg = getattr(args, "project", None)
-        rc = cmd_insights(
-            since=getattr(args, "since", "7d"),
-            top=getattr(args, "top", 5),
-            project=Path(project_arg) if project_arg else None,
-            min_outcomes=getattr(args, "min_outcomes", 1),
-            ascii_mode=getattr(args, "ascii", False),
         )
         sys.exit(rc)
     elif args.command == "clean":

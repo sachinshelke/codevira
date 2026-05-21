@@ -87,8 +87,6 @@ from mcp_server.tools.playbook import get_playbook
 from mcp_server.tools.code_reader import get_signature, get_code
 from mcp_server.tools.learning import (
     get_decision_confidence as learning_get_decision_confidence,
-    get_preferences as learning_get_preferences,
-    get_learned_rules as learning_get_learned_rules,
     get_project_maturity as learning_get_project_maturity,
     get_session_context as learning_get_session_context,
 )
@@ -1102,77 +1100,6 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
-            name="get_preferences",
-            description=(
-                "Get learned developer preferences from past correction patterns. "
-                "Returns coding style signals: naming conventions, structural preferences, patterns. "
-                "Call this before writing code to match the developer's style."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "category": {
-                        "type": "string",
-                        "description": "Filter by category: 'naming' | 'structure' | 'patterns' | 'formatting'",
-                    },
-                },
-            },
-        ),
-        Tool(
-            name="get_learned_rules",
-            description=(
-                "Get auto-generated rules from observed patterns across sessions. "
-                "These rules are learned from what works — test pairing patterns, import rules, "
-                "co-change patterns. Higher confidence = more reliable. "
-                "Use alongside get_playbook() for comprehensive guidance. "
-                "Each rule comes with a numeric `id` — pass that to retire_rule() "
-                "if a rule has gone stale (e.g. pinned to a deleted directory)."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "file_path": {
-                        "type": "string",
-                        "description": "File path to get rules for (matches by pattern)",
-                    },
-                    "category": {
-                        "type": "string",
-                        "description": "Filter: 'testing' | 'imports' | 'structure' | 'patterns' | 'naming'",
-                    },
-                    "include_retired": {
-                        "type": "boolean",
-                        "description": "Include rules previously retired (default false — audit only)",
-                    },
-                },
-            },
-        ),
-        Tool(
-            name="retire_rule",
-            description=(
-                "Retire a stale learned rule by its numeric id. The rule is "
-                "marked retired (kept in the table for audit) and stops "
-                "appearing in get_learned_rules() / get_session_context() "
-                "and stops firing as a high-confidence signal in policies. "
-                "Call this when get_learned_rules surfaces a rule pinned to "
-                "a directory or pattern that no longer exists in the codebase. "
-                "Provide a short reason so future sessions understand why it was retired."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "rule_id": {
-                        "type": "integer",
-                        "description": "Numeric id from get_learned_rules() output",
-                    },
-                    "reason": {
-                        "type": "string",
-                        "description": "Why the rule is being retired (e.g. 'src/control/cli/ deleted in Plan 1 Week 2')",
-                    },
-                },
-                "required": ["rule_id"],
-            },
-        ),
-        Tool(
             name="get_project_maturity",
             description=(
                 "Get overall project intelligence and maturity metrics. "
@@ -1282,8 +1209,6 @@ async def list_tools() -> list[Tool]:
         "analyze_changes",  # PR review — use prompt instead
         "find_hotspots",  # dashboard metric — use prompt instead
         "get_project_maturity",  # dashboard metric
-        "get_preferences",  # included in get_session_context
-        "get_learned_rules",  # included in get_session_context
         "get_full_roadmap",  # rarely needed by agents — use get_phase(n)
     }
     tools = [t for t in tools if t.name not in _ADMIN_TOOLS]
@@ -1541,21 +1466,6 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             result = learning_get_decision_confidence(
                 file_path=arguments.get("file_path"),
                 pattern=arguments.get("pattern"),
-            )
-        elif name == "get_preferences":
-            result = learning_get_preferences(category=arguments.get("category"))
-        elif name == "get_learned_rules":
-            result = learning_get_learned_rules(
-                file_path=arguments.get("file_path"),
-                category=arguments.get("category"),
-                include_retired=arguments.get("include_retired", False),
-            )
-        elif name == "retire_rule":
-            from mcp_server.tools.learning import retire_rule as learning_retire_rule
-
-            result = learning_retire_rule(
-                rule_id=arguments["rule_id"],
-                reason=arguments.get("reason"),
             )
         elif name == "get_project_maturity":
             result = learning_get_project_maturity()

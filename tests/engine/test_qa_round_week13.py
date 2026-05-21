@@ -57,14 +57,12 @@ def isolated_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 @pytest.fixture(autouse=True)
 def _isolate(monkeypatch: pytest.MonkeyPatch):
     from mcp_server.engine.runner import reset_policies
-    from mcp_server.engine.scope_contract import clear_all
 
     reset_policies()
-    clear_all()
+    # v2.2.0+: scope_contract module deleted; nothing to clear.
     monkeypatch.delenv("CODEVIRA_ENGINE", raising=False)
     yield
     reset_policies()
-    clear_all()
 
 
 def _set_project(monkeypatch: pytest.MonkeyPatch, project: Path) -> None:
@@ -100,22 +98,18 @@ class TestL1_TenHeroes:
 
         register_default_policies()
         names = {p.name for p in registered_policies()}
-        # Note: Hero 8 (Decision Replay) is NOT a policy — it's a
-        # browse surface (MCP resources + CLI). So default policy
-        # count stays at 9 (post-Week-12).
+        # v2.2.0+ surface cut (2026-05-22 audit): Hero 7
+        # (LiveStyleEnforcement), Hero 10 (AIPromotionScore), Hero 9
+        # (ProactiveIntentInference), and Hero 3 (ProactiveScopeContractLock)
+        # were all DELETED. Default set: 6 (5 heroes + 1 v2.1.2 item).
         expected = {
-            "blast_radius_veto",  # Hero 4 (Week 4)
-            "decision_lock",  # Hero 1 (Week 5)
-            "relevance_inject",  # Hero 5 (Week 6)
-            "token_budget_persist",  # Hero 6 (Week 7)
-            "anti_regression",  # Hero 2 (Week 8)
-            "live_style_enforcement",  # Hero 7 (Week 9)
-            "ai_promotion_score",  # Hero 10 (Week 10)
-            "intent_inference",  # Hero 9 (Week 11)
-            "scope_contract_lock",  # Hero 3 (Week 12)
+            "blast_radius_veto",  # Hero 4
+            "decision_lock",  # Hero 1 (unique enforcement wedge)
+            "relevance_inject",  # Hero 5 (v2.2.0 UserPromptSubmit inject)
+            "token_budget_persist",  # Hero 6
+            "anti_regression",  # Hero 2
             "post_edit_graph_refresh",  # v2.1.2 Item 4
-            # Hero 8 (Decision Replay) is NOT here — it's a browse
-            # surface, not an event-intercepting policy.
+            # Hero 8 (Decision Replay) is a browse surface, not a policy.
         }
         assert names == expected, (
             f"Default policy set drift: got {sorted(names)}, "
@@ -298,13 +292,9 @@ class TestL4_RecordThenBrowse:
             assert len(decisions) == 1
             assert decisions[0]["decision"] == "End-to-end shared data check"
 
-            # Read via Hero 10's promotion scorer — still graph.db-backed
-            from mcp_server.engine.promotion_score import (
-                aggregate_decision_outcomes,
-            )
-
-            agg = aggregate_decision_outcomes(g.conn, since_days=30, min_outcomes=1)
-            assert any(a.get("decision") == "End-to-end shared data check" for a in agg)
+            # v2.2.0+: Hero 10 (promotion_score) removed; this assertion
+            # is no longer applicable. JSONL + signals.decisions paths
+            # above already verify the cross-surface data coherence.
         finally:
             g.close()
 

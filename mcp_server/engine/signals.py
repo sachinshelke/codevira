@@ -326,27 +326,13 @@ class SignalContext:
         the same process don't hit the DB twice. Returns empty list
         when graph is unavailable or table is empty.
         """
+        # v2.2.0+: promotion_score module deleted along with Hero 10
+        # (AIPromotionScore policy). outcomes() now returns an empty list;
+        # callers that depended on the aggregator have been removed.
         cache_key = ("outcomes", int(since_days), int(min_outcomes), int(limit))
-        if cache_key in self._decisions_cache:  # reuse decisions cache slot
+        if cache_key in self._decisions_cache:
             return self._decisions_cache[cache_key]
         result: list[dict[str, Any]] = []
-        try:
-            graph = self.graph
-            if graph is None:
-                self._decisions_cache[cache_key] = result
-                return result
-            from mcp_server.engine.promotion_score import (
-                aggregate_decision_outcomes,
-            )
-
-            result = aggregate_decision_outcomes(
-                graph.conn,
-                since_days=since_days,
-                min_outcomes=min_outcomes,
-                limit=limit,
-            )
-        except Exception:  # noqa: BLE001
-            result = []
         self._decisions_cache[cache_key] = result
         return result
 
@@ -356,28 +342,14 @@ class SignalContext:
         min_confidence: float = 0.7,
         max_items: int = 3,
     ) -> list[dict[str, Any]]:
-        """Top-N learned rules above a confidence threshold.
+        """v2.2.0+: returns [] — learned_rules surface removed.
 
-        Companion to ``outcomes()`` for Hero 10's inject.
+        Companion to outcomes(); both were Hero 10 inputs. Both gone.
         """
         cache_key = ("rules", float(min_confidence), int(max_items))
         if cache_key in self._decisions_cache:
             return self._decisions_cache[cache_key]
         result: list[dict[str, Any]] = []
-        try:
-            graph = self.graph
-            if graph is None:
-                self._decisions_cache[cache_key] = result
-                return result
-            from mcp_server.engine.promotion_score import top_rules
-
-            result = top_rules(
-                graph.conn,
-                min_confidence=min_confidence,
-                max_items=max_items,
-            )
-        except Exception:  # noqa: BLE001
-            result = []
         self._decisions_cache[cache_key] = result
         return result
 
@@ -408,21 +380,14 @@ class SignalContext:
 
     @property
     def scope_contract(self) -> Any:
-        """The current session's scope contract, or ``None``.
+        """v2.2.0+: always returns None.
 
-        Populated by Hero 3 (Scope Contract Lock) on UserPromptSubmit.
-        Other policies (esp. Hero 4 Blast-Radius) may read this to refine
-        their own decisions ("AI is in tight scope; don't be lenient").
-        Returns ``None`` until Hero 3 ships and is enabled.
+        Hero 3 (ProactiveScopeContractLock) was deleted in the
+        2026-05-22 surface-cut audit. The signal slot is retained
+        as a no-op so existing policy code that probes it doesn't
+        need updating.
         """
-        if self._scope_contract is _UNCOMPUTED:
-            try:
-                from mcp_server.engine.scope_contract import current_contract
-
-                self._scope_contract = current_contract()
-            except Exception:  # noqa: BLE001
-                self._scope_contract = None
-        return self._scope_contract
+        return None
 
     # ---------------------------------------------------------------
     # Current session context

@@ -364,85 +364,12 @@ class TestGetDecisionConfidence:
 # =====================================================================
 
 
-class TestGetPreferences:
-    def test_empty_preferences(self, tmp_path, monkeypatch):
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        db.close()
-        result = learning.get_preferences()
-        assert result["total"] == 0
-        assert "No preferences" in result["hint"]
-
-    def test_preferences_with_data(self, tmp_path, monkeypatch):
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        db.record_preference("naming", "snake_case")
-        db.record_preference("structure", "early returns")
-        db.close()
-        result = learning.get_preferences()
-        assert result["total"] == 2
-        assert "Apply these preferences" in result["hint"]
-
-    def test_preferences_filtered_by_category(self, tmp_path, monkeypatch):
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        db.record_preference("naming", "snake_case")
-        db.record_preference("structure", "early returns")
-        db.close()
-        result = learning.get_preferences(category="naming")
-        assert result["total"] == 1
-        assert result["preferences"][0]["signal"] == "snake_case"
-
-
-# =====================================================================
-# get_learned_rules (tool-level)
-# =====================================================================
-
-
-class TestGetLearnedRules:
-    def test_empty_rules(self, tmp_path, monkeypatch):
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        db.close()
-        result = learning.get_learned_rules()
-        assert result["total"] == 0
-        assert "No rules" in result["hint"]
-
-    def test_rules_with_data(self, tmp_path, monkeypatch):
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        db.add_learned_rule("Rule A", 0.8, ["s1"], category="testing")
-        db.add_learned_rule("Rule B", 0.5, ["s1"], category="imports")
-        db.close()
-        result = learning.get_learned_rules()
-        assert result["total"] == 2
-        assert "learned from past sessions" in result["hint"]
-
-    def test_rules_filtered_by_category(self, tmp_path, monkeypatch):
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        db.add_learned_rule("Rule A", 0.8, ["s1"], category="testing")
-        db.add_learned_rule("Rule B", 0.5, ["s1"], category="imports")
-        db.close()
-        result = learning.get_learned_rules(category="testing")
-        assert result["total"] == 1
-        assert result["rules"][0]["category"] == "testing"
-
-    def test_rules_filtered_by_file(self, tmp_path, monkeypatch):
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        db.add_learned_rule(
-            "API rule", 0.8, ["s1"], category="testing", file_pattern="src/api%"
-        )
-        db.add_learned_rule("General rule", 0.7, ["s1"], category="testing")
-        db.close()
-        result = learning.get_learned_rules(file_path="src/api.py")
-        # Should return both (general applies to all, API rule matches the pattern)
-        assert result["total"] >= 1
-
-    def test_rules_below_min_confidence_excluded(self, tmp_path, monkeypatch):
-        """The tool passes min_confidence=0.3 by default, so rules below that are excluded."""
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        db.add_learned_rule("Very weak rule", 0.1, ["s1"], category="testing")
-        db.add_learned_rule("Decent rule", 0.5, ["s1"], category="testing")
-        db.close()
-        result = learning.get_learned_rules()
-        # Only the 0.5 rule should appear (0.1 < 0.3 min_confidence)
-        assert result["total"] == 1
-        assert result["rules"][0]["rule"] == "Decent rule"
+# v2.2.0+: TestGetPreferences + TestGetLearnedRules removed.
+# The corresponding tools (get_preferences, get_learned_rules, retire_rule)
+# were deleted per the 2026-05-22 surface-cut audit — the auto-extracted
+# signals produced noise rather than value; nobody read them in real
+# sessions. SQLiteGraph still records preferences/rules for back-compat
+# but they're not surfaced as MCP tools or via get_session_context.
 
 
 # =====================================================================
@@ -518,14 +445,11 @@ class TestGetSessionContext:
 
         assert "recent_sessions" in result
         assert "recent_decisions" in result
-        # 2026-05-18 v2.1.2 Item 8: confidence + top_signals may be
-        # replaced by *_note fields when there's no outcome data yet OR
-        # no learned preferences/rules. Accept both shapes.
+        # 2026-05-18 v2.1.2 Item 8: confidence may be replaced by
+        # confidence_note when there's no outcome data yet.
         assert "confidence" in result or "confidence_note" in result
-        assert "top_signals" in result or "top_signals_note" in result
-        if "top_signals" in result:
-            assert "preferences" in result["top_signals"]
-            assert "rules" in result["top_signals"]
+        # v2.2.0+: top_signals (preferences + rules) removed per the
+        # 2026-05-22 surface-cut audit. No longer asserted.
 
     def test_session_context_with_roadmap(self, tmp_path, monkeypatch):
         _, _, db = _setup_project(tmp_path, monkeypatch)
@@ -581,15 +505,7 @@ class TestGetSessionContext:
 
         assert result["recent_sessions"] == []
         assert result["recent_decisions"] == []
-        # 2026-05-18 v2.1.2 Item 8: with no data, top_signals is omitted
-        # in favor of top_signals_note (cleaner UX for fresh projects).
-        if "top_signals" in result:
-            assert result["top_signals"]["preferences"] == []
-            assert result["top_signals"]["rules"] == []
-        else:
-            assert (
-                "top_signals_note" in result
-            ), "expected either top_signals dict OR top_signals_note for empty state"
+        # v2.2.0+: top_signals (preferences + rules) removed.
 
     def test_session_context_surfaces_phase_key_decisions(self, tmp_path, monkeypatch):
         """Bug 5 regression: complete_phase(key_decisions=[...]) writes to

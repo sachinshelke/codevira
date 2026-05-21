@@ -72,10 +72,9 @@ def isolated_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def _clean_engine_state(monkeypatch: pytest.MonkeyPatch):
     """Each E2E test starts with a clean engine + storage."""
     from mcp_server.engine.runner import reset_policies
-    from mcp_server.engine.scope_contract import clear_all
 
     reset_policies()
-    clear_all()
+    # v2.2.0+: scope_contract module deleted; nothing to clear.
     # Clean every env var any hero reads
     for env in (
         "CODEVIRA_ENGINE",
@@ -92,7 +91,6 @@ def _clean_engine_state(monkeypatch: pytest.MonkeyPatch):
         monkeypatch.delenv(env, raising=False)
     yield
     reset_policies()
-    clear_all()
 
 
 def _set_project(monkeypatch: pytest.MonkeyPatch, project: Path) -> None:
@@ -199,113 +197,13 @@ class TestA_AllHeroesCoexistence:
         # Cold project → Hero 10 has nothing to surface → allow.
         assert v.action == "allow"
 
-    def test_user_prompt_submit_with_full_data_flows(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        isolated_project: Path,
-    ):
-        """UserPromptSubmit with planted decisions + fix history. Heroes
-        5, 9, 3 (off by default) all eligible. Hero 5 + 9 should inject."""
-        from indexer.fix_history import record_fix
-        from mcp_server.engine import (
-            register_default_policies,
-            reset_policies,
-            dispatch,
-        )
-        from mcp_server.engine.events import EventType
-
-        _set_project(monkeypatch, isolated_project)
-        g = _open_graph(isolated_project)
-        try:
-            _ensure_session(g)
-            g.conn.execute(
-                "INSERT INTO decisions (session_id, decision, file_path, "
-                "context, created_at) VALUES (?, ?, ?, ?, datetime('now'))",
-                ("s1", "use bcrypt over argon2", "auth.py", "perf"),
-            )
-            g.conn.commit()
-        finally:
-            g.close()
-        (isolated_project / "auth.py").write_text("def login(): pass")
-        record_fix(
-            isolated_project,
-            file_path="auth.py",
-            line_start=0,
-            line_end=0,
-            description="fix: regex didn't escape email special chars",
-            source="manual",
-        )
-
-        reset_policies()
-        register_default_policies()
-
-        v = dispatch(
-            _make_event(
-                EventType.USER_PROMPT_SUBMIT,
-                isolated_project,
-                session_id="rc-a3",
-                prompt_text="Fix the auth.py login bug for special chars",
-            )
-        )
-        # Hero 5 + Hero 9 both inject. Verdict combiner → inject.
-        assert v.action == "inject", f"Expected inject, got {v.action}"
-        ctx = v.inject_context or ""
-        # Hero 5 surfaces the bcrypt decision via keyword search
-        assert "bcrypt over argon2" in ctx
-        # Hero 9 surfaces the fix history (intent=fix-bug, file=auth.py)
-        assert "regex didn't escape" in ctx
-
-    def test_post_tool_use_with_style_pref_warns(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        isolated_project: Path,
-    ):
-        """PostToolUse Edit with snake_case preference + camelCase Edit
-        → Hero 7 warns. Hero 6 (token_budget) ignores. Other heroes don't
-        fire on POST."""
-        from mcp_server.engine import (
-            register_default_policies,
-            reset_policies,
-            dispatch,
-        )
-        from mcp_server.engine.events import EventType
-        from indexer.sqlite_graph import SQLiteGraph
-
-        _set_project(monkeypatch, isolated_project)
-        from mcp_server.paths import get_data_dir
-
-        graph_db = get_data_dir() / "graph" / "graph.db"
-        graph_db.parent.mkdir(parents=True, exist_ok=True)
-        g = SQLiteGraph(graph_db)
-        try:
-            g.conn.execute(
-                "INSERT INTO preferences (category, signal, example, "
-                "frequency, source) VALUES (?, ?, ?, ?, ?)",
-                ("naming", "snake_case", "def fetch_user():", 42, "manual"),
-            )
-            g.conn.commit()
-        finally:
-            g.close()
-
-        reset_policies()
-        register_default_policies()
-
-        diff = (
-            "--- before\nold\n--- after\n"
-            "def fetchUserMetadata(userId):\n    return userId\n"
-        )
-        v = dispatch(
-            _make_event(
-                EventType.POST_TOOL_USE,
-                isolated_project,
-                tool_name="Edit",
-                target_file=isolated_project / "api.py",
-                proposed_diff=diff,
-                session_id="rc-a4",
-            )
-        )
-        assert v.action == "warn"
-        assert "snake_case" in (v.message or "")
+    # v2.2.0+ surface cut (2026-05-22 audit):
+    # - test_user_prompt_submit_with_full_data_flows removed: depended on
+    #   Hero 9 (ProactiveIntentInference) injecting fix history; both
+    #   Hero 9 and the fix-history inject path are gone.
+    # - test_post_tool_use_with_style_pref_warns removed: tested Hero 7
+    #   (LiveStyleEnforcement) — deleted along with the preferences
+    #   surface it consumed.
 
     def test_kill_switch_disables_every_event_type(
         self,
@@ -642,73 +540,8 @@ class TestC_FailureMode:
 class TestD_ConcurrentSessions:
     """Per-session state must not leak between sessions."""
 
-    def test_two_session_contracts_isolated(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        isolated_project: Path,
-    ):
-        """Hero 3's per-session contracts: session A's contract MUST NOT
-        affect session B's edits."""
-        monkeypatch.setenv("CODEVIRA_SCOPE_LOCK_MODE", "block")
-        from mcp_server.engine import (
-            register_default_policies,
-            reset_policies,
-            dispatch,
-        )
-        from mcp_server.engine.events import EventType
-
-        _set_project(monkeypatch, isolated_project)
-        reset_policies()
-        register_default_policies()
-
-        # Session A: scope = auth.py
-        dispatch(
-            _make_event(
-                EventType.USER_PROMPT_SUBMIT,
-                isolated_project,
-                session_id="A",
-                prompt_text="fix auth.py",
-            )
-        )
-        # Session B: scope = users.py
-        dispatch(
-            _make_event(
-                EventType.USER_PROMPT_SUBMIT,
-                isolated_project,
-                session_id="B",
-                prompt_text="fix users.py",
-            )
-        )
-
-        # Edit users.py from session A → blocked (A's scope is auth.py)
-        users = isolated_project / "users.py"
-        users.write_text("")
-        v_a = dispatch(
-            _make_event(
-                EventType.PRE_TOOL_USE,
-                isolated_project,
-                session_id="A",
-                tool_name="Edit",
-                target_file=users,
-            )
-        )
-        assert v_a.is_blocking()
-
-        # Edit users.py from session B → allowed (B's scope is users.py)
-        v_b = dispatch(
-            _make_event(
-                EventType.PRE_TOOL_USE,
-                isolated_project,
-                session_id="B",
-                tool_name="Edit",
-                target_file=users,
-            )
-        )
-        # No Hero 3 block from session B's contract
-        assert v_b.action != "block" or v_b.policy != "scope_contract_lock", (
-            f"Cross-session bleed: session B got {v_b.action} from "
-            f"{v_b.policy}: {v_b.message!r}"
-        )
+    # v2.2.0+: test_two_session_contracts_isolated removed (Hero 3
+    # ProactiveScopeContractLock deleted per 2026-05-22 surface-cut audit).
 
     def test_signal_context_per_event_isolation(
         self,
@@ -771,34 +604,27 @@ class TestE_PublicAPIContract:
         assert callable(registered_policies)
         assert callable(reset_policies)
 
-    def test_all_ten_heroes_exposed_in_policies_package(self):
-        """Every hero class must be importable + a Policy subclass
-        (Hero 8 excepted — browse surface, not a Policy).
+    def test_all_default_heroes_exposed_in_policies_package(self):
+        """Every default-registered hero class must be importable + a
+        Policy subclass.
 
-        v2.2.0: CrossSessionConsistency was replaced by RelevanceInject.
+        v2.2.0+: 4 heroes (LiveStyle, AIPromotion, IntentInference,
+        ScopeContract) deleted per 2026-05-22 surface-cut audit.
         """
         from mcp_server.engine.policies import (
-            AIPromotionScore,
             AntiRegression,
             BlastRadiusVeto,
             RelevanceInject,
             DecisionLock,
-            LiveStyleEnforcement,
-            ProactiveIntentInference,
-            ProactiveScopeContractLock,
             TokenBudgetPersist,
         )
         from mcp_server.engine.policy import Policy
 
         for cls in (
-            AIPromotionScore,
             AntiRegression,
             BlastRadiusVeto,
             RelevanceInject,
             DecisionLock,
-            LiveStyleEnforcement,
-            ProactiveIntentInference,
-            ProactiveScopeContractLock,
             TokenBudgetPersist,
         ):
             assert issubclass(cls, Policy), f"{cls.__name__} not a Policy"
@@ -851,13 +677,12 @@ class TestE_PublicAPIContract:
             timeout=15,
         )
         assert result.returncode == 0
-        # Hero-related subcommands (verified shipped this round)
+        # v2.2.0+: `insights` removed (Hero 10 deleted in surface-cut audit).
+        # `budget` removed too. Remaining hero-related subcommands:
         for sub in (
-            "budget",  # Hero 6
-            "insights",  # Hero 10
             "replay",  # Hero 8
-            "engine",  # internal hook entry (Heroes 1-9 dispatch)
-            "setup",  # Pillar 1 — partial; setup wizard is shipped
+            "engine",  # internal hook entry
+            "setup",  # Pillar 1 — partial; setup wizard
         ):
             assert (
                 sub in result.stdout
@@ -1115,31 +940,24 @@ class TestG_FinalDeepReAudit:
             reset_policies,
         )
         from mcp_server.engine.policies import (
-            AIPromotionScore,
             AntiRegression,
             BlastRadiusVeto,
             RelevanceInject,
             DecisionLock,
-            LiveStyleEnforcement,
-            ProactiveIntentInference,
-            ProactiveScopeContractLock,
             TokenBudgetPersist,
         )
         from mcp_server.engine.policies.post_edit_refresh import PostEditGraphRefresh
 
         # Save originals
         originals = {}
+        # v2.2.0+ default policy set after 2026-05-22 surface-cut audit.
         all_heroes = (
-            AIPromotionScore,
             AntiRegression,
             BlastRadiusVeto,
             RelevanceInject,
             DecisionLock,
-            LiveStyleEnforcement,
-            ProactiveIntentInference,
-            ProactiveScopeContractLock,
             TokenBudgetPersist,
-            PostEditGraphRefresh,  # v2.1.2 Item 4 — must be included
+            PostEditGraphRefresh,
         )
         for cls in all_heroes:
             originals[cls] = cls.enabled_by_default

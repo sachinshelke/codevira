@@ -108,66 +108,13 @@ def _interpret_confidence_with_eligibility(
     return _interpret_confidence(confidence_score)  # falls through to "No data"
 
 
-def get_preferences(category: str | None = None) -> dict:
-    """Get learned developer preferences."""
-    db = _get_db()
-    try:
-        prefs = db.get_preferences(category=category, min_frequency=1)
-        return {
-            "preferences": prefs,
-            "total": len(prefs),
-            "hint": "Apply these preferences when writing code to match the developer's style."
-            if prefs
-            else "No preferences learned yet. They build up over sessions.",
-        }
-    finally:
-        db.close()
-
-
-def get_learned_rules(
-    file_path: str | None = None,
-    category: str | None = None,
-    include_retired: bool = False,
-) -> dict:
-    """Get auto-generated rules from observed patterns.
-
-    v2.0-rc.3 (Bug 3): emits ``id`` per rule + ``retired`` flag so AIs
-    can call ``retire_rule(rule_id=...)`` when they detect a stale rule
-    (e.g. one pinned to a directory that has since been deleted).
-    """
-    db = _get_db()
-    try:
-        rules = db.get_learned_rules(
-            category=category,
-            file_pattern=file_path,
-            min_confidence=0.3,
-            include_retired=include_retired,
-        )
-        return {
-            "rules": [
-                {
-                    "id": r["id"],
-                    "rule": r["rule_text"],
-                    "confidence": r["confidence"],
-                    "category": r["category"],
-                    "applies_to": r.get("file_pattern"),
-                    "retired": bool(r.get("retired_at")),
-                    "retired_reason": r.get("retired_reason"),
-                }
-                for r in rules
-            ],
-            "total": len(rules),
-            "hint": (
-                "These rules were learned from past sessions. Higher confidence = "
-                "more reliable. If a rule references a file/directory that no "
-                "longer exists, call retire_rule(rule_id=N, reason='...') so it "
-                "stops firing as a high-confidence signal."
-                if rules
-                else "No rules learned yet. They emerge after multiple sessions."
-            ),
-        }
-    finally:
-        db.close()
+# v2.2.0+ surface cut: get_preferences and get_learned_rules removed.
+# Per the 2026-05-22 audit, preference/rule extraction surfaced noise
+# rather than signal, and the founder never read the results in real
+# sessions. The underlying tables stay (SQLiteGraph still records via
+# log_session for back-compat) but they're no longer surfaced as MCP
+# tools or via get_session_context. Slated for full storage cleanup
+# in v2.3.0.
 
 
 def record_decision(
@@ -414,41 +361,8 @@ def mark_decision_protected(
     }
 
 
-def retire_rule(rule_id: int, reason: str | None = None) -> dict:
-    """Mark a learned rule as retired.
-
-    Bug 3 (v2.0-rc.3): real dogfood found that high-confidence rules can
-    point at directories the user later deletes (e.g. tests/control/cli/
-    pinned via test-pairing detection, then the whole directory got
-    ported to Go). Without this tool the rule kept firing as a
-    confidence: 1.00 signal in get_session_context, polluting every
-    session. ``retire_rule`` flips a column so the rule is preserved
-    for audit but excluded from default surfaces.
-    """
-    db = _get_db()
-    try:
-        ok = db.retire_learned_rule(rule_id=int(rule_id), reason=reason)
-        if not ok:
-            return {
-                "retired": False,
-                "rule_id": int(rule_id),
-                "error": (
-                    f"No active rule with id={rule_id}. It may have been "
-                    f"retired already or the id is wrong. Use "
-                    f"get_learned_rules() to list current ids."
-                ),
-            }
-        return {
-            "retired": True,
-            "rule_id": int(rule_id),
-            "reason": reason,
-            "hint": (
-                "Rule retired. It will stop appearing in get_learned_rules() "
-                "and get_session_context() unless you pass include_retired=true."
-            ),
-        }
-    finally:
-        db.close()
+# v2.2.0+: retire_rule removed along with get_learned_rules. The
+# learned-rules surface is gone from the MCP tool list.
 
 
 def get_project_maturity() -> dict:
@@ -594,8 +508,8 @@ def get_session_context(since: str | None = None) -> dict:
                 s for s in recent_sessions if (s.get("created_at") or "") > since
             ]
         confidence = db.get_decision_confidence()
-        prefs = db.get_preferences(min_frequency=2)[:3]
-        rules = db.get_learned_rules(min_confidence=0.6)[:3]
+        # v2.2.0+: preferences + learned_rules dropped from session context
+        # (auto-extracted signals were noise per 2026-05-22 audit).
 
         # Roadmap: only current phase name + next action (skip upcoming/completed)
         current_phase = {}
@@ -740,34 +654,9 @@ def get_session_context(since: str | None = None) -> dict:
                     )
                 }
             ),
-            **(
-                {
-                    "top_signals": {
-                        "preferences": [
-                            {
-                                "category": p["category"],
-                                "signal": _truncate(p["signal"], 80),
-                            }
-                            for p in prefs
-                        ],
-                        "rules": [
-                            {
-                                "rule": _smart_truncate(r["rule_text"], 160),
-                                "confidence": round(r["confidence"], 2),
-                            }
-                            for r in rules
-                        ],
-                    }
-                }
-                if (prefs or rules)
-                else {
-                    "top_signals_note": (
-                        "No learned preferences or rules yet — these emerge "
-                        "after several sessions of decisions + outcome tracking. "
-                        "Skip checking these for fresh projects."
-                    )
-                }
-            ),
+            # v2.2.0+: top_signals (preferences + rules) removed.
+            # The auto-extracted signals produced noise rather than value
+            # per the 2026-05-22 audit; nobody read them in real sessions.
             "hint": (
                 "Before touching a file: get_node(path) + get_impact(path). "
                 "For past decisions: search_decisions(query). "

@@ -65,20 +65,17 @@ def shared_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 @pytest.fixture(autouse=True)
 def _clean_engine_state(monkeypatch: pytest.MonkeyPatch):
     from mcp_server.engine.runner import reset_policies
-    from mcp_server.engine.scope_contract import clear_all
 
     reset_policies()
-    clear_all()
+    # v2.2.0+: scope_contract module deleted; nothing to clear.
     for env in (
         "CODEVIRA_ENGINE",
         "CODEVIRA_DECISION_LOCK_MODE",
         "CODEVIRA_CROSS_SESSION_MODE",
-        "CODEVIRA_AI_PROMOTION_MODE",
     ):
         monkeypatch.delenv(env, raising=False)
     yield
     reset_policies()
-    clear_all()
 
 
 # =====================================================================

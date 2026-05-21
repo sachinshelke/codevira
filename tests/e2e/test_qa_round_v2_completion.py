@@ -35,6 +35,7 @@ Specifically asserts:
 Plus Bug-X-shape audit: every command we added wires through the same
 project-root validation + the same crash logger contract.
 """
+
 from __future__ import annotations
 
 import io
@@ -58,6 +59,7 @@ def isolated_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     (project / ".git").mkdir()
     monkeypatch.setattr("mcp_server.paths.get_global_home", lambda: cv_data)
     import mcp_server.paths as paths_mod
+
     paths_mod.set_project_dir(project)
     paths_mod.invalidate_data_dir_cache()
     return project
@@ -66,6 +68,7 @@ def isolated_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 @pytest.fixture(autouse=True)
 def _reset_circuit():
     from indexer.index_codebase import reset_watcher_circuit
+
     reset_watcher_circuit()
     yield
     reset_watcher_circuit()
@@ -77,9 +80,9 @@ def _reset_circuit():
 
 
 class TestA_DoctorCircuitIntegration:
-
     def test_doctor_surfaces_circuit_open_state(
-        self, isolated_project: Path,
+        self,
+        isolated_project: Path,
     ):
         """When the watcher circuit opens (3 consecutive failures),
         doctor's check_watcher_circuit must report FAIL with a fix
@@ -100,12 +103,14 @@ class TestA_DoctorCircuitIntegration:
         assert "→ to fix:" in text
 
     def test_circuit_recovery_clears_doctor_failure(
-        self, isolated_project: Path,
+        self,
+        isolated_project: Path,
     ):
         """A successful reindex resets the circuit. Doctor should
         clear the FAIL and report PASS again."""
         from indexer.index_codebase import (
-            _watcher_circuit_record_failure, _watcher_circuit_record_success,
+            _watcher_circuit_record_failure,
+            _watcher_circuit_record_success,
         )
         from mcp_server.doctor import check_watcher_circuit
 
@@ -123,9 +128,9 @@ class TestA_DoctorCircuitIntegration:
 
 
 class TestB_AgentsDoctorContract:
-
     def test_agents_creates_files_doctor_acknowledges(
-        self, isolated_project: Path,
+        self,
+        isolated_project: Path,
     ):
         """If `codevira agents` writes nudge files for all detected
         IDEs, then `codevira doctor`'s check_nudge_files should not
@@ -170,27 +175,36 @@ class TestC_Bug8ParityAcrossAllCLIs:
         Path(env["HOME"]).mkdir(parents=True, exist_ok=True)
         return env
 
-    @pytest.mark.parametrize("subcommand_args", [
-        ["agents", "--project", "/etc"],
-        ["replay", "--project", "/etc", "--ascii"],
-        ["insights", "--project", "/etc", "--ascii"],
-    ])
+    # v2.2.0+: `insights` removed from the CLI (Hero 10 + cli_insights
+    # deleted per 2026-05-22 surface-cut audit).
+    @pytest.mark.parametrize(
+        "subcommand_args",
+        [
+            ["agents", "--project", "/etc"],
+            ["replay", "--project", "/etc", "--ascii"],
+        ],
+    )
     def test_subcommand_rejects_invalid_project(
-        self, subcommand_args: list[str], repo_env: dict[str, str],
+        self,
+        subcommand_args: list[str],
+        repo_env: dict[str, str],
     ):
         """Every CLI command with --project must reject /etc with rc=1
         + a clear error message — uniform Bug-8 defense."""
         result = subprocess.run(
             [sys.executable, "-m", "mcp_server.cli", *subcommand_args],
-            env=repo_env, capture_output=True, text=True, timeout=15,
+            env=repo_env,
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
         assert result.returncode == 1, (
             f"{' '.join(subcommand_args)}: expected rc=1 (Bug-8 reject); "
             f"got rc={result.returncode}, stdout={result.stdout!r}"
         )
-        assert "not a valid project root" in result.stdout, (
-            f"{' '.join(subcommand_args)}: missing Bug-8 message"
-        )
+        assert (
+            "not a valid project root" in result.stdout
+        ), f"{' '.join(subcommand_args)}: missing Bug-8 message"
 
 
 # =====================================================================
@@ -199,9 +213,9 @@ class TestC_Bug8ParityAcrossAllCLIs:
 
 
 class TestD_SafeLogCrashContract:
-
     def test_safe_log_crash_does_not_raise_when_module_missing(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """The whole point of safe_log_crash: NEVER raise.
         Simulate a broken crash_logger module.
@@ -212,10 +226,12 @@ class TestD_SafeLogCrashContract:
         permanently poisons future ``import mcp_server.crash_logger``
         calls — that pollution broke a sibling test."""
         import sys
+
         real = sys.modules.get("mcp_server.crash_logger")
         try:
             sys.modules["mcp_server.crash_logger"] = None  # noqa: type-arg
             from mcp_server._safe_crash import safe_log_crash
+
             safe_log_crash(RuntimeError("simulated"), context="test")
         finally:
             if real is not None:
@@ -227,7 +243,8 @@ class TestD_SafeLogCrashContract:
                 sys.modules.pop("mcp_server.crash_logger", None)
 
     def test_safe_log_crash_writes_through_when_logger_works(
-        self, isolated_project: Path,
+        self,
+        isolated_project: Path,
     ):
         """Positive control: when crash_logger IS available, the helper
         actually delivers the crash to the log."""
@@ -258,36 +275,39 @@ class TestD_SafeLogCrashContract:
 
 
 class TestE_SqliteUtilOnRealGraph:
-
     def test_real_sqlite_graph_uses_wal_via_shared_helper(
-        self, isolated_project: Path,
+        self,
+        isolated_project: Path,
     ):
         """Phase 5 deduped _enable_wal_with_retry into _sqlite_util.
         Verify the shim still produces a WAL-enabled connection."""
         from indexer.sqlite_graph import SQLiteGraph
         from mcp_server.paths import get_data_dir
+
         db_path = get_data_dir() / "graph" / "graph.db"
         db_path.parent.mkdir(parents=True, exist_ok=True)
         g = SQLiteGraph(db_path)
         try:
             mode = g.conn.execute("PRAGMA journal_mode").fetchone()[0]
-            assert str(mode).lower() == "wal", (
-                f"Phase 5 dedup regression: WAL not enabled. mode={mode}"
-            )
+            assert (
+                str(mode).lower() == "wal"
+            ), f"Phase 5 dedup regression: WAL not enabled. mode={mode}"
         finally:
             g.close()
 
     def test_real_global_db_uses_wal_via_shared_helper(
-        self, isolated_project: Path,
+        self,
+        isolated_project: Path,
     ):
         from indexer.global_db import GlobalDB
         from mcp_server.paths import get_global_home
+
         gdb = GlobalDB(get_global_home() / "global.db")
         try:
             mode = gdb.conn.execute("PRAGMA journal_mode").fetchone()[0]
-            assert str(mode).lower() == "wal", (
-                f"Phase 5 dedup regression in global_db. mode={mode}"
-            )
+            assert (
+                str(mode).lower() == "wal"
+            ), f"Phase 5 dedup regression in global_db. mode={mode}"
         finally:
             gdb.close()
 
@@ -298,15 +318,15 @@ class TestE_SqliteUtilOnRealGraph:
 
 
 class TestF_AllPhasesCoexist:
-
     def test_doctor_runs_clean_on_fresh_install_with_agents_files(
-        self, isolated_project: Path,
+        self,
+        isolated_project: Path,
     ):
         """End-to-end: setup-style flow.
 
-          1. Run codevira agents (Phase 1) — write nudge files
-          2. Run codevira doctor (Phase 3) — verify everything green
-          3. Doctor must NOT fail (PASS or WARN only, never FAIL)
+        1. Run codevira agents (Phase 1) — write nudge files
+        2. Run codevira doctor (Phase 3) — verify everything green
+        3. Doctor must NOT fail (PASS or WARN only, never FAIL)
         """
         from mcp_server.cli_agents import cmd_agents
         from mcp_server.doctor import cmd_doctor
@@ -327,7 +347,9 @@ class TestF_AllPhasesCoexist:
         assert "summary:" in text
 
     def test_universality_e2e_works_alongside_doctor(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """Phase 2 (universality E2E) and Phase 3 (doctor) target
         different surfaces but use overlapping path-resolution code.
@@ -335,6 +357,7 @@ class TestF_AllPhasesCoexist:
         in the same process."""
         # Doctor first — sets project-dir state
         from mcp_server.doctor import run_all_checks
+
         report1 = run_all_checks()
         assert len(report1.results) >= 9
 
@@ -343,14 +366,17 @@ class TestF_AllPhasesCoexist:
         from mcp_server.engine.runner import reset_policies
         from mcp_server.engine import register_default_policies, dispatch
         from mcp_server.engine.events import EventType, HookEvent
+
         reset_policies()
         register_default_policies()
-        v = dispatch(HookEvent(
-            event_type=EventType.USER_PROMPT_SUBMIT,
-            project_root=isolated_project,
-            session_id="qa-completion",
-            prompt_text="show me decisions about retries",
-        ))
+        v = dispatch(
+            HookEvent(
+                event_type=EventType.USER_PROMPT_SUBMIT,
+                project_root=isolated_project,
+                session_id="qa-completion",
+                prompt_text="show me decisions about retries",
+            )
+        )
         # Verdict can be allow or inject — both fine; we just check
         # nothing crashed when both surfaces ran.
         assert v.action in ("allow", "inject")

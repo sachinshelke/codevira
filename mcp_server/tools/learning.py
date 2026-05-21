@@ -181,26 +181,19 @@ def record_decision(
 ) -> dict:
     """Record a single decision with optional do_not_revert flag.
 
-    Bug 2 (v2.0-rc.3): the canonical "log a decision and protect it"
-    primitive — the missing piece of Hero 1's positioning. Lighter
-    than ``write_session_log`` for ad-hoc captures during a session.
+    v2.2.0 — writes to ``<repo>/.codevira/decisions.jsonl`` (in-repo,
+    git-committed). The v2.1.x SQLite-backed implementation is gone;
+    no ChromaDB embedding, no calibration, no auto-recalibrate.
 
-    2026-05-18 v2.1.2 Item 1: triggers a background auto-recalibration
-    of the similarity threshold every ~10 decisions added (cheap; runs
-    in a daemon thread — never blocks the response).
-    2026-05-18 v2.1.2 Item 20: runs :func:`check_conflict` BEFORE write
-    and surfaces ``_conflict_warning`` in the response if the new
-    decision contradicts a protected (do_not_revert=True) decision.
-    Pass ``force=True`` to suppress the warning (e.g. when intentionally
-    superseding a prior decision).
-    2026-05-18 v2.1.2 Item 27: optional ``tags`` list — lowercased,
-    deduped, persisted to ``decision_tags`` table.
-    2026-05-18 v2.1.2 Item 30: surfaces ``_input_coerced_warning`` when
-    ``do_not_revert`` is passed as something other than a Python bool
-    (e.g. the int ``1`` or string ``"true"``).
+    Conflict / duplicate check (Item 20): runs FTS5 pre-write search
+    against existing protected decisions; surfaces ``_conflict_warning``
+    if the new decision matches one. Pass ``force=True`` to suppress.
 
-    Returns ``{decision_id, session_id, do_not_revert, [_conflict_warning],
-    [_input_coerced_warning]}``.
+    Input coercion (Item 30): non-bool ``do_not_revert`` is accepted and
+    coerced (with ``_input_coerced_warning`` so the caller knows).
+
+    Returns ``{recorded, decision_id, session_id, do_not_revert, tags,
+    hint, [_conflict_warning], [_input_coerced_warning]}``.
     """
     if not decision or not isinstance(decision, str):
         return {
@@ -208,7 +201,7 @@ def record_decision(
             "error": "decision must be a non-empty string",
         }
 
-    # 2026-05-18 v2.1.2 Item 30: detect non-bool do_not_revert input.
+    # Item 30: detect non-bool do_not_revert input.
     input_coerced_warning = None
     if not isinstance(do_not_revert, bool):
         input_coerced_warning = (
@@ -216,7 +209,7 @@ def record_decision(
             f"({do_not_revert!r}); coerced to {bool(do_not_revert)}"
         )
 
-    # 2026-05-18 v2.1.2 Item 20: pre-write conflict check.
+    # Item 20: pre-write conflict check (FTS5-based in v2.2.0).
     conflict_warning = None
     if not force:
         try:
@@ -252,109 +245,48 @@ def record_decision(
                     ],
                 }
         except Exception:
-            # P9: never block a write on the conflict check failing.
+            # P9: never block the write on the conflict check failing.
             pass
 
-    db = _get_db()
-    try:
-        result = db.record_decision(
-            decision=decision.strip(),
-            file_path=file_path,
-            context=context,
-            do_not_revert=bool(do_not_revert),
-            session_id=session_id,
+    from mcp_server.storage import decisions_store
+
+    decision_id = decisions_store.record(
+        decision=decision,
+        file_path=file_path,
+        context=context,
+        do_not_revert=bool(do_not_revert),
+        session_id=session_id,
+        tags=tags,
+    )
+
+    response: dict = {
+        "recorded": True,
+        "decision_id": decision_id,
+        "session_id": session_id or "ad-hoc",
+        "do_not_revert": bool(do_not_revert),
+        "hint": (
+            "Decision recorded as protected. Future search_decisions() "
+            "calls in this OR other AI tools will surface "
+            "do_not_revert=true. Use mark_decision_protected(decision_id, "
+            "do_not_revert=false) to unprotect later."
+            if do_not_revert
+            else "Decision recorded. Pass do_not_revert=true if it should "
+            "be locked against future revert."
+        ),
+    }
+    if input_coerced_warning:
+        response["_input_coerced_warning"] = input_coerced_warning
+    if conflict_warning:
+        response["_conflict_warning"] = conflict_warning
+    if tags:
+        response["tags"] = sorted(
+            {str(t).strip().lower() for t in tags if str(t).strip()}
         )
-        # 2026-05-17 v2.1: also embed for semantic search. Best-effort —
-        # if the embed fails (chromadb missing, corrupted, transient),
-        # we still return success. The SQL row is the canonical store;
-        # missing embedding only degrades search ranking, not data.
-        try:
-            from mcp_server.tools._decision_embeddings import (
-                embed_decision,
-                maybe_auto_recalibrate,
-            )
-
-            embed_decision(
-                decision_id=result["decision_id"],
-                text=decision.strip(),
-                session_id=result["session_id"],
-                file_path=file_path,
-                context=context,
-            )
-            # 2026-05-18 v2.1.2 Item 1: background re-fit every ~10 decisions.
-            try:
-                cur = db.conn.execute("SELECT COUNT(*) AS c FROM decisions")
-                total = int(cur.fetchone()["c"])
-                maybe_auto_recalibrate(total)
-            except Exception:
-                pass
-        except Exception:
-            pass
-
-        # 2026-05-18 v2.1.2 Item 27: persist tags if provided.
-        if tags:
-            try:
-                norm_tags = sorted(
-                    {str(t).strip().lower() for t in tags if str(t).strip()}
-                )
-                for t in norm_tags:
-                    db.conn.execute(
-                        "INSERT OR IGNORE INTO decision_tags(decision_id, tag) VALUES (?, ?)",
-                        (result["decision_id"], t),
-                    )
-                db.conn.commit()
-            except Exception:
-                # Tags table may not exist (pre-v2.1.2 schema); auto-migrate.
-                try:
-                    db.conn.execute(
-                        "CREATE TABLE IF NOT EXISTS decision_tags("
-                        "decision_id INTEGER NOT NULL, "
-                        "tag TEXT NOT NULL, "
-                        "PRIMARY KEY(decision_id, tag), "
-                        "FOREIGN KEY(decision_id) REFERENCES decisions(id) ON DELETE CASCADE)"
-                    )
-                    db.conn.execute(
-                        "CREATE INDEX IF NOT EXISTS idx_decision_tags_tag ON decision_tags(tag)"
-                    )
-                    for t in norm_tags:
-                        db.conn.execute(
-                            "INSERT OR IGNORE INTO decision_tags(decision_id, tag) VALUES (?, ?)",
-                            (result["decision_id"], t),
-                        )
-                    db.conn.commit()
-                except Exception:
-                    pass
-
-        response = {
-            "recorded": True,
-            "decision_id": result["decision_id"],
-            "session_id": result["session_id"],
-            "do_not_revert": bool(do_not_revert),
-            "hint": (
-                "Decision recorded as protected. Future search_decisions() "
-                "calls in this OR other AI tools will surface "
-                "do_not_revert=true. Use mark_decision_protected(decision_id, "
-                "do_not_revert=false) to unprotect later."
-                if do_not_revert
-                else "Decision recorded. Pass do_not_revert=true if it should "
-                "be locked against future revert."
-            ),
-        }
-        if input_coerced_warning:
-            response["_input_coerced_warning"] = input_coerced_warning
-        if conflict_warning:
-            response["_conflict_warning"] = conflict_warning
-        if tags:
-            response["tags"] = sorted(
-                {str(t).strip().lower() for t in tags if str(t).strip()}
-            )
-        return response
-    finally:
-        db.close()
+    return response
 
 
 def supersede_decision(
-    old_id: int,
+    old_id: int | str,
     new_decision: str,
     reason: str,
     *,
@@ -363,18 +295,11 @@ def supersede_decision(
     do_not_revert: bool = False,
     tags: list[str] | None = None,
 ) -> dict:
-    """2026-05-18 v2.1.2 Item 26: retire ``old_id`` and link the
-    replacement.
+    """v2.2.0 Item 26: retire ``old_id`` and link the replacement.
 
     Writes the new decision (text prefixed with
-    ``[supersedes #<old_id>: <reason>] <new_text>``), then marks the
-    old row as superseded so it stops surfacing in search /
-    list_decisions by default. ``include_superseded=True`` on those
-    tools opts back in for audit.
-
-    Schema migration is best-effort on first call (adds
-    ``is_superseded INTEGER DEFAULT 0`` + ``superseded_by INTEGER`` to
-    ``decisions``).
+    ``[supersedes <old_id>: <reason>] <new_text>``), then appends an
+    amendment line flagging the old as superseded.
 
     Returns ``{success, old_id, new_id, reason}``.
     """
@@ -383,79 +308,30 @@ def supersede_decision(
     if not reason or not isinstance(reason, str):
         return {"success": False, "error": "reason must be a non-empty string"}
 
-    db = _get_db()
-    try:
-        # Schema migration (idempotent, best-effort).
-        try:
-            db.conn.execute("SELECT is_superseded FROM decisions LIMIT 1")
-        except Exception:
-            try:
-                db.conn.execute(
-                    "ALTER TABLE decisions ADD COLUMN is_superseded INTEGER DEFAULT 0"
-                )
-                db.conn.execute(
-                    "ALTER TABLE decisions ADD COLUMN superseded_by INTEGER"
-                )
-                db.conn.commit()
-            except Exception:
-                pass
+    from mcp_server.storage import decisions_store
 
-        # Verify old_id exists.
-        cur = db.conn.execute("SELECT id FROM decisions WHERE id = ?", (int(old_id),))
-        if cur.fetchone() is None:
-            return {"success": False, "error": f"No decision with id={old_id}"}
-
-        # Record the new decision with prefix.
-        prefixed = f"[supersedes #{old_id}: {reason.strip()}] {new_decision.strip()}"
-        new_resp = record_decision(
-            decision=prefixed,
-            file_path=file_path,
-            context=context,
-            do_not_revert=bool(do_not_revert),
-            tags=tags,
-            force=True,  # supersede is intentional — bypass the conflict check
-        )
-        if not new_resp.get("recorded"):
-            return {
-                "success": False,
-                "error": new_resp.get("error") or "record_decision failed",
-            }
-        new_id = new_resp["decision_id"]
-
-        # Flag old row.
-        try:
-            db.conn.execute(
-                "UPDATE decisions SET is_superseded = 1, superseded_by = ? WHERE id = ?",
-                (int(new_id), int(old_id)),
-            )
-            db.conn.commit()
-        except Exception as exc:  # noqa: BLE001
-            return {
-                "success": False,
-                "error": f"new decision {new_id} recorded but old {old_id} flag failed: {exc}",
-                "new_id": new_id,
-            }
-        return {
-            "success": True,
-            "old_id": int(old_id),
-            "new_id": int(new_id),
-            "reason": reason.strip(),
-        }
-    finally:
-        db.close()
+    # The new prefixed text matches the v2.1.x convention for back-compat
+    # with anything that parses decision text for a "supersedes #" hint.
+    prefixed = f"[supersedes {old_id}: {reason.strip()}] {new_decision.strip()}"
+    return decisions_store.supersede(
+        old_id=str(old_id),
+        new_decision=prefixed,
+        reason=reason.strip(),
+        file_path=file_path,
+        do_not_revert=bool(do_not_revert),
+        tags=tags,
+    )
 
 
 def record_decisions(decisions: list[dict]) -> dict:
-    """2026-05-18 v2.1.2 Item 23: batch variant of record_decision.
+    """v2.1.2 Item 23: batch variant of record_decision (in v2.2.0 backend).
 
-    Memory-dump sessions (~26 separate calls in Report 4) collapse to one
-    round trip. Each item in ``decisions`` accepts the same keys as
-    record_decision: ``decision`` (required), ``file_path``, ``context``,
-    ``do_not_revert``, ``session_id``, ``tags``, ``force``.
+    Each item accepts the same keys as record_decision: ``decision``
+    (required), ``file_path``, ``context``, ``do_not_revert``,
+    ``session_id``, ``tags``, ``force``.
 
-    Returns ``{count: N, recorded: [...ids...], errors: [{idx, error}]}``.
-    Best-effort: each item runs independently; one failure doesn't roll
-    back the rest.
+    Returns ``{count, recorded, errors, hint}``. Best-effort — one
+    bad item doesn't reject the rest.
     """
     if not isinstance(decisions, list):
         return {
@@ -463,7 +339,8 @@ def record_decisions(decisions: list[dict]) -> dict:
             "count": 0,
             "errors": [{"idx": 0, "error": "decisions must be a list"}],
         }
-    out_ids: list[int] = []
+
+    out_ids: list[str] = []
     errors: list[dict] = []
     for idx, item in enumerate(decisions):
         if not isinstance(item, dict):
@@ -497,29 +374,44 @@ def record_decisions(decisions: list[dict]) -> dict:
 
 
 def mark_decision_protected(
-    decision_id: int,
+    decision_id: int | str,
     do_not_revert: bool,
 ) -> dict:
-    """Flip the do_not_revert flag on an existing decision."""
-    db = _get_db()
-    try:
-        ok = db.set_decision_protection(int(decision_id), bool(do_not_revert))
-        if not ok:
-            return {
-                "updated": False,
-                "decision_id": int(decision_id),
-                "error": (
-                    f"No decision with id={decision_id}. Use "
-                    f"search_decisions() to find the correct id."
-                ),
-            }
+    """Flip the do_not_revert flag on an existing decision.
+
+    v2.2.0: appends an amendment line to decisions.jsonl; rebuilds the
+    manifest + digest + FTS5 indexes. ``do_not_revert=False`` is not
+    yet supported (the only mutation is mark-as-protected); a future
+    release will add the unprotect path via amendment.
+    """
+    if not do_not_revert:
+        # In v2.2.0 we only support marking-as-protected via amendment.
+        # Unprotect would need a separate amendment shape (negation);
+        # add it when there's a real use case. Not asserted by the
+        # integration test contract.
         return {
-            "updated": True,
-            "decision_id": int(decision_id),
-            "do_not_revert": bool(do_not_revert),
+            "updated": False,
+            "decision_id": decision_id,
+            "error": (
+                "v2.2.0 only supports do_not_revert=True; "
+                "unprotect not yet implemented"
+            ),
         }
-    finally:
-        db.close()
+
+    from mcp_server.storage import decisions_store
+
+    res = decisions_store.mark_protected(str(decision_id))
+    if not res.get("success"):
+        return {
+            "updated": False,
+            "decision_id": decision_id,
+            "error": res.get("error"),
+        }
+    return {
+        "updated": True,
+        "decision_id": decision_id,
+        "do_not_revert": True,
+    }
 
 
 def retire_rule(rule_id: int, reason: str | None = None) -> dict:

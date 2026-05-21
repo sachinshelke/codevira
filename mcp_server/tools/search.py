@@ -309,11 +309,10 @@ def _structural_fallback(query: str, top_k: int, *, reason: str) -> dict[str, An
 
 
 def write_session_logs(logs: list[dict]) -> dict[str, Any]:
-    """2026-05-18 v2.1.2 Item 24: batch variant of write_session_log.
+    """v2.1.2 Item 24: batch variant of write_session_log (in v2.2.0 backend).
 
     Each item: ``{session_id, task, phase, files_changed?, decisions?,
-    next_steps?}``. Each invocation is independent; partial failure is
-    surfaced per-item.
+    next_steps?}``. Independent per-item; partial failure surfaced.
 
     Returns ``{count, session_ids, errors}``.
     """
@@ -323,24 +322,44 @@ def write_session_logs(logs: list[dict]) -> dict[str, Any]:
             "session_ids": [],
             "errors": [{"idx": 0, "error": "logs must be a list"}],
         }
+
+    from mcp_server.storage import sessions_store
+
+    # sessions_store.write_many returns the GENERATED log ids (S000NNN).
+    # The integration test contract expects the SESSION ID the caller
+    # passed (or batch-N as fallback). So we map item.session_id through
+    # while still calling write_many for the persistence side-effect.
     ids: list[str] = []
     errors: list[dict] = []
+    valid_logs: list[dict] = []
+    requested_session_ids: list[str] = []
     for idx, item in enumerate(logs):
         if not isinstance(item, dict):
             errors.append({"idx": idx, "error": "item must be a dict"})
             continue
+        sid = item.get("session_id") or f"batch-{idx}"
+        valid_logs.append(
+            {
+                "session_id": sid,
+                "task": item.get("task"),
+                "phase": str(item.get("phase", ""))
+                if item.get("phase") is not None
+                else None,
+                "decisions": item.get("decisions") or [],
+                "summary": item.get("summary"),
+            }
+        )
+        requested_session_ids.append(sid)
+
+    if valid_logs:
         try:
-            r = write_session_log(
-                session_id=item.get("session_id", f"batch-{idx}"),
-                task=item.get("task", ""),
-                phase=str(item.get("phase", "")),
-                files_changed=item.get("files_changed") or [],
-                decisions=item.get("decisions") or [],
-                next_steps=item.get("next_steps") or [],
-            )
-            ids.append(r.get("session_id") or item.get("session_id"))
+            _, batch_errors = sessions_store.write_many(valid_logs)
+            ids = requested_session_ids
+            for be in batch_errors:
+                errors.append({"idx": be.get("index", -1), "error": be.get("error")})
         except Exception as exc:  # noqa: BLE001
-            errors.append({"idx": idx, "error": str(exc)})
+            errors.append({"idx": -1, "error": str(exc)})
+
     return {
         "count": len(ids),
         "session_ids": ids,
@@ -356,51 +375,32 @@ def write_session_log(
     decisions: list[dict],
     next_steps: list[str],
 ) -> dict[str, Any]:
-    """Write a structured session log to SQLite Memory.
+    """Write a structured session log (v2.2.0: appends to sessions.jsonl).
 
-    2026-05-18 v2.1.2 Item 22: if ``session_id`` collides with an
-    existing row that has different content, the storage layer
-    auto-suffixes with a short hash. The response always surfaces the
-    ACTUAL session_id written via the ``session_id`` field so the
-    caller knows what id to use for subsequent ``record_decision`` etc.
-    calls (and ``collision_resolved=True`` when the requested id was
-    rewritten).
+    v2.1.x had session_id collision detection (auto-suffix); v2.2.0
+    keeps the SAME session_id semantics (no auto-suffix; the
+    sessions.jsonl format is append-only with timestamps, so multiple
+    entries for the same session_id naturally coexist as audit trail).
     """
-    db = _get_db()
-    actual_session_id = db.log_session(session_id, task, phase, decisions)
-    db.close()
+    from mcp_server.storage import sessions_store
 
-    # v1.5: Export qualifying learnings to global memory
-    try:
-        from mcp_server.global_sync import export_project_to_global
+    sessions_store.write(
+        session_id=session_id,
+        task=task,
+        phase=phase,
+        summary=None,
+        decision_ids=[
+            d.get("id")
+            for d in (decisions or [])
+            if isinstance(d, dict) and d.get("id")
+        ],
+    )
 
-        export_project_to_global()
-    except Exception as e:
-        try:
-            from mcp_server.crash_logger import log_crash
-
-            log_crash(e, context="write_session_log: global export")
-        except Exception:
-            pass
-
-    collision = actual_session_id != session_id
     return {
-        "status": f"Session {actual_session_id} logged to SQLite Memory.",
-        "session_id": actual_session_id,
+        "status": f"Session {session_id} logged to .codevira/sessions.jsonl.",
+        "session_id": session_id,
         "requested_session_id": session_id,
-        "collision_resolved": collision,
-        **(
-            {
-                "note": (
-                    f"Requested session_id {session_id!r} already existed with "
-                    f"different content; auto-suffixed to {actual_session_id!r} to "
-                    f"avoid silent merge. Pass the new id to subsequent "
-                    f"record_decision / get_session_context calls."
-                )
-            }
-            if collision
-            else {}
-        ),
+        "collision_resolved": False,
     }
 
 
@@ -412,171 +412,52 @@ def search_decisions(
     summary_only: bool = False,
     since: str | None = None,
 ) -> dict[str, Any]:
-    """Search past decisions across sessions, changesets, and roadmap phases.
+    """Search past decisions via FTS5 (BM25-ranked).
 
-    2026-05-17 v2.1.1: hybrid retrieval — BM25 keyword (SQL LIKE) AND
-    semantic embedding (ChromaDB), merged with Reciprocal Rank Fusion.
-    Natural-language queries like ``"DDD architecture layer"`` — which
-    produced 0 hits in v2.0's BM25-only search — now surface the right
-    decisions.
+    v2.2.0: pure FTS5 keyword/stemming search over decisions.jsonl.
+    No semantic embedding (chromadb removed). Natural-language queries
+    still work via porter stemming + BM25; concept-only queries with
+    zero keyword overlap may miss (acceptable trade — see v2.2.0 plan).
 
-    2026-05-18 v2.1.2 Item 1: applies a smart self-calibrating similarity
-    THRESHOLD before RRF so gibberish queries (``"how to make a cake"``,
-    ``"zzzzzz xqzv9"``) return zero results instead of "least bad"
-    matches. The threshold defaults to 0.45 (cosine distance — lower =
-    more similar) and re-fits per project every ~10 decisions.
+    Args:
+        query: search terms; empty string returns 0 results.
+        limit: max results (clamped to [1, 20]).
+        session_id: filter to a session (post-FTS5 filter).
+        full: return full decision text (default truncates to 200 chars).
+        summary_only: ~70% smaller payload — only {id, summary, score,
+            do_not_revert} per result.
+        since: ISO 8601 / YYYY-MM-DD; only decisions ts > since returned.
 
-    2026-05-18 v2.1.2 Item 28: ``summary_only=True`` returns a slim
-    payload (id + summary + score + do_not_revert only) — ~70% smaller
-    response for AI triage queries.
-
-    Default: returns up to 5 matches with truncated context (150 chars).
-    Pass ``full=True`` for untruncated text. Response includes:
-        - ``retrieval``: ``"hybrid" | "keyword" | "semantic" |
-          "semantic-no-results-above-threshold"``
-        - ``threshold_used``: the active cosine-distance cut-off
-        - per-result ``score``: cosine distance for the semantic match
-          (omitted for keyword-only hits)
+    Returns:
+        {query, count, retrieval, threshold_used, results, [hint], [_warning]}
     """
-    if limit < 1:
-        limit = 1
-    if limit > 20:
-        limit = 20
+    limit = max(1, min(int(limit), 20))
 
-    # 2026-05-18 v2.1.2 Item 1: load active threshold (calibrated or static).
-    try:
-        from mcp_server.tools._decision_embeddings import load_threshold
+    from mcp_server.storage import decisions_store
 
-        threshold = load_threshold(target="search")
-    except Exception:
-        threshold = 0.45
+    results = decisions_store.search(query or "", limit=limit, since=since)
 
-    db = _get_db()
-    try:
-        # ─── BM25 / SQL LIKE pass (existing behavior, kept as ranked source) ──
-        # v2.1.2 Item 25: thread since= through to the SQL filter.
-        bm25_results = db.search_decisions(
-            query,
-            limit * 3,
-            session_id,
-            since=since,
-        )
-        bm25_ids = [r["id"] for r in bm25_results if r.get("id") is not None]
+    # Apply session_id filter post-search (FTS5 has no notion of session).
+    if session_id:
+        results = [r for r in results if r.get("session_id") == session_id]
 
-        # ─── Semantic / ChromaDB pass with threshold cut-off ─────────────────
-        # 2026-05-18 v2.1.2 Item 1: use scored variant + filter.
-        semantic_scored: list[tuple[int, float]] = []
-        try:
-            from mcp_server.tools._decision_embeddings import (
-                semantic_search_decisions_scored,
-                rrf_merge,
-            )
-
-            raw_scored = semantic_search_decisions_scored(query, limit * 3, session_id)
-            semantic_scored = [(did, d) for did, d in raw_scored if d <= threshold]
-        except Exception:
-            semantic_scored = []
-
-        semantic_ids = [did for did, _d in semantic_scored]
-        semantic_score_by_id: dict[int, float] = dict(semantic_scored)
-
-        # ─── Merge ────────────────────────────────────────────────────────────
-        retrieval: str
-        if semantic_ids and bm25_ids:
-            try:
-                from mcp_server.tools._decision_embeddings import rrf_merge
-
-                merged_ids = rrf_merge(bm25_ids, semantic_ids, limit=limit)
-            except Exception:
-                merged_ids = bm25_ids[:limit]
-                semantic_ids = []
-            retrieval = "hybrid"
-        elif semantic_ids:
-            merged_ids = semantic_ids[:limit]
-            retrieval = "semantic"
-        elif bm25_ids:
-            merged_ids = bm25_ids[:limit]
-            retrieval = "keyword"
-        else:
-            # Both retrievers returned nothing. If semantic ran but everything
-            # was above threshold, distinguish that case so the caller knows
-            # "search worked, just nothing similar enough" vs "search broken."
-            try:
-                raw_scored_unfiltered = semantic_search_decisions_scored(
-                    query, 1, session_id
-                )
-                if raw_scored_unfiltered:
-                    retrieval = "semantic-no-results-above-threshold"
-                else:
-                    retrieval = "no-matches"
-            except Exception:
-                retrieval = "no-matches"
-            merged_ids = []
-
-        # Resolve IDs → full decision rows.
-        id_to_row = {r["id"]: r for r in bm25_results}
-        missing_ids = [i for i in merged_ids if i not in id_to_row]
-        if missing_ids:
-            placeholders = ",".join("?" * len(missing_ids))
-            cur = db.conn.execute(
-                f"SELECT d.id, d.decision, d.context, d.file_path, "
-                f"d.do_not_revert, s.summary, s.phase, d.created_at "
-                f"FROM decisions d JOIN sessions s "
-                f"ON d.session_id = s.session_id WHERE d.id IN ({placeholders})",
-                missing_ids,
-            )
-            for row in cur.fetchall():
-                d = dict(row)
-                if "do_not_revert" in d:
-                    d["do_not_revert"] = bool(d["do_not_revert"])
-                id_to_row[row["id"]] = d
-        results = [id_to_row[i] for i in merged_ids if i in id_to_row]
-
-        # 2026-05-18 v2.1.2 Item 25: semantic-side `since` filter — chromadb
-        # doesn't know about created_at, so we drop rows whose timestamp
-        # is at or before the cutoff AFTER the merge. BM25 path already
-        # filtered server-side.
-        if since:
-            results = [r for r in results if (r.get("created_at") or "") > since]
-
-        # Annotate each result with its semantic score (cosine distance).
-        # Keyword-only matches get score=None so the caller can tell them apart.
-        for r in results:
-            rid = r.get("id")
-            r["score"] = semantic_score_by_id.get(int(rid)) if rid is not None else None
-    finally:
-        db.close()
+    # v2.2.0 retrieval mode is always "keyword" (no semantic).
+    retrieval = "keyword" if results else "keyword-no-results"
+    # No threshold concept in v2.2.0 (FTS5 BM25 has no boolean cutoff).
+    # Return None so callers can detect "no semantic threshold" semantics.
+    threshold = None
 
     if summary_only:
-        # 2026-05-18 v2.1.2 Item 28: ~70% smaller payload for triage queries.
-        slim = []
-        for r in results:
-            slim.append(
-                {
-                    "id": r.get("id"),
-                    "summary": r.get("summary"),
-                    "score": r.get("score"),
-                    "do_not_revert": r.get("do_not_revert"),
-                }
-            )
-    # 2026-05-19 issue #10: if the semantic infra failed to load in this
-    # process (most commonly: torch dlopen blocked by a sandboxed parent
-    # like Antigravity), surface a clear one-shot warning in the response
-    # so the caller knows WHY semantic ranking is missing instead of
-    # silently degrading to BM25.
-    semantic_warning = None
-    try:
-        from mcp_server.tools._decision_embeddings import (
-            get_semantic_unavailable_reason,
-        )
-
-        semantic_warning = get_semantic_unavailable_reason()
-    except Exception:
-        pass
-
-    if summary_only:
-        # Item 28 slim payload assembled above
-        resp = {
+        slim = [
+            {
+                "id": r.get("id"),
+                "summary": (r.get("decision") or "")[:80],
+                "score": r.get("score"),
+                "do_not_revert": bool(r.get("do_not_revert", False)),
+            }
+            for r in results
+        ]
+        return {
             "query": query,
             "count": len(slim),
             "retrieval": retrieval,
@@ -584,44 +465,24 @@ def search_decisions(
             "results": slim,
             "mode": "summary_only",
         }
-        if semantic_warning:
-            resp["_semantic_warning"] = semantic_warning
-        return resp
 
     if not full:
         for r in results:
-            if r.get("decision"):
-                r["decision"] = (
-                    (r["decision"][:199] + "…")
-                    if len(r["decision"]) > 200
-                    else r["decision"]
-                )
-            if r.get("context"):
-                r["context"] = (
-                    (r["context"][:149] + "…")
-                    if len(r["context"]) > 150
-                    else r["context"]
-                )
-            if r.get("summary"):
-                r["summary"] = (
-                    (r["summary"][:99] + "…")
-                    if len(r["summary"]) > 100
-                    else r["summary"]
-                )
+            if r.get("decision") and len(r["decision"]) > 200:
+                r["decision"] = r["decision"][:199] + "…"
 
-    resp = {
+    return {
         "query": query,
         "count": len(results),
         "retrieval": retrieval,
         "threshold_used": threshold,
         "results": results,
-        "hint": "Pass full=True for untruncated decision text. Increase limit up to 20."
-        if not full
-        else "Showing full untruncated decisions.",
+        "hint": (
+            "Pass full=True for untruncated decision text. Increase limit up to 20."
+            if not full
+            else "Showing full untruncated decisions."
+        ),
     }
-    if semantic_warning:
-        resp["_semantic_warning"] = semantic_warning
-    return resp
 
 
 def list_decisions(
@@ -634,108 +495,42 @@ def list_decisions(
     include_superseded: bool = False,
     full: bool = False,
 ) -> dict[str, Any]:
-    """2026-05-18 v2.1.2 Item 11: enumerate decisions with optional filters.
+    """Enumerate decisions with optional filters (v2.2.0: from JSONL).
 
-    Without filters, returns the ``limit`` most recently created decisions.
-    All filters AND together — only decisions matching every supplied
-    constraint are returned.
+    All filters AND together — only decisions matching every constraint
+    are returned. ``tags`` is intersection (all tags must match).
 
     Args:
-        limit: max rows to return (clamped to [1, 200]).
-        since_date: ISO 8601 timestamp (or YYYY-MM-DD). Only decisions
-            ``created_at > since_date`` are returned. v2.1.2 Item 25.
-        file_pattern: SQL LIKE pattern on ``file_path`` (e.g. ``"src/%"``).
-        protected_only: filter to ``do_not_revert = 1`` rows only.
-        session_id: filter to a single session.
-        tags: filter to rows that have ALL of the supplied tags (Item 27).
-        include_superseded: by default soft-deleted (Item 26 supersede)
-            rows are hidden; pass True to include them.
-        full: untruncated decision text.
+        limit: max rows (clamped to [1, 200]).
+        since_date: ISO 8601 / YYYY-MM-DD; only ts > since_date.
+        file_pattern: fnmatch glob on ``file_path`` (e.g. ``"src/*"``).
+        protected_only: only do_not_revert=True.
+        session_id: single-session filter.
+        tags: intersection — match ALL of the supplied tags.
+        include_superseded: default False (hide soft-deleted).
+        full: full record vs slim shape.
 
-    Returns:
-        {"count": N, "decisions": [...], "has_more": bool, "filters_applied": {...}}
+    Returns ``{count, has_more, decisions, filters_applied}``.
     """
     limit = max(1, min(int(limit), 200))
-    where_clauses: list[str] = []
-    params: list = []
 
-    if since_date:
-        where_clauses.append("d.created_at > ?")
-        params.append(since_date)
-    if file_pattern:
-        where_clauses.append("d.file_path LIKE ?")
-        params.append(file_pattern)
-    if protected_only:
-        where_clauses.append("d.do_not_revert = 1")
-    if session_id:
-        where_clauses.append("d.session_id = ?")
-        params.append(session_id)
+    from mcp_server.storage import decisions_store
 
-    db = _get_db()
-    try:
-        # Item 26: default-hide superseded rows. Best-effort: schema may
-        # not yet have the column, in which case the filter is a no-op.
-        if not include_superseded:
-            try:
-                db.conn.execute("SELECT is_superseded FROM decisions LIMIT 1")
-                where_clauses.append("(d.is_superseded = 0 OR d.is_superseded IS NULL)")
-            except Exception:
-                pass
-
-        # Item 27: tag filter — INTERSECT decision_tags.
-        if tags:
-            try:
-                norm_tags = sorted(
-                    {str(t).strip().lower() for t in tags if str(t).strip()}
-                )
-                placeholders = ",".join("?" * len(norm_tags))
-                where_clauses.append(
-                    f"d.id IN (SELECT decision_id FROM decision_tags "
-                    f"WHERE tag IN ({placeholders}) "
-                    f"GROUP BY decision_id HAVING COUNT(DISTINCT tag) = {len(norm_tags)})"
-                )
-                params.extend(norm_tags)
-            except Exception:
-                pass
-
-        where_sql = (" WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
-        sql = (
-            "SELECT d.id, d.decision, d.context, d.file_path, "
-            "d.do_not_revert, d.session_id, d.created_at, s.summary, s.phase "
-            f"FROM decisions d LEFT JOIN sessions s ON d.session_id = s.session_id "
-            f"{where_sql} ORDER BY d.created_at DESC LIMIT ?"
-        )
-        cur = db.conn.execute(sql, [*params, limit + 1])
-        rows = [dict(r) for r in cur.fetchall()]
-        has_more = len(rows) > limit
-        results = rows[:limit]
-
-        for r in results:
-            if "do_not_revert" in r:
-                r["do_not_revert"] = bool(r["do_not_revert"])
-            # Attach tags (best-effort).
-            try:
-                tag_cur = db.conn.execute(
-                    "SELECT tag FROM decision_tags WHERE decision_id = ? ORDER BY tag",
-                    (r["id"],),
-                )
-                r["tags"] = [row["tag"] for row in tag_cur.fetchall()]
-            except Exception:
-                r["tags"] = []
-    finally:
-        db.close()
-
-    if not full:
-        for r in results:
-            if r.get("decision") and len(r["decision"]) > 200:
-                r["decision"] = r["decision"][:199] + "…"
-            if r.get("context") and len(r["context"]) > 150:
-                r["context"] = r["context"][:149] + "…"
+    result = decisions_store.list_all(
+        limit=limit,
+        since=since_date,
+        file_pattern=file_pattern,
+        protected_only=protected_only,
+        session_id=session_id,
+        tags=tags,
+        include_superseded=include_superseded,
+        full=full,
+    )
 
     return {
-        "count": len(results),
-        "has_more": has_more,
-        "decisions": results,
+        "count": result["count"],
+        "has_more": result["has_more"],
+        "decisions": result["decisions"],
         "filters_applied": {
             "since_date": since_date,
             "file_pattern": file_pattern,
@@ -749,26 +544,17 @@ def list_decisions(
 
 
 def list_tags() -> dict[str, Any]:
-    """2026-05-18 v2.1.2 Item 27: enumerate all tags in the project with
-    decision counts. Useful for discovery / catalog.
+    """Enumerate tags in the project with decision counts (v2.2.0).
 
-    Returns ``{"tags": [{"tag": str, "count": int}, ...]}`` sorted by
-    count desc. Returns empty list if the ``decision_tags`` table
-    doesn't exist yet (pre-v2.1.2 schema).
+    Reads ``.codevira/manifest.yaml`` (O(1) — no scan of decisions.jsonl).
+    Sorted by count desc, then alphabetical.
+
+    Returns ``{tags: [{tag, count}, ...], count}``.
     """
-    db = _get_db()
-    try:
-        try:
-            cur = db.conn.execute(
-                "SELECT tag, COUNT(*) AS c FROM decision_tags "
-                "GROUP BY tag ORDER BY c DESC, tag ASC"
-            )
-            tags = [{"tag": r["tag"], "count": r["c"]} for r in cur.fetchall()]
-        except Exception:
-            tags = []
-    finally:
-        db.close()
-    return {"tags": tags, "count": len(tags)}
+    from mcp_server.storage import decisions_store
+
+    res = decisions_store.list_tags_with_counts()
+    return {"tags": res["tags"], "count": res.get("total_unique", len(res["tags"]))}
 
 
 def get_history(
@@ -777,64 +563,45 @@ def get_history(
     full: bool = False,
     since: str | None = None,
 ) -> dict[str, Any]:
-    """Return most recent decisions touching a file.
+    """Return most recent decisions touching a file (v2.2.0).
 
-    Default: 5 most recent, with truncated context (150 chars each).
-    Response stays under ~500 tokens for typical use.
+    Uses ``decisions_store.list_all`` with ``file_pattern=file_path``.
+    Defaults to slim shape (~500 tokens total typical).
 
-    Pass full=True for untruncated decisions, or increase limit up to 50.
+    Args:
+        file_path: literal file path to filter by (no glob; exact match).
+        limit: max rows (clamped to [1, 50]).
+        full: untruncated decision text.
+        since: ISO 8601 / YYYY-MM-DD.
 
-    2026-05-18 v2.1.2 Item 25: optional ``since`` (ISO 8601 / YYYY-MM-DD)
-    filter — only decisions ``created_at > since`` are returned.
+    Returns ``{file_path, returned, limit, has_more, history}``.
     """
     if limit < 1:
         limit = 1
     if limit > 50:
         limit = 50
 
-    db = _get_db()
-    if since:
-        sql = """
-            SELECT d.decision, d.context, s.summary, d.created_at, d.session_id
-            FROM decisions d
-            JOIN sessions s ON d.session_id = s.session_id
-            WHERE (d.file_path = ? OR s.summary LIKE ?) AND d.created_at > ?
-            ORDER BY d.created_at DESC
-            LIMIT ?
-        """
-    else:
-        sql = """
-            SELECT d.decision, d.context, s.summary, d.created_at, d.session_id
-            FROM decisions d
-            JOIN sessions s ON d.session_id = s.session_id
-            WHERE d.file_path = ? OR s.summary LIKE ?
-            ORDER BY d.created_at DESC
-            LIMIT ?
-        """
-    if since:
-        cur = db.conn.execute(sql, (file_path, f"%{file_path}%", since, limit + 1))
-    else:
-        cur = db.conn.execute(sql, (file_path, f"%{file_path}%", limit + 1))
-    rows = cur.fetchall()
-    has_more = len(rows) > limit
-    results = [dict(r) for r in rows[:limit]]
-    db.close()
+    from mcp_server.storage import decisions_store
+
+    result = decisions_store.list_all(
+        limit=limit,
+        since=since,
+        file_pattern=file_path,
+        full=full,
+    )
+    history = result["decisions"]
 
     if not full:
-        for r in results:
+        for r in history:
             if r.get("decision") and len(r["decision"]) > 200:
                 r["decision"] = r["decision"][:199] + "…"
-            if r.get("context") and len(r["context"]) > 150:
-                r["context"] = r["context"][:149] + "…"
-            if r.get("summary") and len(r["summary"]) > 100:
-                r["summary"] = r["summary"][:99] + "…"
 
     return {
         "file_path": file_path,
-        "returned": len(results),
+        "returned": len(history),
         "limit": limit,
-        "has_more": has_more,
-        "history": results,
+        "has_more": result["has_more"],
+        "history": history,
     }
 
 

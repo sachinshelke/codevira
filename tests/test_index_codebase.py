@@ -111,6 +111,9 @@ class TestLoadConfig:
 class TestCheckSearchDeps:
     """Return True/False based on chromadb availability."""
 
+    @pytest.mark.skip(
+        reason="v2.2.0: tests deprecated feature (search_codebase / _check_search_deps / graph.db backend)"
+    )
     def test_returns_true_when_available(self):
         """When both chromadb and sentence_transformers can be imported."""
         mock_chromadb = MagicMock()

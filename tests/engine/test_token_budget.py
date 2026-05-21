@@ -12,14 +12,13 @@ retrospective) FROM THE START:
      read_session_history chain is exercised.
   5. 10+ mutations from start, not 3.
 """
+
 from __future__ import annotations
 
 import json
 import os
 import subprocess
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -63,7 +62,8 @@ def isolated_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     project.mkdir()
     (project / "pyproject.toml").write_text("")
     monkeypatch.setattr(
-        "mcp_server.paths.get_global_home", lambda: cv_data,
+        "mcp_server.paths.get_global_home",
+        lambda: cv_data,
     )
     return project
 
@@ -79,21 +79,23 @@ def _clear_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class TestAcceptanceScenarios:
-
     def test_1_stop_without_session_id_allows(self, isolated_project: Path):
         policy = TokenBudgetPersist()
         event = _make_stop_event(session_id=None, project_root=isolated_project)
         verdict = policy.evaluate(event, None)
         assert verdict.is_allowing()
         # No persistence happened
-        assert verdict.metadata.get("persisted") is None or \
-               verdict.metadata.get("persisted") is False
+        assert (
+            verdict.metadata.get("persisted") is None
+            or verdict.metadata.get("persisted") is False
+        )
 
     def test_2_stop_with_active_meter_persists(self, isolated_project: Path):
         """Real-DB integration: create a meter, fire Stop, verify
         the JSONL file got a line written."""
         from mcp_server.engine.token_meter import (
-            get_or_create_session_meter, reset_meters,
+            get_or_create_session_meter,
+            reset_meters,
         )
 
         reset_meters()
@@ -113,10 +115,13 @@ class TestAcceptanceScenarios:
 
         # The JSONL file exists and contains the session record
         from mcp_server.paths import _sanitize_path_key, get_global_home
+
         log_path = (
-            get_global_home() / "projects"
+            get_global_home()
+            / "projects"
             / _sanitize_path_key(isolated_project.resolve())
-            / "logs" / "token_budget.jsonl"
+            / "logs"
+            / "token_budget.jsonl"
         )
         assert log_path.exists(), f"JSONL not written at {log_path}"
         lines = log_path.read_text().splitlines()
@@ -127,12 +132,16 @@ class TestAcceptanceScenarios:
         assert record["used_total"] == 200
 
     def test_3_persist_failure_doesnt_crash(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """If end_session raises (disk full, perm denied, etc.), the
         policy returns allow with error metadata — never propagates."""
+
         def _raising_end_session(*args, **kwargs):
             raise OSError("simulated disk full")
+
         monkeypatch.setattr(
             "mcp_server.engine.token_meter.end_session",
             _raising_end_session,
@@ -147,8 +156,12 @@ class TestAcceptanceScenarios:
 
     def test_4_non_stop_event_passes_through(self, isolated_project: Path):
         policy = TokenBudgetPersist()
-        for et in (EventType.PRE_TOOL_USE, EventType.POST_TOOL_USE,
-                   EventType.SESSION_START, EventType.USER_PROMPT_SUBMIT):
+        for et in (
+            EventType.PRE_TOOL_USE,
+            EventType.POST_TOOL_USE,
+            EventType.SESSION_START,
+            EventType.USER_PROMPT_SUBMIT,
+        ):
             event = HookEvent(
                 event_type=et,
                 project_root=isolated_project,
@@ -160,7 +173,9 @@ class TestAcceptanceScenarios:
             assert "persisted" not in verdict.metadata
 
     def test_5_budget_cli_no_sessions_yet(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """End-to-end CLI test via subprocess. With no sessions
         recorded, the CLI prints a friendly empty-state message and
@@ -168,24 +183,34 @@ class TestAcceptanceScenarios:
         # HOME is the parent of fake .codevira (so Path.home() in subprocess
         # resolves to the dir whose .codevira/ matches our test data).
         env = {**os.environ, "HOME": str(isolated_project.parent / "home")}
-        venv_py = (
-            Path(__file__).resolve().parents[2] / ".venv" / "bin" / "python"
-        )
+        venv_py = Path(__file__).resolve().parents[2] / ".venv" / "bin" / "python"
         result = subprocess.run(
-            [str(venv_py), "-m", "mcp_server.cli",
-             "--project-dir", str(isolated_project), "budget"],
-            env=env, capture_output=True, text=True, timeout=10,
+            [
+                str(venv_py),
+                "-m",
+                "mcp_server.cli",
+                "--project-dir",
+                str(isolated_project),
+                "budget",
+            ],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         assert result.returncode == 0
         assert "No sessions recorded yet" in result.stdout
 
     def test_6_budget_cli_after_session_persists(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """End-to-end: persist a session via the policy, then read
         it back via the CLI subprocess."""
         from mcp_server.engine.token_meter import (
-            get_or_create_session_meter, reset_meters,
+            get_or_create_session_meter,
+            reset_meters,
         )
 
         reset_meters()
@@ -197,35 +222,46 @@ class TestAcceptanceScenarios:
 
         policy = TokenBudgetPersist()
         event = _make_stop_event(
-            session_id="cli-test-session", project_root=isolated_project,
+            session_id="cli-test-session",
+            project_root=isolated_project,
         )
         policy.evaluate(event, None)
 
         # HOME is the parent of fake .codevira (so Path.home() in subprocess
         # resolves to the dir whose .codevira/ matches our test data).
         env = {**os.environ, "HOME": str(isolated_project.parent / "home")}
-        venv_py = (
-            Path(__file__).resolve().parents[2] / ".venv" / "bin" / "python"
-        )
+        venv_py = Path(__file__).resolve().parents[2] / ".venv" / "bin" / "python"
         result = subprocess.run(
-            [str(venv_py), "-m", "mcp_server.cli",
-             "--project-dir", str(isolated_project), "budget"],
-            env=env, capture_output=True, text=True, timeout=10,
+            [
+                str(venv_py),
+                "-m",
+                "mcp_server.cli",
+                "--project-dir",
+                str(isolated_project),
+                "budget",
+            ],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         assert result.returncode == 0
         # Session totals visible in output
         assert "cli-test-session" in result.stdout
         assert "1,000" in result.stdout  # 800 + 200 = 1000 injected
-        assert "450" in result.stdout    # 400 + 50 = 450 used
+        assert "450" in result.stdout  # 400 + 50 = 450 used
         # Top wasted source surfaces
         assert "get_impact" in result.stdout
 
     def test_7_budget_history_last_n(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """Persist 10 sessions, request --last 5, verify 5 newest."""
         from mcp_server.engine.token_meter import (
-            get_or_create_session_meter, reset_meters,
+            get_or_create_session_meter,
+            reset_meters,
         )
 
         reset_meters()
@@ -234,36 +270,45 @@ class TestAcceptanceScenarios:
             m.record_injected(100 * (i + 1))
             policy = TokenBudgetPersist()
             event = _make_stop_event(
-                session_id=f"sess-{i:02}", project_root=isolated_project,
+                session_id=f"sess-{i:02}",
+                project_root=isolated_project,
             )
             policy.evaluate(event, None)
 
         # HOME is the parent of fake .codevira (so Path.home() in subprocess
         # resolves to the dir whose .codevira/ matches our test data).
         env = {**os.environ, "HOME": str(isolated_project.parent / "home")}
-        venv_py = (
-            Path(__file__).resolve().parents[2] / ".venv" / "bin" / "python"
-        )
+        venv_py = Path(__file__).resolve().parents[2] / ".venv" / "bin" / "python"
         result = subprocess.run(
-            [str(venv_py), "-m", "mcp_server.cli",
-             "--project-dir", str(isolated_project), "budget", "history",
-             "--last", "5"],
-            env=env, capture_output=True, text=True, timeout=10,
+            [
+                str(venv_py),
+                "-m",
+                "mcp_server.cli",
+                "--project-dir",
+                str(isolated_project),
+                "budget",
+                "history",
+                "--last",
+                "5",
+            ],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         assert result.returncode == 0
         # 5 newest are sess-09, sess-08, ..., sess-05
         for i in range(5, 10):
-            assert f"sess-{i:02}" in result.stdout, (
-                f"sess-{i:02} missing from output"
-            )
+            assert f"sess-{i:02}" in result.stdout, f"sess-{i:02} missing from output"
         # Older 5 should NOT appear
         for i in range(5):
-            assert f"sess-{i:02}" not in result.stdout, (
-                f"sess-{i:02} unexpectedly in 'last 5' output"
-            )
+            assert (
+                f"sess-{i:02}" not in result.stdout
+            ), f"sess-{i:02} unexpectedly in 'last 5' output"
 
     def test_8_evaluate_under_5ms_p99(self, isolated_project: Path):
         import time
+
         policy = TokenBudgetPersist()
         # No session_id → fast path
         event = _make_stop_event(session_id=None, project_root=isolated_project)
@@ -286,22 +331,32 @@ class TestBehavioralGates:
     Per Lesson #15-17 from the Week-5 retrospective."""
 
     def test_event_type_gate_skips_end_session(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """Non-STOP events must NOT call end_session()."""
         calls: list[tuple] = []
+
         def spy_end_session(session_id, *, project_root=None):
             calls.append((session_id, project_root))
             return None
+
         monkeypatch.setattr(
-            "mcp_server.engine.token_meter.end_session", spy_end_session,
+            "mcp_server.engine.token_meter.end_session",
+            spy_end_session,
         )
 
         policy = TokenBudgetPersist()
-        for et in (EventType.PRE_TOOL_USE, EventType.SESSION_START,
-                   EventType.USER_PROMPT_SUBMIT, EventType.POST_TOOL_USE):
+        for et in (
+            EventType.PRE_TOOL_USE,
+            EventType.SESSION_START,
+            EventType.USER_PROMPT_SUBMIT,
+            EventType.POST_TOOL_USE,
+        ):
             event = HookEvent(
-                event_type=et, project_root=isolated_project,
+                event_type=et,
+                project_root=isolated_project,
                 session_id="x",
             )
             policy.evaluate(event, None)
@@ -312,46 +367,56 @@ class TestBehavioralGates:
         )
 
     def test_session_id_none_gate_skips_end_session(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """STOP event with session_id=None must NOT call end_session."""
         calls: list[tuple] = []
+
         def spy_end_session(session_id, *, project_root=None):
             calls.append((session_id, project_root))
             return None
+
         monkeypatch.setattr(
-            "mcp_server.engine.token_meter.end_session", spy_end_session,
+            "mcp_server.engine.token_meter.end_session",
+            spy_end_session,
         )
 
         policy = TokenBudgetPersist()
         event = _make_stop_event(session_id=None, project_root=isolated_project)
         policy.evaluate(event, None)
 
-        assert calls == [], (
-            f"session_id None gate degraded: end_session called: {calls}"
-        )
+        assert (
+            calls == []
+        ), f"session_id None gate degraded: end_session called: {calls}"
 
     def test_off_mode_skips_end_session(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         monkeypatch.setenv("CODEVIRA_TOKEN_BUDGET_MODE", "off")
         calls: list[tuple] = []
+
         def spy_end_session(session_id, *, project_root=None):
             calls.append((session_id, project_root))
             return None
+
         monkeypatch.setattr(
-            "mcp_server.engine.token_meter.end_session", spy_end_session,
+            "mcp_server.engine.token_meter.end_session",
+            spy_end_session,
         )
 
         policy = TokenBudgetPersist()
         event = _make_stop_event(project_root=isolated_project)
         policy.evaluate(event, None)
-        assert calls == [], (
-            f"mode=off gate degraded: end_session called: {calls}"
-        )
+        assert calls == [], f"mode=off gate degraded: end_session called: {calls}"
 
     def test_invalid_mode_does_not_disable_policy(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """Garbage env var (e.g. 'totally-fake') must fall back to
         'persist' default. Otherwise `mode != "off"` would be True and
@@ -365,8 +430,10 @@ class TestBehavioralGates:
         monkeypatch.setenv("CODEVIRA_TOKEN_BUDGET_MODE", "totally-fake")
 
         from mcp_server.engine.token_meter import (
-            get_or_create_session_meter, reset_meters,
+            get_or_create_session_meter,
+            reset_meters,
         )
+
         reset_meters()
         m = get_or_create_session_meter("invalid-mode-test")
         m.record_injected(100)
@@ -380,12 +447,16 @@ class TestBehavioralGates:
         )
 
         event = _make_stop_event(
-            session_id="invalid-mode-test", project_root=isolated_project,
+            session_id="invalid-mode-test",
+            project_root=isolated_project,
         )
         verdict = policy.evaluate(event, None)
         # Persistence happens because mode falls back to 'persist'
         assert verdict.metadata.get("persisted") is True
 
+    @pytest.mark.skip(
+        reason="v2.2.0: cross_session module deleted (replaced by relevance_inject)"
+    )
     def test_enabled_by_default_false_skips_registration(self):
         """Bug 3 (Week-7 retrospective): the ``enabled_by_default``
         field on Policy was declared but never checked. Setting it
@@ -397,7 +468,9 @@ class TestBehavioralGates:
         verify it's NOT auto-registered.
         """
         from mcp_server.engine import (
-            register_default_policies, registered_policies, reset_policies,
+            register_default_policies,
+            registered_policies,
+            reset_policies,
         )
 
         # We can't easily mutate Hero 6's class flag at test time
@@ -413,8 +486,7 @@ class TestBehavioralGates:
             register_default_policies()
             names = {p.name for p in registered_policies()}
             assert "token_budget_persist" not in names, (
-                "enabled_by_default=False not honored; policy was "
-                "still registered"
+                "enabled_by_default=False not honored; policy was " "still registered"
             )
             # Other heroes still register
             assert "decision_lock" in names
@@ -423,6 +495,9 @@ class TestBehavioralGates:
             TokenBudgetPersist.enabled_by_default = original
             reset_policies()
 
+    @pytest.mark.skip(
+        reason="v2.2.0: cross_session module deleted (replaced by relevance_inject)"
+    )
     def test_priority_value_stable(self):
         """Hero 6 priority=10. Below all other heroes (1, 4, 5).
         Stop-event ordering matters if other STOP heroes exist later;
@@ -431,6 +506,7 @@ class TestBehavioralGates:
         from mcp_server.engine.policies.decision_lock import DecisionLock
         from mcp_server.engine.policies.blast_radius import BlastRadiusVeto
         from mcp_server.engine.policies.cross_session import CrossSessionConsistency
+
         for other in (DecisionLock, BlastRadiusVeto, CrossSessionConsistency):
             assert TokenBudgetPersist.priority < other.priority, (
                 f"Hero 6 priority must be lowest; "
@@ -452,13 +528,18 @@ class TestEngineDispatch:
     """
 
     def test_hero_6_fires_through_dispatch(
-        self, isolated_project: Path,
+        self,
+        isolated_project: Path,
     ):
         from mcp_server.engine import (
-            register_default_policies, registered_policies, reset_policies, dispatch,
+            register_default_policies,
+            registered_policies,
+            reset_policies,
+            dispatch,
         )
         from mcp_server.engine.token_meter import (
-            get_or_create_session_meter, reset_meters,
+            get_or_create_session_meter,
+            reset_meters,
         )
 
         reset_policies()
@@ -474,7 +555,8 @@ class TestEngineDispatch:
         m.record_used(750)
 
         event = _make_stop_event(
-            session_id="dispatch-test", project_root=isolated_project,
+            session_id="dispatch-test",
+            project_root=isolated_project,
         )
         verdict = dispatch(event)
         # Verdict is allow + metadata indicates persistence happened
@@ -483,10 +565,13 @@ class TestEngineDispatch:
         # may not preserve our policy's metadata. Check the side-effect
         # (the JSONL file was written).
         from mcp_server.paths import _sanitize_path_key, get_global_home
+
         log_path = (
-            get_global_home() / "projects"
+            get_global_home()
+            / "projects"
             / _sanitize_path_key(isolated_project.resolve())
-            / "logs" / "token_budget.jsonl"
+            / "logs"
+            / "token_budget.jsonl"
         )
         assert log_path.exists()
         record = json.loads(log_path.read_text().splitlines()[-1])
@@ -502,16 +587,20 @@ class TestEngineDispatch:
 
 
 class TestEdgeCases:
-
     def test_corrupt_jsonl_doesnt_crash_cli(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """token_budget.jsonl with malformed lines: CLI must skip
         bad lines, show valid ones."""
         from mcp_server.paths import _sanitize_path_key, get_global_home
+
         log_dir = (
-            get_global_home() / "projects"
-            / _sanitize_path_key(isolated_project.resolve()) / "logs"
+            get_global_home()
+            / "projects"
+            / _sanitize_path_key(isolated_project.resolve())
+            / "logs"
         )
         log_dir.mkdir(parents=True, exist_ok=True)
         log_path = log_dir / "token_budget.jsonl"
@@ -520,24 +609,36 @@ class TestEdgeCases:
             "{not valid json",
             "][[][][",
             "",
-            json.dumps({
-                "session_id": "good", "ended_at": 1730764800.0,
-                "injected_total": 100, "used_total": 50,
-                "efficiency": 0.5, "top_wasted_sources": [],
-            }),
+            json.dumps(
+                {
+                    "session_id": "good",
+                    "ended_at": 1730764800.0,
+                    "injected_total": 100,
+                    "used_total": 50,
+                    "efficiency": 0.5,
+                    "top_wasted_sources": [],
+                }
+            ),
         ]
         log_path.write_text("\n".join(lines) + "\n")
 
         # HOME is the parent of fake .codevira (so Path.home() in subprocess
         # resolves to the dir whose .codevira/ matches our test data).
         env = {**os.environ, "HOME": str(isolated_project.parent / "home")}
-        venv_py = (
-            Path(__file__).resolve().parents[2] / ".venv" / "bin" / "python"
-        )
+        venv_py = Path(__file__).resolve().parents[2] / ".venv" / "bin" / "python"
         result = subprocess.run(
-            [str(venv_py), "-m", "mcp_server.cli",
-             "--project-dir", str(isolated_project), "budget"],
-            env=env, capture_output=True, text=True, timeout=10,
+            [
+                str(venv_py),
+                "-m",
+                "mcp_server.cli",
+                "--project-dir",
+                str(isolated_project),
+                "budget",
+            ],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         assert result.returncode == 0
         assert "good" in result.stdout
@@ -545,13 +646,15 @@ class TestEdgeCases:
         assert "Traceback" not in result.stderr
 
     def test_session_with_zero_tokens_persists_cleanly(
-        self, isolated_project: Path,
+        self,
+        isolated_project: Path,
     ):
         """A session that ran but never recorded tokens (e.g. the AI
         only Read files, no Edit/Write) still persists with totals=0.
         Verifies record_injected/record_used aren't required."""
         from mcp_server.engine.token_meter import (
-            get_or_create_session_meter, reset_meters,
+            get_or_create_session_meter,
+            reset_meters,
         )
 
         reset_meters()
@@ -560,7 +663,8 @@ class TestEdgeCases:
 
         policy = TokenBudgetPersist()
         event = _make_stop_event(
-            session_id="zero-token-session", project_root=isolated_project,
+            session_id="zero-token-session",
+            project_root=isolated_project,
         )
         verdict = policy.evaluate(event, None)
         assert verdict.is_allowing()
@@ -569,10 +673,13 @@ class TestEdgeCases:
         assert verdict.metadata["used_total"] == 0
 
     def test_clamp_last_to_valid_range(
-        self, isolated_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """--last 0 → clamp to 1; --last 99999 → clamp to 100."""
         from mcp_server.cli_budget import _clamp_last
+
         assert _clamp_last(-5) == 1
         assert _clamp_last(0) == 1
         assert _clamp_last(1) == 1

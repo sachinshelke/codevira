@@ -1864,14 +1864,15 @@ def main() -> None:
         )
         sys.exit(rc)
     elif args.command == "calibrate":
-        # 2026-05-18 v2.1.2 Item 1: manual threshold re-fit.
-        from mcp_server.cli_calibrate import cmd_calibrate
-
-        rc = cmd_calibrate(
-            target=getattr(args, "target", "decisions"),
-            dry_run=getattr(args, "dry_run", False),
+        # v2.2.0: calibrate removed (no semantic thresholds — FTS5 only).
+        print(
+            "Error: `codevira calibrate` was removed in v2.2.0.\n"
+            "  v2.2.0 uses SQLite FTS5 + BM25 for decision search;\n"
+            "  no learnable thresholds. Use `codevira sync` to rebuild\n"
+            "  the FTS5 index instead.",
+            file=sys.stderr,
         )
-        sys.exit(rc)
+        sys.exit(1)
     elif args.command == "engine":
         # Internal — Claude Code hook scripts call us with `engine handle <event>`.
         if getattr(args, "engine_action", None) == "handle":
@@ -2207,50 +2208,16 @@ def cmd_heal(
         )
         return 1
 
-    # ─── --decisions is the ONLY non-destructive target: handled separately ──
-    # Doesn't wipe anything — just embeds existing SQLite decisions into the
-    # semantic index. Safe to run any time; idempotent (upsert under the hood).
+    # v2.2.0: --decisions backfill removed (no semantic embeddings to
+    # backfill; FTS5 rebuilds from JSONL via `codevira sync`).
     if decisions and not (vectors or graph or heal_all):
-        try:
-            from indexer.sqlite_graph import SQLiteGraph
-            from mcp_server.tools._decision_embeddings import backfill_all_decisions
-
-            graph_db_path = get_data_dir() / "graph" / "graph.db"
-            if not graph_db_path.is_file():
-                print(
-                    f"Error: no graph.db at {graph_db_path}. "
-                    f"Has this project been initialized? Run `codevira init` first.",
-                    file=sys.stderr,
-                )
-                return 1
-            print(
-                f"  Backfilling decision embeddings for {graph_db_path.parent.parent} …"
-            )
-            if dry_run:
-                # Cheap count via SQLite — don't actually embed
-                db = SQLiteGraph(graph_db_path)
-                try:
-                    cur = db.conn.execute("SELECT COUNT(*) FROM decisions")
-                    total = cur.fetchone()[0]
-                finally:
-                    db.close()
-                print(f"    [dry-run] would attempt to embed {total} decision(s)")
-                return 0
-            db = SQLiteGraph(graph_db_path)
-            try:
-                result = backfill_all_decisions(db)
-            finally:
-                db.close()
-            print(
-                f"    total={result.get('total', 0)} embedded={result.get('embedded', 0)} "
-                f"failed={result.get('failed', 0)} skipped={result.get('skipped', 0)}"
-            )
-            if "note" in result:
-                print(f"    note: {result['note']}")
-            return 0 if result.get("failed", 0) == 0 else 1
-        except Exception as e:
-            print(f"Error: --decisions backfill failed: {e}", file=sys.stderr)
-            return 1
+        print(
+            "v2.2.0: `codevira heal --decisions` removed. ChromaDB embeddings\n"
+            "are gone in v2.2.0; decisions live in `.codevira/decisions.jsonl`\n"
+            "and the FTS5 index is rebuilt by `codevira sync`.",
+            file=sys.stderr,
+        )
+        return 1
 
     # Guard against running from $HOME / system dirs (same protection as cmd_index).
     rejection = is_invalid_project_root(get_project_root())

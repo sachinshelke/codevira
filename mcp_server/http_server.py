@@ -15,6 +15,7 @@ Usage:
   codevira serve --port 7443 --https   # HTTPS on 127.0.0.1:7443
   codevira serve --host 0.0.0.0        # Expose on all interfaces (LAN)
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -99,6 +100,7 @@ for documentation.</p>
 
 def _certs_dir() -> Path:
     from mcp_server.paths import get_global_home
+
     return get_global_home() / "certs"
 
 
@@ -114,6 +116,7 @@ def _key_file() -> Path:
 # Bearer token auth (required when binding to non-loopback addresses)
 # ---------------------------------------------------------------------------
 
+
 def _get_or_create_token() -> str:
     """Return the bearer token, creating one if it doesn't exist.
 
@@ -121,6 +124,7 @@ def _get_or_create_token() -> str:
     restarts but is NOT committed to any project repo.
     """
     from mcp_server.paths import get_global_home
+
     token_path = get_global_home() / _TOKEN_FILE_NAME
     if token_path.exists():
         token = token_path.read_text(encoding="utf-8").strip()
@@ -152,7 +156,10 @@ class _BearerAuthMiddleware(BaseHTTPMiddleware):
         auth = request.headers.get("Authorization", "")
         if auth != f"Bearer {self._token}":
             return JSONResponse(
-                {"error": "Unauthorized", "hint": "Set Authorization: Bearer <token> header"},
+                {
+                    "error": "Unauthorized",
+                    "hint": "Set Authorization: Bearer <token> header",
+                },
                 status_code=401,
             )
         return await call_next(request)
@@ -161,6 +168,7 @@ class _BearerAuthMiddleware(BaseHTTPMiddleware):
 # ---------------------------------------------------------------------------
 # Certificate helpers
 # ---------------------------------------------------------------------------
+
 
 def _certs_exist() -> bool:
     return _cert_file().exists() and _key_file().exists()
@@ -191,8 +199,10 @@ def generate_mkcert_certs() -> tuple[Path, Path]:
     subprocess.run(
         [
             "mkcert",
-            "-cert-file", str(cert_f),
-            "-key-file", str(key_f),
+            "-cert-file",
+            str(cert_f),
+            "-key-file",
+            str(key_f),
             "localhost",
             "127.0.0.1",
             "::1",
@@ -205,6 +215,7 @@ def generate_mkcert_certs() -> tuple[Path, Path]:
 # ---------------------------------------------------------------------------
 # ASGI app factory
 # ---------------------------------------------------------------------------
+
 
 def create_app(bearer_token: str | None = None) -> Starlette:
     """
@@ -223,8 +234,8 @@ def create_app(bearer_token: str | None = None) -> Starlette:
     """
     session_manager = StreamableHTTPSessionManager(
         app=server,
-        stateless=True,        # no resumability — simpler for local single-user use
-        json_response=False,   # SSE streaming (not JSON batching)
+        stateless=True,  # no resumability — simpler for local single-user use
+        json_response=False,  # SSE streaming (not JSON batching)
     )
 
     @contextlib.asynccontextmanager
@@ -237,12 +248,14 @@ def create_app(bearer_token: str | None = None) -> Starlette:
         accept = req.headers.get("accept", "")
         if "text/html" in accept:
             return HTMLResponse(_LANDING_HTML)
-        return JSONResponse({
-            "status": "ok",
-            "transport": "streamable-http",
-            "server": "codevira",
-            "mcp_endpoint": "/mcp",
-        })
+        return JSONResponse(
+            {
+                "status": "ok",
+                "transport": "streamable-http",
+                "server": "codevira",
+                "mcp_endpoint": "/mcp",
+            }
+        )
 
     middleware = []
     if bearer_token:
@@ -261,6 +274,7 @@ def create_app(bearer_token: str | None = None) -> Starlette:
 # ---------------------------------------------------------------------------
 # Server runner
 # ---------------------------------------------------------------------------
+
 
 def run_http_server(
     host: str = "127.0.0.1",
@@ -285,6 +299,7 @@ def run_http_server(
     # globally, but a direct caller of run_http_server() may not have done so.
     if project_dir is not None:
         from mcp_server.paths import set_project_dir
+
         set_project_dir(project_dir)
 
     # v1.8.1: refuse to start the HTTP server with $HOME / system root.
@@ -296,6 +311,7 @@ def run_http_server(
     # ~/Library/Group Containers/... — the original v1.8.0 crash mode.
     try:
         from mcp_server.paths import get_project_root, is_invalid_project_root
+
         _early_root = get_project_root()
         _rejection = is_invalid_project_root(_early_root)
         if _rejection:
@@ -315,6 +331,7 @@ def run_http_server(
     # ---- Startup side effects (mirror server.py main()) ----
     try:
         from mcp_server.crash_logger import install_global_handler
+
         install_global_handler()
     except Exception as e:
         logger.warning("Could not install crash handler: %s", e)
@@ -323,24 +340,30 @@ def run_http_server(
     try:
         from mcp_server.migrate import detect_migration_needed, migrate_to_centralized
         from mcp_server.paths import get_project_root
+
         _proj_root = get_project_root()
         if detect_migration_needed(_proj_root):
             logger.info("Migrating legacy .codevira/ to centralized storage...")
             result = migrate_to_centralized(_proj_root)
             if result.get("migrated"):
-                logger.info("Migration complete: %d files moved to %s",
-                            result.get("files_copied", 0), result.get("new_path", ""))
+                logger.info(
+                    "Migration complete: %d files moved to %s",
+                    result.get("files_copied", 0),
+                    result.get("new_path", ""),
+                )
     except Exception as e:
         logger.warning("Could not run storage migration: %s", e)
 
     try:
         from indexer.index_codebase import start_background_watcher
+
         start_background_watcher(quiet=True)
         logger.info("Live file watcher active")
     except Exception as e:
         logger.warning("Could not start background watcher: %s", e)
         try:
             from mcp_server.crash_logger import log_crash
+
             log_crash(e, context="http serve: background watcher")
         except Exception:
             pass
@@ -348,6 +371,7 @@ def run_http_server(
     try:
         from indexer.outcome_tracker import analyze_session_outcomes
         from indexer.rule_learner import run_rule_inference
+
         analyze_session_outcomes()
         run_rule_inference()
     except Exception as e:
@@ -355,6 +379,7 @@ def run_http_server(
 
     try:
         from mcp_server.global_sync import import_global_to_project
+
         import_global_to_project()
     except Exception as e:
         logger.warning("Could not sync global memory: %s", e)
@@ -362,16 +387,13 @@ def run_http_server(
     # v1.7: Enforce logs.retention_days (opt-in, default 0 = keep forever)
     try:
         from mcp_server.log_retention import enforce_retention
+
         enforce_retention()
     except Exception as e:
         logger.warning("Log retention cleanup failed: %s", e)
 
-    # v1.7: Pre-warm the embedding model in a background thread
-    try:
-        from mcp_server.tools.search import prewarm_embedding_model
-        prewarm_embedding_model()
-    except Exception as e:
-        logger.warning("Embedding prewarm failed: %s", e)
+    # v2.2.0: prewarm_embedding_model removed (no chromadb / sentence-transformers / torch).
+    # MCP server startup is <100ms; no native deps to warm.
 
     # ---- TLS certificate setup ----
     ssl_certfile: str | None = None
@@ -400,19 +422,19 @@ def run_http_server(
     print("  Codevira MCP — HTTP Server")
     print("  " + "─" * 44)
     print(f"  Endpoint : {display_url}")
-    print(f"  Transport: MCP Streamable HTTP (2025-03-26)")
+    print("  Transport: MCP Streamable HTTP (2025-03-26)")
     print()
     print("  ── Register in Claude Code ──────────────────")
     print("  Add to ~/.claude/settings.json (global) or")
     print("  .claude/settings.json (project):")
     print()
-    print('  {')
+    print("  {")
     print('    "mcpServers": {')
     print('      "codevira": {')
     print(f'        "url": "{display_url}"')
-    print('      }')
-    print('    }')
-    print('  }')
+    print("      }")
+    print("    }")
+    print("  }")
     print()
     if not use_https:
         print("  Tip: Use --https for a trusted HTTPS URL (required for Claude.ai)")
@@ -425,9 +447,9 @@ def run_http_server(
     is_loopback = host in ("127.0.0.1", "::1", "localhost")
     if not is_loopback:
         bearer_token = _get_or_create_token()
-        print(f"  ── Auth (non-loopback) ──────────────────────")
+        print("  ── Auth (non-loopback) ──────────────────────")
         print(f"  Bearer token: {bearer_token}")
-        print(f"  All /mcp requests require: Authorization: Bearer <token>")
+        print("  All /mcp requests require: Authorization: Bearer <token>")
         print(f"  Token stored in: ~/.codevira/{_TOKEN_FILE_NAME}")
         print()
 

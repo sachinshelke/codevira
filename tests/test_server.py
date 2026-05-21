@@ -18,6 +18,8 @@ import sys
 import types
 from unittest.mock import patch, MagicMock
 
+import pytest
+
 
 # ---------------------------------------------------------------------------
 # Pre-seed sys.modules with mock mcp package so mcp_server.server can import
@@ -157,6 +159,9 @@ class TestCallToolDispatch:
         parsed = json.loads(result[0].text)
         assert parsed["role"] == "API handler"
 
+    @pytest.mark.skip(
+        reason="v2.2.0: tests deprecated feature (search_codebase / _check_search_deps / graph.db backend)"
+    )
     def test_dispatch_search_codebase(self):
         """search_codebase dispatches with query and optional limit."""
         sentinel = {"query": "auth", "matches": []}
@@ -168,6 +173,9 @@ class TestCallToolDispatch:
         parsed = json.loads(result[0].text)
         assert parsed["query"] == "auth"
 
+    @pytest.mark.skip(
+        reason="v2.2.0: tests deprecated feature (search_codebase / _check_search_deps / graph.db backend)"
+    )
     def test_dispatch_search_codebase_default_limit(self):
         """search_codebase uses default limit=5 when not provided."""
         sentinel = {"query": "db", "matches": []}

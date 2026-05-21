@@ -11,6 +11,99 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [2.2.0] — 2026-05-20 — Lean (in-repo, no chromadb, token-optimized)
+
+> The biggest architectural change since v2.0. Decisions move from
+> SQLite into git-tracked JSONL in your repo. ChromaDB / sentence-
+> transformers / torch removed entirely. Pipx install drops from
+> ~200 MB to ~50 MB; MCP server starts in <100ms; per-project disk
+> drops from 40-80 MB to ~1-2 MB. See `docs/plans/v2.2.0.md` for the
+> full plan.
+
+### Changed (architecture)
+
+- **Decision storage moved to `<repo>/.codevira/decisions.jsonl`** —
+  human-readable, git-committed, team-shareable. Visible in `git diff`
+  as one-decision-per-line. Replaces v2.1.x's `~/.codevira/projects/
+  <key>/graph/graph.db` SQLite blob for decisions (the code graph
+  stays in SQLite cache).
+- **Sessions / preferences / learned_rules / changesets / outcomes /
+  roadmap also move to `.codevira/*.jsonl`**. The `.codevira-cache/`
+  dir (gitignored) holds the FTS5 index + code-graph SQLite + hash
+  cache (rebuildable by `codevira sync` / `codevira index`).
+- **AGENTS.md auto-generated** with hard **5 KB cap**. Marker-bounded
+  (`<!-- codevira:begin -->` / `<!-- codevira:end -->`) so user-edited
+  content outside is preserved byte-for-byte. Every `record_decision`
+  regenerates it synchronously. Other AI tools (Copilot, Codex,
+  Cursor, Gemini, Factory, Amp, Windsurf, Zed, RooCode, Jules) read
+  AGENTS.md natively — codevira's decisions are now portable.
+
+### Removed (dropped from the runtime)
+
+- **ChromaDB + sentence-transformers + torch deleted entirely.**
+  ~150 MB of dependencies gone. Pipx install ≤55 MB. MCP server
+  startup <100ms (was 1-3s due to torch warmup).
+- **`search_codebase` MCP tool removed.** AI agents grep + Read files
+  natively in 2026; semantic code search was the source of 90%+ of
+  v2.1.x disk usage and every major bug (issue #10 Antigravity dlopen,
+  64 GB HNSW corruption, write amplification). Calling the tool now
+  returns a friendly explanation pointing at grep/Read.
+- **`codevira calibrate` CLI command removed.** No more semantic
+  thresholds (FTS5 has no learnable thresholds; uses BM25 BM25 ranking).
+- **`prewarm_embedding_model()` removed.** No model to warm.
+- **`mcp_server/cli_calibrate.py`, `mcp_server/tools/_decision_embeddings.py`,
+  `mcp_server/engine/policies/cross_session.py`** — all deleted.
+  ~1,500 LOC of v2.1.x code gone.
+
+### Added
+
+- **`mcp_server/storage/`** new package:
+  - `jsonl_store.py` — atomic append, file lock, monotonic IDs,
+    UTF-8/emoji/CJK roundtrip
+  - `fts5_index.py` — SQLite FTS5 BM25 keyword search, <50ms on
+    1000-decision corpus
+  - `manifest.py` — tag/file → id index in YAML
+  - `digest.py` — slim per-decision records with outcome-weighted
+    scoring
+  - `token_estimator.py` — char-based proxy (4 chars/token); optional
+    tiktoken via `CODEVIRA_TOKEN_PRECISION=exact`
+  - `agents_md_generator.py` — 5 KB-capped AGENTS.md regen with
+    marker preservation
+  - `decisions_store.py`, `sessions_store.py` — high-level facades
+  - `paths.py` — single source of truth for `.codevira/` paths
+- **`mcp_server/engine/policies/relevance_inject.py`** — replaces
+  `cross_session.py`. Token-bounded injection:
+  - **Off-topic prompt → 0 tokens** (no `additionalContext` at all)
+  - **On-topic prompt → ≤600 tokens, ≤3 decisions**
+  - Scoring: tag (0.4) + file (0.4) + FTS5 (0.2) × outcome_weight
+  - Cache-stable output (sorted IDs, no timestamps,
+    `<codevira-context cache_key="...">` wrapper)
+  - Config via `.codevira/config.yaml` or `CODEVIRA_INJECT_*` env vars
+- **`codevira sync`** CLI command — regenerate manifest + digest +
+  FTS5 + AGENTS.md from `decisions.jsonl`. Manual / recovery path
+  (every record_decision triggers regen synchronously).
+
+### Backwards compatibility
+
+- **No migration from v2.1.x.** Per the v2.2.0 plan: clean break.
+  Users `codevira init` on each project to scaffold `.codevira/`.
+  v2.1.x continues to exist on PyPI for users who don't upgrade.
+  Optional `codevira archive-legacy` preserves v2.1.x decisions as a
+  read-only reference.
+- **Decision IDs change from int (`1`, `2`) to string (`D000001`,
+  `D000002`).** Tools that round-trip IDs as opaque values continue
+  to work. Code that hardcodes int IDs needs updating.
+- **`check_conflict` MCP tool semantics shifted from semantic to
+  Jaccard text similarity** (FTS5 candidate pool + Jaccard token-set).
+  Threshold tuned conservatively (0.60).
+
+### Tests
+
+- 141 new tests across `tests/storage/` and `tests/engine/test_relevance_inject.py`
+- Existing integration suite (`tests/integration/test_mcp_roundtrip.py`)
+  passes 13/14 against new backend (the 14th is a chromadb-availability
+  test, skipped permanently now)
+
 ## [2.1.2] — 2026-05-19 — Trust recovery + QoL
 
 Trust-recovery release based on **four independent field-test reports** that

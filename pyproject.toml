@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "codevira"
-version = "2.1.2"
-description = "Stop re-explaining your project to AI agents every session. Codevira gives Claude Code, Cursor, Windsurf, and Antigravity shared persistent memory of your codebase — locally, no signup, MIT-licensed. One install configures every AI tool."
+version = "2.2.0"
+description = "Cross-IDE decision enforcement for AI coding agents. 1 MB per project, in your repo, no cloud, no vectors. Claude Code, Cursor, Windsurf, Antigravity, Codex all share the same in-repo memory; hooks block AI tool calls that violate prior decisions. MIT, local-first."
 readme = "README.md"
 license = { text = "MIT" }
 authors = [
@@ -22,9 +22,9 @@ keywords = [
   "cursor",
   "windsurf",
   "code-intelligence",
-  "semantic-search",
+  "enforcement",
+  "agents-md",
   "context-graph",
-  "chromadb",
   "agentic",
   "coding-assistant",
   "knowledge-graph"
@@ -52,17 +52,14 @@ dependencies = [
   "uvicorn>=0.27.0",
   "starlette>=0.36.0",
   "pathspec>=0.12.0",
-  # Semantic search — required so all 36 MCP tools work out of the box.
-  # Adds ~500MB (includes ML runtime). Downloads ~90MB model on first use.
-  # For a minimal install without semantic search, see:
-  # https://github.com/sachinshelke/codevira#minimal-install
-  "chromadb>=0.5.0",
-  "sentence-transformers>=2.7.0",
+  # v2.2.0: chromadb / sentence-transformers / torch REMOVED. Decision
+  # search uses SQLite FTS5 (stdlib). 200 MB pipx install → ~50 MB.
+  # Code search isn't a codevira concern — AI agents grep + Read directly.
 ]
 
 [project.optional-dependencies]
-# Kept as no-op aliases for backwards compatibility with `pip install codevira[search]`.
-# Semantic search deps are now part of the base install.
+# Kept as no-op aliases so old `pip install codevira[search]` doesn't error.
+# v2.2.0 has no optional semantic-search extras.
 search = []
 all = []
 # Dev dependencies for contributors. Installed via: pip install -e ".[dev]"

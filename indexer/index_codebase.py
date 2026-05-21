@@ -143,40 +143,14 @@ def _load_config() -> dict:
 
 
 def _check_search_deps() -> bool:
-    """Return True if chromadb + sentence-transformers are available.
+    """v2.2.0: ALWAYS False.
 
-    2026-05-17 Bug J/K fix (P9 graceful degradation):
-    Previously this function loaded the heavy ML package by name to test
-    availability — that triggered the FULL PyTorch tensor init (~5s) on
-    every call. Critically, this fired on EVERY `tools/list` MCP request,
-    exceeding Claude Desktop's ~1s renderer timeout and causing disconnects.
-
-    Strategy (in order, all fast):
-      1. ``sys.modules.get(name)`` not None → available. Covers both real
-         loads earlier in the process AND test fixtures that put a stub
-         object in sys.modules. (Tests use ``sys.modules[name] = None``
-         to simulate the "missing" state — that's correctly treated as
-         not available because ``None is not None`` is False.)
-      2. importlib.util.find_spec → metadata-only check, microseconds.
-      3. Catch ValueError (module in sys.modules without __spec__, e.g.
-         a MagicMock) and ImportError (package metadata absent).
+    chromadb / sentence-transformers / torch were deleted in v2.2.0
+    along with semantic code search (search_codebase). All callers of
+    this function already have a graceful-degradation path for the
+    False return (graph-only generation); we just lock in that path.
     """
-    import importlib.util
-    import sys
-
-    for module_name in ("chromadb", "sentence_transformers"):
-        # Value-based check: handles both real loads (value is the module)
-        # AND the test pattern ``sys.modules[name] = None`` to simulate
-        # missing — neither registers as "available" without an object.
-        existing = sys.modules.get(module_name)
-        if existing is not None:
-            continue
-        try:
-            if importlib.util.find_spec(module_name) is None:
-                return False
-        except (ValueError, ImportError):
-            return False
-    return True
+    return False
 
 
 # 2026-05-17 P2 self-heal: ChromaCorrupted is raised by _get_chroma_client

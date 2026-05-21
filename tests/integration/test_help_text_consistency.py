@@ -93,6 +93,9 @@ class TestHelpTextConsistency:
     bitten by. Add a new test method per bug-of-this-class found.
     """
 
+    @pytest.mark.skip(
+        reason="v2.2.0: calibrate command and _decision_embeddings.py removed entirely"
+    )
     def test_calibrate_clamp_range_matches_constants(self):
         """v2.1.2 38447fe regression guard: `codevira calibrate --help`
         cited the WRONG clamp range for ~1 day before smoke-testing
@@ -130,6 +133,9 @@ class TestHelpTextConsistency:
             f"or the other so they agree."
         )
 
+    @pytest.mark.skip(
+        reason="v2.2.0: calibrate command and _decision_embeddings.py removed entirely"
+    )
     def test_calibrate_auto_recalibrate_cadence_matches_constant(self):
         """Same family: the help text says 'every 10 decisions added in
         the background' but the actual cadence is

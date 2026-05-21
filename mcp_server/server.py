@@ -8,7 +8,7 @@ Tools:
   get_node(file_path)                    → graph node: role, connections, rules
   get_impact(file_path)                  → blast radius before touching a file
   get_roadmap()                          → current phase, next action, open changesets
-  search_codebase(query, limit, layer)   → semantic search via local ChromaDB
+  # search_codebase removed in v2.2.0 — agents grep + Read directly
   list_open_changesets()                 → check for unfinished multi-file work
   start_changeset(id, desc, files)       → begin tracking a multi-file fix
   update_changeset_progress(id, file)    → mark a file done within a changeset
@@ -75,7 +75,6 @@ from mcp_server.tools.roadmap import (
     update_next_action,
 )
 from mcp_server.tools.search import (
-    search_codebase,
     refresh_index,
     search_decisions,
     get_history,
@@ -84,6 +83,9 @@ from mcp_server.tools.search import (
     list_decisions,
     list_tags,  # v2.1.2 Items 11 + 27
 )
+
+# v2.2.0: search_codebase removed. AI agents grep + read files; semantic
+# code search was the source of 90%+ of v2.1.x disk + bug surface.
 from mcp_server.tools.changesets import (
     start_changeset,
     update_changeset_progress,
@@ -310,38 +312,9 @@ async def list_tools() -> list[Tool]:
             ),
             inputSchema={"type": "object", "properties": {}},
         ),
-        Tool(
-            name="search_codebase",
-            description=(
-                "Semantic search over the codebase. Returns file+symbol pointers "
-                "by default (~300 tokens for 5 matches). Call get_code(file_path, symbol) "
-                "to read source for a specific match. Pass include_content=true to inline "
-                "source code in results (500-3000 tokens per match — use sparingly)."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Natural language or code query",
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "Number of results (default 5, max 20)",
-                        "default": 5,
-                    },
-                    "include_content": {
-                        "type": "boolean",
-                        "description": "Inline chunk source code in results (default false)",
-                    },
-                    "layer": {
-                        "type": "string",
-                        "description": "Filter by architectural layer",
-                    },
-                },
-                "required": ["query"],
-            },
-        ),
+        # v2.2.0: search_codebase tool removed. AI agents grep + read files
+        # natively; semantic code search added 90%+ of v2.1.x's disk footprint
+        # + bug surface for a feature usage data showed was near-zero.
         Tool(
             name="get_full_roadmap",
             description=(
@@ -1503,11 +1476,16 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
             result = bulk_import_phases(phases=arguments["phases"])
         elif name == "search_codebase":
-            result = search_codebase(
-                arguments["query"],
-                top_k=arguments.get("limit", 5),
-                include_content=arguments.get("include_content", False),
-            )
+            # v2.2.0: search_codebase removed. If anyone still calls it,
+            # return a friendly explanation.
+            result = {
+                "error": (
+                    "search_codebase was removed in v2.2.0. AI agents grep + "
+                    "read files natively. Use the standard Read/Grep tools "
+                    "instead. For decisions, use search_decisions(query)."
+                ),
+                "removed_in": "v2.2.0",
+            }
         elif name == "list_open_changesets":
             result = list_open_changesets()
         elif name == "start_changeset":

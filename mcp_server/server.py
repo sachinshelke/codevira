@@ -10,7 +10,7 @@ Tools:
   get_roadmap()                          → current phase, next action, recent decisions
   # search_codebase removed in v2.2.0 — agents grep + Read directly
   # changesets removed in v2.2.0 — never reached real usage
-  update_node(file_path, changes)        → update graph node after session
+  # update_node / add_node / list_nodes removed in v2.2.0 — graph generator owns mutations
   update_next_action(next_action)        → update roadmap next action
   refresh_graph(file_paths?)             → auto-generate graph nodes for new files
   get_signature(file_path)               → skeleton: public symbols, signatures, line ranges
@@ -51,15 +51,8 @@ import json
 from mcp_server.tools.graph import (
     get_node,
     get_impact,
-    list_nodes,
-    add_node,
-    update_node,
     refresh_graph,
-    export_graph,
-    get_graph_diff,
     query_graph as query_graph_tool,
-    analyze_changes as analyze_changes_tool,
-    find_hotspots as find_hotspots_tool,
 )
 from mcp_server.tools.roadmap import (
     get_roadmap,
@@ -86,8 +79,6 @@ from mcp_server.tools.search import (
 from mcp_server.tools.playbook import get_playbook
 from mcp_server.tools.code_reader import get_signature, get_code
 from mcp_server.tools.learning import (
-    get_decision_confidence as learning_get_decision_confidence,
-    get_project_maturity as learning_get_project_maturity,
     get_session_context as learning_get_session_context,
 )
 
@@ -473,110 +464,9 @@ async def list_tools() -> list[Tool]:
                 "required": ["phases"],
             },
         ),
-        Tool(
-            name="update_node",
-            description=(
-                "Update a graph node after modifying a file. "
-                "Use changes={'do_not_revert': true} to PROTECT a FILE from "
-                "future AI edits that would undo architectural decisions "
-                "(Hero 1 / Decision Lock enforces it). "
-                "For DECISION-LEVEL protection (a specific decision rather "
-                "than the whole file), use record_decision(do_not_revert=true) "
-                "instead — that's lighter and lets one file hold multiple "
-                "independently-protected decisions. "
-                "Call at session end for each file you changed."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "file_path": {"type": "string"},
-                    "changes": {
-                        "type": "object",
-                        "description": (
-                            "Fields to update: do_not_revert (bool — "
-                            "protect file from AI reverts), "
-                            "last_changed_by (str), new_rules (list)"
-                        ),
-                    },
-                },
-                "required": ["file_path", "changes"],
-            },
-        ),
-        Tool(
-            name="list_nodes",
-            description=(
-                "List nodes in the context graph (PAGINATED: 50 per call by default). "
-                "Returns total count, layer distribution, and the requested page of nodes. "
-                "Use filters (layer, stability, do_not_revert) to narrow results. "
-                "For a specific file's full details, call get_node(file_path) instead."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "layer": {
-                        "type": "string",
-                        "description": "Filter by architectural layer",
-                    },
-                    "do_not_revert": {
-                        "type": "boolean",
-                        "description": "If true, return only protected nodes",
-                    },
-                    "stability": {
-                        "type": "string",
-                        "description": "Filter by stability: low | medium | high",
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "Max nodes to return per page (default 50, max 500)",
-                    },
-                    "offset": {
-                        "type": "integer",
-                        "description": "Number of nodes to skip (for pagination)",
-                    },
-                },
-            },
-        ),
-        Tool(
-            name="add_node",
-            description=(
-                "Add a new node to the context graph for a newly created file. "
-                "Call this after creating a new file. Graph file is auto-inferred from path."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "file_path": {
-                        "type": "string",
-                        "description": "Relative file path",
-                    },
-                    "role": {
-                        "type": "string",
-                        "description": "One-line description of what the file does",
-                    },
-                    "layer": {"type": "string", "description": "Architectural layer"},
-                    "stability": {
-                        "type": "string",
-                        "description": "low | medium | high",
-                        "default": "medium",
-                    },
-                    "node_type": {
-                        "type": "string",
-                        "description": "file | service | schema | event",
-                        "default": "file",
-                    },
-                    "key_functions": {"type": "array", "items": {"type": "string"}},
-                    "connects_to": {
-                        "type": "array",
-                        "items": {"type": "object"},
-                        "description": "Edge list: [{target, edge, via}]",
-                    },
-                    "rules": {"type": "array", "items": {"type": "string"}},
-                    "do_not_revert": {"type": "boolean", "default": False},
-                    "tests": {"type": "array", "items": {"type": "string"}},
-                },
-                "required": ["file_path", "role", "layer"],
-            },
-        ),
+        # v2.2.0+: update_node, list_nodes deleted (manual graph mutation
+        # was never load-bearing; query_graph covers list use case).
+        # v2.2.0+: add_node deleted (graph generator owns node creation).
         Tool(
             name="search_decisions",
             description=(
@@ -1030,84 +920,9 @@ async def list_tools() -> list[Tool]:
                 "required": ["file_path"],
             },
         ),
-        # ---- v1.4: Graph Visualization & Diff ----
-        Tool(
-            name="export_graph",
-            description=(
-                "Export the dependency graph as a Mermaid or DOT diagram. "
-                "Use for documentation, PR descriptions, or onboarding. "
-                "Pass scope to limit to a directory (e.g. 'src/services/')."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "format": {
-                        "type": "string",
-                        "enum": ["mermaid", "dot"],
-                        "description": "Output format: 'mermaid' or 'dot'",
-                        "default": "mermaid",
-                    },
-                    "scope": {
-                        "type": "string",
-                        "description": "Filter to files under this directory prefix",
-                    },
-                },
-            },
-        ),
-        Tool(
-            name="get_graph_diff",
-            description=(
-                "Show which graph nodes changed between two git refs and their blast radius. "
-                "Use before opening a PR to understand the impact of your changes. "
-                "Defaults to comparing main...HEAD."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "base_ref": {
-                        "type": "string",
-                        "description": "Base git ref (default: 'main')",
-                        "default": "main",
-                    },
-                    "head_ref": {
-                        "type": "string",
-                        "description": "Head git ref (default: 'HEAD')",
-                        "default": "HEAD",
-                    },
-                },
-            },
-        ),
-        # ---- v1.4: Learning & Adaptive Memory ----
-        Tool(
-            name="get_decision_confidence",
-            description=(
-                "Get confidence scores for a file or pattern based on outcome history. "
-                "Returns how often past decisions were kept, modified, or reverted. "
-                "Call this before making decisions in an area to gauge reliability."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "file_path": {
-                        "type": "string",
-                        "description": "Specific file to check confidence for",
-                    },
-                    "pattern": {
-                        "type": "string",
-                        "description": "Directory or file pattern to check (e.g. 'src/api/')",
-                    },
-                },
-            },
-        ),
-        Tool(
-            name="get_project_maturity",
-            description=(
-                "Get overall project intelligence and maturity metrics. "
-                "Shows session count, file coverage, confidence score, learned rules, "
-                "and preference signals. The higher the score, the less ambiguous agent decisions are."
-            ),
-            inputSchema={"type": "object", "properties": {}},
-        ),
+        # v2.2.0+: export_graph, get_graph_diff, get_decision_confidence,
+        # get_project_maturity tools deleted per 2026-05-22 surface-cut
+        # audit. Vestigial / never-used / dashboard-only surfaces.
         Tool(
             name="get_session_context",
             description=(
@@ -1146,47 +961,7 @@ async def list_tools() -> list[Tool]:
                 "required": ["file_path"],
             },
         ),
-        Tool(
-            name="analyze_changes",
-            description=(
-                "Function-level risk-scored change analysis. Maps git diff to affected functions, "
-                "counts callers, flags test coverage gaps, assigns risk scores (high/medium/low). "
-                "Use before code review or pre-commit."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "base_ref": {
-                        "type": "string",
-                        "description": "Base git ref (default: main)",
-                        "default": "main",
-                    },
-                    "head_ref": {
-                        "type": "string",
-                        "description": "Head git ref (default: HEAD)",
-                        "default": "HEAD",
-                    },
-                },
-            },
-        ),
-        Tool(
-            name="find_hotspots",
-            description=(
-                "Find complexity and risk hotspots: large functions (exceeding line threshold), "
-                "high fan-in symbols (many callers = risky to change), and high fan-out files "
-                "(many dependencies = fragile)."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "threshold": {
-                        "type": "integer",
-                        "description": "Min lines for large function (default: 50)",
-                        "default": 50,
-                    },
-                },
-            },
-        ),
+        # v2.2.0+: analyze_changes + find_hotspots deleted (vestigial).
     ]
 
     # Filter out tools whose optional dependencies aren't installed.
@@ -1200,15 +975,8 @@ async def list_tools() -> list[Tool]:
     # Humans access them via the CLI (codevira index, codevira status) or
     # dedicated MCP prompts (architecture_overview, pre_commit_check).
     _ADMIN_TOOLS = {
-        "list_nodes",  # replaced by get_node(path) targeted queries
-        "add_node",  # auto-generated by refresh_graph
         "refresh_graph",  # background/automatic
         "refresh_index",  # background/automatic
-        "export_graph",  # 5k-50k token Mermaid/DOT dump
-        "get_graph_diff",  # PR review — use prompt instead
-        "analyze_changes",  # PR review — use prompt instead
-        "find_hotspots",  # dashboard metric — use prompt instead
-        "get_project_maturity",  # dashboard metric
         "get_full_roadmap",  # rarely needed by agents — use get_phase(n)
     }
     tools = [t for t in tools if t.name not in _ADMIN_TOOLS]
@@ -1323,32 +1091,6 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 ),
                 "removed_in": "v2.2.0",
             }
-        elif name == "update_node":
-            result = update_node(
-                arguments["file_path"],
-                arguments["changes"],
-            )
-        elif name == "list_nodes":
-            result = list_nodes(
-                layer=arguments.get("layer"),
-                do_not_revert=arguments.get("do_not_revert"),
-                stability=arguments.get("stability"),
-                limit=arguments.get("limit", 50),
-                offset=arguments.get("offset", 0),
-            )
-        elif name == "add_node":
-            result = add_node(
-                file_path=arguments["file_path"],
-                role=arguments["role"],
-                layer=arguments["layer"],
-                stability=arguments.get("stability", "medium"),
-                node_type=arguments.get("node_type", "file"),
-                key_functions=arguments.get("key_functions"),
-                connects_to=arguments.get("connects_to"),
-                rules=arguments.get("rules"),
-                do_not_revert=arguments.get("do_not_revert", False),
-                tests=arguments.get("tests"),
-            )
         elif name == "search_decisions":
             result = search_decisions(
                 arguments["query"],
@@ -1450,43 +1192,17 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             result = get_signature(arguments["file_path"])
         elif name == "get_code":
             result = get_code(arguments["file_path"], symbol=arguments.get("symbol"))
-        # ---- v1.4: Graph Visualization & Diff ----
-        elif name == "export_graph":
-            result = export_graph(
-                format=arguments.get("format", "mermaid"),
-                scope=arguments.get("scope"),
-            )
-        elif name == "get_graph_diff":
-            result = get_graph_diff(
-                base_ref=arguments.get("base_ref", "main"),
-                head_ref=arguments.get("head_ref", "HEAD"),
-            )
-        # ---- v1.4: Learning & Adaptive Memory ----
-        elif name == "get_decision_confidence":
-            result = learning_get_decision_confidence(
-                file_path=arguments.get("file_path"),
-                pattern=arguments.get("pattern"),
-            )
-        elif name == "get_project_maturity":
-            result = learning_get_project_maturity()
+        # v2.2.0+: export_graph, get_graph_diff, get_decision_confidence,
+        # get_project_maturity, analyze_changes, find_hotspots dispatchers
+        # deleted per surface-cut audit.
         elif name == "get_session_context":
             # v2.1.2 Item 25: pass through optional since= cutoff.
             result = learning_get_session_context(since=arguments.get("since"))
-        # ---- v1.5: Deep Graph Intelligence ----
         elif name == "query_graph":
             result = query_graph_tool(
                 file_path=arguments["file_path"],
                 symbol=arguments.get("symbol"),
                 query_type=arguments.get("query_type", "callees"),
-            )
-        elif name == "analyze_changes":
-            result = analyze_changes_tool(
-                base_ref=arguments.get("base_ref", "main"),
-                head_ref=arguments.get("head_ref", "HEAD"),
-            )
-        elif name == "find_hotspots":
-            result = find_hotspots_tool(
-                threshold=arguments.get("threshold", 50),
             )
         else:
             result = {"error": f"Unknown tool: {name}"}

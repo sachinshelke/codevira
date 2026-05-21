@@ -48,7 +48,7 @@ class TestSchemaMigration:
     def test_default_value_is_zero(self, tmp_path):
         db = SQLiteGraph(tmp_path / "graph.db")
         try:
-            res = db.record_decision(decision="test")
+            db.record_decision(decision="test")
             decisions = db.get_recent_decisions(limit=1)
             assert decisions[0]["do_not_revert"] == 0
         finally:
@@ -81,7 +81,7 @@ class TestRecordDecisionDB:
     def test_records_decision_without_protection_default(self, tmp_path):
         db = SQLiteGraph(tmp_path / "graph.db")
         try:
-            res = db.record_decision(decision="something casual")
+            db.record_decision(decision="something casual")
             recent = db.get_recent_decisions(limit=1)
             assert recent[0]["do_not_revert"] == 0
         finally:
@@ -260,15 +260,20 @@ class TestMCPToolRegistration:
         assert 'elif name == "mark_decision_protected"' in content
 
     def test_update_node_description_mentions_record_decision(self):
-        """update_node's description must direct AIs toward
-        record_decision for decision-level protection (not just file)."""
+        """v2.2.0+: update_node tool was deleted per surface-cut audit.
+        record_decision(do_not_revert=True) is now the only protection
+        API. Test reduced to: confirm the deletion is intact."""
         import mcp_server
         from pathlib import Path
 
         server_path = Path(mcp_server.__file__).parent / "server.py"
         content = server_path.read_text(encoding="utf-8")
-        # Find the update_node block; assert it references record_decision
-        # in the description.
+        assert (
+            'name="update_node"' not in content
+        ), "update_node tool should be deleted in v2.2.0+ — surface-cut audit"
+        return
+
+        # Legacy assertion (kept as comment for archaeology):
         idx = content.find('name="update_node"')
         assert idx >= 0
         # Scan ~1500 chars of the description block

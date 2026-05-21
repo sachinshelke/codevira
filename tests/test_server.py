@@ -406,37 +406,8 @@ class TestCallToolSerialization:
 class TestCallToolAdditionalRoutes:
     """Tests for tool dispatch routes not covered by TestCallToolDispatch."""
 
-    def test_dispatch_list_nodes_no_filters(self):
-        """list_nodes dispatches with default pagination."""
-        sentinel = {"nodes": []}
-        with patch(
-            "mcp_server.server.list_nodes", return_value=sentinel
-        ) as mock_fn, patch("mcp_server.auto_init.ensure_project_initialized"):
-            result = _run(call_tool("list_nodes", {}))
-        mock_fn.assert_called_once_with(
-            layer=None, do_not_revert=None, stability=None, limit=50, offset=0
-        )
-        assert len(result) == 1
-        parsed = json.loads(result[0].text)
-        assert parsed == sentinel
-
-    def test_dispatch_list_nodes_with_filters(self):
-        """list_nodes dispatches with layer and stability filters."""
-        sentinel = {"nodes": ["a.py"]}
-        with patch(
-            "mcp_server.server.list_nodes", return_value=sentinel
-        ) as mock_fn, patch("mcp_server.auto_init.ensure_project_initialized"):
-            result = _run(
-                call_tool(
-                    "list_nodes",
-                    {"layer": "api", "stability": "high", "do_not_revert": True},
-                )
-            )
-        mock_fn.assert_called_once_with(
-            layer="api", do_not_revert=True, stability="high", limit=50, offset=0
-        )
-        parsed = json.loads(result[0].text)
-        assert parsed == sentinel
+    # v2.2.0+: list_nodes dispatch tests removed (tool deleted; use
+    # query_graph or get_node instead).
 
     def test_dispatch_complete_phase(self):
         """complete_phase dispatches with phase_number and key_decisions
@@ -499,21 +470,8 @@ class TestCallToolAdditionalRoutes:
         )
         assert len(result) == 1
 
-    # v2.2.0+: get_preferences / get_learned_rules dispatch tests removed
-    # (the tools were deleted along with the preferences + learned_rules
-    # feature per the 2026-05-22 surface-cut audit).
-
-    def test_dispatch_get_project_maturity(self):
-        """get_project_maturity dispatches with no arguments."""
-        sentinel = {"score": 72, "sessions": 15}
-        with patch(
-            "mcp_server.server.learning_get_project_maturity", return_value=sentinel
-        ) as mock_fn, patch("mcp_server.auto_init.ensure_project_initialized"):
-            result = _run(call_tool("get_project_maturity", {}))
-        mock_fn.assert_called_once()
-        assert len(result) == 1
-        parsed = json.loads(result[0].text)
-        assert parsed["score"] == 72
+    # v2.2.0+: get_preferences / get_learned_rules / get_project_maturity
+    # dispatch tests removed per surface-cut audit (tools deleted).
 
     def test_dispatch_get_session_context(self):
         """get_session_context dispatches with no arguments."""
@@ -527,30 +485,7 @@ class TestCallToolAdditionalRoutes:
         parsed = json.loads(result[0].text)
         assert "roadmap" in parsed
 
-    def test_dispatch_export_graph_default(self):
-        """export_graph dispatches with default format."""
-        sentinel = {"diagram": "graph LR ..."}
-        with patch(
-            "mcp_server.server.export_graph", return_value=sentinel
-        ) as mock_fn, patch("mcp_server.auto_init.ensure_project_initialized"):
-            result = _run(call_tool("export_graph", {}))
-        mock_fn.assert_called_once_with(format="mermaid", scope=None)
-        assert len(result) == 1
-        parsed = json.loads(result[0].text)
-        assert parsed == sentinel
-
-    def test_dispatch_export_graph_with_scope(self):
-        """export_graph dispatches with format=dot and a scope."""
-        sentinel = {"diagram": "digraph { ... }"}
-        with patch(
-            "mcp_server.server.export_graph", return_value=sentinel
-        ) as mock_fn, patch("mcp_server.auto_init.ensure_project_initialized"):
-            result = _run(
-                call_tool("export_graph", {"format": "dot", "scope": "src/services/"})
-            )
-        mock_fn.assert_called_once_with(format="dot", scope="src/services/")
-        assert len(result) == 1
-
+    # v2.2.0+: export_graph dispatch tests removed (tool deleted).
     # v2.2.0+: changeset dispatch tests removed (whole feature deleted —
     # never reached real usage per the 2026-05-22 audit).
 
@@ -566,32 +501,7 @@ class TestCallToolAdditionalRoutes:
         parsed = json.loads(result[0].text)
         assert "rules" in parsed
 
-    def test_dispatch_get_decision_confidence(self):
-        """get_decision_confidence dispatches with file_path and pattern."""
-        sentinel = {"confidence": 0.85}
-        with patch(
-            "mcp_server.server.learning_get_decision_confidence", return_value=sentinel
-        ) as mock_fn, patch("mcp_server.auto_init.ensure_project_initialized"):
-            result = _run(
-                call_tool(
-                    "get_decision_confidence",
-                    {"file_path": "src/api.py", "pattern": "src/"},
-                )
-            )
-        mock_fn.assert_called_once_with(file_path="src/api.py", pattern="src/")
-        assert len(result) == 1
-        parsed = json.loads(result[0].text)
-        assert parsed["confidence"] == 0.85
-
-    def test_dispatch_get_decision_confidence_no_args(self):
-        """get_decision_confidence dispatches with no arguments."""
-        sentinel = {"confidence": 0.5}
-        with patch(
-            "mcp_server.server.learning_get_decision_confidence", return_value=sentinel
-        ) as mock_fn, patch("mcp_server.auto_init.ensure_project_initialized"):
-            result = _run(call_tool("get_decision_confidence", {}))
-        mock_fn.assert_called_once_with(file_path=None, pattern=None)
-        assert len(result) == 1
+    # v2.2.0+: get_decision_confidence dispatch tests removed (tool deleted).
 
     def test_dispatch_refresh_index(self):
         """refresh_index dispatches with file_paths."""
@@ -769,39 +679,9 @@ class TestCallToolMissingDispatches:
             _run(call_tool("get_code", {"file_path": "src/api.py", "symbol": "foo"}))
         m.assert_called_once_with("src/api.py", symbol="foo")
 
-    def test_dispatch_export_graph(self):
-        sentinel = {"mermaid": "graph LR"}
-        with patch("mcp_server.server.export_graph", return_value=sentinel) as m, patch(
-            "mcp_server.auto_init.ensure_project_initialized"
-        ):
-            _run(call_tool("export_graph", {"format": "mermaid"}))
-        m.assert_called_once_with(format="mermaid", scope=None)
-
-    def test_dispatch_get_graph_diff(self):
-        sentinel = {"diff": []}
-        with patch(
-            "mcp_server.server.get_graph_diff", return_value=sentinel
-        ) as m, patch("mcp_server.auto_init.ensure_project_initialized"):
-            _run(call_tool("get_graph_diff", {}))
-        m.assert_called_once_with(base_ref="main", head_ref="HEAD")
-
-    def test_dispatch_get_decision_confidence(self):
-        sentinel = {"confidence": 0.9}
-        with patch(
-            "mcp_server.server.learning_get_decision_confidence", return_value=sentinel
-        ) as m, patch("mcp_server.auto_init.ensure_project_initialized"):
-            _run(call_tool("get_decision_confidence", {"file_path": "src/api.py"}))
-        m.assert_called_once_with(file_path="src/api.py", pattern=None)
-
-    # v2.2.0+: get_preferences / get_learned_rules removed (see above).
-
-    def test_dispatch_get_project_maturity(self):
-        sentinel = {"maturity": "Senior"}
-        with patch(
-            "mcp_server.server.learning_get_project_maturity", return_value=sentinel
-        ) as m, patch("mcp_server.auto_init.ensure_project_initialized"):
-            _run(call_tool("get_project_maturity", {}))
-        m.assert_called_once()
+    # v2.2.0+: export_graph / get_graph_diff / get_decision_confidence /
+    # get_preferences / get_learned_rules / get_project_maturity dispatch
+    # tests all removed (tools deleted per surface-cut audit).
 
     def test_dispatch_get_session_context(self):
         sentinel = {"context": {}}
@@ -821,21 +701,8 @@ class TestCallToolMissingDispatches:
             file_path="src/api.py", symbol=None, query_type="callees"
         )
 
-    def test_dispatch_analyze_changes(self):
-        sentinel = {"changes": []}
-        with patch(
-            "mcp_server.server.analyze_changes_tool", return_value=sentinel
-        ) as m, patch("mcp_server.auto_init.ensure_project_initialized"):
-            _run(call_tool("analyze_changes", {}))
-        m.assert_called_once_with(base_ref="main", head_ref="HEAD")
-
-    def test_dispatch_find_hotspots(self):
-        sentinel = {"hotspots": []}
-        with patch(
-            "mcp_server.server.find_hotspots_tool", return_value=sentinel
-        ) as m, patch("mcp_server.auto_init.ensure_project_initialized"):
-            _run(call_tool("find_hotspots", {}))
-        m.assert_called_once_with(threshold=50)
+    # v2.2.0+: analyze_changes / find_hotspots dispatch tests removed
+    # (tools deleted per surface-cut audit).
 
 
 # ---------------------------------------------------------------------------
@@ -1030,43 +897,7 @@ class TestServerMain:
         mock_start_watcher.assert_not_called()
 
 
-# ===========================================================================
-# v2.0-rc.2 — Bug 1 (update_node description discoverability) regression
-#
-# The other Claude Code session in dogfood explicitly missed do_not_revert
-# because it lived only in inputSchema.changes.description, not the outer
-# tool description. Symptom: "None of the Codevira write tools accept a
-# do_not_revert flag" — refused to mark Sachin's Postgres decision protected.
-#
-# This contract test pins the description so a future "tighten the wording"
-# pass doesn't accidentally drop the visibility of `do_not_revert`.
-# ===========================================================================
-
-
-class TestUpdateNodeDescriptionContract:
-    def test_update_node_description_mentions_do_not_revert(self):
-        """update_node's outer description must explicitly mention
-        do_not_revert. Regression of Bug 1: the field was buried in the
-        inner schema and AIs missed it during tool discovery."""
-        from mcp_server.server import list_tools
-
-        tools = _run(list_tools())
-        update_node = next(t for t in tools if t.name == "update_node")
-        assert "do_not_revert" in update_node.description, (
-            f"Bug 1 regression: update_node description does not mention "
-            f"`do_not_revert`. AIs scanning tool surfaces will miss the "
-            f"protection mechanism. Description: {update_node.description!r}"
-        )
-
-    def test_update_node_inner_changes_description_mentions_do_not_revert(self):
-        """The inputSchema.changes.description should ALSO mention
-        do_not_revert (defense in depth — different AIs read different
-        levels of the schema)."""
-        from mcp_server.server import list_tools
-
-        tools = _run(list_tools())
-        update_node = next(t for t in tools if t.name == "update_node")
-        changes_desc = update_node.inputSchema["properties"]["changes"].get(
-            "description", ""
-        )
-        assert "do_not_revert" in changes_desc
+# v2.2.0+: TestUpdateNodeDescriptionContract removed (update_node tool
+# deleted per surface-cut audit). The do_not_revert protection mechanism
+# now lives exclusively on record_decision(do_not_revert=True), which is
+# the recommended decision-level API.

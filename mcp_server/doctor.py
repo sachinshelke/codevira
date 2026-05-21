@@ -32,6 +32,7 @@ Checks shipped in v2.0:
   C11 engine_kill_switch      — CODEVIRA_ENGINE env var sanity
   C12 crash_log_size          — recent crash log is reasonable size
 """
+
 from __future__ import annotations
 
 import os
@@ -54,11 +55,12 @@ _FAIL = "FAIL"
 @dataclass(frozen=True)
 class CheckResult:
     """Outcome of one doctor check."""
+
     name: str
-    state: str             # PASS / WARN / FAIL
-    message: str           # one-line summary
+    state: str  # PASS / WARN / FAIL
+    message: str  # one-line summary
     fix_command: str = ""  # exact shell command to fix; "" if none / not applicable
-    details: str = ""      # optional multi-line context (printed in --verbose mode)
+    details: str = ""  # optional multi-line context (printed in --verbose mode)
 
 
 @dataclass(frozen=True)
@@ -96,11 +98,13 @@ def check_python_version() -> CheckResult:
     major, minor = sys.version_info.major, sys.version_info.minor
     if major == 3 and minor >= 10:
         return CheckResult(
-            "python_version", _PASS,
+            "python_version",
+            _PASS,
             f"Python {major}.{minor} (≥ 3.10 required)",
         )
     return CheckResult(
-        "python_version", _FAIL,
+        "python_version",
+        _FAIL,
         f"Python {major}.{minor} (need ≥ 3.10)",
         fix_command="brew install python@3.13  # or your preferred 3.10+ runtime",
     )
@@ -110,33 +114,39 @@ def check_codevira_data_dir() -> CheckResult:
     """C2 — ~/.codevira exists and is writable."""
     try:
         from mcp_server.paths import get_global_home
+
         home = get_global_home()
     except Exception as e:  # noqa: BLE001
         return CheckResult(
-            "codevira_data_dir", _FAIL,
+            "codevira_data_dir",
+            _FAIL,
             f"Could not resolve ~/.codevira: {e}",
             fix_command="codevira setup",
         )
     if not home.exists():
         return CheckResult(
-            "codevira_data_dir", _WARN,
+            "codevira_data_dir",
+            _WARN,
             f"{home} does not exist yet (first run?)",
             fix_command="codevira setup",
         )
     if not home.is_dir():
         return CheckResult(
-            "codevira_data_dir", _FAIL,
+            "codevira_data_dir",
+            _FAIL,
             f"{home} exists but is not a directory",
             fix_command=f"rm '{home}' && codevira setup",
         )
     if not os.access(home, os.W_OK):
         return CheckResult(
-            "codevira_data_dir", _FAIL,
+            "codevira_data_dir",
+            _FAIL,
             f"{home} is not writable",
             fix_command=f"chmod u+w '{home}'",
         )
     return CheckResult(
-        "codevira_data_dir", _PASS,
+        "codevira_data_dir",
+        _PASS,
         f"{home} exists and is writable",
     )
 
@@ -145,22 +155,26 @@ def check_project_root() -> CheckResult:
     """C3 — current project root is not a refused path ($HOME, /, etc.)."""
     try:
         from mcp_server.paths import get_project_root, is_invalid_project_root
+
         root = get_project_root()
     except Exception as e:  # noqa: BLE001
         return CheckResult(
-            "project_root", _FAIL,
+            "project_root",
+            _FAIL,
             f"Could not resolve project root: {e}",
             fix_command="cd <your-project> && codevira doctor",
         )
     rejection = is_invalid_project_root(root)
     if rejection:
         return CheckResult(
-            "project_root", _FAIL,
+            "project_root",
+            _FAIL,
             f"{root} rejected as project root: {rejection}",
             fix_command="cd <project-with-.git-or-pyproject.toml> && codevira doctor",
         )
     return CheckResult(
-        "project_root", _PASS,
+        "project_root",
+        _PASS,
         f"{root} is a valid project root",
     )
 
@@ -169,17 +183,20 @@ def check_graph_db() -> CheckResult:
     """C4 — graph.db opens + has the expected tables."""
     try:
         from mcp_server.paths import get_data_dir
+
         data_dir = get_data_dir()
     except Exception as e:  # noqa: BLE001
         return CheckResult(
-            "graph_db", _WARN,
+            "graph_db",
+            _WARN,
             f"data dir not resolvable: {e}",
             fix_command="codevira init",
         )
     db_path = data_dir / "graph" / "graph.db"
     if not db_path.exists():
         return CheckResult(
-            "graph_db", _WARN,
+            "graph_db",
+            _WARN,
             f"{db_path} does not exist (no index yet)",
             fix_command="codevira index",
         )
@@ -196,23 +213,24 @@ def check_graph_db() -> CheckResult:
             conn.close()
     except sqlite3.Error as e:
         return CheckResult(
-            "graph_db", _FAIL,
+            "graph_db",
+            _FAIL,
             f"graph.db is corrupted or unreadable: {e}",
-            fix_command=(
-                f"rm '{db_path}' && codevira index  # full re-index"
-            ),
+            fix_command=(f"rm '{db_path}' && codevira index  # full re-index"),
             details=f"path: {db_path}",
         )
     expected = {"nodes", "decisions", "sessions", "outcomes"}
     missing = expected - tables
     if missing:
         return CheckResult(
-            "graph_db", _FAIL,
+            "graph_db",
+            _FAIL,
             f"graph.db missing tables: {sorted(missing)}",
             fix_command=f"rm '{db_path}' && codevira index",
         )
     return CheckResult(
-        "graph_db", _PASS,
+        "graph_db",
+        _PASS,
         f"graph.db has all {len(expected)} expected tables",
     )
 
@@ -221,16 +239,19 @@ def check_global_db() -> CheckResult:
     """C5 — ~/.codevira/global.db opens."""
     try:
         from mcp_server.paths import get_global_home
+
         home = get_global_home()
     except Exception as e:  # noqa: BLE001
         return CheckResult(
-            "global_db", _WARN,
+            "global_db",
+            _WARN,
             f"global home unresolvable: {e}",
         )
     db_path = home / "global.db"
     if not db_path.exists():
         return CheckResult(
-            "global_db", _WARN,
+            "global_db",
+            _WARN,
             "global.db does not exist (first run?)",
             fix_command="codevira setup",
         )
@@ -242,12 +263,14 @@ def check_global_db() -> CheckResult:
             conn.close()
     except sqlite3.Error as e:
         return CheckResult(
-            "global_db", _FAIL,
+            "global_db",
+            _FAIL,
             f"global.db unreadable: {e}",
             fix_command=f"mv '{db_path}' '{db_path}.bak' && codevira setup",
         )
     return CheckResult(
-        "global_db", _PASS,
+        "global_db",
+        _PASS,
         f"{db_path} opens cleanly",
     )
 
@@ -257,15 +280,18 @@ def check_detected_ides() -> CheckResult:
     try:
         from mcp_server.setup_wizard import detect_targets
         from mcp_server.paths import get_project_root
+
         detected = detect_targets(get_project_root())
     except Exception as e:  # noqa: BLE001
         return CheckResult(
-            "detected_ides", _WARN,
+            "detected_ides",
+            _WARN,
             f"Could not run IDE detection: {e}",
         )
     if not detected:
         return CheckResult(
-            "detected_ides", _WARN,
+            "detected_ides",
+            _WARN,
             "No AI coding tools detected (Claude Code, Cursor, etc.)",
             fix_command=(
                 "Install at least one: claude.ai/download · cursor.sh · "
@@ -273,54 +299,66 @@ def check_detected_ides() -> CheckResult:
             ),
         )
     return CheckResult(
-        "detected_ides", _PASS,
+        "detected_ides",
+        _PASS,
         f"{len(detected)} AI tool(s) detected: {', '.join(sorted(detected))}",
     )
 
 
 def check_nudge_files() -> CheckResult:
-    """C7 — for each detected IDE, the nudge file exists in this project."""
+    """C7 — AGENTS.md exists and carries the codevira marker block.
+
+    v2.2.0+ (2026-05-22 surface-cut audit): the per-IDE nudge file
+    matrix collapsed to AGENTS.md only. Every modern AI tool reads
+    AGENTS.md (Linux Foundation standard) natively, so the duplicates
+    (CLAUDE.md / GEMINI.md / .cursor/rules/codevira.mdc / .windsurfrules
+    / .github/copilot-instructions.md) were deleted. This check just
+    verifies the one remaining file is healthy.
+    """
     try:
-        from mcp_server.setup_wizard import detect_targets
-        from mcp_server.agents_md import target_path_for
         from mcp_server.paths import get_project_root, is_invalid_project_root
+
         root = get_project_root()
         if is_invalid_project_root(root):
             return CheckResult(
-                "nudge_files", _WARN,
+                "nudge_files",
+                _WARN,
                 "skipped (project root invalid; see project_root check)",
             )
-        detected = detect_targets(root)
     except Exception as e:  # noqa: BLE001
         return CheckResult(
-            "nudge_files", _WARN, f"could not check: {e}",
+            "nudge_files",
+            _WARN,
+            f"could not check: {e}",
         )
-    if not detected:
+    agents_md = root / "AGENTS.md"
+    if not agents_md.is_file():
         return CheckResult(
-            "nudge_files", _WARN,
-            "no IDEs detected, no nudge files expected",
+            "nudge_files",
+            _WARN,
+            "AGENTS.md not found — run `codevira sync` to create it",
+            fix_command="codevira sync",
         )
-    missing: list[str] = []
-    for ide in detected:
-        try:
-            path = target_path_for(ide, root)
-        except ValueError:
-            continue
-        if not path.exists():
-            try:
-                missing.append(f"{ide} ({path.relative_to(root)})")
-            except ValueError:
-                missing.append(f"{ide} ({path})")
-    if missing:
+    try:
+        text = agents_md.read_text(encoding="utf-8")
+    except OSError as e:  # noqa: BLE001
         return CheckResult(
-            "nudge_files", _WARN,
-            f"missing nudge files for {len(missing)} detected IDE(s)",
-            fix_command="codevira agents",
-            details="\n".join(f"  - {m}" for m in missing),
+            "nudge_files",
+            _WARN,
+            f"AGENTS.md exists but is unreadable: {e}",
+        )
+    if "<!-- codevira:begin" not in text:
+        return CheckResult(
+            "nudge_files",
+            _WARN,
+            "AGENTS.md exists but has no codevira block — "
+            "run `codevira sync` to regenerate",
+            fix_command="codevira sync",
         )
     return CheckResult(
-        "nudge_files", _PASS,
-        f"all {len(detected)} detected IDE(s) have nudge files",
+        "nudge_files",
+        _PASS,
+        "AGENTS.md present with codevira block",
     )
 
 
@@ -335,15 +373,18 @@ def check_watcher_circuit() -> CheckResult:
     """
     try:
         from indexer.index_codebase import watcher_circuit_status
+
         status = watcher_circuit_status()
     except Exception as e:  # noqa: BLE001
         return CheckResult(
-            "watcher_circuit", _WARN,
+            "watcher_circuit",
+            _WARN,
             f"could not read watcher state: {e}",
         )
     if status["open"]:
         return CheckResult(
-            "watcher_circuit", _FAIL,
+            "watcher_circuit",
+            _FAIL,
             f"watcher circuit OPEN ({status['consecutive_failures']} "
             f"failures; {status['seconds_until_retry']:.0f}s until retry)",
             fix_command="codevira report  # check crash log for the underlying error",
@@ -351,13 +392,15 @@ def check_watcher_circuit() -> CheckResult:
         )
     if status["consecutive_failures"] > 0:
         return CheckResult(
-            "watcher_circuit", _WARN,
+            "watcher_circuit",
+            _WARN,
             f"watcher had {status['consecutive_failures']} recent failure(s) "
             f"but circuit still closed",
             details=f"last error: {status['last_error']}",
         )
     return CheckResult(
-        "watcher_circuit", _PASS,
+        "watcher_circuit",
+        _PASS,
         "watcher circuit clean (no recent failures)",
     )
 
@@ -367,22 +410,26 @@ def check_engine_kill_switch() -> CheckResult:
     val = os.environ.get("CODEVIRA_ENGINE")
     if val is None:
         return CheckResult(
-            "engine_kill_switch", _PASS,
+            "engine_kill_switch",
+            _PASS,
             "engine ON (default; CODEVIRA_ENGINE not set)",
         )
     if val == "0":
         return CheckResult(
-            "engine_kill_switch", _WARN,
+            "engine_kill_switch",
+            _WARN,
             "engine DISABLED via CODEVIRA_ENGINE=0",
             fix_command="unset CODEVIRA_ENGINE  # to re-enable",
         )
     if val == "1":
         return CheckResult(
-            "engine_kill_switch", _PASS,
+            "engine_kill_switch",
+            _PASS,
             "engine ON (CODEVIRA_ENGINE=1 explicit)",
         )
     return CheckResult(
-        "engine_kill_switch", _WARN,
+        "engine_kill_switch",
+        _WARN,
         f"CODEVIRA_ENGINE={val!r} is unexpected (use 0 or 1)",
         fix_command="export CODEVIRA_ENGINE=1",
     )
@@ -408,7 +455,8 @@ def check_claude_mcp_visibility() -> CheckResult:
     claude = shutil.which("claude")
     if not claude:
         return CheckResult(
-            "claude_mcp_visibility", _WARN,
+            "claude_mcp_visibility",
+            _WARN,
             "claude CLI not found on PATH (skipped)",
             details=(
                 "This check verifies Claude Code's MCP runtime sees "
@@ -421,17 +469,22 @@ def check_claude_mcp_visibility() -> CheckResult:
     try:
         result = subprocess.run(
             [claude, "mcp", "list"],
-            capture_output=True, text=True, timeout=10, check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
         )
     except (subprocess.TimeoutExpired, OSError) as e:
         return CheckResult(
-            "claude_mcp_visibility", _WARN,
+            "claude_mcp_visibility",
+            _WARN,
             f"claude mcp list failed: {e}",
         )
 
     if result.returncode != 0:
         return CheckResult(
-            "claude_mcp_visibility", _WARN,
+            "claude_mcp_visibility",
+            _WARN,
             f"claude mcp list exited {result.returncode}",
             details=(result.stderr or "")[:400],
         )
@@ -454,7 +507,8 @@ def check_claude_mcp_visibility() -> CheckResult:
         # check WARN even though codevira itself was ✓ Connected. Now we
         # parse the codevira-specific line in isolation.
         codevira_lines = [
-            line for line in out.splitlines()
+            line
+            for line in out.splitlines()
             if "codevira" in line.lower() and ":" in line
         ]
         codevira_line = codevira_lines[0] if codevira_lines else ""
@@ -462,12 +516,14 @@ def check_claude_mcp_visibility() -> CheckResult:
         connected = "✓ Connected" in codevira_line
         if has_failed:
             return CheckResult(
-                "claude_mcp_visibility", _WARN,
+                "claude_mcp_visibility",
+                _WARN,
                 "codevira listed but Claude Code shows ✗ Failed — restart Claude Code",
             )
         if connected:
             return CheckResult(
-                "claude_mcp_visibility", _PASS,
+                "claude_mcp_visibility",
+                _PASS,
                 "codevira visible to Claude Code (✓ Connected)",
             )
         # Listed but no Connected/Failed indicator. Most common cause:
@@ -475,13 +531,15 @@ def check_claude_mcp_visibility() -> CheckResult:
         # project — the registration is fine; we just can't probe the
         # live session state from here.
         return CheckResult(
-            "claude_mcp_visibility", _PASS,
+            "claude_mcp_visibility",
+            _PASS,
             "codevira registered in Claude Code MCP config "
             "(live connection state unprobed from this cwd)",
         )
 
     return CheckResult(
-        "claude_mcp_visibility", _FAIL,
+        "claude_mcp_visibility",
+        _FAIL,
         "codevira NOT in claude mcp list — Claude Code can't see it",
         fix_command=(
             "codevira setup -y   # re-runs the user-scope MCP merge; "
@@ -507,23 +565,27 @@ def check_codeindex_freshness() -> CheckResult:
     """
     try:
         from mcp_server.paths import get_data_dir, get_project_root
+
         project_root = get_project_root()
         if project_root is None:
             return CheckResult(
-                "codeindex_freshness", _PASS,
+                "codeindex_freshness",
+                _PASS,
                 "no project — skipped",
             )
         data_dir = get_data_dir()
         codeindex = data_dir / "codeindex"
     except Exception as e:  # noqa: BLE001
         return CheckResult(
-            "codeindex_freshness", _PASS,
+            "codeindex_freshness",
+            _PASS,
             f"could not resolve codeindex path: {e}",
         )
 
     if not codeindex.exists():
         return CheckResult(
-            "codeindex_freshness", _PASS,
+            "codeindex_freshness",
+            _PASS,
             "no codeindex directory yet (will be built on first index)",
         )
 
@@ -531,9 +593,9 @@ def check_codeindex_freshness() -> CheckResult:
     # is older than 2 weeks AND we have at least one chromadb file,
     # warn that the codeindex may be incompatible.
     import time
+
     now = time.time()
     THRESHOLD_DAYS = 14
-    threshold_seconds = THRESHOLD_DAYS * 86400
 
     freshest = 0.0
     has_files = False
@@ -548,14 +610,16 @@ def check_codeindex_freshness() -> CheckResult:
                 continue
     if not has_files:
         return CheckResult(
-            "codeindex_freshness", _PASS,
+            "codeindex_freshness",
+            _PASS,
             "codeindex empty (clean state)",
         )
 
     age_days = (now - freshest) / 86400
     if age_days > THRESHOLD_DAYS:
         return CheckResult(
-            "codeindex_freshness", _WARN,
+            "codeindex_freshness",
+            _WARN,
             f"codeindex last touched {int(age_days)} days ago (>{THRESHOLD_DAYS}) — may be stale",
             fix_command=f"rm -rf '{codeindex}' && codevira index",
             details=(
@@ -565,7 +629,8 @@ def check_codeindex_freshness() -> CheckResult:
             ),
         )
     return CheckResult(
-        "codeindex_freshness", _PASS,
+        "codeindex_freshness",
+        _PASS,
         f"codeindex last touched {int(age_days)} day(s) ago (recent)",
     )
 
@@ -581,16 +646,19 @@ def check_semantic_search_health() -> CheckResult:
     """
     try:
         from mcp_server.paths import get_data_dir, get_project_root
+
         project_root = get_project_root()
         if project_root is None:
             return CheckResult(
-                "semantic_search_health", _PASS,
+                "semantic_search_health",
+                _PASS,
                 "no project — skipped",
             )
         data_dir = get_data_dir()
     except Exception as e:  # noqa: BLE001
         return CheckResult(
-            "semantic_search_health", _PASS,
+            "semantic_search_health",
+            _PASS,
             f"could not resolve data dir: {e}",
         )
 
@@ -601,7 +669,8 @@ def check_semantic_search_health() -> CheckResult:
     codeindex = data_dir / "codeindex"
     if not codeindex.exists():
         return CheckResult(
-            "semantic_search_health", _WARN,
+            "semantic_search_health",
+            _WARN,
             "no codeindex — semantic search degraded",
             fix_command="codevira index   # builds the embedding index",
         )
@@ -621,12 +690,14 @@ def check_semantic_search_health() -> CheckResult:
     # Real projects exceed 1 MB after a small index.
     if total_size < 100 * 1024:
         return CheckResult(
-            "semantic_search_health", _WARN,
+            "semantic_search_health",
+            _WARN,
             f"codeindex looks empty ({total_size // 1024} KB) — semantic search degraded",
             fix_command="codevira index   # rebuild the embedding index",
         )
     return CheckResult(
-        "semantic_search_health", _PASS,
+        "semantic_search_health",
+        _PASS,
         f"codeindex {total_size // 1024} KB across {file_count} file(s)",
     )
 
@@ -635,25 +706,29 @@ def check_crash_log_size() -> CheckResult:
     """C12 — crash log isn't pathologically large."""
     try:
         from mcp_server.paths import get_global_home
+
         home = get_global_home()
     except Exception:  # noqa: BLE001
         return CheckResult("crash_log_size", _WARN, "could not resolve home")
     log = home / "crash.log"
     if not log.exists():
         return CheckResult(
-            "crash_log_size", _PASS,
+            "crash_log_size",
+            _PASS,
             "no crash log (clean state)",
         )
     size = log.stat().st_size
     LIMIT_MB = 5
     if size > LIMIT_MB * 1024 * 1024:
         return CheckResult(
-            "crash_log_size", _WARN,
+            "crash_log_size",
+            _WARN,
             f"crash.log is {size // 1024 // 1024} MB (>{LIMIT_MB} MB)",
             fix_command=f"mv '{log}' '{log}.archived'",
         )
     return CheckResult(
-        "crash_log_size", _PASS,
+        "crash_log_size",
+        _PASS,
         f"crash.log is {size // 1024} KB (within budget)",
     )
 
@@ -667,25 +742,29 @@ def check_crash_log_size() -> CheckResult:
 # hot file's signature surface small.
 from mcp_server._ghost_check import check_ghost_projects  # noqa: E402
 
+
 def check_codevira_dir() -> CheckResult:
     """v2.2.0: confirm in-repo .codevira/ exists with expected files."""
     from mcp_server.storage import paths as storage_paths
 
     if not storage_paths.is_initialized():
         return CheckResult(
-            "codevira_dir", _WARN,
+            "codevira_dir",
+            _WARN,
             "No .codevira/ in this project — run `codevira init`",
         )
 
     decisions_count = 0
     try:
         from mcp_server.storage import jsonl_store
+
         decisions_count = jsonl_store.count(storage_paths.decisions_path())
     except Exception:
         pass
 
     return CheckResult(
-        "codevira_dir", _PASS,
+        "codevira_dir",
+        _PASS,
         f".codevira/ present ({decisions_count} decision(s))",
     )
 
@@ -698,19 +777,22 @@ def check_agents_md_size() -> CheckResult:
     agents_md = get_project_root() / "AGENTS.md"
     if not agents_md.is_file():
         return CheckResult(
-            "agents_md_size", _PASS,
+            "agents_md_size",
+            _PASS,
             "AGENTS.md not present (will be generated on first record_decision)",
         )
 
     size = agents_md.stat().st_size
     if size > 10 * 1024:
         return CheckResult(
-            "agents_md_size", _WARN,
+            "agents_md_size",
+            _WARN,
             f"AGENTS.md is {size:,} bytes; codevira block has a 5 KB cap, but "
             f"user content outside markers may have grown",
         )
     return CheckResult(
-        "agents_md_size", _PASS,
+        "agents_md_size",
+        _PASS,
         f"AGENTS.md is {size:,} bytes (≤10 KB safety threshold)",
     )
 
@@ -719,18 +801,18 @@ _CHECKS: tuple[Callable[[], CheckResult], ...] = (
     check_python_version,
     check_codevira_data_dir,
     check_project_root,
-    check_codevira_dir,                # v2.2.0 — replaces check_codeindex_freshness
-    check_agents_md_size,              # v2.2.0 — new
+    check_codevira_dir,  # v2.2.0 — replaces check_codeindex_freshness
+    check_agents_md_size,  # v2.2.0 — new
     check_graph_db,
     check_global_db,
     check_detected_ides,
     check_nudge_files,
     check_watcher_circuit,
     check_engine_kill_switch,
-    check_claude_mcp_visibility,       # rc.4 (Bug 10)
+    check_claude_mcp_visibility,  # rc.4 (Bug 10)
     # v2.2.0: check_codeindex_freshness + check_semantic_search_health
     # removed (chromadb deleted in Phase E).
-    check_ghost_projects,              # rc.4 (Bug 21c)
+    check_ghost_projects,  # rc.4 (Bug 21c)
     check_crash_log_size,
 )
 
@@ -742,12 +824,14 @@ def run_all_checks() -> DoctorReport:
         try:
             results.append(check())
         except Exception as e:  # noqa: BLE001 — defense
-            results.append(CheckResult(
-                check.__name__.replace("check_", ""),
-                _FAIL,
-                f"check itself crashed: {type(e).__name__}: {e}",
-                fix_command="codevira report  # send the crash log",
-            ))
+            results.append(
+                CheckResult(
+                    check.__name__.replace("check_", ""),
+                    _FAIL,
+                    f"check itself crashed: {type(e).__name__}: {e}",
+                    fix_command="codevira report  # send the crash log",
+                )
+            )
     return DoctorReport(results=tuple(results))
 
 
@@ -777,6 +861,7 @@ def cmd_doctor(*, verbose: bool = False, out: IO[str] | None = None) -> int:
     snapshot_root = None
     try:
         from mcp_server.paths import get_global_home
+
         snapshot_root = get_global_home() / "projects"
         if snapshot_root.is_dir():
             snapshot_pre = {p.name for p in snapshot_root.iterdir() if p.is_dir()}
@@ -790,6 +875,7 @@ def cmd_doctor(*, verbose: bool = False, out: IO[str] | None = None) -> int:
     if snapshot_root is not None and snapshot_root.is_dir():
         try:
             import shutil as _shutil
+
             for p in snapshot_root.iterdir():
                 if p.is_dir() and p.name not in snapshot_pre:
                     _shutil.rmtree(p, ignore_errors=True)

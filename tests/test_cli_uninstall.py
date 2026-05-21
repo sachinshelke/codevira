@@ -42,8 +42,10 @@ import pytest
 
 from mcp_server.cli_uninstall import (
     _build_uninstall_plan,
+    _legacy_nudge_has_marker,
     _remove_claude_hook_entries,
     _strip_agents_md_marker,
+    _strip_legacy_nudge_marker,
     cmd_uninstall,
 )
 
@@ -108,6 +110,127 @@ class TestStripAgentsMdMarker:
         changed = _strip_agents_md_marker(path)
         assert changed is False
         assert path.read_text(encoding="utf-8") == "# Hand-written\n"
+
+
+# ---------------------------------------------------------------------------
+# _strip_legacy_nudge_marker — v2.2.0+ back-compat
+# ---------------------------------------------------------------------------
+
+
+class TestStripLegacyNudgeMarker:
+    """The 2026-05-22 surface-cut audit deleted the per-IDE nudge file
+    matrix, but machines that upgraded from v2.1.x still have those
+    files lying around with codevira marker blocks embedded. Uninstall
+    must strip the codevira block from each one while preserving user
+    content outside the markers byte-for-byte — same invariant as the
+    canonical AGENTS.md strip.
+
+    These tests cover both legacy marker spellings:
+      - ``<!-- codevira:start -->`` (pre-v2.2.0 templates)
+      - ``<!-- codevira:begin -->`` (post-v2.2.0 generator, in case
+        a legacy file was ever touched by the new generator)
+    """
+
+    def test_strips_legacy_start_end_markers(self, tmp_path: Path) -> None:
+        """The legacy ``<!-- codevira:start -->`` spelling, which the
+        pre-v2.2.0 templates used in CLAUDE.md / GEMINI.md / etc."""
+        path = tmp_path / "CLAUDE.md"
+        path.write_text(
+            "# My project\n"
+            "\n"
+            "Hand-written project notes I care about.\n"
+            "\n"
+            "<!-- codevira:start -->\n"
+            "Auto-managed by codevira v2.1.x\n"
+            "<!-- codevira:end -->\n"
+            "\n"
+            "More user content below.\n",
+            encoding="utf-8",
+        )
+        changed = _strip_legacy_nudge_marker(path)
+        assert changed is True
+        text = path.read_text(encoding="utf-8")
+        assert "Hand-written project notes I care about." in text
+        assert "More user content below." in text
+        assert "Auto-managed by codevira" not in text
+        assert "<!-- codevira:" not in text
+
+    def test_strips_v2_2_begin_end_markers(self, tmp_path: Path) -> None:
+        """The newer ``<!-- codevira:begin -->`` spelling — defensive
+        coverage in case any legacy file ever got touched by the v2.2.0
+        generator on the way out."""
+        path = tmp_path / "GEMINI.md"
+        path.write_text(
+            "Top user content\n"
+            "<!-- codevira:begin (auto) -->\n"
+            "managed block\n"
+            "<!-- codevira:end -->\n"
+            "Bottom user content\n",
+            encoding="utf-8",
+        )
+        changed = _strip_legacy_nudge_marker(path)
+        assert changed is True
+        text = path.read_text(encoding="utf-8")
+        assert "Top user content" in text
+        assert "Bottom user content" in text
+        assert "managed block" not in text
+
+    def test_deletes_file_when_only_codevira_block_existed(
+        self, tmp_path: Path
+    ) -> None:
+        """A pure auto-generated legacy nudge (user never edited it)
+        becomes empty after stripping → delete the file rather than
+        leave an empty stub behind."""
+        path = tmp_path / "GEMINI.md"
+        path.write_text(
+            "<!-- codevira:start -->\n"
+            "all-managed content\n"
+            "<!-- codevira:end -->\n",
+            encoding="utf-8",
+        )
+        changed = _strip_legacy_nudge_marker(path)
+        assert changed is True
+        assert not path.exists()
+
+    def test_leaves_malformed_marker_alone(self, tmp_path: Path) -> None:
+        """If we find an open marker but no matching close, leave the
+        file intact rather than risk damaging user content."""
+        path = tmp_path / ".windsurfrules"
+        original = (
+            "User config\n"
+            "<!-- codevira:start -->\n"
+            "no close marker — file corrupt\n"
+        )
+        path.write_text(original, encoding="utf-8")
+        changed = _strip_legacy_nudge_marker(path)
+        assert changed is False
+        assert path.read_text(encoding="utf-8") == original
+
+    def test_no_marker_returns_false(self, tmp_path: Path) -> None:
+        path = tmp_path / "CLAUDE.md"
+        path.write_text("# Pure user content\n", encoding="utf-8")
+        changed = _strip_legacy_nudge_marker(path)
+        assert changed is False
+        assert path.read_text(encoding="utf-8") == "# Pure user content\n"
+
+    def test_has_marker_detects_both_spellings(self, tmp_path: Path) -> None:
+        """``_legacy_nudge_has_marker`` is the planner-side probe — it
+        must accept both legacy and new marker spellings so the plan
+        includes a strip action regardless of when the file was last
+        regenerated."""
+        start_path = tmp_path / "CLAUDE.md"
+        start_path.write_text(
+            "x\n<!-- codevira:start -->\ny\n<!-- codevira:end -->\nz\n"
+        )
+        begin_path = tmp_path / "GEMINI.md"
+        begin_path.write_text(
+            "x\n<!-- codevira:begin -->\ny\n<!-- codevira:end -->\nz\n"
+        )
+        none_path = tmp_path / ".windsurfrules"
+        none_path.write_text("plain text\n")
+        assert _legacy_nudge_has_marker(start_path) is True
+        assert _legacy_nudge_has_marker(begin_path) is True
+        assert _legacy_nudge_has_marker(none_path) is False
 
 
 # ---------------------------------------------------------------------------

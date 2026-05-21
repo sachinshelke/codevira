@@ -19,6 +19,19 @@ Reverses every system write made by ``codevira init`` and ``codevira setup``:
                                      <!-- codevira:begin -->/<!-- codevira:end -->
                                      boundaries)
 
+  Per-project legacy back-compat (v2.1.x → v2.2.0 upgrade path)
+    The 2026-05-22 surface-cut audit deleted the per-IDE nudge
+    matrix. Machines that upgraded from v2.1.x still have
+    codevira-marker blocks embedded in these legacy files, so
+    uninstall sweeps them too:
+      <repo>/CLAUDE.md
+      <repo>/GEMINI.md
+      <repo>/.cursor/rules/codevira.mdc
+      <repo>/.windsurfrules
+      <repo>/.github/copilot-instructions.md
+    Same marker-preservation guarantee — user content outside the
+    codevira block survives byte-for-byte.
+
 Flags:
   --dry-run        Print the plan; don't write anything.
   -y, --yes        Skip every confirmation prompt.
@@ -247,6 +260,37 @@ def _build_uninstall_plan(*, keep_data: bool) -> dict:
                                 "_action": "strip-agents-md-marker",
                             }
                         )
+
+                    # v2.2.0+ back-compat: pre-v2.2.0 installs wrote
+                    # codevira marker blocks into per-IDE nudge files
+                    # too (CLAUDE.md, GEMINI.md, .cursor/rules/
+                    # codevira.mdc, .windsurfrules, .github/
+                    # copilot-instructions.md). Those nudges were
+                    # deleted in the 2026-05-22 surface-cut audit but
+                    # the FILES still exist on machines that upgraded
+                    # from v2.1.x. Strip our block from each one we
+                    # find — user content outside the markers stays.
+                    legacy_nudges = (
+                        proj_path / "CLAUDE.md",
+                        proj_path / "GEMINI.md",
+                        proj_path / ".cursor" / "rules" / "codevira.mdc",
+                        proj_path / ".windsurfrules",
+                        proj_path / ".github" / "copilot-instructions.md",
+                    )
+                    for nudge in legacy_nudges:
+                        if nudge.is_file() and _legacy_nudge_has_marker(nudge):
+                            actions.append(
+                                {
+                                    "op": "edit-file",
+                                    "path": str(nudge),
+                                    "detail": (
+                                        f"strip codevira block from "
+                                        f"legacy nudge ({proj_path.name}/"
+                                        f"{nudge.name})"
+                                    ),
+                                    "_action": "strip-legacy-nudge-marker",
+                                }
+                            )
         except Exception:
             pass
 
@@ -258,6 +302,65 @@ def _agents_md_has_marker(path: Path) -> bool:
         return "<!-- codevira:begin" in path.read_text(encoding="utf-8")
     except Exception:
         return False
+
+
+def _legacy_nudge_has_marker(path: Path) -> bool:
+    """True if a pre-v2.2.0 nudge file still carries a codevira block.
+
+    Pre-v2.2.0 ``mcp_server/agents_md.py`` wrote per-IDE nudge files
+    (CLAUDE.md, GEMINI.md, .windsurfrules, etc.) with marker pairs.
+    The legacy module used ``<!-- codevira:start -->`` /
+    ``<!-- codevira:end -->`` (note: START, not BEGIN — the v2.2.0
+    AGENTS.md generator uses BEGIN). We accept either spelling so we
+    catch files from any prior release.
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except Exception:
+        return False
+    return "<!-- codevira:start" in text or "<!-- codevira:begin" in text
+
+
+def _strip_legacy_nudge_marker(path: Path) -> bool:
+    """Strip the codevira block from a pre-v2.2.0 per-IDE nudge file.
+
+    Handles both legacy spellings (``<!-- codevira:start -->`` from
+    pre-v2.2.0 templates, and ``<!-- codevira:begin -->`` from
+    machines that already swapped in the v2.2.0 generator). Preserves
+    user content outside the marker boundaries byte-for-byte.
+
+    If the file becomes empty (was entirely codevira-managed),
+    delete it. Returns True if the file was modified.
+    """
+    text = path.read_text(encoding="utf-8")
+    # Try begin/end first (v2.2.0-shape markers if anything ever
+    # regenerated this legacy file); fall back to start/end (the
+    # original pre-v2.2.0 shape).
+    for begin_marker, end_marker in (
+        ("<!-- codevira:begin", "<!-- codevira:end -->"),
+        ("<!-- codevira:start", "<!-- codevira:end -->"),
+    ):
+        start = text.find(begin_marker)
+        if start < 0:
+            continue
+        end = text.find(end_marker, start)
+        if end < 0:
+            # Malformed: leave alone — don't risk damaging user content.
+            return False
+        end_line = text.find("\n", end)
+        if end_line < 0:
+            end_line = len(text)
+        else:
+            end_line += 1
+        new_text = text[:start] + text[end_line:]
+        while "\n\n\n\n" in new_text:
+            new_text = new_text.replace("\n\n\n\n", "\n\n\n")
+        if not new_text.strip():
+            path.unlink()
+            return True
+        path.write_text(new_text, encoding="utf-8")
+        return True
+    return False
 
 
 def _strip_agents_md_marker(path: Path) -> bool:
@@ -364,4 +467,6 @@ def _execute_action(action: dict) -> bool:
         return _remove_claude_hook_entries(path)
     if op == "edit-file" and sub == "strip-agents-md-marker":
         return _strip_agents_md_marker(path)
+    if op == "edit-file" and sub == "strip-legacy-nudge-marker":
+        return _strip_legacy_nudge_marker(path)
     raise ValueError(f"unknown action op={op!r} _action={sub!r}")

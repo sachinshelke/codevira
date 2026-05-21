@@ -34,9 +34,9 @@ def detect_installed_ides(project_root: Path) -> list[str]:
     """Detect which AI coding tools are installed.
 
     Returns a list of stable string keys identifying each detected
-    tool. Keys are consumed by ``mcp_server.agents_md.SUPPORTED_IDES``
-    and by the setup wizard. Keep additions backward-compatible —
-    existing keys must keep their meaning.
+    tool. Keys are consumed by the setup wizard and the doctor.
+    Keep additions backward-compatible — existing keys must keep
+    their meaning.
 
     Tier 1 (have specific MCP-config path support): claude,
     claude_desktop, cursor, windsurf, antigravity.

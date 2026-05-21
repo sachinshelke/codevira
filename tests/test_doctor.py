@@ -158,15 +158,19 @@ class TestCrashLogSize:
 
 class TestNudgeFiles:
     def test_warn_when_missing(self, isolated_project: Path):
-        # No nudge files written, but at least claude is detected
-        # on this machine.
+        """v2.2.0+ (2026-05-22 surface-cut audit): the per-IDE nudge
+        matrix collapsed to AGENTS.md only. The doctor check now
+        verifies that single file; the fix command is `codevira sync`
+        (not the deleted `codevira agents`)."""
+        # No AGENTS.md present in the fresh isolated_project fixture.
         r = doctor.check_nudge_files()
-        # Either WARN ("missing nudge files") or PASS (if no IDEs
-        # detected for some reason in CI). Both are acceptable shapes;
-        # this test is to verify the check doesn't crash.
         assert r.state in ("PASS", "WARN")
         if r.state == "WARN":
-            assert "codevira agents" in r.fix_command
+            assert "codevira sync" in r.fix_command, (
+                f"fix command should now point at `codevira sync` "
+                f"(was `codevira agents` pre-v2.2.0); got "
+                f"{r.fix_command!r}"
+            )
 
 
 # =====================================================================

@@ -240,11 +240,12 @@ felt out of scope for the surface-cut audit:
   - some need style decisions (E701 / E702 multi-statement lines)
   - it's a separate, low-stakes sweep that doesn't belong in the
     audit-cut commits
-- **`tests/e2e/fixtures/code_only_python/tests/test_widgets.py`**
-  pytest tries to collect it as a real test and fails. Pre-existing.
-  Workaround: I ran e2e suite with `--ignore=tests/e2e/fixtures`.
-  Real fix: add `conftest.py` in `tests/e2e/fixtures` with
-  `collect_ignore`. ~5 min if you want me to.
+- ~~**`tests/e2e/fixtures/code_only_python/tests/test_widgets.py`**
+  pytest tries to collect it as a real test and fails.~~ **Fixed
+  after this doc was first drafted.** Added
+  `tests/e2e/fixtures/conftest.py` with `collect_ignore` — `make
+  test-e2e` and `pytest tests/e2e/ -q` now both work without the
+  `--ignore=tests/e2e/fixtures` flag. (See commit ``e20767d``.)
 
 ---
 

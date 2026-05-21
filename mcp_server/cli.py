@@ -742,17 +742,20 @@ def main() -> None:
     subparsers = parser.add_subparsers(dest="command", parser_class=_ScopedSubparser)
 
     # init
-    # init (P2-1 rc.5: added description)
+    # init (P2-1 rc.5: added description; v2.2.0: updated for in-repo .codevira/)
     init_parser = subparsers.add_parser(
         "init",
         help="Initialize Codevira in the current project",
         description=(
-            "Bootstrap codevira state for the current project: write config.yaml "
-            "(auto-detects language, source dirs, file extensions), create the "
-            "per-project data directory under ~/.codevira/projects/, register in "
-            "global.db, and (unless --no-inject) inject MCP config + nudge files "
-            "into detected IDEs. Equivalent to first-MCP-call auto-init but "
-            "explicit. Use --dirs / --ext to override the auto-detected values."
+            "Bootstrap codevira state for the current project. v2.2.0+ writes "
+            "decisions, sessions, outcomes, and config to <repo>/.codevira/ "
+            "(in-repo, git-committed). The cross-project tracking database "
+            "(global.db) and crash log stay under ~/.codevira/. The rebuildable "
+            "code-graph cache lives under <repo>/.codevira-cache/ (gitignored). "
+            "Also updates .gitignore, regenerates AGENTS.md with the codevira "
+            "marker block, and (unless --no-inject) injects MCP config + nudge "
+            "files into detected IDEs. Equivalent to first-MCP-call auto-init "
+            "but explicit. Use --dirs / --ext to override auto-detected values."
         ),
     )
     init_parser.add_argument("--name", help="Override project name")
@@ -1659,6 +1662,7 @@ def main() -> None:
         # v2.2.0: scaffold .codevira/ (in-repo storage layer).
         try:
             from mcp_server.cli_init import cmd_init as cmd_init_v22
+
             cmd_init_v22(yes=True, dry_run=False)
         except Exception as e:
             print(f"  ⚠ v2.2.0 .codevira/ scaffold failed: {e}", file=sys.stderr)

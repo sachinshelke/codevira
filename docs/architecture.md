@@ -16,7 +16,7 @@
                             ↓
 ┌───────────────────────────────────────────────────────────────────┐
 │  CODEVIRA MCP SERVER                                              │
-│  ~50 MB pipx install, <100ms cold start                           │
+│  ~85 MB pipx install, <100ms cold start                           │
 │                                                                   │
 │  Tools (33):                                                      │
 │    Decisions: record/record_many/search/list/list_tags/           │
@@ -180,11 +180,12 @@ These survived the v2.2.0 surgery untouched:
 
 | Measurement | v2.1.2 | v2.2.0 |
 |---|---|---|
-| Pipx install size | ~200 MB | **~50 MB** |
+| Pipx install size | ~450 MB | **~85 MB** |
 | MCP server cold-start time | 1-3s | **<100ms** |
 | Per-project disk (active project) | 40-80 MB | **~1-2 MB** |
 | Worst-case disk explosion (v2.1.2 HNSW) | up to 64 GB | **structurally impossible** |
 | ChromaDB / sentence-transformers / torch | required | **gone** |
+| Tree-sitter grammars | 17 langs, 351 MB | **4 langs, ~5 MB** (TS/JS/Go/Rust). Long-tail via opt-in `[all-languages]` |
 
 ## Comparison with alternative tools (2026)
 

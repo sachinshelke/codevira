@@ -1,6 +1,7 @@
 """
 Shared pytest fixtures for the Codevira MCP test suite.
 """
+
 import sys
 import types
 from unittest.mock import MagicMock
@@ -26,6 +27,7 @@ import pytest
 # ---------------------------------------------------------------------------
 try:
     import numpy as _numpy  # noqa: F401 — eager import to avoid concurrent partial-load
+
     # Sanity-check: if isscalar isn't present, our pre-import didn't actually
     # complete the load. Force attribute access to surface that immediately.
     _ = _numpy.isscalar
@@ -40,18 +42,39 @@ except (ImportError, AttributeError):
 # file imports modules that depend on it. This mock provides all attributes
 # that code_reader.py, chunker.py, and graph_generator.py import.
 #
-# We only mock when the real packages are NOT installed. If tree-sitter and
-# tree-sitter-language-pack are available (e.g. in the dev venv),
-# test_treesitter_parser.py will use the real implementations.
+# We only mock when the real packages are NOT installed. v2.2.0 switched
+# from `tree-sitter-language-pack` (351 MB) to individual `tree-sitter-{lang}`
+# packages for the 4 most-used non-Python languages. The legacy pack stays
+# importable when `codevira[all-languages]` is installed.
 # ---------------------------------------------------------------------------
 _ts_available = True
 try:
-    import tree_sitter_language_pack  # noqa: F401
     import tree_sitter  # noqa: F401
+
+    # At least one grammar source must be importable. We try the v2.2.0
+    # base set first; the legacy pack is the [all-languages] opt-in.
+    _grammar_found = False
+    for _pkg in (
+        "tree_sitter_typescript",
+        "tree_sitter_javascript",
+        "tree_sitter_go",
+        "tree_sitter_rust",
+        "tree_sitter_language_pack",
+    ):
+        try:
+            __import__(_pkg)
+            _grammar_found = True
+            break
+        except ImportError:
+            continue
+    if not _grammar_found:
+        _ts_available = False
 except ImportError:
     _ts_available = False
 
 if not _ts_available:
+    # Stub the legacy pack name for code paths that still try to fall back
+    # via tree_sitter_language_pack (treesitter_parser._load_parser_for).
     if "tree_sitter_language_pack" not in sys.modules:
         _ts_lang_pack = types.ModuleType("tree_sitter_language_pack")
         _ts_lang_pack.__dict__["__all__"] = []
@@ -102,10 +125,11 @@ if not _ts_available:
         sys.modules["indexer.treesitter_parser"] = _fake_ts
         # Also set on parent package so `from indexer.treesitter_parser import X` works
         import indexer as _indexer_pkg
+
         _indexer_pkg.treesitter_parser = _fake_ts
 
-import mcp_server.paths as paths
-from indexer.sqlite_graph import SQLiteGraph
+import mcp_server.paths as paths  # noqa: E402 — must follow stub install
+from indexer.sqlite_graph import SQLiteGraph  # noqa: E402 — must follow stub install
 
 
 @pytest.fixture(autouse=True)
@@ -150,24 +174,56 @@ def populated_db(project_env):
     project, data_dir, db = project_env
     # Nodes
     db.add_node("file:src/api.py", "file", "api.py", "src/api.py", layer="api")
-    db.add_node("file:src/service.py", "file", "service.py", "src/service.py", layer="service")
+    db.add_node(
+        "file:src/service.py", "file", "service.py", "src/service.py", layer="service"
+    )
     db.add_node("file:src/db.py", "file", "db.py", "src/db.py", layer="data")
-    db.add_node("file:tests/test_api.py", "file", "test_api.py", "tests/test_api.py", layer="test")
+    db.add_node(
+        "file:tests/test_api.py",
+        "file",
+        "test_api.py",
+        "tests/test_api.py",
+        layer="test",
+    )
     # Edges
     db.add_edge("file:src/api.py", "file:src/service.py", kind="imports")
     db.add_edge("file:src/service.py", "file:src/db.py", kind="imports")
     db.add_edge("file:tests/test_api.py", "file:src/api.py", kind="tests")
     # Sessions + decisions
-    db.log_session("s1", "Initial API setup", "1", [
-        {"file_path": "src/api.py", "decision": "Use REST endpoints", "context": "API design"},
-        {"file_path": "src/service.py", "decision": "Use repository pattern", "context": "Architecture"},
-    ])
-    db.log_session("s2", "Add database layer", "2", [
-        {"file_path": "src/db.py", "decision": "Use SQLite for local storage", "context": "Data layer"},
-    ])
+    db.log_session(
+        "s1",
+        "Initial API setup",
+        "1",
+        [
+            {
+                "file_path": "src/api.py",
+                "decision": "Use REST endpoints",
+                "context": "API design",
+            },
+            {
+                "file_path": "src/service.py",
+                "decision": "Use repository pattern",
+                "context": "Architecture",
+            },
+        ],
+    )
+    db.log_session(
+        "s2",
+        "Add database layer",
+        "2",
+        [
+            {
+                "file_path": "src/db.py",
+                "decision": "Use SQLite for local storage",
+                "context": "Data layer",
+            },
+        ],
+    )
     # Outcomes
     db.record_outcome("s1", "src/api.py", "kept")
-    db.record_outcome("s1", "src/service.py", "modified", delta_summary="Changed naming")
+    db.record_outcome(
+        "s1", "src/service.py", "modified", delta_summary="Changed naming"
+    )
     # Preferences
     db.record_preference("naming", "Prefers snake_case")
     db.record_preference("naming", "Prefers snake_case")
@@ -175,11 +231,16 @@ def populated_db(project_env):
     db.record_preference("structure", "Uses early returns")
     # Learned rules
     db.add_learned_rule(
-        "API files should have tests", 0.8, ["s1"],
-        category="testing", file_pattern="src/api/*",
+        "API files should have tests",
+        0.8,
+        ["s1"],
+        category="testing",
+        file_pattern="src/api/*",
     )
     db.add_learned_rule(
-        "Use type hints", 0.9, ["s1", "s2"],
+        "Use type hints",
+        0.9,
+        ["s1", "s2"],
         category="patterns",
     )
     return project, data_dir, db
@@ -250,18 +311,22 @@ def sample_source_files(tmp_path):
 @pytest.fixture
 def corrupt_yaml(tmp_path):
     """Factory for creating corrupt YAML files."""
+
     def _make(name="corrupt.yaml", content="{{invalid yaml: ["):
         p = tmp_path / name
         p.write_text(content)
         return p
+
     return _make
 
 
 @pytest.fixture
 def corrupt_sqlite(tmp_path):
     """Factory for creating corrupt SQLite database files."""
+
     def _make(name="corrupt.db"):
         p = tmp_path / name
         p.write_bytes(b"NOT A SQLITE DB" + b"\x00" * 100)
         return p
+
     return _make

@@ -47,7 +47,16 @@ dependencies = [
   "mcp>=1.0.0",
   "watchdog>=3.0.0",
   "tree-sitter>=0.23.0",
-  "tree-sitter-language-pack>=0.13.0,<1.0.0",
+  # v2.2.0: switched from tree-sitter-language-pack (351 MB, 17 grammars) to
+  # individual grammar packages for the 4 most-used non-Python languages
+  # (Python parsing uses stdlib `ast`). Total grammar footprint ~10-15 MB
+  # instead of 351 MB — the v2.2.0 ≤55 MB pipx budget (G1) depends on it.
+  # Long-tail languages (Java/C/C++/Ruby/PHP/Kotlin/Swift/Solidity) are
+  # available as an opt-in extra: `pip install codevira[all-languages]`.
+  "tree-sitter-typescript>=0.23.0",
+  "tree-sitter-javascript>=0.23.0",
+  "tree-sitter-go>=0.23.0",
+  "tree-sitter-rust>=0.23.0",
   "rich>=13.0.0",
   "uvicorn>=0.27.0",
   "starlette>=0.36.0",
@@ -62,6 +71,14 @@ dependencies = [
 # v2.2.0 has no optional semantic-search extras.
 search = []
 all = []
+# v2.2.0: opt-in extra for users who need the long-tail languages that
+# don't ship in the base install (Python via stdlib + TS/JS/Go/Rust as
+# individual grammars). Installs the same bundle that v2.1.2 shipped by
+# default. ~350 MB extra; opt-in keeps the base install under the
+# 55 MB G1 budget. Activate with: `pip install codevira[all-languages]`.
+all-languages = [
+  "tree-sitter-language-pack>=0.13.0,<1.0.0",
+]
 # Dev dependencies for contributors. Installed via: pip install -e ".[dev]"
 # Or use the Makefile target: make dev
 # These power the discipline scaffold (Pillar 3): pre-commit, lint, type-check, e2e tests.

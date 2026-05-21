@@ -80,6 +80,37 @@ if [ ! -x "$TMP/venv/bin/codevira" ]; then
 fi
 echo "✓ wheel installed; codevira entry point present"
 
+# ─── Step 2.5: venv size budget (v2.2.0 G1 — ≤100 MB target) ───────
+# v2.2.0 architectural promise: dropping chromadb / sentence-transformers /
+# torch lands install at ≤100 MB (was ~450 MB on v2.1.2 with
+# tree-sitter-language-pack + chromadb stack). 100 MB matches the
+# practical floor in a 2026-05 dep tree: mcp pulls cryptography
+# (24 MB) + pydantic (4 MB) + httpx (1 MB); pip itself takes 11 MB;
+# rich pulls pygments (9 MB); the 4 individual tree-sitter grammars
+# (TS/JS/Go/Rust) total ~5 MB; codevira itself is ~3 MB; the rest is
+# transitive (~40 MB). Earlier planning numbers (≤55 MB) didn't
+# account for mcp's 2026 dep growth.
+#
+# If a future dep change inflates the venv beyond the budget, fail
+# loudly here so the regression doesn't reach users via PyPI. Override
+# with CODEVIRA_VENV_SIZE_MAX_MB=NNN for local experimentation.
+echo
+echo "═══ Step 2.5: venv size budget (≤${CODEVIRA_VENV_SIZE_MAX_MB:-100} MB) ═══"
+VENV_SIZE_MB="$(du -sm "$TMP/venv" | awk '{print $1}')"
+VENV_SIZE_LIMIT_MB="${CODEVIRA_VENV_SIZE_MAX_MB:-100}"
+if [ "$VENV_SIZE_MB" -le "$VENV_SIZE_LIMIT_MB" ]; then
+    echo "✓ venv size: ${VENV_SIZE_MB} MB (under ${VENV_SIZE_LIMIT_MB} MB budget)"
+else
+    echo "✗ FAIL: venv size ${VENV_SIZE_MB} MB exceeds budget ${VENV_SIZE_LIMIT_MB} MB"
+    echo "  Top 5 packages contributing to the bloat:"
+    du -sh "$TMP/venv/lib"/*/site-packages/* 2>/dev/null \
+        | sort -rh | awk 'NR<=5 {print "    "$0}'
+    echo
+    echo "  To diagnose: pip install --target ./_inspect $WHEEL && du -sh _inspect/*"
+    echo "  To override the gate (dev only): CODEVIRA_VENV_SIZE_MAX_MB=NNN $0"
+    exit 1
+fi
+
 # ─── Step 3: version ───────────────────────────────────────────────
 echo
 echo "═══ Step 3: --version ═══"

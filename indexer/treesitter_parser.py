@@ -1,8 +1,16 @@
 """
-treesitter_parser.py — Unified tree-sitter parser using tree-sitter-language-pack.
+treesitter_parser.py — Unified tree-sitter parser.
 
-Supports parsing AST nodes (classes, functions, methods, imports) across many languages.
-Python files are NOT handled here — they use the stdlib `ast` module.
+Supports parsing AST nodes (classes, functions, methods, imports) across
+several languages. Python files are NOT handled here — they use the stdlib
+`ast` module.
+
+v2.2.0: switched from ``tree-sitter-language-pack`` (351 MB, 17 grammars)
+to individual grammar packages for the 4 most-used non-Python languages
+(TypeScript / JavaScript / Go / Rust). Total grammar disk footprint
+~10-15 MB. Users who need long-tail languages (Java, C, C++, Ruby, PHP,
+Kotlin, Swift, Solidity) can opt in via ``pip install codevira[all-languages]``
+— that brings back ``tree-sitter-language-pack`` and the legacy grammar set.
 """
 
 from __future__ import annotations
@@ -12,8 +20,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import tree_sitter_language_pack as tslp
-from tree_sitter import Node
+from tree_sitter import Language, Node, Parser
 
 logger = logging.getLogger(__name__)
 
@@ -53,11 +60,22 @@ class ParsedFile:
 # Language registry
 # ---------------------------------------------------------------------------
 
+# Languages shipped in the base install (individual tree-sitter-* grammars).
+# Long-tail languages remain in EXTENSION_MAP only when the opt-in extra
+# ``codevira[all-languages]`` is installed — we detect that at parser-load
+# time and fall back to the language pack when present.
+_BASE_LANGUAGES = ("typescript", "tsx", "javascript", "go", "rust")
+
 EXTENSION_MAP: dict[str, str] = {
+    # Always shipped:
     ".ts": "typescript",
     ".tsx": "tsx",
+    ".js": "javascript",
+    ".jsx": "javascript",
     ".go": "go",
     ".rs": "rust",
+    # Long-tail (only resolve to parsers when codevira[all-languages] extra is
+    # installed — load_parser_for() detects + falls back gracefully):
     ".java": "java",
     ".cs": "csharp",
     ".rb": "ruby",
@@ -72,13 +90,60 @@ EXTENSION_MAP: dict[str, str] = {
     ".php": "php",
     ".sol": "solidity",
     ".vue": "vue",
-    ".js": "javascript",
-    ".jsx": "javascript",
 }
 
 
 def get_language(extension: str) -> str | None:
     return EXTENSION_MAP.get(extension.lower())
+
+
+def _load_parser_for(language: str) -> Parser:
+    """Resolve a tree-sitter Parser for ``language``.
+
+    Tries individual grammar packages first (always installed), then falls
+    back to ``tree-sitter-language-pack`` (the opt-in ``[all-languages]``
+    extra). Raises ValueError if neither path supplies the language.
+    """
+    # Individual packages for the v2.2.0 base set.
+    if language == "typescript":
+        import tree_sitter_typescript as _ts
+
+        return Parser(Language(_ts.language_typescript()))
+    if language == "tsx":
+        import tree_sitter_typescript as _ts
+
+        return Parser(Language(_ts.language_tsx()))
+    if language == "javascript":
+        import tree_sitter_javascript as _js
+
+        return Parser(Language(_js.language()))
+    if language == "go":
+        import tree_sitter_go as _go
+
+        return Parser(Language(_go.language()))
+    if language == "rust":
+        import tree_sitter_rust as _rs
+
+        return Parser(Language(_rs.language()))
+
+    # Long-tail fallback via the optional language pack.
+    try:
+        import tree_sitter_language_pack as tslp  # type: ignore[import-not-found]
+    except ImportError as exc:
+        raise ValueError(
+            f"No tree-sitter grammar bundled for language '{language}'. "
+            f"Install the optional extra: pip install 'codevira[all-languages]' "
+            f"(adds Java / C / C++ / Ruby / PHP / Kotlin / Swift / Solidity / etc.)"
+        ) from exc
+    parser = tslp.get_parser(language)  # type: ignore[no-any-return]
+    if parser is None:
+        # The legacy pack reports unsupported languages by returning None
+        # (and the test-suite stub mirrors that). Surface as ValueError so
+        # parse_file's contract ("ValueError on unsupported language") holds.
+        raise ValueError(
+            f"tree-sitter-language-pack has no grammar for language '{language}'"
+        )
+    return parser
 
 
 # ---------------------------------------------------------------------------
@@ -161,7 +226,10 @@ def parse_file(file_path: str, language: str | None = None) -> ParsedFile:
             raise ValueError(f"Cannot infer language for extension: {path.suffix}")
 
     try:
-        parser = tslp.get_parser(language)  # type: ignore[arg-type]
+        parser = _load_parser_for(language)
+    except ValueError:
+        # Already a user-actionable ValueError (e.g. "Install codevira[all-languages]")
+        raise
     except Exception as e:
         raise ValueError(f"Failed to load parser for {language}: {e}")
 

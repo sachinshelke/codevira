@@ -15,10 +15,12 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 > The biggest architectural change since v2.0. Decisions move from
 > SQLite into git-tracked JSONL in your repo. ChromaDB / sentence-
-> transformers / torch removed entirely. Pipx install drops from
-> ~200 MB to ~50 MB; MCP server starts in <100ms; per-project disk
-> drops from 40-80 MB to ~1-2 MB. See `docs/plans/v2.2.0.md` for the
-> full plan.
+> transformers / torch removed entirely; tree-sitter-language-pack
+> (351 MB) replaced by 4 individual grammar packages (TS / JS / Go /
+> Rust) totaling ~5 MB. Pipx install drops from ~450 MB (v2.1.2 with
+> the full grammar stack) to ~85 MB; MCP server starts in <100ms;
+> per-project disk drops from 40-80 MB to ~1-2 MB. See
+> `docs/plans/v2.2.0.md` for the full plan.
 
 ### Changed (architecture)
 
@@ -41,8 +43,17 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ### Removed (dropped from the runtime)
 
 - **ChromaDB + sentence-transformers + torch deleted entirely.**
-  ~150 MB of dependencies gone. Pipx install ≤55 MB. MCP server
-  startup <100ms (was 1-3s due to torch warmup).
+  ~150 MB of dependencies gone. Pipx install ≤100 MB (gated by the
+  cold-install smoke G2.5). MCP server startup <100ms (was 1-3s due
+  to torch warmup).
+- **tree-sitter-language-pack (351 MB, 17 grammars) replaced** with
+  individual grammar packages: `tree-sitter-typescript`,
+  `tree-sitter-javascript`, `tree-sitter-go`, `tree-sitter-rust`
+  (~5 MB total). Long-tail languages (Java, C, C++, Ruby, PHP,
+  Kotlin, Swift, Solidity, etc.) remain available via the opt-in
+  extra `pip install 'codevira[all-languages]'` which re-adds the
+  legacy pack. This is the single biggest contributor to the v2.2.0
+  size cut.
 - **`search_codebase` MCP tool removed.** AI agents grep + Read files
   natively in 2026; semantic code search was the source of 90%+ of
   v2.1.x disk usage and every major bug (issue #10 Antigravity dlopen,

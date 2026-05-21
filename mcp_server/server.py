@@ -221,6 +221,15 @@ async def handle_read_resource(uri):
         raise ValueError(f"Unknown codevira resource: {uri_str!r}")
 
     try:
+        # v2.2.0: prefer the JSONL backend when the project has been
+        # initialized via `codevira init`. Falls back to the legacy
+        # graph.db path for v2.1.x projects.
+        from mcp_server.storage import paths as store_paths
+
+        if store_paths.is_initialized():
+            timeline = build_timeline(None, query=query, since_days=30, limit=20)
+            return render_html(timeline, title=title)
+
         from indexer.sqlite_graph import SQLiteGraph
 
         graph_db = get_data_dir() / "graph" / "graph.db"

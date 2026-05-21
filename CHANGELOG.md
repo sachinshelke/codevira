@@ -104,6 +104,39 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   passes 13/14 against new backend (the 14th is a chromadb-availability
   test, skipped permanently now)
 
+### Fixed — cross-tool wedge gaps (post-Phase-G completeness)
+
+The cross-tool universality e2e tests surfaced several read paths
+that Phase B's "tool surface repointed at JSONL" pass missed. All
+fixed in the same release:
+
+- **`SignalContext.search_decisions`** now reads via
+  `decisions_store.search()` (FTS5 over JSONL) when `.codevira/` is
+  initialized. The legacy `SQLiteGraph.search_decisions()` is kept
+  as a fallback for v2.1.x projects.
+- **`codevira replay` CLI + `codevira://decisions` MCP resource**
+  now read from `.codevira/decisions.jsonl` + `.codevira/outcomes.jsonl`
+  + `.codevira/sessions.jsonl`. Both surface decisions recorded via
+  `record_decision` immediately, with outcome counts aggregated from
+  `outcomes.jsonl` (kept/modified/reverted). SQLiteGraph fallback
+  preserved for v2.1.x.
+- **FTS5 index now indexes `file_path`** (BM25 weight 0.8) so search
+  queries like `"retries"` match decisions whose only reference to
+  the term is in the file path. Existing FTS5 caches without the new
+  column are detected and auto-dropped + rebuilt on the next search.
+- **FTS5 `_sanitize_fts_query` now OR-joins terms** with stopword +
+  short-token stripping. The previous implicit-AND turned every
+  multi-word prompt into an over-strict phrase query — e.g. asking
+  "What did we decide about bcrypt for password hashing?" missed the
+  decision "use bcrypt over argon2" because "password" and "hashing"
+  aren't in the stored text. The off-topic 0-token gate
+  (`relevance_min_score=0.10`) still suppresses irrelevant matches.
+- **`decisions_store.record` and `record_many` now append
+  `digest.jsonl` incrementally**. Previously digest was only
+  regenerated via `codevira sync` / `rebuild_indexes()`, so the
+  relevance-inject policy showed `(decision summary unavailable —
+  try codevira sync)` for decisions recorded since the last sync.
+
 ## [2.1.2] — 2026-05-19 — Trust recovery + QoL
 
 Trust-recovery release based on **four independent field-test reports** that

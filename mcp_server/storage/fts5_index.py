@@ -59,6 +59,7 @@ USING fts5(
     decision,
     context,
     summary,
+    file_path,
     tags UNINDEXED,
     tokenize = "porter unicode61 remove_diacritics 2"
 );
@@ -85,6 +86,37 @@ def _connect(path: Path) -> sqlite3.Connection:
 
 
 def _ensure_tables(conn: sqlite3.Connection) -> None:
+    """Create FTS5 and meta tables if they don't exist.
+
+    Schema evolution: if the FTS5 table exists but is missing the
+    ``file_path`` column (pre-v2.2.0 schema), drop and recreate it so
+    the caller gets a clean rebuild on the next ``rebuild_from_jsonl``
+    call. We detect this by checking the FTS5 schema string stored in
+    ``{_TABLE}_config``.
+    """
+    # Check if the FTS5 table already exists with the old schema (no file_path).
+    try:
+        tables = {
+            r[0]
+            for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        if f"{_TABLE}" in tables:
+            # Detect old schema: try to SELECT the file_path column.
+            try:
+                conn.execute(f"SELECT file_path FROM {_TABLE} LIMIT 1").fetchone()
+            except sqlite3.OperationalError:
+                # Old schema — drop and let it be recreated below.
+                conn.execute(f"DROP TABLE IF EXISTS {_TABLE}")
+                conn.execute(f"DROP TABLE IF EXISTS {_TABLE}_data")
+                conn.execute(f"DROP TABLE IF EXISTS {_TABLE}_idx")
+                conn.execute(f"DROP TABLE IF EXISTS {_TABLE}_content")
+                conn.execute(f"DROP TABLE IF EXISTS {_TABLE}_docsize")
+                conn.execute(f"DROP TABLE IF EXISTS {_TABLE}_config")
+                conn.commit()
+    except Exception:  # noqa: BLE001
+        pass
     conn.execute(_CREATE_SQL)
     conn.execute(_CREATE_META_SQL)
     conn.commit()
@@ -111,13 +143,14 @@ def rebuild_from_jsonl(decisions_path: Path, index_path: Path) -> int:
                     continue
                 conn.execute(
                     f"INSERT INTO {_TABLE} "
-                    "(decision_id, decision, context, summary, tags) "
-                    "VALUES (?, ?, ?, ?, ?)",
+                    "(decision_id, decision, context, summary, file_path, tags) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
                     (
                         str(r.get("id", "")),
                         r.get("decision") or "",
                         r.get("context") or "",
                         _summary_or_first_chars(r),
+                        r.get("file_path") or "",
                         " ".join(r.get("tags") or []),
                     ),
                 )
@@ -155,13 +188,14 @@ def add_decision(index_path: Path, decision: dict[str, Any]) -> None:
             conn.execute(f"DELETE FROM {_TABLE} WHERE decision_id = ?", (did,))
             conn.execute(
                 f"INSERT INTO {_TABLE} "
-                "(decision_id, decision, context, summary, tags) "
-                "VALUES (?, ?, ?, ?, ?)",
+                "(decision_id, decision, context, summary, file_path, tags) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
                 (
                     did,
                     decision.get("decision") or "",
                     decision.get("context") or "",
                     _summary_or_first_chars(decision),
+                    decision.get("file_path") or "",
                     " ".join(decision.get("tags") or []),
                 ),
             )
@@ -205,7 +239,7 @@ def search(
             cursor = conn.execute(
                 f"""
                 SELECT decision_id,
-                       bm25({_TABLE}, 3.0, 1.5, 1.0, 0.0) AS score,
+                       bm25({_TABLE}, 3.0, 1.5, 1.0, 0.8, 0.0) AS score,
                        snippet({_TABLE}, 1, '[', ']', '…', 12) AS snippet
                 FROM {_TABLE}
                 WHERE {_TABLE} MATCH ?
@@ -282,29 +316,115 @@ def _summary_or_first_chars(record: dict[str, Any], cap: int = 80) -> str:
 
 
 def _sanitize_fts_query(query: str) -> str:
-    """Strip FTS5 operator chars unless the user wrote them deliberately.
+    """Build a relevance-search FTS5 query from user input.
 
-    FTS5 treats characters like ``"``, ``*``, ``(``, ``)``, ``-``, ``:``
-    as operators. A user query like ``"x.y.z"`` (with no quoting intent)
-    can blow up the parser. We quote the whole thing as a phrase if it
-    contains only "safe" characters; otherwise we pass through.
+    Produces an ``OR``-joined query over significant content words.
+    This means a document matching ANY of the query terms will be
+    returned and ranked by BM25 (most-matching docs score highest).
+    An AND query (the default when tokens are space-separated in FTS5)
+    is too strict for relevance injection — e.g. a prompt asking about
+    "bcrypt for password hashing" should still find the decision "use
+    bcrypt over argon2" even though "password" and "hashing" aren't in
+    the stored text.
 
-    Recovery: if our sanitized query still blows up, ``search()``
-    catches OperationalError and returns [].
+    Stopwords are stripped so common English connectives don't dominate
+    the match. Tokens under 3 chars are also skipped (too noisy).
+
+    Recovery: if the sanitized query blows up at the FTS5 layer,
+    ``search()`` catches OperationalError and returns [].
     """
+    _STOPWORDS = frozenset(
+        {
+            "a",
+            "an",
+            "the",
+            "is",
+            "it",
+            "in",
+            "on",
+            "at",
+            "to",
+            "for",
+            "of",
+            "or",
+            "and",
+            "but",
+            "if",
+            "do",
+            "did",
+            "we",
+            "i",
+            "you",
+            "he",
+            "she",
+            "they",
+            "what",
+            "how",
+            "why",
+            "when",
+            "where",
+            "this",
+            "that",
+            "with",
+            "from",
+            "by",
+            "as",
+            "be",
+            "was",
+            "are",
+            "about",
+            "have",
+            "has",
+            "had",
+            "not",
+            "can",
+            "will",
+            "would",
+            "should",
+            "could",
+            "our",
+            "their",
+            "which",
+            "who",
+            "get",
+            "use",
+            "used",
+            "any",
+            "all",
+            "my",
+            "your",
+            "its",
+            "been",
+            "into",
+            "let",
+            "also",
+            "just",
+            "so",
+            "up",
+            "out",
+            "there",
+            "then",
+        }
+    )
     stripped = query.strip()
     if not stripped:
         return ""
-    # Tokenize on whitespace; reject empty tokens; quote each as a phrase
-    # so dots/slashes/colons inside tokens don't confuse FTS5.
     tokens = []
     for raw in stripped.split():
-        # Strip outer quotes the user may have typed; we'll re-quote.
-        t = raw.strip('"').strip("'").strip()
-        # Drop any FTS5 operator chars from the middle of tokens.
+        # Strip trailing punctuation and outer quotes.
+        t = raw.strip("\"'.,;:!?()[]{}").strip()
+        # Drop FTS5 operator chars from the inside of tokens.
         for op_char in ('"', "(", ")", "*", ":", "^"):
             t = t.replace(op_char, " ")
         t = t.strip()
-        if t:
-            tokens.append(f'"{t}"')
-    return " ".join(tokens)
+        if not t:
+            continue
+        # Skip stopwords and very short tokens.
+        if t.lower() in _STOPWORDS or len(t) < 3:
+            continue
+        # Quote to protect embedded dots / slashes / hyphens.
+        tokens.append(f'"{t}"')
+    if not tokens:
+        return ""
+    # OR-join so ANY matching token scores the document.
+    return " OR ".join(tokens)

@@ -131,7 +131,7 @@ def record(
     )
     base_record["id"] = decision_id
 
-    # Best-effort manifest + FTS5 update (P9: never fail the write).
+    # Best-effort manifest + FTS5 + digest update (P9: never fail the write).
     try:
         manifest.incremental_add(paths.manifest_path(), base_record)
     except Exception as exc:  # noqa: BLE001
@@ -141,6 +141,14 @@ def record(
         fts5_index.add_decision(paths.fts5_path(), base_record)
     except Exception as exc:  # noqa: BLE001
         logger.warning("decisions_store.record: FTS5 update failed: %s", exc)
+
+    try:
+        # Incrementally append one digest entry so RelevanceInject can
+        # surface the summary without waiting for `codevira sync`.
+        digest_rec = digest.digest_record(base_record)
+        jsonl_store.append(paths.digest_path(), digest_rec)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("decisions_store.record: digest update failed: %s", exc)
 
     # Phase D — regenerate AGENTS.md so other AI tools (Copilot, Codex,
     # Cursor, Gemini, Factory, Amp, Windsurf, Zed, RooCode, Jules) see
@@ -208,6 +216,15 @@ def record_many(
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "decisions_store.record_many: FTS5 update failed for %s: %s",
+                did,
+                exc,
+            )
+        try:
+            digest_rec = digest.digest_record(rec)
+            jsonl_store.append(paths.digest_path(), digest_rec)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "decisions_store.record_many: digest update failed for %s: %s",
                 did,
                 exc,
             )

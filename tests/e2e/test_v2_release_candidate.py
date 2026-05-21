@@ -605,13 +605,13 @@ class TestC_FailureMode:
             dispatch,
         )
         from mcp_server.engine.events import EventType
-        from mcp_server.engine.policies.cross_session import CrossSessionConsistency
+        from mcp_server.engine.policies.relevance_inject import RelevanceInject
 
         # Sabotage Hero 5
         def crashing(self, event, signals=None):
             raise RuntimeError("stress test crash")
 
-        monkeypatch.setattr(CrossSessionConsistency, "evaluate", crashing)
+        monkeypatch.setattr(RelevanceInject, "evaluate", crashing)
 
         _set_project(monkeypatch, isolated_project)
         reset_policies()
@@ -769,12 +769,15 @@ class TestE_PublicAPIContract:
 
     def test_all_ten_heroes_exposed_in_policies_package(self):
         """Every hero class must be importable + a Policy subclass
-        (Hero 8 excepted — browse surface, not a Policy)."""
+        (Hero 8 excepted — browse surface, not a Policy).
+
+        v2.2.0: CrossSessionConsistency was replaced by RelevanceInject.
+        """
         from mcp_server.engine.policies import (
             AIPromotionScore,
             AntiRegression,
             BlastRadiusVeto,
-            CrossSessionConsistency,
+            RelevanceInject,
             DecisionLock,
             LiveStyleEnforcement,
             ProactiveIntentInference,
@@ -787,7 +790,7 @@ class TestE_PublicAPIContract:
             AIPromotionScore,
             AntiRegression,
             BlastRadiusVeto,
-            CrossSessionConsistency,
+            RelevanceInject,
             DecisionLock,
             LiveStyleEnforcement,
             ProactiveIntentInference,
@@ -1133,13 +1136,14 @@ class TestG_FinalDeepReAudit:
             AIPromotionScore,
             AntiRegression,
             BlastRadiusVeto,
-            CrossSessionConsistency,
+            RelevanceInject,
             DecisionLock,
             LiveStyleEnforcement,
             ProactiveIntentInference,
             ProactiveScopeContractLock,
             TokenBudgetPersist,
         )
+        from mcp_server.engine.policies.post_edit_refresh import PostEditGraphRefresh
 
         # Save originals
         originals = {}
@@ -1147,12 +1151,13 @@ class TestG_FinalDeepReAudit:
             AIPromotionScore,
             AntiRegression,
             BlastRadiusVeto,
-            CrossSessionConsistency,
+            RelevanceInject,
             DecisionLock,
             LiveStyleEnforcement,
             ProactiveIntentInference,
             ProactiveScopeContractLock,
             TokenBudgetPersist,
+            PostEditGraphRefresh,  # v2.1.2 Item 4 — must be included
         )
         for cls in all_heroes:
             originals[cls] = cls.enabled_by_default

@@ -20,6 +20,7 @@ mcp_server.engine`` fast.
 
 See docs/heroes/00-engine.md "Signals" for the full surface.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -100,14 +101,14 @@ class SignalContext:
         future daemon) need this.
         """
         try:
-            from indexer.sqlite_graph import SQLiteGraph  # local import — slow on cold path
+            from indexer.sqlite_graph import (
+                SQLiteGraph,
+            )  # local import — slow on cold path
             from mcp_server.paths import _sanitize_path_key, get_global_home
 
             # 1. Centralized location (v1.6+).
             key = _sanitize_path_key(self.project_root)
-            centralized = (
-                get_global_home() / "projects" / key / "graph" / "graph.db"
-            )
+            centralized = get_global_home() / "projects" / key / "graph" / "graph.db"
             if centralized.exists():
                 return SQLiteGraph(centralized)
 
@@ -225,30 +226,40 @@ class SignalContext:
         return result
 
     def search_decisions(
-        self, query: str, *, limit: int = 5,
+        self,
+        query: str,
+        *,
+        limit: int = 5,
     ) -> list[dict[str, Any]]:
-        """Substring-search decisions by query string.
+        """BM25-ranked FTS5 search over the JSONL decision store.
 
-        Used by Hero 5 (Cross-Session Consistency) to surface prior
-        decisions relevant to the current user prompt. Wraps
-        ``indexer.sqlite_graph.SQLiteGraph.search_decisions`` which does
-        relevance-tiered LIKE matching (file_path → decision text →
-        context → summary).
+        v2.2.0: uses ``mcp_server.storage.decisions_store.search()``
+        (JSONL + FTS5 backend) when the project has an initialised
+        ``.codevira/`` directory. Falls back to the legacy SQLiteGraph
+        path for projects that haven't been migrated.
 
         Cached by ``(query, limit)`` so multiple policies asking the
         same question pay once. Returns empty list on any error or
-        when graph is unavailable.
+        when no storage is available.
 
-        Limit is clamped to [1, 20] — same defensive bound as the
-        existing ``tools.search.search_decisions``.
+        Limit is clamped to [1, 20].
         """
-        # Cache + defensive clamp
         limit = max(1, min(int(limit), 20))
         cache_key = ("search", query, limit)
         cached = self._decisions_cache.get(cache_key)
         if cached is not None:
             return cached
         result: list[dict[str, Any]] = []
+        try:
+            from mcp_server.storage import decisions_store, paths as store_paths
+
+            if store_paths.is_initialized():
+                result = decisions_store.search(query, limit=limit)
+                self._decisions_cache[cache_key] = result
+                return result
+        except Exception:  # noqa: BLE001
+            pass
+        # Legacy fallback: graph.db (projects not yet running v2.2.0).
         try:
             graph = self.graph
             if graph is None:
@@ -276,6 +287,7 @@ class SignalContext:
         result: list[dict[str, Any]] = []
         try:
             from indexer.fix_history import lookup as fix_lookup
+
             result = fix_lookup(self.project_root, file_path)
         except Exception:  # noqa: BLE001
             result = []
@@ -338,6 +350,7 @@ class SignalContext:
             from mcp_server.engine.promotion_score import (
                 aggregate_decision_outcomes,
             )
+
             result = aggregate_decision_outcomes(
                 graph.conn,
                 since_days=since_days,
@@ -369,6 +382,7 @@ class SignalContext:
                 self._decisions_cache[cache_key] = result
                 return result
             from mcp_server.engine.promotion_score import top_rules
+
             result = top_rules(
                 graph.conn,
                 min_confidence=min_confidence,
@@ -394,6 +408,7 @@ class SignalContext:
         if self._token_budget is _UNCOMPUTED:
             try:
                 from mcp_server.engine.token_meter import get_session_meter
+
                 self._token_budget = get_session_meter()
             except Exception:  # noqa: BLE001
                 self._token_budget = None
@@ -415,6 +430,7 @@ class SignalContext:
         if self._scope_contract is _UNCOMPUTED:
             try:
                 from mcp_server.engine.scope_contract import current_contract
+
                 self._scope_contract = current_contract()
             except Exception:  # noqa: BLE001
                 self._scope_contract = None
@@ -430,6 +446,7 @@ class SignalContext:
         if self._current_session is _UNCOMPUTED:
             try:
                 from mcp_server.tools.learning import get_session_context  # type: ignore[attr-defined]
+
                 self._current_session = get_session_context() or {}
             except Exception:  # noqa: BLE001
                 self._current_session = {}

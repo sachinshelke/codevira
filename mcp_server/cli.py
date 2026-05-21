@@ -1128,6 +1128,46 @@ def main() -> None:
     # v2.2.0 has no semantic similarity threshold to calibrate (FTS5
     # uses BM25 with no learnable parameters).
 
+    # v2.2.0+ Phase 5: `uninstall` reverses every system write made by
+    # `init` and `setup`. Closes the audit's "uninstalling left junk"
+    # complaint — `pipx uninstall codevira` removes the venv but leaves
+    # ~15 system touch points behind. This sweeps all of them.
+    uninstall_parser = subparsers.add_parser(
+        "uninstall",
+        help="Reverse every system write made by codevira (IDE configs, hooks, data dirs)",
+        description=(
+            "Reverses every system write codevira has made: drops the "
+            "MCP entry from ~/.claude.json, deletes ~/.claude/hooks/"
+            "codevira-*.sh, strips codevira-tagged registrations from "
+            "~/.claude/settings.json, removes per-project .codevira/ "
+            "and .codevira-cache/ dirs (with prompt), and strips the "
+            "codevira block from each project's AGENTS.md (preserving "
+            "user content outside the marker boundaries). Optionally "
+            "deletes ~/.codevira/ entirely. After running, "
+            "`pipx uninstall codevira` is the only step left to fully "
+            "remove the binary."
+        ),
+    )
+    uninstall_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the plan; don't write anything",
+    )
+    uninstall_parser.add_argument(
+        "-y",
+        "--yes",
+        action="store_true",
+        help="Skip every confirmation prompt",
+    )
+    uninstall_parser.add_argument(
+        "--keep-data",
+        action="store_true",
+        help=(
+            "Don't touch ~/.codevira/ or per-project .codevira/ "
+            "directories (uninstalls IDE wiring only)"
+        ),
+    )
+
     engine_parser = subparsers.add_parser(
         "engine",
         help="Internal: lifecycle-hook engine entry (called by hook scripts)",
@@ -1161,7 +1201,15 @@ def main() -> None:
     # everything). Now every codevira invocation (except commands that have
     # their own bootstrap logic like `init`, `setup`, `clean`, `engine`) runs
     # the cheap synchronous repair first.
-    _NO_HEAL_COMMANDS = {"init", "setup", "clean", "engine", "register", "configure"}
+    _NO_HEAL_COMMANDS = {
+        "init",
+        "setup",
+        "clean",
+        "engine",
+        "register",
+        "configure",
+        "uninstall",  # don't bootstrap state on our way to wiping it
+    }
     if args.command and args.command not in _NO_HEAL_COMMANDS:
         try:
             from mcp_server.paths import (
@@ -1327,6 +1375,16 @@ def main() -> None:
         rc = cmd_observe_git(verbose=getattr(args, "verbose", False))
         sys.exit(rc)
     # v2.2.0+: `calibrate` dispatch deleted (parser + command removed).
+    elif args.command == "uninstall":
+        # v2.2.0+ Phase 5: surface-cut audit fix — clean uninstall path.
+        from mcp_server.cli_uninstall import cmd_uninstall
+
+        rc = cmd_uninstall(
+            dry_run=getattr(args, "dry_run", False),
+            yes=getattr(args, "yes", False),
+            keep_data=getattr(args, "keep_data", False),
+        )
+        sys.exit(rc)
     elif args.command == "engine":
         # Internal — Claude Code hook scripts call us with `engine handle <event>`.
         if getattr(args, "engine_action", None) == "handle":

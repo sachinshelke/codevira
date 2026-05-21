@@ -8,6 +8,7 @@ data structures.
 Tests use ``tmp_path`` plus monkey-patched ``Path.home()`` to keep
 the real ~/.claude / ~/.cursor / etc. untouched.
 """
+
 from __future__ import annotations
 
 import json
@@ -72,24 +73,28 @@ class TestIdempotency:
         )
 
         plan1 = build_setup_plan(
-            isolated, detected_ides=("claude",),
-            install_mcp=False, install_hooks=False,  # nudge files only — simpler
+            isolated,
+            detected_ides=("claude",),
+            install_mcp=False,
+            install_hooks=False,  # nudge files only — simpler
         )
         result1 = execute_plan(plan1)
         assert result1.all_succeeded
         assert any(r.action == "created" for r in result1.steps)
 
         plan2 = build_setup_plan(
-            isolated, detected_ides=("claude",),
-            install_mcp=False, install_hooks=False,
+            isolated,
+            detected_ides=("claude",),
+            install_mcp=False,
+            install_hooks=False,
         )
         result2 = execute_plan(plan2)
         assert result2.all_succeeded
         # Every step should be no_change — file exists, content matches
         for r in result2.steps:
-            assert r.action == "no_change", (
-                f"step {r.step.preview} reported {r.action} on idempotent re-run"
-            )
+            assert (
+                r.action == "no_change"
+            ), f"step {r.step.preview} reported {r.action} on idempotent re-run"
 
 
 # =====================================================================
@@ -98,12 +103,12 @@ class TestIdempotency:
 
 
 class TestPartialDetect:
-    def test_only_claude_detected_only_claude_configured(
-        self, isolated: Path
-    ):
+    def test_only_claude_detected_only_claude_configured(self, isolated: Path):
         plan = build_setup_plan(
-            isolated, detected_ides=("claude",),
-            install_mcp=False, install_hooks=False,
+            isolated,
+            detected_ides=("claude",),
+            install_mcp=False,
+            install_hooks=False,
         )
         # Should have exactly 1 nudge step (for claude) + maybe 1 AGENTS.md
         # fallback. No cursor/windsurf/antigravity steps.
@@ -122,8 +127,10 @@ class TestPartialDetect:
 class TestDryRun:
     def test_dry_run_touches_nothing(self, isolated: Path):
         plan = build_setup_plan(
-            isolated, detected_ides=("claude", "cursor"),
-            install_mcp=False, install_hooks=False,
+            isolated,
+            detected_ides=("claude", "cursor"),
+            install_mcp=False,
+            install_hooks=False,
         )
         # Snapshot the project tree
         before = self._tree_snapshot(isolated)
@@ -151,7 +158,8 @@ class TestDryRun:
 class TestNoHooks:
     def test_no_hooks_skips_hook_steps(self, isolated: Path):
         plan = build_setup_plan(
-            isolated, detected_ides=("claude",),
+            isolated,
+            detected_ides=("claude",),
             install_hooks=False,
             install_mcp=False,
         )
@@ -160,7 +168,8 @@ class TestNoHooks:
 
     def test_install_hooks_includes_all_5_events(self, isolated: Path):
         plan = build_setup_plan(
-            isolated, detected_ides=("claude",),
+            isolated,
+            detected_ides=("claude",),
             install_hooks=True,
             install_mcp=False,
             write_nudge_files=False,
@@ -177,7 +186,9 @@ class TestNoHooks:
 
 class TestMalformedConfig:
     def test_broken_settings_json_does_not_crash(
-        self, isolated: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         # Plant a broken settings.json
         claude_dir = Path.home() / ".claude"
@@ -185,22 +196,23 @@ class TestMalformedConfig:
         (claude_dir / "settings.json").write_text("{ this is not json")
 
         plan = build_setup_plan(
-            isolated, detected_ides=("claude",),
-            install_mcp=False, install_hooks=True, write_nudge_files=False,
+            isolated,
+            detected_ides=("claude",),
+            install_mcp=False,
+            install_hooks=True,
+            write_nudge_files=False,
         )
         result = execute_plan(plan)
         # The hook script copies should still succeed; only the
         # settings.json merge step should fail.
         script_results = [
-            r for r in result.steps
-            if r.step.target_path.name != "settings.json"
+            r for r in result.steps if r.step.target_path.name != "settings.json"
         ]
-        assert all(r.succeeded for r in script_results), (
-            "script-install steps must succeed even when settings.json is broken"
-        )
+        assert all(
+            r.succeeded for r in script_results
+        ), "script-install steps must succeed even when settings.json is broken"
         settings_results = [
-            r for r in result.steps
-            if r.step.target_path.name == "settings.json"
+            r for r in result.steps if r.step.target_path.name == "settings.json"
         ]
         assert len(settings_results) == 1
         assert not settings_results[0].succeeded
@@ -224,8 +236,10 @@ class TestPreservesUserContent:
         user_md.write_text(custom)
 
         plan = build_setup_plan(
-            isolated, detected_ides=("claude",),
-            install_mcp=False, install_hooks=False,
+            isolated,
+            detected_ides=("claude",),
+            install_mcp=False,
+            install_hooks=False,
         )
         result = execute_plan(plan)
         assert result.all_succeeded
@@ -247,7 +261,9 @@ class TestPreservesUserContent:
 
 class TestSelectiveIDE:
     def test_only_ides_filter_excludes_others(
-        self, isolated: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         # Mock detection so the wizard sees claude+cursor as installed
         monkeypatch.setattr(
@@ -258,8 +274,10 @@ class TestSelectiveIDE:
         assert detected == ("cursor",)
 
         plan = build_setup_plan(
-            isolated, detected_ides=detected,
-            install_mcp=False, install_hooks=False,
+            isolated,
+            detected_ides=detected,
+            install_mcp=False,
+            install_hooks=False,
         )
         ides_in_plan = {s.ide for s in plan.steps if s.kind == "nudge_file"}
         # Only cursor's file (no AGENTS.md fallback because cursor
@@ -268,7 +286,9 @@ class TestSelectiveIDE:
         assert "claude" not in ides_in_plan
 
     def test_unknown_ide_in_filter_raises(
-        self, isolated: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         monkeypatch.setattr(
             "mcp_server.ide_inject.detect_installed_ides",
@@ -285,7 +305,9 @@ class TestSelectiveIDE:
 
 class TestProjectRootGuard:
     def test_resolve_setup_target_rejects_home(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         home = tmp_path / "home"
         home.mkdir()
@@ -308,19 +330,22 @@ class TestPerformance:
     def test_plan_under_50ms(self, isolated: Path):
         """Plan-building must be fast — the spec budgets <50ms p95."""
         import time
+
         durations = []
         for _ in range(20):
             t = time.perf_counter()
             build_setup_plan(
-                isolated, detected_ides=("claude", "cursor", "windsurf",
-                                         "antigravity", "codex"),
+                isolated,
+                detected_ides=("claude", "cursor", "windsurf", "antigravity", "codex"),
             )
             durations.append((time.perf_counter() - t) * 1000)
         p95 = sorted(durations)[18]
         assert p95 < 50.0, f"build_setup_plan p95 = {p95:.1f}ms"
 
     def test_full_execute_under_5s(
-        self, isolated: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """Full execute on a 4-IDE detect must finish in < 5s.
 
@@ -329,8 +354,10 @@ class TestPerformance:
         path is fast.
         """
         import time
+
         plan = build_setup_plan(
-            isolated, detected_ides=("claude", "cursor", "windsurf", "codex"),
+            isolated,
+            detected_ides=("claude", "cursor", "windsurf", "codex"),
             install_mcp=False,  # avoids real ~/.codeium etc.
         )
         t = time.perf_counter()
@@ -348,8 +375,10 @@ class TestPerformance:
 class TestPlanDataStructures:
     def test_setup_step_is_frozen(self, isolated: Path):
         plan = build_setup_plan(
-            isolated, detected_ides=("claude",),
-            install_mcp=False, install_hooks=False,
+            isolated,
+            detected_ides=("claude",),
+            install_mcp=False,
+            install_hooks=False,
         )
         step = plan.steps[0]
         with pytest.raises((AttributeError, TypeError)):
@@ -357,8 +386,10 @@ class TestPlanDataStructures:
 
     def test_setup_plan_steps_is_tuple_not_list(self, isolated: Path):
         plan = build_setup_plan(
-            isolated, detected_ides=("claude",),
-            install_mcp=False, install_hooks=False,
+            isolated,
+            detected_ides=("claude",),
+            install_mcp=False,
+            install_hooks=False,
         )
         assert isinstance(plan.steps, tuple)
 
@@ -391,8 +422,11 @@ class TestExternalSchema:
         # isolated home, then run the registration installer.
         settings_path = Path.home() / ".claude" / "settings.json"
         step = SetupStep(
-            kind="hook", ide="claude", target_path=settings_path,
-            target_path_existed=False, will_merge=False,
+            kind="hook",
+            ide="claude",
+            target_path=settings_path,
+            target_path_existed=False,
+            will_merge=False,
             preview="Register codevira hooks",
         )
         result = _install_hook_registrations(step, dry_run=False)
@@ -410,19 +444,18 @@ class TestExternalSchema:
             )
             # The matcher is a regex; verify it matches our edit tools
             import re
+
             for tool in ("Edit", "Write", "MultiEdit"):
-                assert re.search(entry["matcher"], tool), (
-                    f"{event} matcher {entry['matcher']!r} doesn't match {tool}"
-                )
+                assert re.search(
+                    entry["matcher"], tool
+                ), f"{event} matcher {entry['matcher']!r} doesn't match {tool}"
             # Negative: should NOT match Read/Bash
             for tool in ("Read", "Bash", "Glob"):
-                assert not re.fullmatch(entry["matcher"], tool), (
-                    f"{event} matcher {entry['matcher']!r} unexpectedly matches {tool}"
-                )
+                assert not re.fullmatch(
+                    entry["matcher"], tool
+                ), f"{event} matcher {entry['matcher']!r} unexpectedly matches {tool}"
 
-    def test_session_lifecycle_events_have_no_matcher(
-        self, isolated: Path
-    ):
+    def test_session_lifecycle_events_have_no_matcher(self, isolated: Path):
         """SessionStart / UserPromptSubmit / Stop have no tool name —
         a matcher would never match. They must be registered without one.
         """
@@ -430,8 +463,12 @@ class TestExternalSchema:
 
         settings_path = Path.home() / ".claude" / "settings.json"
         step = SetupStep(
-            kind="hook", ide="claude", target_path=settings_path,
-            target_path_existed=False, will_merge=False, preview="...",
+            kind="hook",
+            ide="claude",
+            target_path=settings_path,
+            target_path_existed=False,
+            will_merge=False,
+            preview="...",
         )
         _install_hook_registrations(step, dry_run=False)
 
@@ -440,9 +477,9 @@ class TestExternalSchema:
             entries = data["hooks"][event]
             assert entries, f"no entries for {event}"
             entry = entries[0]
-            assert "matcher" not in entry, (
-                f"{event} should not have a matcher (no tool name in event)"
-            )
+            assert (
+                "matcher" not in entry
+            ), f"{event} should not have a matcher (no tool name in event)"
 
     def test_canonical_block_under_windsurf_12k_cap(self):
         """Windsurf enforces a 12,000-character workspace-rules limit.
@@ -450,6 +487,7 @@ class TestExternalSchema:
         under it with headroom for the IDE-specific wrapper. (Week-3 R8
         external-schema finding.)"""
         from mcp_server.agents_md import canonical_block_text, render_for_ide
+
         block = canonical_block_text()
         windsurf_text = render_for_ide("windsurf")
         assert len(block) < 11000, (
@@ -472,39 +510,20 @@ class TestCLIVisibility:
     command is deprecated.
     """
 
-    def test_register_help_shows_deprecation(self):
-        import subprocess
-        from pathlib import Path
-        venv_py = (
-            Path(__file__).resolve().parents[1] / ".venv" / "bin" / "python"
-        )
-        if not venv_py.exists():
-            import sys
-            venv_py = Path(sys.executable)
-        result = subprocess.run(
-            [str(venv_py), "-m", "mcp_server.cli", "register", "--help"],
-            capture_output=True, text=True, timeout=10,
-        )
-        assert result.returncode == 0, result.stderr
-        # The deprecation must be in the help output (subparser
-        # description), not only in the parent command's help= line.
-        assert "DEPRECATED" in result.stdout, (
-            f"`codevira register --help` does not surface deprecation: "
-            f"{result.stdout!r}"
-        )
-        assert "codevira setup" in result.stdout
+    # v2.2.0+: test_register_help_shows_deprecation removed.
+    # `register` itself was deleted (was deprecated in v2.0; finalized
+    # in surface-cut audit 2026-05-22). Use `codevira setup`.
 
 
 class TestSecurityHardening:
     """Week-3 R1 QA findings: marker-spoofing + symlink traversal."""
 
-    def test_inline_marker_in_user_prose_does_not_match(
-        self, isolated: Path
-    ):
+    def test_inline_marker_in_user_prose_does_not_match(self, isolated: Path):
         """User content with '<!-- codevira:start -->' inside a sentence
         must NOT trigger our regex replace (markers are line-anchored).
         """
         from mcp_server.agents_md import write_nudge_file
+
         target = isolated / "CLAUDE.md"
         # Plant content with the marker substring INLINE, not on its
         # own line. Regex must skip and append a fresh block.
@@ -529,9 +548,7 @@ class TestSecurityHardening:
             "<!-- codevira:end -->\n"
         )
 
-    def test_symlink_at_target_refused(
-        self, isolated: Path
-    ):
+    def test_symlink_at_target_refused(self, isolated: Path):
         """If CLAUDE.md is a symlink (potentially pointing outside
         the project), refuse to write through it.
         """
@@ -551,9 +568,7 @@ class TestSecurityHardening:
         # The outside file MUST be untouched
         assert outside.read_text() == "don't touch me"
 
-    def test_symlink_in_parent_dir_refused(
-        self, isolated: Path
-    ):
+    def test_symlink_in_parent_dir_refused(self, isolated: Path):
         """If a parent directory in the path is a symlink that escapes
         the project, refuse to write.
         """
@@ -579,9 +594,7 @@ class TestIntegrationFindings:
     that per-module unit tests didn't catch.
     """
 
-    def test_mcp_config_path_matches_inject_helper(
-        self, isolated: Path
-    ):
+    def test_mcp_config_path_matches_inject_helper(self, isolated: Path):
         """The wizard's preview path for each IDE must match the path
         the underlying ``inject_global_*`` helper actually writes to.
         Mismatch = misleading preview AND broken idempotency check.
@@ -590,10 +603,13 @@ class TestIntegrationFindings:
         """
         from mcp_server.setup_wizard import _mcp_config_path_for
         from mcp_server.ide_inject import (
-            _claude_global_config_path, _claude_desktop_config_path,
+            _claude_global_config_path,
+            _claude_desktop_config_path,
             _cursor_global_config_path,
-            _windsurf_global_config_path, _antigravity_config_path,
+            _windsurf_global_config_path,
+            _antigravity_config_path,
         )
+
         assert _mcp_config_path_for("claude") == _claude_global_config_path()
         assert _mcp_config_path_for("claude_desktop") == _claude_desktop_config_path()
         assert _mcp_config_path_for("cursor") == _cursor_global_config_path()
@@ -608,6 +624,7 @@ class TestIntegrationFindings:
         """
         from mcp_server.setup_wizard import _mcp_config_path_for
         from mcp_server.ide_inject import _claude_desktop_config_path
+
         result = _mcp_config_path_for("claude_desktop")
         assert result is not None, (
             "claude_desktop must produce a planned MCP-config path; "
@@ -622,10 +639,12 @@ class TestIntegrationFindings:
         run — this is a contract test, not an integration test.
         """
         from mcp_server import setup_wizard
+
         # The dispatcher dict is constructed inside _execute_mcp_config.
         # Read the source to ensure both keys are present (cheap regex
         # check is fine — change-detector but pinned to the bug shape).
         import inspect
+
         src = inspect.getsource(setup_wizard._execute_mcp_config)
         assert '"claude_desktop"' in src, (
             "Bug 6b regression: _execute_mcp_config dispatcher must "
@@ -636,15 +655,14 @@ class TestIntegrationFindings:
             "inject_global_claude_desktop"
         )
 
-    def test_nudge_write_is_atomic_no_temp_files_on_success(
-        self, isolated: Path
-    ):
+    def test_nudge_write_is_atomic_no_temp_files_on_success(self, isolated: Path):
         """I7 finding C.2: nudge writes use temp-then-rename so a
         Ctrl-C mid-write doesn't corrupt the target. Verify the
         success path leaves NO leftover temp file (the rename
         transferred ownership) and the target has the right content.
         """
         from mcp_server.agents_md import write_nudge_file
+
         result = write_nudge_file("claude", isolated)
         assert result.action == "created"
 
@@ -655,20 +673,20 @@ class TestIntegrationFindings:
 
         # No leftover .CLAUDE.md.* temp files (atomic rename succeeded)
         leftovers = [
-            p for p in isolated.iterdir()
+            p
+            for p in isolated.iterdir()
             if p.name.startswith(".CLAUDE.md.") and p.name.endswith(".tmp")
         ]
-        assert not leftovers, (
-            f"atomic write left temp files behind: {[p.name for p in leftovers]}"
-        )
+        assert (
+            not leftovers
+        ), f"atomic write left temp files behind: {[p.name for p in leftovers]}"
 
-    def test_atomic_write_helper_writes_correctly(
-        self, tmp_path: Path
-    ):
+    def test_atomic_write_helper_writes_correctly(self, tmp_path: Path):
         """Direct test of the _atomic_write_text helper: writes the
         right bytes, leaves no temp residue, returns correct byte count.
         """
         from mcp_server.agents_md import _atomic_write_text
+
         target = tmp_path / "subdir" / "out.txt"  # parent doesn't exist yet
         content = "héllo, wörld\n" * 100
         n = _atomic_write_text(target, content)
@@ -745,9 +763,7 @@ class TestIntegrationFindings:
         assert not target.exists()
         # No temp leftovers
         leftovers = list(tmp_path.glob(".out.txt.*.tmp"))
-        assert not leftovers, (
-            f"failed atomic write left temp files: {leftovers}"
-        )
+        assert not leftovers, f"failed atomic write left temp files: {leftovers}"
 
     def test_idempotent_rerun_reports_no_change_on_mcp_config(
         self, isolated: Path, monkeypatch: pytest.MonkeyPatch
@@ -767,19 +783,22 @@ class TestIntegrationFindings:
         )
 
         plan1 = build_setup_plan(
-            isolated, detected_ides=("claude",),
-            install_hooks=False, write_nudge_files=False,
+            isolated,
+            detected_ides=("claude",),
+            install_hooks=False,
+            write_nudge_files=False,
         )
         result1 = execute_plan(plan1)
         # First run: at least one step that's not no_change/skipped
         assert any(
-            r.action not in ("no_change", "skipped")
-            for r in result1.steps
+            r.action not in ("no_change", "skipped") for r in result1.steps
         ), f"first run did nothing: {[r.action for r in result1.steps]}"
 
         plan2 = build_setup_plan(
-            isolated, detected_ides=("claude",),
-            install_hooks=False, write_nudge_files=False,
+            isolated,
+            detected_ides=("claude",),
+            install_hooks=False,
+            write_nudge_files=False,
         )
         result2 = execute_plan(plan2)
         # Second run: every MCP config step must be no_change
@@ -794,7 +813,9 @@ class TestIntegrationFindings:
 
 class TestColdInstall:
     def test_cmd_setup_yes_succeeds_end_to_end(
-        self, isolated: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated: Path,
+        monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture,
     ):
         """Cold-install scenario from the spec: --yes returns 0
@@ -822,7 +843,9 @@ class TestColdInstall:
         assert "Codevira — persistent project memory" in content
 
     def test_cmd_setup_no_ides_detected_returns_zero(
-        self, isolated: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """If no AI tools detected, exit 0 cleanly with a message."""
         monkeypatch.setattr(

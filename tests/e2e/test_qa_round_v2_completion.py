@@ -128,32 +128,11 @@ class TestA_DoctorCircuitIntegration:
 
 
 class TestB_AgentsDoctorContract:
-    def test_agents_creates_files_doctor_acknowledges(
-        self,
-        isolated_project: Path,
-    ):
-        """If `codevira agents` writes nudge files for all detected
-        IDEs, then `codevira doctor`'s check_nudge_files should not
-        report missing nudge files for those same IDEs."""
-        from mcp_server.cli_agents import cmd_agents
-        from mcp_server.doctor import check_nudge_files
-
-        # Generate every nudge file
-        rc = cmd_agents(out=io.StringIO())
-        assert rc == 0
-
-        # Doctor's check should pass (or warn for non-detected IDEs only)
-        result = check_nudge_files()
-        # On a real machine some IDEs may not be detected, so the most
-        # we can assert: result does NOT FAIL.
-        assert result.state in ("PASS", "WARN")
-        # If it warns, the missing list shouldn't include 'claude' since
-        # we just wrote CLAUDE.md.
-        if result.state == "WARN":
-            assert "claude " not in (result.details or ""), (
-                f"agents-CLI / doctor contract drift: doctor says claude "
-                f"missing but agents-CLI wrote CLAUDE.md. details: {result.details}"
-            )
+    # v2.2.0+: test_agents_creates_files_doctor_acknowledges removed.
+    # The `codevira agents` CLI was deleted in the 2026-05-22 surface-cut
+    # audit (per-IDE nudge files collapsed to AGENTS.md only, which
+    # `codevira init` regenerates).
+    pass
 
 
 # =====================================================================
@@ -177,10 +156,10 @@ class TestC_Bug8ParityAcrossAllCLIs:
 
     # v2.2.0+: `insights` removed from the CLI (Hero 10 + cli_insights
     # deleted per 2026-05-22 surface-cut audit).
+    # v2.2.0+: `agents` removed; only `replay` remains with --project.
     @pytest.mark.parametrize(
         "subcommand_args",
         [
-            ["agents", "--project", "/etc"],
             ["replay", "--project", "/etc", "--ascii"],
         ],
     )
@@ -318,33 +297,9 @@ class TestE_SqliteUtilOnRealGraph:
 
 
 class TestF_AllPhasesCoexist:
-    def test_doctor_runs_clean_on_fresh_install_with_agents_files(
-        self,
-        isolated_project: Path,
-    ):
-        """End-to-end: setup-style flow.
-
-        1. Run codevira agents (Phase 1) — write nudge files
-        2. Run codevira doctor (Phase 3) — verify everything green
-        3. Doctor must NOT fail (PASS or WARN only, never FAIL)
-        """
-        from mcp_server.cli_agents import cmd_agents
-        from mcp_server.doctor import cmd_doctor
-
-        # Phase 1: write nudge files
-        rc1 = cmd_agents(out=io.StringIO())
-        assert rc1 == 0
-
-        # Phase 3: health check on the result
-        out = io.StringIO()
-        rc2 = cmd_doctor(out=out)
-        # rc2 may be 0 (clean) or 1 (some FAIL, e.g., graph.db not yet
-        # created — that's fine for this test, we just check the doctor
-        # ran end-to-end without exceptions).
-        assert rc2 in (0, 1)
-        text = out.getvalue()
-        assert "Codevira health check" in text
-        assert "summary:" in text
+    # v2.2.0+: test_doctor_runs_clean_on_fresh_install_with_agents_files
+    # removed — `codevira agents` deleted in 2026-05-22 surface-cut audit.
+    # The doctor-runs-clean coverage is provided by test_doctor.py.
 
     def test_universality_e2e_works_alongside_doctor(
         self,

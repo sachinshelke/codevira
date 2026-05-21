@@ -16,8 +16,6 @@ retrospective) FROM THE START:
 from __future__ import annotations
 
 import json
-import os
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -172,139 +170,11 @@ class TestAcceptanceScenarios:
             # No persist metadata on pass-through
             assert "persisted" not in verdict.metadata
 
-    def test_5_budget_cli_no_sessions_yet(
-        self,
-        isolated_project: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ):
-        """End-to-end CLI test via subprocess. With no sessions
-        recorded, the CLI prints a friendly empty-state message and
-        exits 0."""
-        # HOME is the parent of fake .codevira (so Path.home() in subprocess
-        # resolves to the dir whose .codevira/ matches our test data).
-        env = {**os.environ, "HOME": str(isolated_project.parent / "home")}
-        venv_py = Path(__file__).resolve().parents[2] / ".venv" / "bin" / "python"
-        result = subprocess.run(
-            [
-                str(venv_py),
-                "-m",
-                "mcp_server.cli",
-                "--project-dir",
-                str(isolated_project),
-                "budget",
-            ],
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        assert result.returncode == 0
-        assert "No sessions recorded yet" in result.stdout
+    # v2.2.0+: test_5_budget_cli_no_sessions_yet removed (budget CLI deleted in surface-cut audit).
 
-    def test_6_budget_cli_after_session_persists(
-        self,
-        isolated_project: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ):
-        """End-to-end: persist a session via the policy, then read
-        it back via the CLI subprocess."""
-        from mcp_server.engine.token_meter import (
-            get_or_create_session_meter,
-            reset_meters,
-        )
+    # v2.2.0+: test_6_budget_cli_after_session_persists removed (budget CLI deleted in surface-cut audit).
 
-        reset_meters()
-        m = get_or_create_session_meter("cli-test-session")
-        m.record_injected(800, source="search_decisions")
-        m.record_used(400, source="search_decisions")
-        m.record_injected(200, source="get_impact")
-        m.record_used(50, source="get_impact")
-
-        policy = TokenBudgetPersist()
-        event = _make_stop_event(
-            session_id="cli-test-session",
-            project_root=isolated_project,
-        )
-        policy.evaluate(event, None)
-
-        # HOME is the parent of fake .codevira (so Path.home() in subprocess
-        # resolves to the dir whose .codevira/ matches our test data).
-        env = {**os.environ, "HOME": str(isolated_project.parent / "home")}
-        venv_py = Path(__file__).resolve().parents[2] / ".venv" / "bin" / "python"
-        result = subprocess.run(
-            [
-                str(venv_py),
-                "-m",
-                "mcp_server.cli",
-                "--project-dir",
-                str(isolated_project),
-                "budget",
-            ],
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        assert result.returncode == 0
-        # Session totals visible in output
-        assert "cli-test-session" in result.stdout
-        assert "1,000" in result.stdout  # 800 + 200 = 1000 injected
-        assert "450" in result.stdout  # 400 + 50 = 450 used
-        # Top wasted source surfaces
-        assert "get_impact" in result.stdout
-
-    def test_7_budget_history_last_n(
-        self,
-        isolated_project: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ):
-        """Persist 10 sessions, request --last 5, verify 5 newest."""
-        from mcp_server.engine.token_meter import (
-            get_or_create_session_meter,
-            reset_meters,
-        )
-
-        reset_meters()
-        for i in range(10):
-            m = get_or_create_session_meter(f"sess-{i:02}")
-            m.record_injected(100 * (i + 1))
-            policy = TokenBudgetPersist()
-            event = _make_stop_event(
-                session_id=f"sess-{i:02}",
-                project_root=isolated_project,
-            )
-            policy.evaluate(event, None)
-
-        # HOME is the parent of fake .codevira (so Path.home() in subprocess
-        # resolves to the dir whose .codevira/ matches our test data).
-        env = {**os.environ, "HOME": str(isolated_project.parent / "home")}
-        venv_py = Path(__file__).resolve().parents[2] / ".venv" / "bin" / "python"
-        result = subprocess.run(
-            [
-                str(venv_py),
-                "-m",
-                "mcp_server.cli",
-                "--project-dir",
-                str(isolated_project),
-                "budget",
-                "history",
-                "--last",
-                "5",
-            ],
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        assert result.returncode == 0
-        # 5 newest are sess-09, sess-08, ..., sess-05
-        for i in range(5, 10):
-            assert f"sess-{i:02}" in result.stdout, f"sess-{i:02} missing from output"
-        # Older 5 should NOT appear
-        for i in range(5):
-            assert (
-                f"sess-{i:02}" not in result.stdout
-            ), f"sess-{i:02} unexpectedly in 'last 5' output"
+    # v2.2.0+: test_7_budget_history_last_n removed (budget CLI deleted in surface-cut audit).
 
     def test_8_evaluate_under_5ms_p99(self, isolated_project: Path):
         import time
@@ -587,63 +457,7 @@ class TestEngineDispatch:
 
 
 class TestEdgeCases:
-    def test_corrupt_jsonl_doesnt_crash_cli(
-        self,
-        isolated_project: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ):
-        """token_budget.jsonl with malformed lines: CLI must skip
-        bad lines, show valid ones."""
-        from mcp_server.paths import _sanitize_path_key, get_global_home
-
-        log_dir = (
-            get_global_home()
-            / "projects"
-            / _sanitize_path_key(isolated_project.resolve())
-            / "logs"
-        )
-        log_dir.mkdir(parents=True, exist_ok=True)
-        log_path = log_dir / "token_budget.jsonl"
-        # 3 bad lines + 1 good
-        lines = [
-            "{not valid json",
-            "][[][][",
-            "",
-            json.dumps(
-                {
-                    "session_id": "good",
-                    "ended_at": 1730764800.0,
-                    "injected_total": 100,
-                    "used_total": 50,
-                    "efficiency": 0.5,
-                    "top_wasted_sources": [],
-                }
-            ),
-        ]
-        log_path.write_text("\n".join(lines) + "\n")
-
-        # HOME is the parent of fake .codevira (so Path.home() in subprocess
-        # resolves to the dir whose .codevira/ matches our test data).
-        env = {**os.environ, "HOME": str(isolated_project.parent / "home")}
-        venv_py = Path(__file__).resolve().parents[2] / ".venv" / "bin" / "python"
-        result = subprocess.run(
-            [
-                str(venv_py),
-                "-m",
-                "mcp_server.cli",
-                "--project-dir",
-                str(isolated_project),
-                "budget",
-            ],
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        assert result.returncode == 0
-        assert "good" in result.stdout
-        # Doesn't crash on the malformed lines
-        assert "Traceback" not in result.stderr
+    # v2.2.0+: test_corrupt_jsonl_doesnt_crash_cli removed (budget CLI deleted in surface-cut audit).
 
     def test_session_with_zero_tokens_persists_cleanly(
         self,
@@ -672,17 +486,4 @@ class TestEdgeCases:
         assert verdict.metadata["injected_total"] == 0
         assert verdict.metadata["used_total"] == 0
 
-    def test_clamp_last_to_valid_range(
-        self,
-        isolated_project: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ):
-        """--last 0 → clamp to 1; --last 99999 → clamp to 100."""
-        from mcp_server.cli_budget import _clamp_last
-
-        assert _clamp_last(-5) == 1
-        assert _clamp_last(0) == 1
-        assert _clamp_last(1) == 1
-        assert _clamp_last(50) == 50
-        assert _clamp_last(100) == 100
-        assert _clamp_last(99999) == 100
+    # v2.2.0+: test_clamp_last_to_valid_range removed (budget CLI deleted in surface-cut audit).

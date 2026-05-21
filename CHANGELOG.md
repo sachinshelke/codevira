@@ -11,6 +11,112 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+> Post-2.2.0 changes pending the next tag. The 2026-05-22 surface-cut
+> audit produced these focused deletions on top of the v2.2.0 shape
+> shipped 2026-05-20. They land as `unreleased` until the next minor
+> bump (planned v2.2.1 once dogfood signal stabilizes).
+>
+> See `docs/audit-2026-05-22.md` for the audit synthesis and
+> `docs/surface-cuts-2026-05-22.md` for the per-item kill list.
+
+### Added
+
+- **`codevira uninstall` command (Phase 5).** Reverses every system
+  write made by `codevira init` / `codevira setup`: drops the MCP
+  entry from `~/.claude.json`, deletes `~/.claude/hooks/codevira-*.sh`,
+  strips codevira-tagged registrations from `~/.claude/settings.json`,
+  removes per-project `.codevira/` + `.codevira-cache/` dirs, and
+  strips the codevira marker block from each project's `AGENTS.md`
+  (preserves user content outside the markers byte-for-byte). Optional
+  `--keep-data` skips per-user `~/.codevira/`. Closes the audit's
+  "uninstalling left junk" complaint — `pipx uninstall codevira` used
+  to leave ~15 system touch points behind.
+- **Legacy per-IDE nudge back-compat sweep** in `codevira uninstall`:
+  for upgraders from v2.1.x, also strips codevira marker blocks from
+  `CLAUDE.md`, `GEMINI.md`, `.cursor/rules/codevira.mdc`,
+  `.windsurfrules`, `.github/copilot-instructions.md`.
+- **`record_decision` MCP tool forwards `tags` and `force`** — these
+  were silently dropped by the dispatch layer before; now agents'
+  tag intent actually persists when loop-calling the endpoint.
+
+### Changed
+
+- **Per-IDE nudge files collapsed to AGENTS.md only (batch 5).** The
+  setup wizard now writes exactly one nudge file (`AGENTS.md` via
+  the `mcp_server.storage.agents_md_generator`) regardless of which
+  IDEs are detected. Every modern AI tool reads AGENTS.md natively;
+  the per-IDE duplicates (`CLAUDE.md` / `GEMINI.md` / `.cursor/rules/
+  codevira.mdc` / `.windsurfrules` / `.github/copilot-instructions.md`)
+  were pure surface bloat. Per-IDE MCP configuration writes are
+  intentionally retained — they're the cross-IDE memory wedge.
+- **`codevira doctor`'s `nudge_files` check** rewritten to verify
+  AGENTS.md only; fix command updated from the deleted `codevira
+  agents` to `codevira sync`.
+
+### Removed
+
+- **9 vestigial CLI subcommands deleted (batch 4b):** `heal`,
+  `budget`, `agents`, `hooks`, `register`, `configure`, `report`,
+  `calibrate`. The remaining 15 cover every documented user workflow.
+  `report` folded into `doctor`; `register` / `configure` / `hooks` /
+  `agents` folded into `init` / `setup`.
+- **9 vestigial MCP tools deleted (batch 4a):** `update_node`,
+  `list_nodes`, `add_node`, `export_graph`, `get_graph_diff`,
+  `get_decision_confidence`, `get_project_maturity`, `analyze_changes`,
+  `find_hotspots`. All flagged by the audit as near-zero usage with no
+  clear use case.
+- **Preferences + learned rules surface deleted (batch 2):**
+  `get_preferences`, `get_learned_rules`, `retire_rule` MCP tools
+  plus the underlying preference inference / rule-extraction pipeline.
+  The audit found these returned noise more often than signal.
+- **4 dead engine policies deleted (batch 3):** `LiveStyleEnforcement`,
+  `AIPromotionScore`, `ProactiveIntentInference`,
+  `ProactiveScopeContractLock`. Default policy set: 6
+  (`BlastRadiusVeto`, `DecisionLock`, `RelevanceInject`,
+  `TokenBudgetPersist`, `AntiRegression`, `PostEditGraphRefresh`).
+- **Changesets feature deleted (batch 1):** `start_changeset`,
+  `update_changeset_progress`, `complete_changeset`,
+  `list_open_changesets` MCP tools + the underlying storage. The
+  audit found 4 tools / 0 real users.
+- **Per-IDE nudge generator deleted (batch 5):**
+  `mcp_server/agents_md.py` (~470 LOC) + 7 templates. The new
+  `storage/agents_md_generator.py` generates `AGENTS.md` content
+  directly from `decisions.jsonl`.
+- **5 redundant MCP tools deleted (batch 6):** `record_decisions` and
+  `write_session_logs` (batch endpoints agents never used; loop
+  single-record calls instead), `mark_decision_protected` (use
+  `supersede_decision(..., do_not_revert=True)` for the same flip +
+  audit trail), `refresh_index` (chromadb-era; `refresh_graph` was
+  always the separate code-graph refresh tool callers wanted),
+  `get_full_roadmap` (duplicate of `get_roadmap` with a flag).
+
+### Counts
+
+- MCP tools: 46 → **25** (-46%) across batches 1, 2, 4a, 6
+- CLI subcommands: 23 → **15** (-35%) in batch 4b
+- Engine policies: 10 → **6** (-40%) in batch 3
+- Per-project nudge files: 6 → **1** (-83%) in batch 5
+- Templates shipped in the wheel: 7 → **0** (deleted) in batch 5
+
+### Migration notes
+
+Most deletions have a clear successor above. Two with non-obvious
+mappings:
+
+- **From `mark_decision_protected(id, True)`** →
+  `supersede_decision(old_id=id, new_decision=<text>, reason=<why>,
+  do_not_revert=True)`. The supersede path gives you the audit trail
+  (why you flipped the flag) that the standalone tool didn't.
+- **From `record_decisions(decisions=[...])`** → for d in decisions:
+  `record_decision(**d)`. The audit found agents called single-record
+  in practice anyway, so this is the actually-used pattern.
+
+The `codevira uninstall` command picks up any legacy artifacts on
+disk from earlier versions (per-IDE nudge files, etc.) so users
+upgrading don't need to hand-clean.
+
+---
+
 ## [2.2.0] — 2026-05-20 — Lean (in-repo, no chromadb, token-optimized)
 
 > The biggest architectural change since v2.0. Decisions move from

@@ -86,9 +86,7 @@ def _file_exists_at_head(project_root: Path, file_path: str) -> bool:
     return (project_root / file_path).is_file()
 
 
-def _commit_at_or_before(
-    project_root: Path, file_path: str, iso_ts: str
-) -> str | None:
+def _commit_at_or_before(project_root: Path, file_path: str, iso_ts: str) -> str | None:
     """Return the commit SHA touching ``file_path`` on or before ``iso_ts``.
 
     Used as the proxy "when the decision was recorded" anchor. If the
@@ -118,9 +116,7 @@ def _commit_at_or_before(
     return first[0] if first else None
 
 
-def _file_changed_since(
-    project_root: Path, file_path: str, since_commit: str
-) -> bool:
+def _file_changed_since(project_root: Path, file_path: str, since_commit: str) -> bool:
     """True iff ``file_path`` changed between ``since_commit`` and HEAD."""
     diff = _run_git(
         ["diff", "--name-only", f"{since_commit}..HEAD", "--", file_path],
@@ -129,9 +125,7 @@ def _file_changed_since(
     return bool(diff.strip())
 
 
-def _classify_decision(
-    project_root: Path, decision: dict[str, Any]
-) -> str | None:
+def _classify_decision(project_root: Path, decision: dict[str, Any]) -> str | None:
     """Return outcome type (kept / modified / reverted) for a decision.
 
     Returns None if the decision has no file_path or we can't classify
@@ -224,15 +218,17 @@ def observe_all(*, project_root: Path | None = None) -> dict[str, Any]:
         if d.get("outcome") == outcome_type:
             continue
 
-        new_outcomes.append({
-            "ts": datetime.now(timezone.utc).isoformat(),
-            "decision_id": d.get("id"),
-            "outcome_type": outcome_type,
-            "git_ref": head_sha[:12] if head_sha else None,
-            "delta_summary": (
-                f"file {d.get('file_path')} → {outcome_type} as of HEAD"
-            ),
-        })
+        new_outcomes.append(
+            {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "decision_id": d.get("id"),
+                "outcome_type": outcome_type,
+                "git_ref": head_sha[:12] if head_sha else None,
+                "delta_summary": (
+                    f"file {d.get('file_path')} → {outcome_type} as of HEAD"
+                ),
+            }
+        )
 
         # Also append an amendment to decisions.jsonl so the merged view
         # carries the latest outcome (drives digest.weight).
@@ -256,9 +252,7 @@ def observe_all(*, project_root: Path | None = None) -> dict[str, Any]:
                 paths.digest_path(project_root),
             )
         except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "outcomes_writer.observe_all: digest regen failed: %s", exc
-            )
+            logger.warning("outcomes_writer.observe_all: digest regen failed: %s", exc)
 
     return {
         "decisions_observed": len(active),
@@ -283,7 +277,7 @@ def cmd_observe_git(*, verbose: bool = False) -> int:
     print()
     print("  Codevira — Observe (git)")
     print(f"  HEAD: {summary.get('head_sha') or 'unknown'}")
-    print(f"  " + "─" * 60)
+    print("  " + "─" * 60)
     print()
     print(f"    Decisions observed: {summary['decisions_observed']}")
     print(f"      • kept:           {summary['kept']}")

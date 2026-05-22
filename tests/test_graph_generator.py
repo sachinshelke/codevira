@@ -4,6 +4,7 @@ Tests for indexer.graph_generator — graph node generation and SQLite graph bui
 Mocks treesitter_parser at the sys.modules level before importing graph_generator,
 since it has a module-level `from indexer.treesitter_parser import ...`.
 """
+
 from __future__ import annotations
 
 import sys
@@ -20,8 +21,10 @@ _fake_ts.parse_file = lambda *a, **kw: None  # type: ignore[attr-defined]
 _fake_ts.get_language = lambda ext: None  # type: ignore[attr-defined]
 _fake_ts.EXTENSION_MAP = {}  # type: ignore[attr-defined]
 
-# ParsedSymbol is referenced by _get_python_symbols_detailed at runtime
-from dataclasses import dataclass, field as _field
+# ParsedSymbol is referenced by _get_python_symbols_detailed at runtime;
+# the import is intentionally late so the stub-module assembly above
+# completes first (test-file pattern; the import order isn't a smell here).
+from dataclasses import dataclass, field as _field  # noqa: E402
 
 
 @dataclass
@@ -153,13 +156,7 @@ class TestGetPythonDocstring:
 class TestGetPythonPublicSymbols:
     def test_functions_and_classes(self, tmp_path):
         py = tmp_path / "mixed.py"
-        py.write_text(
-            "def public_func():\n"
-            "    pass\n"
-            "\n"
-            "class PublicClass:\n"
-            "    pass\n"
-        )
+        py.write_text("def public_func():\n    pass\n\nclass PublicClass:\n    pass\n")
         result = _get_python_public_symbols(str(py))
         assert "public_func" in result
         assert "PublicClass" in result
@@ -196,11 +193,7 @@ class TestGetPythonPublicSymbols:
     def test_nested_functions_not_included(self, tmp_path):
         """Only top-level definitions are listed."""
         py = tmp_path / "nested.py"
-        py.write_text(
-            "def outer():\n"
-            "    def inner():\n"
-            "        pass\n"
-        )
+        py.write_text("def outer():\n    def inner():\n        pass\n")
         result = _get_python_public_symbols(str(py))
         assert "outer" in result
         # inner is nested inside outer's body — not a top-level body statement
@@ -271,11 +264,7 @@ class TestGenerateGraphNode:
         models_dir = project / "src" / "models"
         models_dir.mkdir(parents=True, exist_ok=True)
         py = models_dir / "user.py"
-        py.write_text(
-            '"""User model."""\n'
-            "class User:\n"
-            "    pass\n"
-        )
+        py.write_text('"""User model."""\nclass User:\n    pass\n')
 
         node = generate_graph_node("src/models/user.py", str(project))
         assert node["layer"] == "database"
@@ -326,15 +315,9 @@ class TestGenerateGraphSqlite:
         src = project / "src"
         src.mkdir(parents=True, exist_ok=True)
         (src / "alpha.py").write_text(
-            '"""Alpha module."""\n'
-            "def do_alpha():\n"
-            "    pass\n"
+            '"""Alpha module."""\ndef do_alpha():\n    pass\n'
         )
-        (src / "beta.py").write_text(
-            '"""Beta module."""\n'
-            "def do_beta():\n"
-            "    pass\n"
-        )
+        (src / "beta.py").write_text('"""Beta module."""\ndef do_beta():\n    pass\n')
 
         db_path = str(data_dir / "graph" / "graph.db")
         db.close()
@@ -363,7 +346,8 @@ class TestGenerateGraphSqlite:
 
         db_path = str(data_dir / "graph" / "graph.db")
         db.close()
-        stats = generate_graph_sqlite(str(project), db_path)
+        # Result intentionally unused — test checks via verify_db below.
+        _ = generate_graph_sqlite(str(project), db_path)
 
         verify_db = SQLiteGraph(db_path)
         node_nm = verify_db.get_node("file:node_modules/pkg/index.py")
@@ -381,7 +365,8 @@ class TestGenerateGraphSqlite:
 
         db_path = str(data_dir / "graph" / "graph.db")
         db.close()
-        stats = generate_graph_sqlite(str(project), db_path)
+        # Result intentionally unused — test checks via verify_db below.
+        _ = generate_graph_sqlite(str(project), db_path)
 
         verify_db = SQLiteGraph(db_path)
         node_venv = verify_db.get_node("file:.venv/lib/something.py")
@@ -398,8 +383,12 @@ class TestGenerateGraphSqlite:
 
         # Pre-add a node so it already exists
         db.add_node(
-            "file:src/existing.py", "file", "existing.py", "src/existing.py",
-            layer="core", role="Already here.",
+            "file:src/existing.py",
+            "file",
+            "existing.py",
+            "src/existing.py",
+            layer="core",
+            role="Already here.",
         )
         db.close()
 
@@ -484,6 +473,7 @@ class TestGetPythonSymbolsDetailed:
     def test_extracts_function_with_params_and_calls(self, tmp_path):
         """_get_python_symbols_detailed extracts functions with parameters and call info."""
         from indexer.graph_generator import _get_python_symbols_detailed
+
         py_file = tmp_path / "service.py"
         py_file.write_text(
             """def process(data: dict, timeout: int = 30) -> str:
@@ -506,6 +496,7 @@ class TestGetPythonSymbolsDetailed:
     def test_extracts_class_with_methods(self, tmp_path):
         """Classes are extracted with methods list."""
         from indexer.graph_generator import _get_python_symbols_detailed
+
         py_file = tmp_path / "handler.py"
         py_file.write_text(
             """class Handler:
@@ -530,6 +521,7 @@ class TestGetPythonSymbolsDetailed:
     def test_private_functions_excluded(self, tmp_path):
         """Functions starting with _ are excluded from symbols."""
         from indexer.graph_generator import _get_python_symbols_detailed
+
         py_file = tmp_path / "util.py"
         py_file.write_text(
             """def public_fn():
@@ -547,6 +539,7 @@ def _private_fn():
     def test_syntax_error_returns_empty_list(self, tmp_path):
         """File with syntax errors returns empty symbol list."""
         from indexer.graph_generator import _get_python_symbols_detailed
+
         py_file = tmp_path / "broken.py"
         py_file.write_text("def broken(\n    missing_paren")
         symbols = _get_python_symbols_detailed(str(py_file))
@@ -554,6 +547,7 @@ def _private_fn():
 
     def test_empty_file_returns_empty_list(self, tmp_path):
         from indexer.graph_generator import _get_python_symbols_detailed
+
         py_file = tmp_path / "empty.py"
         py_file.write_text("")
         symbols = _get_python_symbols_detailed(str(py_file))
@@ -562,6 +556,7 @@ def _private_fn():
     def test_function_with_docstring_extracts_first_line(self, tmp_path):
         """Multi-line docstrings: only first line stored."""
         from indexer.graph_generator import _get_python_symbols_detailed
+
         py_file = tmp_path / "multi_doc.py"
         py_file.write_text(
             """def fn():
@@ -587,6 +582,7 @@ class TestGenerateRoadmapStub:
         """generate_roadmap_stub creates a valid YAML roadmap file."""
         from indexer.graph_generator import generate_roadmap_stub
         import yaml
+
         output = tmp_path / "roadmap.yaml"
 
         with patch("subprocess.check_output", return_value=b"Initial commit"):
@@ -601,6 +597,7 @@ class TestGenerateRoadmapStub:
     def test_skips_if_output_exists(self, tmp_path):
         """generate_roadmap_stub does nothing if output_path already exists."""
         from indexer.graph_generator import generate_roadmap_stub
+
         output = tmp_path / "roadmap.yaml"
         output.write_text("existing: content")
 
@@ -613,6 +610,7 @@ class TestGenerateRoadmapStub:
         """When git log fails, uses default description."""
         from indexer.graph_generator import generate_roadmap_stub
         import yaml
+
         output = tmp_path / "roadmap.yaml"
 
         with patch("subprocess.check_output", side_effect=Exception("not a git repo")):
@@ -620,11 +618,15 @@ class TestGenerateRoadmapStub:
 
         assert output.exists()
         data = yaml.safe_load(output.read_text())
-        assert data["current_phase"]["description"] == "Bootstrap project and core architecture."
+        assert (
+            data["current_phase"]["description"]
+            == "Bootstrap project and core architecture."
+        )
 
     def test_creates_parent_dirs(self, tmp_path):
         """generate_roadmap_stub creates parent directories if needed."""
         from indexer.graph_generator import generate_roadmap_stub
+
         output = tmp_path / "deep" / "nested" / "roadmap.yaml"
 
         with patch("subprocess.check_output", side_effect=Exception("no git")):
@@ -665,7 +667,11 @@ def _private_helper():
         # Verify the symbol was added
         db = SQLiteGraph(tmp_path / "graph.db")
         cur = db.conn.execute("SELECT name FROM symbols WHERE name = 'get_users'")
-        row = cur.fetchone()
+        # The result is intentionally unused — the assertion is just
+        # that the query doesn't raise. Whether the symbol row exists
+        # depends on whether _get_python_symbols_detailed was invoked
+        # by this codepath, which the test doesn't pin down.
+        _ = cur.fetchone()
         db.close()
         # Symbol should exist if _get_python_symbols_detailed was called
         # (may or may not exist depending on schema — just verify no crash)

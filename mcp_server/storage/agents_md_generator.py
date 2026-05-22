@@ -240,11 +240,40 @@ def _merge_into_file(target_path: Path, block: str) -> None:
             after = existing[after_start:]
             new_content = before + block + after
 
-    # Atomic write via tmp + rename so a concurrent reader never sees
-    # a half-written AGENTS.md.
-    tmp = target_path.with_suffix(target_path.suffix + ".tmp")
-    tmp.write_text(new_content, encoding="utf-8")
-    tmp.replace(target_path)
+    # v3.0.0 (2026-05-22 round-2): atomic write via UNIQUE tmp + rename.
+    # Pre-fix the tmp suffix was a fixed ``.tmp`` — two concurrent
+    # regenerate() calls (which happens when record_decision auto-syncs)
+    # would race: thread A's tmp got consumed by its own replace(),
+    # thread B's later replace() raised FileNotFoundError. The user's
+    # decision data still landed safely (the JSONL append uses fcntl
+    # locking), but AGENTS.md got partial / lost updates. Per-call
+    # unique tmp via tempfile.mkstemp closes that gap.
+    import os
+    import tempfile
+
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{target_path.name}.",
+        suffix=".tmp",
+        dir=str(target_path.parent),
+    )
+    tmp_path: str | None = tmp_name
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(new_content)
+            fh.flush()
+            try:
+                os.fsync(fh.fileno())
+            except OSError:
+                pass
+        os.replace(tmp_path, target_path)
+        tmp_path = None  # ownership transferred
+    finally:
+        if tmp_path is not None:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
 
 def regenerate(*, target_path: Path | None = None) -> dict[str, Any]:

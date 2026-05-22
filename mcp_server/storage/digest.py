@@ -107,6 +107,9 @@ def regenerate(
     Atomic via write-to-tmp + rename (so a concurrent reader never sees
     a half-written digest).
     """
+    import os
+    import tempfile
+
     decisions = jsonl_store.read_all(decisions_path)
     digest_records: list[dict[str, Any]] = []
     for d in decisions:
@@ -116,18 +119,32 @@ def regenerate(
             continue
         digest_records.append(digest_record(d))
 
-    tmp = digest_path.with_suffix(digest_path.suffix + ".tmp")
-    tmp.parent.mkdir(parents=True, exist_ok=True)
-    if tmp.exists():
-        tmp.unlink()
-    if digest_records:
-        # Use append_many on the tmp path so the atomic write semantics
-        # apply (lock + fsync) even though we're rebuilding from scratch.
-        jsonl_store.append_many(tmp, digest_records)
-    else:
-        # append_many on an empty list is a no-op (doesn't create the
-        # file); we still need an empty file for the rename to succeed
-        # and for downstream code to see "digest exists, no records."
-        tmp.touch()
-    tmp.replace(digest_path)
+    # v3.0.0 (2026-05-22 round-2): per-write UNIQUE tmp filename so two
+    # concurrent regenerate() calls don't race on the rename target.
+    # Pre-fix the tmp was a fixed ``<digest_path>.tmp`` — thread A's
+    # tmp got consumed by its own replace(), thread B's later replace()
+    # raised FileNotFoundError. Caught by the 50-thread record_decision
+    # smoke test (which triggers regenerate via _sync_agents_md_best_effort).
+    digest_path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{digest_path.name}.",
+        suffix=".tmp",
+        dir=str(digest_path.parent),
+    )
+    os.close(fd)  # close mkstemp's fd; append_many opens its own
+    tmp_path = Path(tmp_name)
+    try:
+        if digest_records:
+            # append_many provides the lock + fsync semantics; we just
+            # need it on the unique tmp file.
+            jsonl_store.append_many(tmp_path, digest_records)
+        # If no records, the empty mkstemp file is already valid.
+        os.replace(tmp_name, digest_path)
+        tmp_name = None  # ownership transferred
+    finally:
+        if tmp_name is not None:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
     return len(digest_records)

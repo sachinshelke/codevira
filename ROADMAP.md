@@ -200,6 +200,62 @@ Stay local. Stay focused on the one developer working on their machine.
 
 ---
 
+## ✅ v3.0.0 — Audit, lean, opinionated (May 22 2026)
+
+Major version. Biggest API contraction since v2.0 shipped — driven
+by a 2026-05-22 surface-cut audit that traced 5 categories of user
+complaints to overgrown surface, false-positive IDE detections, and
+"junk left behind" after uninstall. All five categories fixed.
+
+Headline cuts (v2.1.x → v3.0.0):
+
+| Surface                       | v2.1.x  | v3.0.0    | Δ      |
+|-------------------------------|---------|-----------|--------|
+| MCP tools                     | 46      | 25        | -46%   |
+| CLI subcommands               | 23      | 15        | -35%   |
+| Engine policies               | 10      | 6         | -40%   |
+| Per-project nudge files       | 6       | 1         | -83%   |
+| MCP prompt library            | 5       | 1         | -80%   |
+| Pipx install size             | ~450 MB | ~83 MB    | -82%   |
+| MCP server startup            | 1–3 s   | <100 ms   | -97%   |
+
+Key changes:
+
+- **IDE auto-detection hardened.** STRONG signals only (binary on
+  PATH + valid config file). v2.x weak signals (empty `~/.cursor/`
+  dir, parent of Claude Desktop's config) deleted. New ``--force``
+  flag is the escape hatch for the rare case detection misses an
+  install. ``--ide cursor`` on a Cursor-less machine no longer
+  silently fails — it raises a clear error.
+- **Per-IDE nudge files collapsed to AGENTS.md only.** Setup writes
+  exactly one nudge file regardless of detected IDEs. Per-IDE
+  duplicates (`CLAUDE.md` / `GEMINI.md` / `.windsurfrules` etc.)
+  were pure surface bloat.
+- **`codevira uninstall` shipped.** Reverses every system write
+  made by `init`/`setup`. Optional `--keep-data`. Closes the
+  "uninstalling left junk" complaint.
+- **21 MCP tools deleted** across changesets, preferences,
+  learned_rules, project_maturity, list_nodes / add_node /
+  update_node / export_graph, batch endpoints, mark_decision_protected
+  (use `supersede_decision(..., do_not_revert=True)` for the same
+  flip + audit trail).
+- **8 CLI subcommands deleted**: heal (use `reset`), budget, agents,
+  hooks, register, configure, report (folded into doctor), calibrate.
+- **4 engine policies deleted**: LiveStyleEnforcement,
+  AIPromotionScore, ProactiveIntentInference,
+  ProactiveScopeContractLock.
+- **Dead-code sweep**: ~3,800 LOC removed after the audit surfaced
+  internal helpers + tests for deleted features. `indexer/rule_learner.py`
+  deleted. 7 SQLiteGraph methods deleted (tables stay for back-compat).
+  `mcp_server/engine/signals.py::preferences` (broken — imported a
+  non-existent symbol) deleted.
+
+Full plan + audit: [`docs/audit-2026-05-22.md`](docs/audit-2026-05-22.md)
++ [`docs/surface-cuts-2026-05-22.md`](docs/surface-cuts-2026-05-22.md).
+Full v3.0.0 entry in [CHANGELOG.md](CHANGELOG.md).
+
+---
+
 ## ✅ v2.2.0 — Lean (May 2026)
 
 Architectural pivot. ~3,800 LOC deleted, ~150 MB runtime deps removed.

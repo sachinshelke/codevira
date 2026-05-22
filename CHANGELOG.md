@@ -11,13 +11,35 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-> Post-2.2.0 changes pending the next tag. The 2026-05-22 surface-cut
-> audit produced these focused deletions on top of the v2.2.0 shape
-> shipped 2026-05-20. They land as `unreleased` until the next minor
-> bump (planned v2.2.1 once dogfood signal stabilizes).
+(no unreleased changes pending)
+
+---
+
+## [3.0.0] — 2026-05-22 — Lean, audited, opinionated
+
+> **Major version bump.** This is the biggest API contraction since
+> v2.0 shipped: 21 MCP tools deleted, 8 CLI subcommands deleted,
+> per-IDE nudge file matrix collapsed to AGENTS.md only, IDE
+> detection hardened from "directory exists" to "binary on PATH +
+> valid config file." The cuts are subtractive — any v2.x user who
+> upgrades will lose surface they MAY have been using. SemVer
+> requires the major bump.
 >
-> See `docs/audit-2026-05-22.md` for the audit synthesis and
-> `docs/surface-cuts-2026-05-22.md` for the per-item kill list.
+> The driver: a 2026-05-22 surface-cut audit (see
+> `docs/audit-2026-05-22.md`) traced 5 categories of user
+> complaints to overgrown surface, false-positive IDE detections,
+> and "junk left behind" after uninstall. v3.0.0 fixes all five
+> categories. See `docs/surface-cuts-2026-05-22.md` for the
+> per-item kill list.
+>
+> v3.0.0 includes everything in the unreleased v2.2.0+ work plus
+> two additional pieces:
+>   - Full dead-code sweep across the whole repo (~3,800 lines
+>     removed) after the surface cuts surfaced obviously-dead
+>     internal helpers
+>   - IDE auto-detection hardened: strong signals only, ``--force``
+>     escape hatch, no more silent-filter on `--ide` for
+>     undetected IDEs
 
 ### Added
 
@@ -31,77 +53,158 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `--keep-data` skips per-user `~/.codevira/`. Closes the audit's
   "uninstalling left junk" complaint — `pipx uninstall codevira` used
   to leave ~15 system touch points behind.
+
+- **`codevira setup --force`.** Escape hatch for the rare case where
+  codevira's IDE detector misses an install (portable binary not on
+  PATH, non-standard config location). Without ``--force``, passing
+  `--ide cursor` on a machine where Cursor isn't auto-detected raises
+  a clear error pointing at the flag. The v2.x silent-filter behavior
+  (which made ``setup --ide cursor`` exit 0 with no output and no
+  config on Cursor-less machines) is gone.
+
 - **Legacy per-IDE nudge back-compat sweep** in `codevira uninstall`:
   for upgraders from v2.1.x, also strips codevira marker blocks from
   `CLAUDE.md`, `GEMINI.md`, `.cursor/rules/codevira.mdc`,
   `.windsurfrules`, `.github/copilot-instructions.md`.
-- **`record_decision` MCP tool forwards `tags` and `force`** — these
-  were silently dropped by the dispatch layer before; now agents'
-  tag intent actually persists when loop-calling the endpoint.
+
+- **`record_decision` MCP tool now forwards `tags` and `force`** —
+  these were silently dropped by the dispatch layer in v2.x; now
+  agents' tag intent actually persists when loop-calling the endpoint.
 
 ### Changed
 
-- **Per-IDE nudge files collapsed to AGENTS.md only (batch 5).** The
-  setup wizard now writes exactly one nudge file (`AGENTS.md` via
-  the `mcp_server.storage.agents_md_generator`) regardless of which
-  IDEs are detected. Every modern AI tool reads AGENTS.md natively;
-  the per-IDE duplicates (`CLAUDE.md` / `GEMINI.md` / `.cursor/rules/
-  codevira.mdc` / `.windsurfrules` / `.github/copilot-instructions.md`)
-  were pure surface bloat. Per-IDE MCP configuration writes are
-  intentionally retained — they're the cross-IDE memory wedge.
+- **IDE auto-detection hardened (mcp_server/ide_inject.py).** Each
+  detector now requires a STRONG signal: either the IDE's binary on
+  PATH, or a verified config file (not just a parent dir). v2.x had
+  three WEAK detectors (Claude Desktop, Antigravity, Continue.dev)
+  that fired on the presence of an empty directory — false positives
+  that caused codevira to write MCP config for IDEs the user never
+  installed. v3.0.0 cross-checks.
+
+  | IDE             | v2.x signal                    | v3.0.0 signal                                    |
+  |-----------------|--------------------------------|--------------------------------------------------|
+  | Claude Code     | `.claude/ OR claude on PATH`   | `claude on PATH`                                 |
+  | Claude Desktop  | parent dir of config exists    | config FILE exists AND parses as JSON            |
+  | Cursor          | `~/.cursor/ OR cursor on PATH` | `~/.cursor/ AND (mcp.json OR cursor on PATH)`    |
+  | Windsurf        | `~/.windsurf/ OR ~/.codeium/…` | actual mcp_config.json exists in either location |
+  | Antigravity     | `~/.gemini/ exists`            | `~/.gemini/antigravity/mcp_config.json exists`   |
+
+- **`setup_wizard.detect_targets`** raises a clear ``ValueError`` on
+  `--ide <name>` for known IDEs that weren't auto-detected (use
+  `--force` to override). v2.x silently filtered the request, which
+  produced the worst possible UX: command exit 0 with no output.
+
+- **Per-IDE nudge files collapsed to AGENTS.md only.** The setup
+  wizard now writes exactly one nudge file (`AGENTS.md` via the new
+  `mcp_server.storage.agents_md_generator`) regardless of which IDEs
+  are detected. Per-IDE duplicates (`CLAUDE.md` / `GEMINI.md` /
+  `.cursor/rules/codevira.mdc` / `.windsurfrules` /
+  `.github/copilot-instructions.md`) were pure surface bloat — every
+  modern AI tool reads AGENTS.md natively.
+
 - **`codevira doctor`'s `nudge_files` check** rewritten to verify
-  AGENTS.md only; fix command updated from the deleted `codevira
-  agents` to `codevira sync`.
+  AGENTS.md only; fix command updated to `codevira sync`.
+
+- **`mcp_server.global_sync`** gutted from a 187-line bidirectional
+  preference + rule sync to a ~90-LOC project-registry helper. New
+  primary entry: ``register_current_project()``. v2.x
+  ``import_global_to_project`` kept as a back-compat alias.
+
+- **MCP prompt library** pruned from 5 templates to 1
+  (``onboard_session``). The 4 deleted templates referenced MCP tools
+  that the audit deleted (analyze_changes, find_hotspots,
+  get_learned_rules, get_preferences, get_project_maturity,
+  list_open_changesets, export_graph, list_nodes, search_codebase).
 
 ### Removed
 
-- **9 vestigial CLI subcommands deleted (batch 4b):** `heal`,
-  `budget`, `agents`, `hooks`, `register`, `configure`, `report`,
-  `calibrate`. The remaining 15 cover every documented user workflow.
-  `report` folded into `doctor`; `register` / `configure` / `hooks` /
-  `agents` folded into `init` / `setup`.
-- **9 vestigial MCP tools deleted (batch 4a):** `update_node`,
-  `list_nodes`, `add_node`, `export_graph`, `get_graph_diff`,
-  `get_decision_confidence`, `get_project_maturity`, `analyze_changes`,
-  `find_hotspots`. All flagged by the audit as near-zero usage with no
-  clear use case.
-- **Preferences + learned rules surface deleted (batch 2):**
-  `get_preferences`, `get_learned_rules`, `retire_rule` MCP tools
-  plus the underlying preference inference / rule-extraction pipeline.
-  The audit found these returned noise more often than signal.
-- **4 dead engine policies deleted (batch 3):** `LiveStyleEnforcement`,
-  `AIPromotionScore`, `ProactiveIntentInference`,
-  `ProactiveScopeContractLock`. Default policy set: 6
-  (`BlastRadiusVeto`, `DecisionLock`, `RelevanceInject`,
-  `TokenBudgetPersist`, `AntiRegression`, `PostEditGraphRefresh`).
-- **Changesets feature deleted (batch 1):** `start_changeset`,
-  `update_changeset_progress`, `complete_changeset`,
-  `list_open_changesets` MCP tools + the underlying storage. The
-  audit found 4 tools / 0 real users.
-- **Per-IDE nudge generator deleted (batch 5):**
-  `mcp_server/agents_md.py` (~470 LOC) + 7 templates. The new
-  `storage/agents_md_generator.py` generates `AGENTS.md` content
-  directly from `decisions.jsonl`.
-- **5 redundant MCP tools deleted (batch 6):** `record_decisions` and
-  `write_session_logs` (batch endpoints agents never used; loop
-  single-record calls instead), `mark_decision_protected` (use
+**MCP tools (46 → 25, –46%):**
+
+- Batch 1 — Changesets:
+  `start_changeset`, `update_changeset_progress`, `complete_changeset`,
+  `list_open_changesets` (entire feature; ~zero real users).
+- Batch 2 — Preferences + learned rules:
+  `get_preferences`, `get_learned_rules`, `retire_rule` (auto-extracted
+  signals were noise more than signal).
+- Batch 4a — Vestigial graph helpers:
+  `update_node`, `list_nodes`, `add_node`, `export_graph`,
+  `get_graph_diff`, `get_decision_confidence`, `get_project_maturity`,
+  `analyze_changes`, `find_hotspots`.
+- Batch 6 — Redundant / FOLD candidates:
+  `record_decisions` (batch — loop single-record instead),
+  `write_session_logs` (batch — same),
+  `mark_decision_protected` (use
   `supersede_decision(..., do_not_revert=True)` for the same flip +
-  audit trail), `refresh_index` (chromadb-era; `refresh_graph` was
-  always the separate code-graph refresh tool callers wanted),
+  audit trail),
+  `refresh_index` (chromadb-era; `refresh_graph` is the still-active
+  code-graph refresh tool),
   `get_full_roadmap` (duplicate of `get_roadmap` with a flag).
 
-### Counts
+**CLI subcommands (23 → 15, –35%, batch 4b):**
 
-- MCP tools: 46 → **25** (-46%) across batches 1, 2, 4a, 6
-- CLI subcommands: 23 → **15** (-35%) in batch 4b
-- Engine policies: 10 → **6** (-40%) in batch 3
-- Per-project nudge files: 6 → **1** (-83%) in batch 5
-- Templates shipped in the wheel: 7 → **0** (deleted) in batch 5
+- `heal`, `budget`, `agents`, `hooks`, `register`, `configure`,
+  `report`, `calibrate`, `insights`. Folded into `init` / `setup` /
+  `doctor` where they had real successors; deleted outright where
+  they had ~zero real usage.
+
+**Engine policies (10 → 6, –40%, batch 3):**
+
+- `LiveStyleEnforcement`, `AIPromotionScore`, `ProactiveIntentInference`,
+  `ProactiveScopeContractLock`. Default policy set:
+  `BlastRadiusVeto`, `DecisionLock`, `RelevanceInject`,
+  `TokenBudgetPersist`, `AntiRegression`, `PostEditGraphRefresh`.
+
+**Per-project nudge files (6 → 1, –83%, batch 5):**
+
+- `mcp_server/agents_md.py` (the legacy per-IDE nudge writer) + 7
+  templates (`claude_md.tmpl`, `cursor_rules.mdc.tmpl`,
+  `windsurfrules.tmpl`, `gemini_md.tmpl`,
+  `copilot_instructions.tmpl`, `agents_md.tmpl`,
+  `canonical_block.md`). The v3.0.0 `storage/agents_md_generator.py`
+  generates AGENTS.md content directly from `decisions.jsonl`.
+
+**Dead-code sweep (after audit deletions):**
+
+- `indexer/rule_learner.py` (~250 LOC; consumed only by deleted MCP
+  tools).
+- 7 dead functions in `mcp_server/tools/graph.py` (~408 LOC).
+- 7 dead methods in `indexer/sqlite_graph.py` (preferences +
+  learned_rules + project_maturity tables stay in the schema for
+  back-compat but are never written or read).
+- `mcp_server/tools/learning.py::get_project_maturity` +
+  `_compute_maturity_score` / `_maturity_level` / `_maturity_hint`.
+- `mcp_server/engine/signals.py::SignalContext.preferences`
+  (was broken — imported a non-existent symbol; v2.x would have
+  crashed on first call from any consuming policy).
+- `mcp_server/engine/signals.py::SignalContext.outcomes` +
+  `.learned_rules` (no-op stubs after batch 3).
+- 15 dead test classes across the test suite (matched to deleted
+  features).
+
+**IDE detector entries:**
+
+- `continue.dev` and `aider` no longer in the detector output. Neither
+  had a codevira-configurable integration path; their entries existed
+  only as advisory listings (pure noise).
+
+### Counts (v2.1.x → v3.0.0)
+
+| Surface                         | v2.1.x       | v3.0.0     | Δ      |
+|---------------------------------|--------------|------------|--------|
+| MCP tools                       | 46           | 25         | -46%   |
+| CLI subcommands                 | 23           | 15         | -35%   |
+| Engine policies                 | 10           | 6          | -40%   |
+| Per-project nudge files         | 6            | 1          | -83%   |
+| Templates shipped in the wheel  | 7            | 0          | n/a    |
+| MCP prompt library              | 5            | 1          | -80%   |
+| Pipx install size               | ~450 MB      | ~83 MB     | -82%   |
+| MCP server startup              | 1–3 s        | <100 ms    | -97%   |
+| Tests (passing)                 | 2354         | 1870 + 72  | rebased |
 
 ### Migration notes
 
-Most deletions have a clear successor above. Two with non-obvious
-mappings:
+Most deletions have a clear successor in this file's `### Removed`
+sections. Two with non-obvious mappings:
 
 - **From `mark_decision_protected(id, True)`** →
   `supersede_decision(old_id=id, new_decision=<text>, reason=<why>,
@@ -114,6 +217,19 @@ mappings:
 The `codevira uninstall` command picks up any legacy artifacts on
 disk from earlier versions (per-IDE nudge files, etc.) so users
 upgrading don't need to hand-clean.
+
+For IDE detection changes: if you previously relied on codevira
+configuring Claude Desktop / Antigravity / Cursor based on the
+presence of a directory, you may now need to either:
+(a) actually install the IDE so the binary is on PATH (or so the
+    relevant config file exists), OR
+(b) re-run `codevira setup --ide <name> --force` to override the
+    detector and configure anyway.
+
+The strict mode is the right default. The audit found false-positive
+configurations (codevira injected into IDEs the user never installed)
+were a real churn driver — silently writing config for absent apps
+makes users distrust the tool.
 
 ---
 

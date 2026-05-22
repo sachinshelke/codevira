@@ -34,6 +34,7 @@ Failure-mode policy (P4 + P9):
 from __future__ import annotations
 
 import json
+import os
 import sys
 import sqlite3
 from datetime import datetime, timezone
@@ -166,16 +167,31 @@ def export_decisions_to_path(
                 rows = _dump_table_as_json(conn, table)
                 payload["tables"][table] = rows
                 summary["tables"][table] = len(rows)
-            # Atomic write via tmp + rename (P3 alignment with ide_inject).
-            tmp = out_path.with_suffix(out_path.suffix + ".tmp")
-            tmp.write_text(json.dumps(payload, indent=2, default=str))
-            tmp.replace(out_path)
+            # v3.0.0 round-3: shared atomic-write helper (was a fixed
+            # ``.tmp`` suffix — same race shape as the manifest bug).
+            from mcp_server.storage.atomic import atomic_write_text
+
+            atomic_write_text(
+                out_path,
+                json.dumps(payload, indent=2, default=str),
+            )
 
         elif format == "sql":
             # SQL dump preserves schema + FK relationships. iterdump
-            # yields every CREATE / INSERT in one stream.
-            tmp = out_path.with_suffix(out_path.suffix + ".tmp")
-            with open(tmp, "w") as f:
+            # yields every CREATE / INSERT in one stream — we stream
+            # to a unique tmp file (mkstemp) and rename into place so
+            # large exports don't have to fit in memory and concurrent
+            # invocations can't race on the rename target.
+            import tempfile as _tempfile
+
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            fd, tmp_name = _tempfile.mkstemp(
+                prefix=f".{out_path.name}.",
+                suffix=".tmp",
+                dir=str(out_path.parent),
+            )
+            tmp = Path(tmp_name)
+            with os.fdopen(fd, "w") as f:
                 f.write(f"-- codevira export ({summary['exported_at']})\n")
                 f.write(f"-- source: {graph_db_path}\n")
                 f.write(f"-- target: {target}\n\n")
@@ -204,7 +220,12 @@ def export_decisions_to_path(
                             continue
                     f.write(line + "\n")
                 f.write("COMMIT;\n")
-            tmp.replace(out_path)
+                f.flush()
+                try:
+                    os.fsync(f.fileno())
+                except OSError:
+                    pass
+            os.replace(str(tmp), str(out_path))
             # For SQL dumps, table counts are not directly available;
             # estimate via re-counting from the source.
             for table in tables_to_dump:

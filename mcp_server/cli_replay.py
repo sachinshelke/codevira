@@ -166,7 +166,9 @@ def cmd_replay(
 
     if out_file is not None:
         try:
-            Path(out_file).write_text(rendered, encoding="utf-8")
+            from mcp_server.storage.atomic import atomic_write_text
+
+            atomic_write_text(Path(out_file), rendered)
             # P1-7 (rc.5): report BYTES, not character count. The previous
             # code used len(rendered) which is the number of Unicode code
             # points — but multibyte UTF-8 characters (📌 emoji etc. in the

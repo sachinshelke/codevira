@@ -157,7 +157,9 @@ def migrate_to_centralized(project_root: Path) -> dict:
         "migrated_at": datetime.now(timezone.utc).isoformat(),
         "version": _codevira_version(),
     }
-    (centralized / "metadata.json").write_text(json.dumps(metadata, indent=2))
+    from mcp_server.storage.atomic import atomic_write_text
+
+    atomic_write_text(centralized / "metadata.json", json.dumps(metadata, indent=2))
 
     # 6. Update global.db project registry
     gdb = None

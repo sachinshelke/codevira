@@ -296,8 +296,12 @@ def _write_config(data_dir: Path, detected: dict, project_root: Path) -> None:
             "collection_name": detected["collection_name"],
         }
     }
-    with open(data_dir / "config.yaml", "w") as f:
-        yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+    from mcp_server.storage.atomic import atomic_write_text
+
+    atomic_write_text(
+        data_dir / "config.yaml",
+        yaml.dump(config, default_flow_style=False, sort_keys=False),
+    )
 
 
 def _codevira_version() -> str:
@@ -323,7 +327,9 @@ def _write_metadata(data_dir: Path, project_root: Path) -> None:
         "version": _codevira_version(),
         "auto_initialized": True,
     }
-    (data_dir / "metadata.json").write_text(json.dumps(metadata, indent=2))
+    from mcp_server.storage.atomic import atomic_write_text
+
+    atomic_write_text(data_dir / "metadata.json", json.dumps(metadata, indent=2))
 
 
 def _register_global(data_dir: Path, project_root: Path, detected: dict) -> None:

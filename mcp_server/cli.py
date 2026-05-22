@@ -211,17 +211,23 @@ def cmd_init() -> None:
     # Try to copy example config as base, then merge project settings
     pkg_config_example = get_package_data_dir() / "config.example.yaml"
     config_path = data_dir / "config.yaml"
+    from mcp_server.storage.atomic import atomic_write_text
+
     if pkg_config_example.exists():
         shutil.copy(pkg_config_example, config_path)
         # Merge project section on top
         with open(config_path) as f:
             base = yaml.safe_load(f) or {}
         base.update(config)
-        with open(config_path, "w") as f:
-            yaml.dump(base, f, default_flow_style=False, sort_keys=False)
+        atomic_write_text(
+            config_path,
+            yaml.dump(base, default_flow_style=False, sort_keys=False),
+        )
     else:
-        with open(config_path, "w") as f:
-            yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+        atomic_write_text(
+            config_path,
+            yaml.dump(config, default_flow_style=False, sort_keys=False),
+        )
 
     print()
 
@@ -314,8 +320,10 @@ def cmd_init() -> None:
                 if "codevira" not in existing.lower():
                     hook_path.rename(hook_path.with_suffix(".bak"))
 
-            hook_path.write_text(hook_content)
-            hook_path.chmod(0o755)
+            from mcp_server.storage.atomic import atomic_write_text
+
+            # 0o755 so git can exec the hook; mode applied post-rename.
+            atomic_write_text(hook_path, hook_content, mode=0o755)
             print("done")
         except Exception as e:
             print(f"skipped ({e})")

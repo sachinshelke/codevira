@@ -17,6 +17,7 @@ from indexer.treesitter_parser import (
 from indexer.sqlite_graph import SQLiteGraph
 from indexer.chunker import extract_imports
 
+
 def _infer_layer(file_path: str) -> str:
     path = file_path.lower()
     if any(x in path for x in ["/api/", "/controllers/", "/routers/", "/routes/"]):
@@ -33,6 +34,7 @@ def _infer_layer(file_path: str) -> str:
         return "test"
     return "core"
 
+
 def _get_python_docstring(file_path: str) -> str | None:
     try:
         with open(file_path, "r", encoding="utf-8") as f:
@@ -43,6 +45,7 @@ def _get_python_docstring(file_path: str) -> str | None:
     except Exception:
         pass
     return None
+
 
 def _get_python_public_symbols(file_path: str) -> list[str]:
     symbols = []
@@ -58,9 +61,11 @@ def _get_python_public_symbols(file_path: str) -> list[str]:
         pass
     return symbols
 
+
 def _get_python_symbols_detailed(file_path: str) -> list:
     """Extract Python symbols with call information for the call graph."""
     from indexer.treesitter_parser import ParsedSymbol
+
     symbols = []
     try:
         with open(file_path, "r", encoding="utf-8") as f:
@@ -101,7 +106,11 @@ def _get_python_symbols_detailed(file_path: str) -> list:
                     except Exception:
                         pass
 
-                sig_line = source_lines[node.lineno - 1].strip() if node.lineno <= len(source_lines) else ""
+                sig_line = (
+                    source_lines[node.lineno - 1].strip()
+                    if node.lineno <= len(source_lines)
+                    else ""
+                )
                 doc = ast.get_docstring(node)
 
                 sym = ParsedSymbol(
@@ -122,9 +131,18 @@ def _get_python_symbols_detailed(file_path: str) -> list:
             elif isinstance(node, ast.ClassDef):
                 if node.name.startswith("_"):
                     continue
-                sig_line = source_lines[node.lineno - 1].strip() if node.lineno <= len(source_lines) else ""
+                sig_line = (
+                    source_lines[node.lineno - 1].strip()
+                    if node.lineno <= len(source_lines)
+                    else ""
+                )
                 doc = ast.get_docstring(node)
-                methods = [n.name for n in node.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and not n.name.startswith("_")]
+                methods = [
+                    n.name
+                    for n in node.body
+                    if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and not n.name.startswith("_")
+                ]
                 sym = ParsedSymbol(
                     name=node.name,
                     kind="class",
@@ -152,9 +170,9 @@ def generate_graph_node(file_path: str, project_root: str) -> dict[str, Any]:
     layer = _infer_layer(file_path)
     role = f"Handles {layer} logic."
     key_funcs = []
-    
+
     ext = os.path.splitext(abs_path)[1].lower()
-    
+
     lang = ts_get_language(ext)
     if lang:
         try:
@@ -187,24 +205,44 @@ def generate_graph_node(file_path: str, project_root: str) -> dict[str, Any]:
         "auto_generated": True,
     }
 
-def generate_graph_sqlite(project_root: str, db_path: str | None = None) -> dict[str, Any]:
+
+def generate_graph_sqlite(
+    project_root: str, db_path: str | None = None
+) -> dict[str, Any]:
     if not db_path:
         from mcp_server.paths import get_data_dir
+
         db_path = str(get_data_dir() / "graph" / "graph.db")
-        
+
     db = SQLiteGraph(db_path)
-    
+
     # Skip dirs that commonly contain symlinks to system/OS directories,
     # or are otherwise not user source code. rglob() follows symlinks by
     # default on macOS, which can walk into ~/Library/Group Containers/
     # and similar OS-managed paths.
-    _SKIP_DIRS = frozenset({
-        "node_modules", ".venv", "venv", ".git", "__pycache__",
-        ".pytest_cache", ".tox", "dist", "build", ".next", ".nuxt",
-        ".codevira", ".codevira.migrated", "htmlcov", ".coverage",
-        # macOS system paths that can appear via symlinks
-        "Library", "System", "Applications",
-    })
+    _SKIP_DIRS = frozenset(
+        {
+            "node_modules",
+            ".venv",
+            "venv",
+            ".git",
+            "__pycache__",
+            ".pytest_cache",
+            ".tox",
+            "dist",
+            "build",
+            ".next",
+            ".nuxt",
+            ".codevira",
+            ".codevira.migrated",
+            "htmlcov",
+            ".coverage",
+            # macOS system paths that can appear via symlinks
+            "Library",
+            "System",
+            "Applications",
+        }
+    )
 
     def _walk_sources(root: Path, extensions: list[str]) -> list[str]:
         """Walk project_root safely: skip known-bad dirs, ignore OSError on walk."""
@@ -230,25 +268,25 @@ def generate_graph_sqlite(project_root: str, db_path: str | None = None) -> dict
 
     all_exts = list(TS_EXTENSION_MAP.keys()) + [".py"]
     file_paths = _walk_sources(Path(project_root), all_exts)
-    
+
     added = 0
     skipped = 0
     files_added = []
-    
+
     for fp in file_paths:
         if "node_modules" in fp or ".venv" in fp:
             continue
-            
+
         node_id = f"file:{fp}"
         existing = db.get_node(node_id)
         if existing:
             skipped += 1
             continue
-            
+
         node_data = generate_graph_node(fp, project_root)
         if not node_data:
             continue
-            
+
         db.add_node(
             node_id=node_id,
             kind="file",
@@ -261,13 +299,15 @@ def generate_graph_sqlite(project_root: str, db_path: str | None = None) -> dict
             key_functions=json.dumps(node_data["key_functions"]),
             dependencies="[]",
             rules="[]",
-            do_not_revert=node_data.get("do_not_revert", False)
+            do_not_revert=node_data.get("do_not_revert", False),
         )
         added += 1
         files_added.append(fp)
-        
+
     # Build the full set of project file paths (used by Phases 2 and 4)
-    all_node_paths = {fp for fp in file_paths if "node_modules" not in fp and ".venv" not in fp}
+    all_node_paths = {
+        fp for fp in file_paths if "node_modules" not in fp and ".venv" not in fp
+    }
 
     # ---- Phase 2: Populate function-level symbols ----
     symbols_added = 0
@@ -295,9 +335,17 @@ def generate_graph_sqlite(project_root: str, db_path: str | None = None) -> dict
 
         for sym in symbols_for_file:
             sym_id = f"file:{fp}::{sym.name}"
-            calls_json = json.dumps(getattr(sym, 'calls', []) if hasattr(sym, 'calls') else [])
-            params_json = json.dumps(getattr(sym, 'parameters', []) if hasattr(sym, 'parameters') else [])
-            ret_type = getattr(sym, 'return_type', None) if hasattr(sym, 'return_type') else None
+            calls_json = json.dumps(
+                getattr(sym, "calls", []) if hasattr(sym, "calls") else []
+            )
+            params_json = json.dumps(
+                getattr(sym, "parameters", []) if hasattr(sym, "parameters") else []
+            )
+            ret_type = (
+                getattr(sym, "return_type", None)
+                if hasattr(sym, "return_type")
+                else None
+            )
 
             db.add_symbol(
                 symbol_id=sym_id,
@@ -324,7 +372,9 @@ def generate_graph_sqlite(project_root: str, db_path: str | None = None) -> dict
         if name not in all_symbols:
             all_symbols[name] = row["id"]
 
-    for row in db.conn.execute("SELECT id, calls FROM symbols WHERE calls IS NOT NULL AND calls != '[]'").fetchall():
+    for row in db.conn.execute(
+        "SELECT id, calls FROM symbols WHERE calls IS NOT NULL AND calls != '[]'"
+    ).fetchall():
         caller_id = row["id"]
         try:
             calls = json.loads(row["calls"])
@@ -371,18 +421,23 @@ def generate_graph_sqlite(project_root: str, db_path: str | None = None) -> dict
         "files_added": files_added,
     }
 
+
 def generate_roadmap_stub(project_root: str, output_path: str):
     if os.path.exists(output_path):
         return
 
     phase_name = "Phase 1: Initial Development"
     desc = "Bootstrap project and core architecture."
-    
+
     try:
-        out = subprocess.check_output(
-            ["git", "-C", project_root, "log", "-1", "--pretty=format:%s"],
-            stderr=subprocess.DEVNULL
-        ).decode("utf-8").strip()
+        out = (
+            subprocess.check_output(
+                ["git", "-C", project_root, "log", "-1", "--pretty=format:%s"],
+                stderr=subprocess.DEVNULL,
+            )
+            .decode("utf-8")
+            .strip()
+        )
         if out:
             desc = f"Latest context: {out}"
     except Exception:
@@ -405,7 +460,12 @@ def generate_roadmap_stub(project_root: str, output_path: str):
         "completed_phases": [],
     }
 
-    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "w", encoding="utf-8") as f:
-        yaml.safe_dump(stub, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+    from mcp_server.storage.atomic import atomic_write_text
+
+    atomic_write_text(
+        Path(output_path),
+        yaml.safe_dump(
+            stub, default_flow_style=False, sort_keys=False, allow_unicode=True
+        ),
+    )
     print(f"Created initial roadmap: {output_path}")

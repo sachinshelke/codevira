@@ -131,8 +131,13 @@ def _get_or_create_token() -> str:
         if token:
             return token
     token = secrets.token_urlsafe(32)
-    token_path.write_text(token + "\n", encoding="utf-8")
-    token_path.chmod(0o600)
+    # v3.0.0 round-3: atomic write so a crash mid-write doesn't leave
+    # the server with an empty or partial token file (which would fail
+    # auth on every subsequent request). The mode kwarg ensures the
+    # final file is 0o600 — secret-handling site.
+    from mcp_server.storage.atomic import atomic_write_text
+
+    atomic_write_text(token_path, token + "\n", mode=0o600)
     return token
 
 

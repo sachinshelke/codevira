@@ -13,6 +13,7 @@ Implementation notes:
 - Failure is non-fatal: cleanup errors are logged to crash_logger but
   don't prevent the server from starting
 """
+
 from __future__ import annotations
 
 import logging
@@ -44,11 +45,12 @@ def _should_run_cleanup(data_dir: Path) -> bool:
 
 
 def _mark_cleanup_done(data_dir: Path) -> None:
-    """Record that cleanup just ran."""
+    """Record that cleanup just ran (atomic)."""
+    from mcp_server.storage.atomic import atomic_write_text
+
     marker = _marker_path(data_dir)
     try:
-        marker.parent.mkdir(parents=True, exist_ok=True)
-        marker.write_text(str(time.time()))
+        atomic_write_text(marker, str(time.time()))
     except OSError:
         pass
 
@@ -60,6 +62,7 @@ def _read_retention_days(data_dir: Path) -> int:
         return 0
     try:
         import yaml
+
         with open(config_path) as f:
             raw = yaml.safe_load(f) or {}
         return int(raw.get("logs", {}).get("retention_days", 0))
@@ -113,12 +116,11 @@ def enforce_retention(data_dir: Path | None = None, *, force: bool = False) -> d
 
     try:
         import sqlite3
+
         conn = sqlite3.connect(str(graph_db))
         conn.row_factory = sqlite3.Row
 
-        cutoff_sql = (
-            "datetime('now', ?)"
-        )
+        cutoff_sql = "datetime('now', ?)"
         cutoff_arg = f"-{retention_days} days"
 
         # Count first so we can return accurate stats
@@ -163,6 +165,7 @@ def enforce_retention(data_dir: Path | None = None, *, force: bool = False) -> d
         logger.warning("Retention cleanup failed: %s", e)
         try:
             from mcp_server.crash_logger import log_crash
+
             log_crash(e, context="log_retention.enforce_retention")
         except Exception:
             pass

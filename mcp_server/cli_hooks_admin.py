@@ -7,6 +7,7 @@ deleting files in ``~/.claude/hooks/`` AND hand-editing
 Kept in its own module so additions don't inflate the public surface of
 ``mcp_server.cli`` (high blast radius).
 """
+
 from __future__ import annotations
 
 import json
@@ -101,8 +102,9 @@ def cmd_hooks_uninstall(*, dry_run: bool = False, yes: bool = False) -> int:
     print("  " + "─" * 40)
     print()
     if not existing and not settings_path.is_file():
-        print("  Nothing to remove — no codevira hook scripts found, "
-              "no settings.json.")
+        print(
+            "  Nothing to remove — no codevira hook scripts found, " "no settings.json."
+        )
         return 0
 
     print(f"  Would remove {len(existing)} hook script(s):")
@@ -136,6 +138,7 @@ def cmd_hooks_uninstall(*, dry_run: bool = False, yes: bool = False) -> int:
 
     if not yes:
         from mcp_server._prompts import confirm
+
         if not confirm("Proceed with uninstall?", default=False):
             print("  Aborted.")
             return 0
@@ -159,7 +162,8 @@ def cmd_hooks_uninstall(*, dry_run: bool = False, yes: bool = False) -> int:
                 kept_entries = []
                 for entry in entries or []:
                     kept_inner = [
-                        h for h in (entry.get("hooks") or [])
+                        h
+                        for h in (entry.get("hooks") or [])
                         if "codevira-" not in h.get("command", "")
                     ]
                     if kept_inner:
@@ -172,9 +176,12 @@ def cmd_hooks_uninstall(*, dry_run: bool = False, yes: bool = False) -> int:
                 data["hooks"] = new_hooks
             elif "hooks" in data:
                 del data["hooks"]
-            tmp = settings_path.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps(data, indent=2))
-            tmp.replace(settings_path)
+            # v3.0.0 round-3: shared atomic-write helper (was a fixed
+            # ``.json.tmp`` suffix — race shape if two unregister
+            # commands ran concurrently).
+            from mcp_server.storage.atomic import atomic_write_text
+
+            atomic_write_text(settings_path, json.dumps(data, indent=2))
             print(f"  ✓ unregistered codevira from {settings_path.name}")
         except Exception as exc:
             print(f"  ✗ failed to update {settings_path}: {exc}")

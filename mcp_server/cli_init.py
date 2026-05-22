@@ -153,14 +153,19 @@ def cmd_init(*, yes: bool = False, dry_run: bool = False) -> int:
             "inject_max_tokens": 600,
             "archive_after_days": 90,
         }
-        cfg_path.write_text(
+        from mcp_server.storage.atomic import atomic_write_text
+
+        atomic_write_text(
+            cfg_path,
             yaml.safe_dump(cfg, sort_keys=False, default_flow_style=False),
-            encoding="utf-8",
         )
 
     # Step 4: write default enforcement.yaml (idempotent).
     if not enf_path.is_file():
-        enf_path.write_text(
+        from mcp_server.storage.atomic import atomic_write_text
+
+        atomic_write_text(
+            enf_path,
             "# enforcement.yaml — per-project decision-enforcement policy.\n"
             "# v2.2.0 default: do_not_revert decisions hard-block matching edits.\n"
             "schema_version: 1\n"
@@ -169,11 +174,12 @@ def cmd_init(*, yes: bool = False, dry_run: bool = False) -> int:
             "  protected_age_days: 7\n"
             "  override_requires_reason: true\n"
             "overrides: {}\n",
-            encoding="utf-8",
         )
 
     # Step 5: update .gitignore (idempotent).
     if not gitignore_has_cache:
+        from mcp_server.storage.atomic import atomic_write_text
+
         existing = (
             gitignore_path.read_text(encoding="utf-8")
             if gitignore_path.is_file()
@@ -185,7 +191,10 @@ def cmd_init(*, yes: bool = False, dry_run: bool = False) -> int:
         )
         if not existing.endswith("\n") and existing:
             existing += "\n"
-        gitignore_path.write_text(existing + addition, encoding="utf-8")
+        # .gitignore is read+rewrite (not append) — atomic_write_text
+        # is safe because we hold the full content in memory and rename
+        # into place; a crash mid-write leaves the old .gitignore intact.
+        atomic_write_text(gitignore_path, existing + addition)
 
     # Step 6: regenerate AGENTS.md (creates the marker block if missing).
     from mcp_server.storage import agents_md_generator

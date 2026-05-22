@@ -358,7 +358,9 @@ def _strip_legacy_nudge_marker(path: Path) -> bool:
         if not new_text.strip():
             path.unlink()
             return True
-        path.write_text(new_text, encoding="utf-8")
+        from mcp_server.storage.atomic import atomic_write_text
+
+        atomic_write_text(path, new_text)
         return True
     return False
 
@@ -393,7 +395,9 @@ def _strip_agents_md_marker(path: Path) -> bool:
     if not new_text.strip():
         path.unlink()
         return True
-    path.write_text(new_text, encoding="utf-8")
+    from mcp_server.storage.atomic import atomic_write_text
+
+    atomic_write_text(path, new_text)
     return True
 
 
@@ -439,7 +443,9 @@ def _remove_claude_hook_entries(path: Path) -> bool:
         data.pop("hooks", None)
         modified = True
     if modified:
-        path.write_text(_json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        from mcp_server.storage.atomic import atomic_write_text
+
+        atomic_write_text(path, _json.dumps(data, indent=2) + "\n")
     return modified
 
 

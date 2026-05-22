@@ -508,6 +508,72 @@ class TestRealGraphIntegration:
         finally:
             reset_policies()
 
+    def test_signals_decisions_reads_jsonl_not_sql(self, tmp_path: Path):
+        """v3.0.0 regression guard (2026-05-22 round-2 G5):
+        prove signals.decisions() reads from .codevira/decisions.jsonl,
+        NOT from graph.db's SQL ``decisions`` table.
+
+        Pre-v3.0.0, the read path was SQL — so v3.0.0's record_decision
+        (which writes to JSONL) silently produced 0 hits and the
+        DecisionLock policy fail-opened. This test seeds via JSONL,
+        also seeds a CONTRADICTORY SQL row, and asserts signals.decisions
+        returns the JSONL data — proving the read path is JSONL-rooted.
+        """
+        from indexer.sqlite_graph import SQLiteGraph
+        from mcp_server.engine.signals import SignalContext
+        from mcp_server.paths import get_data_dir
+        from mcp_server.storage import (
+            decisions_store,
+        )
+
+        project = self._setup_real_graph(tmp_path)
+        # _setup_real_graph already seeded the JSONL via decisions_store.
+        # Now plant a CONFLICTING row in graph.db's SQL `decisions` table
+        # — if signals.decisions reverts to reading SQL, this row would
+        # show up.
+        db_path = get_data_dir() / "graph" / "graph.db"
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        g = SQLiteGraph(db_path)
+        try:
+            g.add_node("trap", "file", "trap.py", "trap.py", do_not_revert=True)
+            g.conn.execute(
+                "INSERT INTO sessions (session_id, summary) VALUES (?, ?)",
+                ("trap-session", "x"),
+            )
+            g.conn.execute(
+                "INSERT INTO decisions (session_id, decision, file_path, "
+                "context, created_at) VALUES (?, ?, ?, ?, ?)",
+                (
+                    "trap-session",
+                    "TRAP: SQL-only decision (should not appear)",
+                    "trap.py",
+                    "regression-trap",
+                    "2025-04-13",
+                ),
+            )
+            g.conn.commit()
+        finally:
+            g.close()
+
+        ctx = SignalContext(project_root=project)
+        results = ctx.decisions(limit=20)
+        files = {r["file_path"] for r in results}
+        assert "auth.py" in files, (
+            f"JSONL-seeded decision missing — signals.decisions may "
+            f"have regressed to reading SQL. Got files: {files}"
+        )
+        assert "trap.py" not in files, (
+            f"SQL-only trap decision LEAKED through — "
+            f"signals.decisions is reading the wrong storage layer. "
+            f"Got files: {files}"
+        )
+
+        # Confirm via the same JSONL store the policy is now meant to read
+        jsonl_records = decisions_store.list_all(limit=20, full=True)
+        jsonl_files = {d.get("file_path") for d in jsonl_records.get("decisions", [])}
+        assert "auth.py" in jsonl_files
+        assert "trap.py" not in jsonl_files
+
 
 class TestCoexistenceWithHero4:
     def test_higher_priority_block_wins_in_combined_verdict(

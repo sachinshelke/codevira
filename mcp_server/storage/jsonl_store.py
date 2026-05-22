@@ -41,101 +41,21 @@ none of the corruption surface and full git-friendliness.
 
 from __future__ import annotations
 
-import contextlib
 import io
 import json
 import logging
 import os
-import sys
-import threading
-import time
 from pathlib import Path
 from typing import Any, Iterator
 
+# v3.0.0 round-3: the file-lock helpers moved to
+# ``mcp_server.storage.atomic`` so every write site in codevira shares
+# one implementation (Posix flock + Windows sentinel fallback). This
+# module imports the canonical version; the ``_file_lock`` private
+# alias preserves the symbol any internal caller used previously.
+from mcp_server.storage.atomic import file_lock as _file_lock
+
 logger = logging.getLogger(__name__)
-
-
-# Module-level per-path lock cache so two writers in the SAME process
-# also serialize (fcntl.flock is per-OS-file-descriptor on macOS, not
-# per process). Without this, the same Python interpreter can race
-# itself if two threads call append() on the same path.
-_PROCESS_LOCKS: dict[str, threading.Lock] = {}
-_PROCESS_LOCKS_GUARD = threading.Lock()
-
-
-def _process_lock_for(path: Path) -> threading.Lock:
-    """Return a process-wide lock keyed on the absolute file path."""
-    key = str(path.resolve())
-    with _PROCESS_LOCKS_GUARD:
-        lock = _PROCESS_LOCKS.get(key)
-        if lock is None:
-            lock = threading.Lock()
-            _PROCESS_LOCKS[key] = lock
-        return lock
-
-
-@contextlib.contextmanager
-def _file_lock(path: Path, *, exclusive: bool = True) -> Iterator[None]:
-    """Acquire an OS-level advisory lock on ``path``.
-
-    POSIX: ``fcntl.flock`` (LOCK_EX or LOCK_SH).
-    Windows: falls back to a sentinel ``.lock`` file (best-effort).
-
-    The path is opened/created first if it doesn't exist so the lock has
-    something to lock.
-    """
-    # Ensure parent + file exists.
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if not path.exists():
-        # Touch the file under the process lock so a parallel touch
-        # doesn't race.
-        with _process_lock_for(path):
-            if not path.exists():
-                path.touch()
-
-    process_lock = _process_lock_for(path)
-    process_lock.acquire()
-    fd: int | None = None
-    try:
-        # Open the file in append-binary so the OS-level lock is on the
-        # actual data file we'll write to.
-        fd = os.open(str(path), os.O_RDWR | os.O_CREAT, 0o644)
-        if sys.platform == "win32":
-            # Best-effort: Windows lacks fcntl. Use a sentinel file.
-            sentinel = path.with_suffix(path.suffix + ".lock")
-            # Crude retry loop — Windows file locks are rare in our user
-            # base; this is the fallback.
-            for _ in range(50):  # up to ~5s
-                try:
-                    sfd = os.open(str(sentinel), os.O_CREAT | os.O_EXCL | os.O_RDWR)
-                    os.close(sfd)
-                    break
-                except FileExistsError:
-                    time.sleep(0.1)
-            else:
-                logger.warning(
-                    "jsonl_store: could not acquire windows sentinel lock on %s "
-                    "after 5s; proceeding anyway (other writers may race)",
-                    sentinel,
-                )
-            try:
-                yield
-            finally:
-                with contextlib.suppress(FileNotFoundError):
-                    os.unlink(str(sentinel))
-        else:
-            import fcntl
-
-            mode = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
-            fcntl.flock(fd, mode)
-            try:
-                yield
-            finally:
-                fcntl.flock(fd, fcntl.LOCK_UN)
-    finally:
-        if fd is not None:
-            os.close(fd)
-        process_lock.release()
 
 
 def append(path: Path, record: dict[str, Any]) -> None:

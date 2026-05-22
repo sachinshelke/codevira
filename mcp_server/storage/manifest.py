@@ -75,51 +75,23 @@ def load(path: Path) -> dict[str, Any]:
 
 
 def save(path: Path, manifest: dict[str, Any]) -> None:
-    """Atomically write manifest to ``path`` (write-tmp + rename).
+    """Atomically write manifest to ``path`` via storage.atomic helper.
 
-    v3.0.0 (2026-05-22 round-2): per-write UNIQUE tmp filename via
-    ``tempfile.mkstemp``. Pre-fix the temp was a fixed
-    ``<path>.tmp`` — when two threads called save() concurrently
-    they raced on the rename target: thread A's tmp got consumed by
-    its own ``replace()``, thread B's later ``replace()`` then
-    raised ``FileNotFoundError: <path>.tmp``. Decisions still
-    landed safely (the JSONL append uses fcntl-locked I/O), but
-    the cache file got partial / lost updates. Caught by the
-    50-thread concurrent record_decision smoke test.
+    v3.0.0 round-3: delegates to ``atomic.atomic_write_text`` so all
+    write sites in codevira share one crash-safety contract. Round-2
+    inlined the same pattern (per-write unique tmp + fsync + rename);
+    round-3 consolidated four such copies into the helper.
     """
-    import os
-    import tempfile
+    from mcp_server.storage import atomic
 
     manifest["generated_at"] = datetime.now(timezone.utc).isoformat()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(
-        prefix=f".{path.name}.",
-        suffix=".tmp",
-        dir=str(path.parent),
+    payload = yaml.safe_dump(
+        manifest,
+        default_flow_style=False,
+        sort_keys=False,
+        allow_unicode=True,
     )
-    tmp_path: str | None = tmp_name
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            yaml.safe_dump(
-                manifest,
-                fh,
-                default_flow_style=False,
-                sort_keys=False,
-                allow_unicode=True,
-            )
-            fh.flush()
-            try:
-                os.fsync(fh.fileno())
-            except OSError:
-                pass  # some filesystems don't support fsync
-        os.replace(tmp_path, path)
-        tmp_path = None  # ownership transferred
-    finally:
-        if tmp_path is not None:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
+    atomic.atomic_write_text(path, payload)
 
 
 def regenerate(decisions_path: Path, manifest_path: Path) -> dict[str, Any]:
@@ -176,33 +148,18 @@ def incremental_add(manifest_path: Path, decision: dict[str, Any]) -> None:
     re-scanning decisions.jsonl on every call. Idempotent if the
     decision ID is already present (avoids dup entries from retries).
 
-    v3.0.0 (2026-05-22 round-2): the read-modify-write IS NOW
-    fcntl-locked. Pre-fix, 10 threads calling incremental_add
-    concurrently each read the same starting manifest, mutated their
-    own copy, then raced on save() — the last writer won, losing the
-    other 9 updates. Decisions stayed safe in JSONL (canonical),
-    but the manifest cache fell behind (50 writes → 37 counted).
-
-    Lock scope: the whole read-modify-write — a coarse lock is fine
-    because manifest updates are fast (single decision per call,
-    microseconds). The lock is on a sidecar ``.lock`` file in the
-    same dir; we don't lock manifest.yaml directly so a stale lock
-    can't render the manifest unreadable.
+    v3.0.0 round-3: the read-modify-write is locked via
+    ``atomic.file_lock`` (Posix flock + Windows sentinel fallback).
+    Round-2 used a hand-rolled fcntl.flock that silently no-op'd on
+    Windows; round-3 routes through the shared helper so both
+    platforms get the lost-update guarantee.
     """
-    import fcntl
+    from mcp_server.storage import atomic
 
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     lock_path = manifest_path.with_suffix(manifest_path.suffix + ".lock")
 
-    with open(lock_path, "w") as lock_fh:
-        try:
-            fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
-        except OSError:
-            # Some filesystems (e.g. certain network mounts) don't
-            # support flock — fall back to lock-free behavior
-            # (preserves the v2.x best-effort contract).
-            pass
-
+    with atomic.file_lock(lock_path):
         manifest = load(manifest_path)
         did = str(decision.get("id", ""))
         if not did:
@@ -239,4 +196,4 @@ def incremental_add(manifest_path: Path, decision: dict[str, Any]) -> None:
                 manifest["do_not_revert_ids"].sort()
 
         save(manifest_path, manifest)
-        # fcntl.flock is released on file close
+        # atomic.file_lock releases the OS-level lock on context exit.

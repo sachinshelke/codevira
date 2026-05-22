@@ -67,10 +67,8 @@ the load-bearing surface.
 from __future__ import annotations
 
 import json
-import os as _os
 import shutil
 import sys
-import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -825,57 +823,16 @@ def _ide_display_name(ide: str) -> str:
 def _atomic_write_text(target: Path, content: str) -> int:
     """Write ``content`` to ``target`` atomically.
 
-    Strategy: write to a temp file in the SAME directory (so the
-    rename is on the same filesystem and ``os.replace`` is atomic),
-    then ``os.replace`` the temp into place. ``os.replace`` is atomic
-    on POSIX and approximates atomicity on Windows (replaces the
-    existing file in one call rather than the dangerous unlink-then-
-    rename pattern).
+    v3.0.0 round-3: thin wrapper around
+    ``mcp_server.storage.atomic.atomic_write_text``. Was a
+    standalone helper in v2.2.0; now consolidated in the storage
+    layer alongside the other write sites.
 
-    Why: a Ctrl-C between ``write_text`` chunks leaves the target
-    half-written, and the next ``codevira setup`` run sees a corrupt
-    file. The settings.json merge would either fail-open (lose the
-    codevira hook block) or fail-closed (truncate user content).
-    Caught by Week-1-through-4 integration round I7.
-
-    Used by the settings.json merge step. Inlined here in v2.2.0+
-    after the 2026-05-22 surface-cut audit deleted the legacy
-    ``mcp_server/agents_md.py`` module that previously owned this
-    helper. Setup wizard is the only remaining caller.
-
-    Returns the number of bytes written.
+    Returns bytes written.
     """
-    encoded = content.encode("utf-8")
-    target.parent.mkdir(parents=True, exist_ok=True)
+    from mcp_server.storage.atomic import atomic_write_text
 
-    # Use mkstemp in the same dir as target so the rename stays on
-    # one filesystem.
-    fd, _raw_tmp = tempfile.mkstemp(
-        prefix=f".{target.name}.",
-        suffix=".tmp",
-        dir=str(target.parent),
-    )
-    tmp_path: str | None = _raw_tmp
-    try:
-        with _os.fdopen(fd, "wb") as f:
-            f.write(encoded)
-            assert tmp_path is not None
-            # Flush to disk before rename so a crash doesn't leave the
-            # destination pointing at empty content.
-            f.flush()
-            try:
-                _os.fsync(f.fileno())
-            except OSError:
-                pass  # some filesystems / containers don't support fsync
-        _os.replace(tmp_path, target)
-        tmp_path = None  # ownership transferred — don't clean up below
-    finally:
-        if tmp_path is not None:
-            try:
-                _os.unlink(tmp_path)
-            except OSError:
-                pass
-    return len(encoded)
+    return atomic_write_text(target, content)
 
 
 # =====================================================================

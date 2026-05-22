@@ -641,6 +641,21 @@ def main() -> None:
             ".md / .html / etc. silently."
         ),
     )
+    # v3.0.0: expose the `yes` kwarg that cli_init.cmd_init already
+    # supports — was wired in the function but not in argparse. Found
+    # during the v3.0.0 G5 verification when `codevira init -y` errored
+    # against AgentStore.
+    init_parser.add_argument(
+        "-y",
+        "--yes",
+        action="store_true",
+        help="Skip the interactive 'Proceed? [Y/n]' prompt (for scripts).",
+    )
+    init_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the init plan but don't write any files.",
+    )
 
     # index (P2-1 rc.5: added description)
     index_parser = subparsers.add_parser(
@@ -1265,10 +1280,19 @@ def main() -> None:
         cmd_init._single_language = getattr(args, "single_language", False)  # type: ignore[attr-defined]
         cmd_init()
         # v2.2.0: scaffold .codevira/ (in-repo storage layer).
+        # v3.0.0: -y/--yes always passes through (init has always run
+        # non-interactively for the .codevira/ scaffold; the only
+        # interactive prompts are in the LEGACY cmd_init above for
+        # edge cases like "you're in a subdirectory"). Threading
+        # --dry-run lets users preview the .codevira/ plan without
+        # touching anything.
         try:
             from mcp_server.cli_init import cmd_init as cmd_init_v22
 
-            cmd_init_v22(yes=True, dry_run=False)
+            cmd_init_v22(
+                yes=True,
+                dry_run=getattr(args, "dry_run", False),
+            )
         except Exception as e:
             print(f"  ⚠ v2.2.0 .codevira/ scaffold failed: {e}", file=sys.stderr)
     elif args.command == "index":

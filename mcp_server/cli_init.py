@@ -1,16 +1,14 @@
 """
-cli_init.py — v2.2.0 ``codevira init`` command.
+cli_init.py — ``codevira init`` command.
 
 Scaffolds the in-repo storage layer for a new (or existing) project:
 
   .codevira/                      ← source of truth (committed)
-    decisions.jsonl               ← empty (gitignored entries appended here)
+    decisions.jsonl               ← empty (entries appended here)
     digest.jsonl                  ← regenerated
     manifest.yaml                 ← regenerated
-    outcomes.jsonl                ← empty
-    sessions.jsonl                ← empty
-    preferences.jsonl             ← empty
-    learned_rules.jsonl           ← empty
+    outcomes.jsonl                ← empty (git-observed kept/reverted)
+    sessions.jsonl                ← empty (session events)
     config.yaml                   ← project settings
     enforcement.yaml              ← per-decision enforcement policy
 
@@ -23,6 +21,13 @@ Scaffolds the in-repo storage layer for a new (or existing) project:
 
 Run on a fresh project OR an existing project (idempotent — running
 twice doesn't clobber anything you've already configured).
+
+v3.0.0 (2026-05-22 surface-cut audit): we no longer scaffold
+``preferences.jsonl`` or ``learned_rules.jsonl``. The MCP tools that
+wrote them (get_preferences / get_learned_rules / retire_rule) were
+deleted in the audit; the files would just be empty noise. Existing
+projects keep their files (init is idempotent — never touches files
+that are already present).
 
 If the project has v2.1.x data at ``~/.codevira/projects/<key>/graph.db``,
 ``codevira init`` does NOT migrate it. Run ``codevira archive-legacy``
@@ -74,12 +79,13 @@ def cmd_init(*, yes: bool = False, dry_run: bool = False) -> int:
     print("  Plan:")
     print(f"    {'(exists)' if cv_exists else 'CREATE  '} {cv_dir}/")
     print(f"    {'(exists)' if cache_dir.is_dir() else 'CREATE  '} {cache_dir}/")
+    # v3.0.0: scaffold ONLY the storage files v3.0.0 code actually reads
+    # or writes. preferences.jsonl / learned_rules.jsonl removed in the
+    # 2026-05-22 surface-cut audit (their MCP tools were deleted).
     files_to_create = [
         "decisions.jsonl",
         "outcomes.jsonl",
         "sessions.jsonl",
-        "preferences.jsonl",
-        "learned_rules.jsonl",
     ]
     for f in files_to_create:
         target = cv_dir / f

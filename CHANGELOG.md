@@ -118,7 +118,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Removed
 
-**MCP tools (46 → 25, –46%):**
+**MCP tools (46 → 24, –48%):**
 
 - Batch 1 — Changesets:
   `start_changeset`, `update_changeset_progress`, `complete_changeset`,
@@ -191,7 +191,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 | Surface                         | v2.1.x       | v3.0.0     | Δ      |
 |---------------------------------|--------------|------------|--------|
-| MCP tools                       | 46           | 25         | -46%   |
+| MCP tools                       | 46           | 24         | -48%   |
 | CLI subcommands                 | 23           | 15         | -35%   |
 | Engine policies                 | 10           | 6          | -40%   |
 | Per-project nudge files         | 6            | 1          | -83%   |

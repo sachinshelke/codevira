@@ -211,7 +211,7 @@ Headline cuts (v2.1.x → v3.0.0):
 
 | Surface                       | v2.1.x  | v3.0.0    | Δ      |
 |-------------------------------|---------|-----------|--------|
-| MCP tools                     | 46      | 25        | -46%   |
+| MCP tools                     | 46      | 24        | -48%   |
 | CLI subcommands               | 23      | 15        | -35%   |
 | Engine policies               | 10      | 6         | -40%   |
 | Per-project nudge files       | 6       | 1         | -83%   |

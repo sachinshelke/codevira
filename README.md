@@ -97,7 +97,7 @@ every AI tool, on every project, on your local machine.**
 |---|---|
 | **Decision storage** | Moved into `<repo>/.codevira/decisions.jsonl` (git-tracked, one decision per line). v2.x stored decisions in `~/.codevira/projects/<key>/graph/graph.db` (a SQLite blob nobody could read). |
 | **AGENTS.md is the nudge file** | Per-IDE nudges (CLAUDE.md / GEMINI.md / .windsurfrules / .cursor/rules/codevira.mdc / .github/copilot-instructions.md) all deleted. Every modern AI tool reads AGENTS.md natively. Slim 5 KB cap; auto-regenerated from decisions; user content outside the `<!-- codevira:begin -->...<!-- codevira:end -->` markers preserved byte-for-byte. |
-| **MCP tool surface** | 46 → 25 tools (-46%). The audit found 21 tools that nobody called in real usage (preferences, learned_rules, changesets, project_maturity, list_nodes / add_node / update_node / export_graph, etc.). All deleted. |
+| **MCP tool surface** | 46 → 24 tools (-48%; 23 surfaced to AI clients, 1 admin-only). The audit found 22 tools that nobody called in real usage (preferences, learned_rules, changesets, project_maturity, list_nodes / add_node / update_node / export_graph, etc.). All deleted. |
 | **CLI surface** | 23 → 15 commands (-35%). Deleted: `heal` (use `reset`), `budget`, `agents`, `hooks`, `register`, `configure`, `report` (folded into `doctor`), `calibrate`, `insights`. |
 | **IDE detection hardened** | No more false-positives from stale `~/.cursor/` dirs. Each IDE needs a STRONG signal (binary on PATH, or verified config file). Pass `--ide X --force` to override when the detector misses an install. |
 | **`codevira uninstall`** | New command. Reverses every system write made by `init`/`setup`: drops the MCP entry from `~/.claude.json`, deletes `~/.claude/hooks/codevira-*.sh`, strips codevira-tagged registrations from `~/.claude/settings.json`, removes per-project `.codevira/` + `.codevira-cache/`, strips the codevira block from AGENTS.md. Optional `--keep-data`. |
@@ -312,7 +312,10 @@ The agent always asks for what it needs, in the size it needs.
 
 ## MCP Tools
 
-**25 tools** exposed to AI agents (token-optimized, summary-first).
+**23 tools** surfaced to AI clients via `tools/list` (token-optimized,
+summary-first). One additional admin tool (`refresh_graph`) is
+registered but hidden from `tools/list` because it runs automatically
+in the background — humans invoke it via `codevira sync`.
 v3.0.0 cut 21 v2.x tools that produced noise or had no real users —
 see [CHANGELOG.md](CHANGELOG.md) for the full kill list.
 
@@ -399,7 +402,7 @@ The opt-in extra `pip install 'codevira[all-languages]'` re-adds the
 | `do_not_revert` enforcement at Claude Code PreToolUse | Multi-language code graph for languages outside Python / TS / JS / Go / Rust — use the `[all-languages]` extra |
 | FTS5 decision search with BM25 ranking | Real-time multi-machine sync — by design, codevira is local-first; for team sharing, commit `.codevira/` to git |
 | Per-project + cross-machine project inventory (`global.db`) | Web UI for browsing decisions — use the `codevira://decisions` MCP resource in Claude Desktop, or `codevira replay --format html` for a static file |
-| All 25 MCP tools, 15 CLI commands, 6 engine policies | The HTTP server (`codevira serve`) is single-project per launch — for daily use, stick with stdio via `codevira setup` |
+| All 24 MCP tools (23 AI-facing + 1 admin) + 15 CLI commands + 6 engine policies | The HTTP server (`codevira serve`) is single-project per launch — for daily use, stick with stdio via `codevira setup` |
 
 ---
 

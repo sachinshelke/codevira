@@ -567,7 +567,12 @@ class TestJsonHelpers:
 
 
 class TestDetectInstalledIdes:
-    def test_claude_detected_via_claude_dir(self, tmp_path, monkeypatch):
+    def test_claude_NOT_detected_via_claude_dir_alone(self, tmp_path, monkeypatch):
+        """v3.0.0 detection hardening: a per-project ``.claude/``
+        directory is NO LONGER a sufficient signal that Claude Code
+        is installed. Many users create the dir for IDE state without
+        ever installing Claude Code. The strong signal is the
+        ``claude`` binary on PATH."""
         (tmp_path / ".claude").mkdir()
         monkeypatch.setattr("shutil.which", lambda name: None)
         monkeypatch.setattr(Path, "home", lambda: tmp_path / "fakehome")
@@ -578,7 +583,10 @@ class TestDetectInstalledIdes:
             lambda: tmp_path / "fakehome" / "nonexistent" / "config.json",
         )
         result = detect_installed_ides(tmp_path)
-        assert "claude" in result
+        assert "claude" not in result, (
+            ".claude/ dir alone must NOT trigger Claude Code detection "
+            "in v3.0.0+ — audit-hardened against false positives."
+        )
 
     def test_claude_detected_via_binary_in_path(self, tmp_path, monkeypatch):
         def mock_which(name):
@@ -597,10 +605,15 @@ class TestDetectInstalledIdes:
         result = detect_installed_ides(tmp_path)
         assert "claude" in result
 
-    def test_cursor_detected_via_cursor_dir(self, tmp_path, monkeypatch):
+    def test_cursor_detected_via_dir_plus_mcp_json(self, tmp_path, monkeypatch):
+        """v3.0.0: ~/.cursor/ + ~/.cursor/mcp.json is the STRONG signal
+        (dir alone is too easy to fake; mcp.json proves the user ran
+        Cursor at least once)."""
         fakehome = tmp_path / "fakehome"
         fakehome.mkdir()
-        (fakehome / ".cursor").mkdir()
+        cursor_dir = fakehome / ".cursor"
+        cursor_dir.mkdir()
+        (cursor_dir / "mcp.json").write_text("{}")  # the proof file
         monkeypatch.setattr(Path, "home", lambda: fakehome)
         monkeypatch.setattr("shutil.which", lambda name: None)
         monkeypatch.setattr(
@@ -611,10 +624,31 @@ class TestDetectInstalledIdes:
         result = detect_installed_ides(tmp_path)
         assert "cursor" in result
 
-    def test_windsurf_detected_via_windsurf_dir(self, tmp_path, monkeypatch):
+    def test_cursor_NOT_detected_via_empty_cursor_dir(self, tmp_path, monkeypatch):
+        """The bare ~/.cursor/ dir without mcp.json AND without the
+        ``cursor`` binary on PATH is a v3.0.0 false-positive case —
+        we explicitly DO NOT detect it. Many users have empty
+        ~/.cursor/ left behind from prior installs."""
         fakehome = tmp_path / "fakehome"
         fakehome.mkdir()
-        (fakehome / ".windsurf").mkdir()
+        (fakehome / ".cursor").mkdir()  # empty dir, no mcp.json
+        monkeypatch.setattr(Path, "home", lambda: fakehome)
+        monkeypatch.setattr("shutil.which", lambda name: None)
+        monkeypatch.setattr(
+            ide_inject,
+            "_claude_desktop_config_path",
+            lambda: fakehome / "nonexistent" / "config.json",
+        )
+        assert "cursor" not in detect_installed_ides(tmp_path)
+
+    def test_windsurf_detected_via_mcp_config_json(self, tmp_path, monkeypatch):
+        """v3.0.0: Windsurf requires the actual mcp_config.json file
+        (in either standard location)."""
+        fakehome = tmp_path / "fakehome"
+        fakehome.mkdir()
+        windsurf_dir = fakehome / ".windsurf"
+        windsurf_dir.mkdir()
+        (windsurf_dir / "mcp_config.json").write_text("{}")
         monkeypatch.setattr(Path, "home", lambda: fakehome)
         monkeypatch.setattr("shutil.which", lambda name: None)
         monkeypatch.setattr(
@@ -625,10 +659,30 @@ class TestDetectInstalledIdes:
         result = detect_installed_ides(tmp_path)
         assert "windsurf" in result
 
-    def test_antigravity_detected_via_gemini_dir(self, tmp_path, monkeypatch):
+    def test_windsurf_NOT_detected_via_empty_dir(self, tmp_path, monkeypatch):
+        """Bare ~/.windsurf/ without mcp_config.json is a false
+        positive — explicitly NOT detected in v3.0.0."""
         fakehome = tmp_path / "fakehome"
         fakehome.mkdir()
-        (fakehome / ".gemini").mkdir()
+        (fakehome / ".windsurf").mkdir()  # empty
+        monkeypatch.setattr(Path, "home", lambda: fakehome)
+        monkeypatch.setattr("shutil.which", lambda name: None)
+        monkeypatch.setattr(
+            ide_inject,
+            "_claude_desktop_config_path",
+            lambda: fakehome / "nonexistent" / "config.json",
+        )
+        assert "windsurf" not in detect_installed_ides(tmp_path)
+
+    def test_antigravity_detected_via_mcp_config_json(self, tmp_path, monkeypatch):
+        """v3.0.0: Antigravity requires the actual antigravity/
+        mcp_config.json under ~/.gemini/. Bare ~/.gemini/ dir was a
+        false positive (any Google CLI gemini install creates it)."""
+        fakehome = tmp_path / "fakehome"
+        fakehome.mkdir()
+        antigravity_cfg = fakehome / ".gemini" / "antigravity" / "mcp_config.json"
+        antigravity_cfg.parent.mkdir(parents=True)
+        antigravity_cfg.write_text("{}")
         monkeypatch.setattr(Path, "home", lambda: fakehome)
         monkeypatch.setattr("shutil.which", lambda name: None)
         monkeypatch.setattr(
@@ -639,13 +693,32 @@ class TestDetectInstalledIdes:
         result = detect_installed_ides(tmp_path)
         assert "antigravity" in result
 
-    def test_claude_desktop_detected_via_config_dir(self, tmp_path, monkeypatch):
+    def test_antigravity_NOT_detected_via_bare_gemini_dir(self, tmp_path, monkeypatch):
+        """v3.0.0: bare ~/.gemini/ (created by any gemini CLI install)
+        no longer trips the antigravity detector — we need the actual
+        antigravity/mcp_config.json sub-file."""
+        fakehome = tmp_path / "fakehome"
+        fakehome.mkdir()
+        (fakehome / ".gemini").mkdir()  # bare, no antigravity/
+        monkeypatch.setattr(Path, "home", lambda: fakehome)
+        monkeypatch.setattr("shutil.which", lambda name: None)
+        monkeypatch.setattr(
+            ide_inject,
+            "_claude_desktop_config_path",
+            lambda: fakehome / "nonexistent" / "config.json",
+        )
+        assert "antigravity" not in detect_installed_ides(tmp_path)
+
+    def test_claude_desktop_detected_via_config_file(self, tmp_path, monkeypatch):
+        """v3.0.0: Claude Desktop requires the config FILE to exist
+        and be valid JSON (was: the parent dir existing was enough)."""
         fakehome = tmp_path / "fakehome"
         fakehome.mkdir()
         desktop_config = (
             fakehome / "Library" / "Application Support" / "Claude" / "config.json"
         )
         desktop_config.parent.mkdir(parents=True)
+        desktop_config.write_text("{}")  # the proof file
         monkeypatch.setattr(Path, "home", lambda: fakehome)
         monkeypatch.setattr("shutil.which", lambda name: None)
         monkeypatch.setattr(
@@ -653,6 +726,42 @@ class TestDetectInstalledIdes:
         )
         result = detect_installed_ides(tmp_path)
         assert "claude_desktop" in result
+
+    def test_claude_desktop_NOT_detected_via_empty_dir(self, tmp_path, monkeypatch):
+        """v3.0.0: the parent dir alone is no longer a signal — the
+        config.json itself must exist + parse."""
+        fakehome = tmp_path / "fakehome"
+        fakehome.mkdir()
+        desktop_config_dir = fakehome / "Library" / "Application Support" / "Claude"
+        desktop_config_dir.mkdir(parents=True)
+        # config.json deliberately ABSENT
+        monkeypatch.setattr(Path, "home", lambda: fakehome)
+        monkeypatch.setattr("shutil.which", lambda name: None)
+        monkeypatch.setattr(
+            ide_inject,
+            "_claude_desktop_config_path",
+            lambda: desktop_config_dir / "config.json",
+        )
+        assert "claude_desktop" not in detect_installed_ides(tmp_path)
+
+    def test_claude_desktop_NOT_detected_via_corrupt_config(
+        self, tmp_path, monkeypatch
+    ):
+        """Even if the config FILE exists, malformed JSON means the
+        app was never set up — refuse to detect."""
+        fakehome = tmp_path / "fakehome"
+        fakehome.mkdir()
+        desktop_config = (
+            fakehome / "Library" / "Application Support" / "Claude" / "config.json"
+        )
+        desktop_config.parent.mkdir(parents=True)
+        desktop_config.write_text("this is not json")
+        monkeypatch.setattr(Path, "home", lambda: fakehome)
+        monkeypatch.setattr("shutil.which", lambda name: None)
+        monkeypatch.setattr(
+            ide_inject, "_claude_desktop_config_path", lambda: desktop_config
+        )
+        assert "claude_desktop" not in detect_installed_ides(tmp_path)
 
     def test_none_found_returns_empty(self, tmp_path, monkeypatch):
         fakehome = tmp_path / "fakehome"
@@ -719,7 +828,13 @@ class TestInjectIdeConfigIntegration:
         fakehome = tmp_path / "fakehome"
         fakehome.mkdir()
         monkeypatch.setattr(Path, "home", lambda: fakehome)
-        monkeypatch.setattr("shutil.which", lambda name: None)
+        # v3.0.0 detection hardening: empty .claude/ dir is no longer
+        # a sufficient signal. Mock `which('claude')` to return a
+        # fake binary path so the strong-signal detector trips.
+        monkeypatch.setattr(
+            "shutil.which",
+            lambda name: "/usr/bin/claude" if name == "claude" else None,
+        )
         monkeypatch.setattr(
             ide_inject,
             "_claude_desktop_config_path",
@@ -747,7 +862,13 @@ class TestInjectIdeConfigIntegration:
         fakehome.mkdir()
         (fakehome / ".claude").mkdir()
         monkeypatch.setattr(Path, "home", lambda: fakehome)
-        monkeypatch.setattr("shutil.which", lambda name: None)
+        # v3.0.0 detection hardening: empty .claude/ dir is no longer
+        # a sufficient signal. Mock `which('claude')` to return a
+        # fake binary path so the strong-signal detector trips.
+        monkeypatch.setattr(
+            "shutil.which",
+            lambda name: "/usr/bin/claude" if name == "claude" else None,
+        )
         monkeypatch.setattr(
             ide_inject,
             "_claude_desktop_config_path",
@@ -780,6 +901,10 @@ class TestInjectIdeConfigIntegration:
         fakehome = tmp_path / "fakehome"
         fakehome.mkdir()
         monkeypatch.setattr(Path, "home", lambda: fakehome)
+        # This test ASSERTS the no-IDE case — keep `which` returning
+        # None for everything (the v3.0.0 sweep set most other tests
+        # to mock `which('claude')` because they relied on the old
+        # weak signal, but here we genuinely want zero detections).
         monkeypatch.setattr("shutil.which", lambda name: None)
         monkeypatch.setattr(
             ide_inject,
@@ -809,7 +934,13 @@ class TestInjectIdeConfigIntegration:
         desktop_config = desktop_config_dir / "claude_desktop_config.json"
 
         monkeypatch.setattr(Path, "home", lambda: fakehome)
-        monkeypatch.setattr("shutil.which", lambda name: None)
+        # v3.0.0 detection hardening: empty .claude/ dir is no longer
+        # a sufficient signal. Mock `which('claude')` to return a
+        # fake binary path so the strong-signal detector trips.
+        monkeypatch.setattr(
+            "shutil.which",
+            lambda name: "/usr/bin/claude" if name == "claude" else None,
+        )
         monkeypatch.setattr(
             ide_inject, "_claude_desktop_config_path", lambda: desktop_config
         )
@@ -833,7 +964,13 @@ class TestInjectIdeConfigIntegration:
         (fakehome / ".gemini").mkdir()
 
         monkeypatch.setattr(Path, "home", lambda: fakehome)
-        monkeypatch.setattr("shutil.which", lambda name: None)
+        # v3.0.0 detection hardening: empty .claude/ dir is no longer
+        # a sufficient signal. Mock `which('claude')` to return a
+        # fake binary path so the strong-signal detector trips.
+        monkeypatch.setattr(
+            "shutil.which",
+            lambda name: "/usr/bin/claude" if name == "claude" else None,
+        )
         monkeypatch.setattr(
             ide_inject,
             "_claude_desktop_config_path",
@@ -857,10 +994,20 @@ class TestInjectIdeConfigIntegration:
 
         fakehome = tmp_path / "fakehome"
         fakehome.mkdir()
-        (fakehome / ".cursor").mkdir()
+        cursor_dir = fakehome / ".cursor"
+        cursor_dir.mkdir()
+        # v3.0.0 strong signal: empty ~/.cursor/ alone doesn't detect;
+        # need either mcp.json or `cursor` on PATH.
+        (cursor_dir / "mcp.json").write_text("{}")
 
         monkeypatch.setattr(Path, "home", lambda: fakehome)
-        monkeypatch.setattr("shutil.which", lambda name: None)
+        # v3.0.0 detection hardening: empty .claude/ dir is no longer
+        # a sufficient signal. Mock `which('claude')` to return a
+        # fake binary path so the strong-signal detector trips.
+        monkeypatch.setattr(
+            "shutil.which",
+            lambda name: "/usr/bin/claude" if name == "claude" else None,
+        )
         monkeypatch.setattr(
             ide_inject,
             "_claude_desktop_config_path",
@@ -873,8 +1020,6 @@ class TestInjectIdeConfigIntegration:
         )
 
         # Make _inject_claude raise, but _inject_cursor should still succeed
-        original_inject_claude = ide_inject._inject_claude
-
         def broken_inject_claude(*args, **kwargs):
             raise RuntimeError("Simulated failure")
 
@@ -887,22 +1032,37 @@ class TestInjectIdeConfigIntegration:
 
     # --- New: all IDEs detected simultaneously ---
     def test_all_ides_detected_simultaneously(self, tmp_path, monkeypatch):
-        """When all IDEs are detected, all get configs written."""
+        """When all IDEs are detected via STRONG signals, all get
+        configs written. v3.0.0+: each IDE needs its proof file
+        (mcp.json / mcp_config.json / valid claude_desktop config)."""
         project = tmp_path / "proj"
         project.mkdir()
         (project / ".claude").mkdir()
 
         fakehome = tmp_path / "fakehome"
         fakehome.mkdir()
-        (fakehome / ".cursor").mkdir()
-        (fakehome / ".windsurf").mkdir()
-        (fakehome / ".gemini").mkdir()
+        cursor_dir = fakehome / ".cursor"
+        cursor_dir.mkdir()
+        (cursor_dir / "mcp.json").write_text("{}")
+        windsurf_dir = fakehome / ".windsurf"
+        windsurf_dir.mkdir()
+        (windsurf_dir / "mcp_config.json").write_text("{}")
+        antigravity_cfg = fakehome / ".gemini" / "antigravity" / "mcp_config.json"
+        antigravity_cfg.parent.mkdir(parents=True)
+        antigravity_cfg.write_text("{}")
         desktop_dir = fakehome / "Library" / "Application Support" / "Claude"
         desktop_dir.mkdir(parents=True)
         desktop_config = desktop_dir / "claude_desktop_config.json"
+        desktop_config.write_text("{}")  # v3.0.0: valid JSON required
 
         monkeypatch.setattr(Path, "home", lambda: fakehome)
-        monkeypatch.setattr("shutil.which", lambda name: None)
+        # v3.0.0 detection hardening: empty .claude/ dir is no longer
+        # a sufficient signal. Mock `which('claude')` to return a
+        # fake binary path so the strong-signal detector trips.
+        monkeypatch.setattr(
+            "shutil.which",
+            lambda name: "/usr/bin/claude" if name == "claude" else None,
+        )
         monkeypatch.setattr(
             ide_inject, "_claude_desktop_config_path", lambda: desktop_config
         )
@@ -931,7 +1091,13 @@ class TestInjectIdeConfigIntegration:
         fakehome = tmp_path / "fakehome"
         fakehome.mkdir()
         monkeypatch.setattr(Path, "home", lambda: fakehome)
-        monkeypatch.setattr("shutil.which", lambda name: None)
+        # v3.0.0 detection hardening: empty .claude/ dir is no longer
+        # a sufficient signal. Mock `which('claude')` to return a
+        # fake binary path so the strong-signal detector trips.
+        monkeypatch.setattr(
+            "shutil.which",
+            lambda name: "/usr/bin/claude" if name == "claude" else None,
+        )
         monkeypatch.setattr(
             ide_inject,
             "_claude_desktop_config_path",

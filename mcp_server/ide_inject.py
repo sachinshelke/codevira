@@ -41,63 +41,108 @@ def detect_installed_ides(project_root: Path) -> list[str]:
     Tier 1 (have specific MCP-config path support): claude,
     claude_desktop, cursor, windsurf, antigravity.
 
-    Tier 2 (added in Week 3 — AGENTS.md-style nudge file only,
-    no MCP-config injection support yet): codex, copilot,
-    continue, aider.
+    Tier 2 (AGENTS.md-style integration, no MCP-config injection):
+    codex, copilot.
+
+    v3.0.0 detection hardening (2026-05-22+ audit):
+    The detection rules below require STRONG signals (binary on PATH
+    AND a config file/dir present) wherever possible. The v2.x version
+    treated "directory exists at the expected path" as a sufficient
+    signal — that produced false positives (stale dirs from previous
+    installs, hand-created folders) and we configured IDEs the user
+    didn't actually have. Now we cross-check.
+
+    The ``continue`` and ``aider`` v2.x detections were also removed
+    in this hardening pass — neither IDE has a configured-for-codevira
+    integration path; their entries existed only as advisory listings.
     """
     found: list[str] = []
 
-    # ---- Tier 1 (existing + MCP config support) ----
+    # ---- Tier 1 (MCP config support) ----
 
-    # Claude Code: per-project .claude/ or claude binary in PATH
-    if (project_root / ".claude").is_dir() or shutil.which("claude"):
+    # Claude Code: must be installed (binary on PATH). The per-project
+    # `.claude/` dir is NOT a reliable signal — many users create one
+    # manually for IDE state without having installed Claude Code.
+    if shutil.which("claude") is not None:
         found.append("claude")
 
-    # Claude Desktop: check for its config directory
-    desktop_cfg_dir = _claude_desktop_config_path().parent
-    if desktop_cfg_dir.exists():
+    # Claude Desktop: require the config FILE to exist (not just the
+    # parent dir), and parse as valid JSON. A stale install can leave
+    # the directory but the file alone proves the app was set up.
+    desktop_cfg = _claude_desktop_config_path()
+    if desktop_cfg.is_file() and _is_valid_json(desktop_cfg):
         found.append("claude_desktop")
 
-    # Cursor: global ~/.cursor/ or cursor binary
-    if (Path.home() / ".cursor").is_dir() or shutil.which("cursor"):
+    # Cursor: directory + (binary OR mcp.json config file). The
+    # binary check is the strong signal; the mcp.json fallback
+    # covers cases where the user installed Cursor via the .app
+    # bundle and didn't add it to PATH.
+    cursor_dir = Path.home() / ".cursor"
+    if cursor_dir.is_dir() and (
+        shutil.which("cursor") is not None or (cursor_dir / "mcp.json").is_file()
+    ):
         found.append("cursor")
 
-    # Windsurf: global ~/.windsurf/ or ~/.codeium/windsurf/
-    if (Path.home() / ".windsurf").is_dir() or (
-        Path.home() / ".codeium" / "windsurf"
-    ).is_dir():
+    # Windsurf: require the actual mcp_config.json to exist (not just
+    # the parent directory). Windsurf writes this file the first time
+    # the app runs.
+    windsurf_paths = (
+        Path.home() / ".windsurf" / "mcp_config.json",
+        Path.home() / ".codeium" / "windsurf" / "mcp_config.json",
+    )
+    if any(p.is_file() for p in windsurf_paths):
         found.append("windsurf")
 
-    # Google Antigravity: global ~/.gemini/
-    if (Path.home() / ".gemini").is_dir():
+    # Google Antigravity: require the antigravity-specific config file,
+    # not just ~/.gemini/. The bare ~/.gemini/ dir gets created by
+    # any Google-CLI gemini install; antigravity is a specific subdir.
+    antigravity_cfg = Path.home() / ".gemini" / "antigravity" / "mcp_config.json"
+    if antigravity_cfg.is_file() and _is_valid_json(antigravity_cfg):
         found.append("antigravity")
 
-    # ---- Tier 2 (Week 3 — nudge-file support only) ----
+    # ---- Tier 2 (nudge-file integration only) ----
 
-    # OpenAI Codex CLI: ~/.codex/ or `codex` on PATH. Codex was the
-    # original AGENTS.md project; AGENTS.md is its native format.
-    if (Path.home() / ".codex").is_dir() or shutil.which("codex"):
+    # OpenAI Codex CLI: binary on PATH (strong) or AGENTS.md present
+    # in the project root (the canonical Codex format).
+    if shutil.which("codex") is not None:
+        found.append("codex")
+    elif (project_root / "AGENTS.md").is_file():
+        # Weaker signal — AGENTS.md alone doesn't prove Codex is
+        # installed, but it's the standard integration point. Mark
+        # so the user can drop --ide codex if they don't have it.
         found.append("codex")
 
-    # GitHub Copilot: detected via existing project file (some teams
-    # commit copilot-instructions.md to .github/), or via the `gh`
-    # extension list, or via the `copilot` binary on PATH.
-    if (project_root / ".github" / "copilot-instructions.md").exists():
+    # GitHub Copilot: any of three strong signals.
+    if (project_root / ".github" / "copilot-instructions.md").is_file():
         found.append("copilot")
     elif _gh_copilot_extension_present():
         found.append("copilot")
-    elif shutil.which("copilot"):
+    elif shutil.which("copilot") is not None:
         found.append("copilot")
 
-    # Continue.dev: ~/.continue/ directory present
-    if (Path.home() / ".continue").is_dir():
-        found.append("continue")
-
-    # Aider: aider binary on PATH (no global config dir to check)
-    if shutil.which("aider"):
-        found.append("aider")
+    # v3.0.0 removed continue + aider detection: neither had a
+    # codevira-configurable integration path; the keys only existed
+    # so the setup wizard could print "detected" — pure noise.
 
     return found
+
+
+def _is_valid_json(path: Path) -> bool:
+    """True if ``path`` is a readable file whose contents parse as
+    JSON. Used by the IDE detector to distinguish "the IDE was
+    actually set up" from "an empty dir exists at the expected path."
+
+    Best-effort: any read error or parse error returns False (we
+    treat "we can't tell" as "not installed" rather than risk
+    writing config for an absent IDE).
+    """
+    try:
+        import json
+
+        json.loads(path.read_text(encoding="utf-8"))
+        return True
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def _gh_copilot_extension_present() -> bool:

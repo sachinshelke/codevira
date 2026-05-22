@@ -773,8 +773,24 @@ def main() -> None:
         "--ide",
         action="append",
         metavar="IDE",
-        help="Only configure this IDE (repeatable). One of: claude, cursor, "
-        "windsurf, antigravity, codex, copilot, continue, aider",
+        help=(
+            "Only configure this IDE (repeatable). One of: claude, "
+            "claude_desktop, cursor, windsurf, antigravity, agents_md. "
+            "By default the wizard configures ALL auto-detected IDEs; "
+            "use this to scope down. Pairs with --force when the IDE "
+            "you want isn't auto-detected."
+        ),
+    )
+    setup_parser.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "Configure --ide values even if the IDE wasn't auto-"
+            "detected on this machine. Use when codevira's detector "
+            "misses an install (portable binary not on PATH, etc.). "
+            "Without --force, ``setup --ide cursor`` on a machine "
+            "where Cursor isn't detected raises a clear error."
+        ),
     )
     setup_parser.add_argument(
         "--no-hooks",
@@ -784,7 +800,7 @@ def main() -> None:
     setup_parser.add_argument(
         "--no-nudge-files",
         action="store_true",
-        help="Skip CLAUDE.md / AGENTS.md / etc. generation",
+        help="Skip AGENTS.md generation",
     )
     setup_parser.add_argument(
         "--no-mcp",
@@ -1288,6 +1304,7 @@ def main() -> None:
             yes=getattr(args, "yes", False),
             dry_run=getattr(args, "dry_run", False),
             only_ides=only_ides_tuple,
+            force=getattr(args, "force", False),
             install_mcp=not getattr(args, "no_mcp", False),
             install_hooks=not getattr(args, "no_hooks", False),
             write_nudge_files=not getattr(args, "no_nudge_files", False),

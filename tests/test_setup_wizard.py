@@ -334,6 +334,59 @@ class TestSelectiveIDE:
         with pytest.raises(ValueError, match="unknown IDE"):
             detect_targets(isolated, only_ides=("not-a-real-ide",))
 
+    def test_known_but_undetected_ide_raises_without_force(
+        self,
+        isolated: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """v3.0.0 contract: --ide cursor on a machine where Cursor is
+        NOT auto-detected raises a clear ValueError pointing at
+        --force. v2.x silently filtered the IDE out and exited 0 with
+        no config written — the worst possible UX."""
+        monkeypatch.setattr(
+            "mcp_server.ide_inject.detect_installed_ides",
+            lambda _root: ["claude"],  # only claude detected
+        )
+        with pytest.raises(ValueError, match="couldn't auto-detect"):
+            detect_targets(isolated, only_ides=("cursor",))
+
+    def test_known_but_undetected_ide_accepted_with_force(
+        self,
+        isolated: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """v3.0.0: --force is the escape hatch for the rare case where
+        the user's IDE install isn't auto-detected (portable binary,
+        non-standard config path). With --force, the wizard proceeds
+        with the user-specified IDE."""
+        monkeypatch.setattr(
+            "mcp_server.ide_inject.detect_installed_ides",
+            lambda _root: ["claude"],
+        )
+        result = detect_targets(isolated, only_ides=("cursor",), force=True)
+        assert result == ("cursor",), (
+            "With --force, the requested IDE should be configured "
+            "even though detection didn't find it."
+        )
+
+    def test_agents_md_sentinel_always_valid(
+        self,
+        isolated: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """The agents_md sentinel is "always available" — it's the
+        universal AGENTS.md write, not a real IDE. --ide agents_md
+        must NEVER trip the undetected check."""
+        monkeypatch.setattr(
+            "mcp_server.ide_inject.detect_installed_ides",
+            lambda _root: [],  # zero IDEs detected
+        )
+        # No error raised — agents_md is the universal target.
+        result = detect_targets(isolated, only_ides=("agents_md",))
+        # agents_md isn't in `detected` (it's a sentinel, not an IDE),
+        # so the returned tuple is empty, but the call doesn't raise.
+        assert result == ()
+
 
 # =====================================================================
 # Acceptance scenario #9: Bad project_root rejected

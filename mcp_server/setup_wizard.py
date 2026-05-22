@@ -212,16 +212,48 @@ def resolve_setup_target() -> Path:
 # =====================================================================
 
 
+#: IDEs codevira knows how to configure. Used to validate ``--ide``
+#: arguments — unknown names trip an error before we plan anything.
+_KNOWN_IDES: frozenset[str] = frozenset(
+    {
+        "claude",
+        "claude_desktop",
+        "cursor",
+        "windsurf",
+        "antigravity",
+        # The agents_md sentinel covers the universal AGENTS.md write
+        # (the only nudge file v3.0.0 still emits).
+        "agents_md",
+    }
+)
+
+
 def detect_targets(
     project_root: Path,
     *,
     only_ides: tuple[str, ...] | None = None,
+    force: bool = False,
 ) -> tuple[str, ...]:
     """Detect which AI tools are present on this machine.
 
-    ``only_ides`` (if given) filters the detection result. Unknown IDEs
-    in the filter raise ``ValueError`` — we want the user to see a
-    typo immediately rather than silently producing an empty plan.
+    ``only_ides`` (if given) narrows the configured-IDE set. The
+    v3.0.0 contract has two cases:
+
+    1. Unknown name (typo / a totally fictional IDE) → raise
+       ``ValueError`` immediately. We've never silently dropped these.
+
+    2. Known name but NOT in the auto-detected set (e.g. user passes
+       ``--ide cursor`` on a machine where Cursor isn't installed) →
+       raise ``ValueError`` UNLESS ``force=True``. The v2.x code
+       silently filtered these out, which produced the worst possible
+       UX: ``codevira setup --ide cursor`` exited 0 with no output and
+       no config written.  Now the user gets a clear "we couldn't see
+       it; pass --force if you know better."
+
+    Passing ``force=True`` is the escape hatch for cases where the
+    detector misses an install (e.g. a portable binary not on PATH,
+    a non-standard config location). It's intentionally noisy so
+    users only reach for it when needed.
     """
     from mcp_server.ide_inject import detect_installed_ides
 
@@ -230,26 +262,28 @@ def detect_targets(
     if only_ides is None:
         return detected
 
-    # v2.2.0+: the known IDE alphabet collapsed to the tier-1 set
-    # (those with MCP config injection) plus the universal AGENTS.md
-    # sentinel. The per-IDE nudge files (CLAUDE.md / GEMINI.md /
-    # .cursor/rules/codevira.mdc / .windsurfrules / copilot-instructions.md)
-    # were deleted in the 2026-05-22 surface-cut audit, so they're no
-    # longer valid --ide arguments either.
-    valid = set(detected) | {
-        "claude",
-        "claude_desktop",
-        "cursor",
-        "windsurf",
-        "antigravity",
-        "agents_md",
-    }
-    unknown = [i for i in only_ides if i not in valid]
+    # Stage 1 — reject unknown names (typos / never-supported IDEs).
+    unknown = [i for i in only_ides if i not in _KNOWN_IDES]
     if unknown:
         raise ValueError(
-            f"unknown IDE(s) in --ide: {unknown}. " f"Supported: {sorted(valid)}"
+            f"unknown IDE(s) in --ide: {unknown}. " f"Supported: {sorted(_KNOWN_IDES)}"
         )
-    return tuple(i for i in only_ides if i in detected)
+
+    # Stage 2 — reject known-but-not-detected unless --force.
+    # The `agents_md` sentinel is always "available" (we write
+    # AGENTS.md regardless of detected IDE), so it never trips this
+    # branch.
+    undetected = [i for i in only_ides if i != "agents_md" and i not in detected]
+    if undetected and not force:
+        detected_str = ", ".join(sorted(detected)) or "(none)"
+        raise ValueError(
+            f"--ide named IDE(s) we couldn't auto-detect on this "
+            f"machine: {undetected}. Detected: {detected_str}. "
+            f"If you're sure they're installed (e.g. portable binary "
+            f"not on PATH), re-run with --force to configure anyway."
+        )
+
+    return tuple(i for i in only_ides if i in detected or force)
 
 
 # =====================================================================
@@ -854,6 +888,7 @@ def cmd_setup(
     yes: bool = False,
     dry_run: bool = False,
     only_ides: tuple[str, ...] | None = None,
+    force: bool = False,
     install_mcp: bool = True,
     install_hooks: bool = True,
     write_nudge_files: bool = True,
@@ -862,6 +897,13 @@ def cmd_setup(
     0 on success / dry-run / user-declined
     1 on bad project root or unrecoverable startup failure
     2 on partial failure (some steps succeeded, some failed)
+
+    v3.0.0 contract: by default the wizard ONLY configures IDEs whose
+    install is auto-detected on this machine. ``--ide X`` for a
+    non-detected IDE raises a clear error pointing at ``--force`` as
+    the override. The v2.x silent-filter behavior (which made
+    ``setup --ide cursor`` on a Cursor-less machine succeed with no
+    output and no config) was deleted in the surface-cut audit.
     """
     started = time.perf_counter()
 
@@ -870,12 +912,12 @@ def cmd_setup(
 
     # Stage 2
     try:
-        detected = detect_targets(project_root, only_ides=only_ides)
+        detected = detect_targets(project_root, only_ides=only_ides, force=force)
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
         print(
             "  → check your --ide value against `codevira setup --help`. "
-            "Valid IDEs: claude, cursor, windsurf, antigravity, codex, copilot.",
+            "Valid IDEs: claude, cursor, windsurf, antigravity, agents_md.",
             file=sys.stderr,
         )
         return 1
@@ -883,7 +925,8 @@ def cmd_setup(
     if not detected:
         print("No supported AI tools detected on this machine.")
         print("Install Claude Code, Cursor, Windsurf, Antigravity, or Codex,")
-        print("then re-run `codevira setup`.")
+        print("then re-run `codevira setup`. To configure an IDE we missed,")
+        print("pass `--ide <name> --force`.")
         return 0
 
     # Stage 3

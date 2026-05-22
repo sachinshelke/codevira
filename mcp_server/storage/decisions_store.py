@@ -409,17 +409,31 @@ def supersede(
     do_not_revert: bool = False,
     tags: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Append a new decision; amend the old to is_superseded=True."""
+    """Append a new decision; amend the old to is_superseded=True.
+
+    v3.0.0 (2026-05-22 round-2 G5 fix): when ``file_path`` is None,
+    INHERIT from the superseded decision. Pre-fix, the new decision
+    would land with file_path=None — silently detaching it from the
+    file the old decision was protecting. The DecisionLock policy
+    then couldn't fire on edits to that file (it filters by
+    file_path). Same inheritance for ``tags``. Callers wanting to
+    explicitly detach can still pass ``file_path=""`` — only ``None``
+    triggers the inheritance.
+    """
     paths.ensure_dirs()
-    if get(old_id) is None:
+    old = get(old_id)
+    if old is None:
         return {"success": False, "error": f"decision {old_id} not found"}
+
+    effective_file_path = file_path if file_path is not None else old.get("file_path")
+    effective_tags = tags if tags is not None else old.get("tags")
 
     new_id = record(
         decision=new_decision,
-        file_path=file_path,
+        file_path=effective_file_path,
         context=f"[supersedes {old_id}: {reason}]",
         do_not_revert=do_not_revert,
-        tags=tags,
+        tags=effective_tags,
     )
     amendment = {
         "id": old_id,

@@ -571,7 +571,16 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "old_id": {"type": "integer", "description": "Decision to retire"},
+                    "old_id": {
+                        "type": "string",
+                        "description": (
+                            "Decision id to retire (e.g. 'D000001'). v3.0.0 "
+                            "uses zero-padded string IDs returned by "
+                            "record_decision. v2.x integer IDs are not "
+                            "accepted — they live in graph.db which v3.0.0 "
+                            "no longer reads."
+                        ),
+                    },
                     "new_decision": {
                         "type": "string",
                         "description": "Replacement decision text",

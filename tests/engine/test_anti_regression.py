@@ -268,7 +268,6 @@ class TestAcceptanceScenarios:
         reverts (Hero 2 applicable). Both fire; combined verdict
         carries Hero 1's message (priority=100 > 80).
         """
-        from indexer.sqlite_graph import SQLiteGraph
         from indexer.fix_history import record_fix
         from mcp_server.engine import (
             register_default_policies,
@@ -280,22 +279,23 @@ class TestAcceptanceScenarios:
         paths_mod.set_project_dir(isolated_project)
         paths_mod.invalidate_data_dir_cache()
 
-        from mcp_server.paths import get_data_dir
+        # v3.0.0 (2026-05-22 round-2 G5 fix): seed via the JSONL
+        # backend, not graph.db SQL. signals.decisions() reads from
+        # .codevira/decisions.jsonl in v3.0.0; SQL-table seeds are
+        # invisible (the storage layer they're written to isn't the
+        # one DecisionLock reads).
+        from mcp_server.storage import (
+            decisions_store,
+            paths as store_paths,
+        )
 
-        graph_db = get_data_dir() / "graph" / "graph.db"
-        graph_db.parent.mkdir(parents=True, exist_ok=True)
-        g = SQLiteGraph(graph_db)
-        g.add_node("auth", "file", "auth.py", "auth.py", do_not_revert=True)
-        g.conn.execute(
-            "INSERT INTO sessions (session_id, summary) VALUES (?, ?)", ("s1", "x")
+        store_paths.ensure_dirs()
+        decisions_store.record(
+            decision="Use bcrypt",
+            file_path="auth.py",
+            context="perf",
+            do_not_revert=True,
         )
-        g.conn.execute(
-            "INSERT INTO decisions (session_id, decision, file_path, context, created_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            ("s1", "Use bcrypt", "auth.py", "perf", "2025-04-13"),
-        )
-        g.conn.commit()
-        g.close()
 
         # Record a fix on the same file
         record_fix(

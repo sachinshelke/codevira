@@ -175,54 +175,69 @@ class SignalContext:
         Shape: list of dicts with keys ``id``, ``file_path``, ``decision``,
         ``context``, ``locked`` (bool, mirrors do_not_revert), ``timestamp``.
 
+        v3.0.0 (2026-05-22): rewired to read ``.codevira/decisions.jsonl``
+        via ``mcp_server.storage.decisions_store`` — the v2.x SQL path
+        that queried ``graph.db`` was structurally broken in v2.2.0 onward
+        because record_decision writes to JSONL, not the SQL table. The
+        bug went undetected because every engine-policy unit test mocked
+        SignalContext with ``_FakeSignals``; the only real exercise was
+        this round-2 G5 verification, which surfaced ``DecisionLock``
+        silently failing open. Don't add back-compat for the SQL path:
+        the JSONL is the v3.0.0 source of truth.
+
         Round-4 QA HIGH #3: ``limit`` is clamped to [1, 1000] to prevent
-        a misbehaving policy from issuing ``limit=-1`` (SQLite returns
-        all rows) or ``limit=10**9`` (memory exhaustion). Honest bound;
-        no real policy needs >1000 decisions in one call.
+        a misbehaving policy from issuing ``limit=-1`` or
+        ``limit=10**9`` (memory exhaustion).
 
         Cached by argument tuple.
         """
-        # Defensive clamp before SQL — caller may pass negative or huge.
         limit = max(1, min(int(limit), 1000))
         cache_key = (str(file) if file is not None else None, locked_only, limit)
         if cache_key in self._decisions_cache:
             return self._decisions_cache[cache_key]
+
         result: list[dict[str, Any]] = []
         try:
-            graph = self.graph
-            if graph is None:
+            from mcp_server.storage import (
+                decisions_store,
+                paths as store_paths,
+            )
+
+            decisions_path = store_paths.decisions_path()
+            if not decisions_path.is_file():
+                # .codevira/ not initialised; no decisions to evaluate.
                 self._decisions_cache[cache_key] = result
                 return result
-            # Direct SQL — the existing search_decisions doesn't expose a
-            # locked_only filter cleanly, so we go to the source.
-            # Schema note: the decisions table column is ``created_at``
-            # (not ``timestamp``). The original SELECT ``d.timestamp``
-            # was a Week-1 bug that survived 5 weeks because every test
-            # used a _FakeSignals stub instead of a real graph DB. The
-            # column-not-found error was swallowed by the broad
-            # ``except Exception`` below, returning ``[]`` — which made
-            # Hero 1 (Decision Lock) silently fail-open against any
-            # real project. Caught by Week-5 R8-redo (live integration
-            # against a real SQLiteGraph instance).
-            sql = """
-                SELECT d.id, d.file_path, d.decision, d.context,
-                       COALESCE(n.do_not_revert, 0) AS locked,
-                       d.created_at AS timestamp
-                FROM decisions d
-                LEFT JOIN nodes n ON n.file_path = d.file_path
-                WHERE 1=1
-            """
-            params: list[Any] = []
-            if file is not None:
-                sql += " AND d.file_path = ?"
-                params.append(str(file) if isinstance(file, Path) else file)
-            if locked_only:
-                sql += " AND COALESCE(n.do_not_revert, 0) = 1"
-            sql += " ORDER BY d.created_at DESC LIMIT ?"
-            params.append(limit)
-            rows = graph.conn.execute(sql, params).fetchall()
-            result = [dict(r) for r in rows]
-        except Exception:  # noqa: BLE001
+
+            # Build a normalised file-path filter. The decision_lock policy
+            # passes the project-relative form; the JSONL stores the same.
+            file_str = str(file) if file is not None else None
+
+            # decisions_store.list_all applies amendments + superseded
+            # filtering automatically. We use the public API rather than
+            # re-reading the JSONL ourselves so any future schema changes
+            # land in one place.
+            raw = decisions_store.list_all(
+                limit=limit,
+                file_pattern=file_str,
+                protected_only=locked_only,
+                include_superseded=False,
+                full=True,
+            )
+            for d in raw.get("decisions", []):
+                # The engine-policy contract expects these specific keys.
+                # Map v3.0.0 JSONL shape → engine shape.
+                result.append(
+                    {
+                        "id": d.get("id"),
+                        "file_path": d.get("file_path"),
+                        "decision": d.get("decision"),
+                        "context": d.get("context"),
+                        "locked": bool(d.get("do_not_revert")),
+                        "timestamp": d.get("ts"),
+                    }
+                )
+        except Exception:  # noqa: BLE001 — signals must never raise
             result = []
         self._decisions_cache[cache_key] = result
         return result

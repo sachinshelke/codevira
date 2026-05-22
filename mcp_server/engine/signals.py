@@ -88,19 +88,27 @@ class SignalContext:
         return self._graph
 
     def _load_graph(self) -> Any:
-        """Locate and open the project's graph.db.
+        """Locate and open the project's code graph SQLite DB.
 
-        Resolution priority (matches mcp_server.paths.get_data_dir):
-          1. Centralized: ``~/.codevira/projects/<slug>/graph/graph.db``
-             (v1.6+ default)
-          2. Legacy in-project: ``<project_root>/.codevira/graph/graph.db``
-             (v1.5 and earlier — still in use on un-migrated projects)
-          3. None — uninitialized project; signal returns None to policies.
+        v3.0.0 (2026-05-22 round-2): added the v3.0.0 location as the
+        PRIMARY tier. Pre-fix the resolution only checked v1.5 and
+        v1.6 paths; v3.0.0 writes the code graph to
+        ``<project>/.codevira-cache/graph.sqlite`` (gitignored,
+        rebuildable). signals.graph returned None on every v3.0.0
+        project, which structurally broke BlastRadiusVeto + the
+        DecisionLock no-rationale branch. Caught during the
+        round-2 G5 audit immediately after the
+        signals.decisions-reads-JSONL fix.
 
-        We resolve manually (rather than calling ``get_data_dir()``) so
-        that this signal works for ANY ``project_root``, not just the
-        process-global one. Multi-project use cases (running tests,
-        future daemon) need this.
+        Resolution priority:
+          1. v3.0.0: ``<project>/.codevira-cache/graph.sqlite``
+          2. Centralized v1.6+: ``~/.codevira/projects/<slug>/graph/graph.db``
+          3. Legacy in-project v1.5: ``<project>/.codevira/graph/graph.db``
+          4. None — uninitialized project; signals returns None.
+
+        We resolve manually (rather than calling ``get_data_dir()``)
+        so this signal works for ANY ``project_root``, not just the
+        process-global one (multi-project use cases need this).
         """
         try:
             from indexer.sqlite_graph import (
@@ -108,21 +116,23 @@ class SignalContext:
             )  # local import — slow on cold path
             from mcp_server.paths import _sanitize_path_key, get_global_home
 
-            # 1. Centralized location (v1.6+).
+            # 1. v3.0.0 location (preferred).
+            v3 = self.project_root / ".codevira-cache" / "graph.sqlite"
+            if v3.exists():
+                return SQLiteGraph(v3)
+
+            # 2. Centralized location (v1.6+).
             key = _sanitize_path_key(self.project_root)
             centralized = get_global_home() / "projects" / key / "graph" / "graph.db"
             if centralized.exists():
                 return SQLiteGraph(centralized)
 
-            # 2. Legacy in-project location (v1.5 and earlier). Honors
-            #    users who haven't been migrated yet — without this
-            #    fallback, every signal-using policy silently no-ops on
-            #    legacy projects.
+            # 3. Legacy in-project location (v1.5 and earlier).
             legacy = self.project_root / ".codevira" / "graph" / "graph.db"
             if legacy.exists():
                 return SQLiteGraph(legacy)
 
-            # 3. Uninitialized — return None so policies skip silently.
+            # 4. Uninitialized — return None so policies skip silently.
             return None
         except Exception:  # noqa: BLE001 — signal layer must never crash a policy
             return None

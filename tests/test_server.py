@@ -696,8 +696,6 @@ class TestServerMain:
         ) as mock_handler, patch("asyncio.run"), patch(
             "indexer.index_codebase.start_background_watcher", return_value=MagicMock()
         ), patch("indexer.outcome_tracker.analyze_session_outcomes"), patch(
-            "indexer.rule_learner.run_rule_inference"
-        ), patch(
             "mcp_server.global_sync.import_global_to_project", return_value={}
         ), patch("mcp_server.migrate.detect_migration_needed", return_value=False):
             from mcp_server.server import main
@@ -713,8 +711,6 @@ class TestServerMain:
         ), patch("asyncio.run"), patch(
             "indexer.index_codebase.start_background_watcher", return_value=MagicMock()
         ), patch("indexer.outcome_tracker.analyze_session_outcomes"), patch(
-            "indexer.rule_learner.run_rule_inference"
-        ), patch(
             "mcp_server.global_sync.import_global_to_project", return_value={}
         ), patch("mcp_server.migrate.detect_migration_needed", return_value=False):
             from mcp_server.server import main
@@ -728,8 +724,6 @@ class TestServerMain:
         ), patch(
             "indexer.index_codebase.start_background_watcher", return_value=mock_watcher
         ), patch("indexer.outcome_tracker.analyze_session_outcomes"), patch(
-            "indexer.rule_learner.run_rule_inference"
-        ), patch(
             "mcp_server.global_sync.import_global_to_project", return_value={}
         ), patch(
             "mcp_server.migrate.detect_migration_needed", return_value=True
@@ -748,8 +742,6 @@ class TestServerMain:
         ), patch(
             "indexer.index_codebase.start_background_watcher", return_value=MagicMock()
         ), patch("indexer.outcome_tracker.analyze_session_outcomes"), patch(
-            "indexer.rule_learner.run_rule_inference"
-        ), patch(
             "mcp_server.global_sync.import_global_to_project", return_value={}
         ), patch(
             "mcp_server.migrate.detect_migration_needed",
@@ -766,8 +758,6 @@ class TestServerMain:
             "indexer.index_codebase.start_background_watcher",
             side_effect=ImportError("watchdog not found"),
         ), patch("indexer.outcome_tracker.analyze_session_outcomes"), patch(
-            "indexer.rule_learner.run_rule_inference"
-        ), patch(
             "mcp_server.global_sync.import_global_to_project", return_value={}
         ), patch("mcp_server.migrate.detect_migration_needed", return_value=False):
             from mcp_server.server import main
@@ -782,7 +772,7 @@ class TestServerMain:
         ), patch(
             "indexer.outcome_tracker.analyze_session_outcomes",
             side_effect=RuntimeError("learning fail"),
-        ), patch("indexer.rule_learner.run_rule_inference"), patch(
+        ), patch(
             "mcp_server.global_sync.import_global_to_project", return_value={}
         ), patch("mcp_server.migrate.detect_migration_needed", return_value=False):
             from mcp_server.server import main
@@ -795,8 +785,6 @@ class TestServerMain:
         ), patch(
             "indexer.index_codebase.start_background_watcher", return_value=MagicMock()
         ), patch("indexer.outcome_tracker.analyze_session_outcomes"), patch(
-            "indexer.rule_learner.run_rule_inference"
-        ), patch(
             "mcp_server.global_sync.import_global_to_project",
             side_effect=RuntimeError("sync fail"),
         ), patch("mcp_server.migrate.detect_migration_needed", return_value=False):
@@ -811,8 +799,6 @@ class TestServerMain:
         ), patch(
             "indexer.index_codebase.start_background_watcher", return_value=mock_watcher
         ), patch("indexer.outcome_tracker.analyze_session_outcomes"), patch(
-            "indexer.rule_learner.run_rule_inference"
-        ), patch(
             "mcp_server.global_sync.import_global_to_project", return_value={}
         ), patch("mcp_server.migrate.detect_migration_needed", return_value=False):
             from mcp_server.server import main

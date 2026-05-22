@@ -215,25 +215,13 @@ def populated_db(project_env):
     db.record_outcome(
         "s1", "src/service.py", "modified", delta_summary="Changed naming"
     )
-    # Preferences
-    db.record_preference("naming", "Prefers snake_case")
-    db.record_preference("naming", "Prefers snake_case")
-    db.record_preference("naming", "Prefers snake_case")
-    db.record_preference("structure", "Uses early returns")
-    # Learned rules
-    db.add_learned_rule(
-        "API files should have tests",
-        0.8,
-        ["s1"],
-        category="testing",
-        file_pattern="src/api/*",
-    )
-    db.add_learned_rule(
-        "Use type hints",
-        0.9,
-        ["s1", "s2"],
-        category="patterns",
-    )
+    # v3.0.0 audit cleanup: the preference + learned-rule seed calls
+    # were removed. The SQLiteGraph methods that backed them
+    # (record_preference / add_learned_rule) were deleted in the
+    # 2026-05-22 surface-cut audit because the MCP tools that consumed
+    # those tables (get_preferences / get_learned_rules / retire_rule)
+    # were also deleted. Outcomes are still seeded — they feed
+    # AntiRegression policy + decision-confidence scoring.
     return project, data_dir, db
 
 

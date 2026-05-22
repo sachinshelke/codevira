@@ -1253,37 +1253,39 @@ def main():
 
         safe_log_crash(e, context="background watcher startup")
 
-    # v1.4: Run outcome analysis and rule inference on startup
-    # This processes any sessions that haven't been analyzed yet.
+    # v1.4: Run outcome analysis on startup. This processes any sessions
+    # that haven't been analyzed yet so AntiRegression + decision-
+    # confidence have fresh data.
+    #
+    # v3.0.0 audit cleanup: the companion ``run_rule_inference()`` call
+    # was removed. The rule-learner module was deleted in the
+    # 2026-05-22 surface-cut audit because the MCP tools that consumed
+    # its output (get_learned_rules, retire_rule) were also deleted.
     try:
         from indexer.outcome_tracker import analyze_session_outcomes
-        from indexer.rule_learner import run_rule_inference
 
         analyze_session_outcomes()
-        run_rule_inference()
-        logger.info("Outcome analysis and rule inference complete")
+        logger.info("Outcome analysis complete")
     except Exception as e:
-        logger.warning("Could not run startup learning: %s", e)
+        logger.warning("Could not run startup outcome analysis: %s", e)
         from mcp_server._safe_crash import safe_log_crash
 
-        safe_log_crash(e, context="startup learning pipeline")
+        safe_log_crash(e, context="startup outcome analysis")
 
-    # v1.5: Import global intelligence from cross-project memory
+    # v1.5 → v3.0.0: register this project in the cross-machine inventory
+    # so `codevira projects` can enumerate it. Best-effort; never breaks
+    # startup. v3.0.0 simplified the previous "import global intelligence"
+    # path — preferences + rules sync was deleted in the audit; project
+    # registration is the one piece of cross-project state that survives.
     try:
-        from mcp_server.global_sync import import_global_to_project
+        from mcp_server.global_sync import register_current_project
 
-        stats = import_global_to_project()
-        if stats.get("preferences_imported") or stats.get("rules_imported"):
-            logger.info(
-                "Global memory: imported %d preferences, %d rules",
-                stats["preferences_imported"],
-                stats["rules_imported"],
-            )
+        register_current_project()
     except Exception as e:
-        logger.warning("Could not sync global memory: %s", e)
+        logger.warning("Could not register project in global inventory: %s", e)
         from mcp_server._safe_crash import safe_log_crash
 
-        safe_log_crash(e, context="global memory import")
+        safe_log_crash(e, context="cross-project registration")
 
     # v1.7: Enforce logs.retention_days from config (opt-in, default 0 = keep forever)
     try:

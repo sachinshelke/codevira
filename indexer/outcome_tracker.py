@@ -10,11 +10,11 @@ what happened to the agent's changes:
 This feedback feeds into confidence scoring, preference learning, and
 automatic rule generation.
 """
+
 from __future__ import annotations
 
 import logging
 import subprocess
-from pathlib import Path
 
 from mcp_server.paths import get_data_dir, get_project_root
 from indexer.sqlite_graph import SQLiteGraph
@@ -28,10 +28,14 @@ def _project_root():
 
 def _git_cmd(*args: str) -> str | None:
     try:
-        return subprocess.check_output(
-            ["git", "-C", str(_project_root())] + list(args),
-            stderr=subprocess.DEVNULL,
-        ).decode("utf-8", errors="replace").strip()
+        return (
+            subprocess.check_output(
+                ["git", "-C", str(_project_root())] + list(args),
+                stderr=subprocess.DEVNULL,
+            )
+            .decode("utf-8", errors="replace")
+            .strip()
+        )
     except (subprocess.CalledProcessError, FileNotFoundError):
         return None
 
@@ -49,12 +53,12 @@ def analyze_session_outcomes(session_id: str | None = None):
             sessions = [{"session_id": session_id}]
         else:
             # Find sessions that have decisions but no outcomes yet
-            cur = db.conn.execute('''
+            cur = db.conn.execute("""
                 SELECT DISTINCT d.session_id FROM decisions d
                 LEFT JOIN outcomes o ON d.session_id = o.session_id
                 WHERE o.id IS NULL
                 ORDER BY d.created_at DESC LIMIT 20
-            ''')
+            """)
             sessions = [dict(r) for r in cur.fetchall()]
 
         for sess in sessions:
@@ -76,10 +80,13 @@ def _analyze_single_session(db: SQLiteGraph, session_id: str):
     ``context`` text. The first plausible mention becomes the canonical file
     for outcome classification.
     """
-    decisions = db.conn.execute('''
+    decisions = db.conn.execute(
+        """
         SELECT id, file_path, decision, context, created_at FROM decisions
         WHERE session_id = ?
-    ''', (session_id,)).fetchall()
+    """,
+        (session_id,),
+    ).fetchall()
 
     if not decisions:
         return
@@ -111,9 +118,13 @@ def _analyze_single_session(db: SQLiteGraph, session_id: str):
                 delta_summary=outcome.get("delta"),
             )
 
-            # If modified, try to learn preferences from the diff
-            if outcome["type"] == "modified" and outcome.get("delta"):
-                _learn_from_modification(db, file_path, outcome["delta"])
+            # v3.0.0 audit cleanup: the "learn preferences from
+            # modification" hook was removed. The preferences surface
+            # (MCP tools + SQLiteGraph methods) was deleted in the
+            # 2026-05-22 audit; recording would write to a table no
+            # caller reads. Outcomes themselves are still tracked
+            # because AntiRegression policy + decision-confidence
+            # scoring still consume them.
 
 
 def _extract_file_mentions(text: str) -> list[str]:
@@ -142,16 +153,82 @@ def _extract_file_mentions(text: str) -> list[str]:
     # extensions match before their prefixes — otherwise `.md` regex-matches
     # only `.m` (Objective-C) and we lose the trailing `d`.
     _ext_list = [
-        "py", "pyi", "ipynb", "js", "jsx", "ts", "tsx", "mjs", "cjs",
-        "go", "rs", "rb", "php", "java", "kt", "scala", "swift",
-        "c", "cc", "cpp", "h", "hpp", "cs", "m", "mm",
-        "sh", "bash", "zsh", "fish", "ps1", "lua", "pl", "r", "jl",
-        "dart", "ex", "exs", "erl", "clj", "cljs", "elm", "hs", "ml", "mli", "v",
-        "yaml", "yml", "toml", "json", "jsonl", "xml", "ini", "env",
-        "proto", "graphql", "prisma", "sql", "thrift", "cap",
-        "md", "mdx", "rst", "adoc", "txt",
-        "html", "htm", "css", "scss", "sass", "less",
-        "vue", "svelte", "astro", "dockerfile", "gradle", "bazel",
+        "py",
+        "pyi",
+        "ipynb",
+        "js",
+        "jsx",
+        "ts",
+        "tsx",
+        "mjs",
+        "cjs",
+        "go",
+        "rs",
+        "rb",
+        "php",
+        "java",
+        "kt",
+        "scala",
+        "swift",
+        "c",
+        "cc",
+        "cpp",
+        "h",
+        "hpp",
+        "cs",
+        "m",
+        "mm",
+        "sh",
+        "bash",
+        "zsh",
+        "fish",
+        "ps1",
+        "lua",
+        "pl",
+        "r",
+        "jl",
+        "dart",
+        "ex",
+        "exs",
+        "erl",
+        "clj",
+        "cljs",
+        "elm",
+        "hs",
+        "ml",
+        "mli",
+        "v",
+        "yaml",
+        "yml",
+        "toml",
+        "json",
+        "jsonl",
+        "xml",
+        "ini",
+        "env",
+        "proto",
+        "graphql",
+        "prisma",
+        "sql",
+        "thrift",
+        "cap",
+        "md",
+        "mdx",
+        "rst",
+        "adoc",
+        "txt",
+        "html",
+        "htm",
+        "css",
+        "scss",
+        "sass",
+        "less",
+        "vue",
+        "svelte",
+        "astro",
+        "dockerfile",
+        "gradle",
+        "bazel",
     ]
     _exts = "|".join(sorted(_ext_list, key=len, reverse=True))
 
@@ -191,6 +268,7 @@ def _determine_file_outcome(file_path: str, session_date: str) -> dict | None:
     # Normalize date to ISO 8601 for git --since compatibility
     try:
         from datetime import datetime
+
         dt = datetime.fromisoformat(session_date.replace(" ", "T"))
         since_date = dt.isoformat()
     except (ValueError, AttributeError):
@@ -198,8 +276,7 @@ def _determine_file_outcome(file_path: str, session_date: str) -> dict | None:
 
     # Get commits touching this file after the session date
     log_output = _git_cmd(
-        "log", "--oneline", "--follow", f"--since={since_date}",
-        "--", file_path
+        "log", "--oneline", "--follow", f"--since={since_date}", "--", file_path
     )
 
     if not log_output:
@@ -218,26 +295,22 @@ def _determine_file_outcome(file_path: str, session_date: str) -> dict | None:
     # If there are subsequent commits but no revert, it was modified
     if len(commits) >= 1:
         # Get a summary of changes
-        diff_stat = _git_cmd("diff", "--stat", f"HEAD~{min(len(commits), 5)}", "--", file_path)
+        diff_stat = _git_cmd(
+            "diff", "--stat", f"HEAD~{min(len(commits), 5)}", "--", file_path
+        )
         if not diff_stat:
-            logger.debug("Could not get diff stats for %s, using commit count", file_path)
-        return {"type": "modified", "delta": diff_stat or f"{len(commits)} subsequent commits"}
+            logger.debug(
+                "Could not get diff stats for %s, using commit count", file_path
+            )
+        return {
+            "type": "modified",
+            "delta": diff_stat or f"{len(commits)} subsequent commits",
+        }
 
     return {"type": "kept", "delta": None}
 
 
-def _learn_from_modification(db: SQLiteGraph, file_path: str, delta: str):
-    """
-    When a developer modifies agent output, try to extract preference signals.
-    This is a lightweight heuristic — not perfect, but builds up over time.
-    """
-    # Detect naming convention changes
-    if "camelCase" in delta or "snake_case" in delta:
-        db.record_preference("naming", "Prefers consistent naming convention", example=file_path)
-
-    # Detect structural patterns from file extension
-    ext = Path(file_path).suffix
-    if ext in ('.py', '.ts', '.tsx', '.go', '.rs'):
-        db.record_preference("structure", f"Developer modifies AI output in {ext} files", example=file_path)
-
-
+# v3.0.0 audit cleanup: _learn_from_modification deleted along with
+# the preferences surface (record_preference / get_preferences /
+# MCP tools / engine policies that consumed them) in the 2026-05-22
+# surface-cut audit.

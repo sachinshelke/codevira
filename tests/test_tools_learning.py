@@ -1,16 +1,20 @@
 """
-Tests for mcp_server/tools/learning.py — adaptive memory, confidence scoring,
-preferences, learned rules, project maturity, and session context.
+Tests for mcp_server/tools/learning.py — v3.0.0 adaptive memory.
 
-Covers ALL functions (0% coverage previously):
+v3.0.0 surface (2026-05-22 surface-cut audit):
   - get_decision_confidence: scope by file_path or pattern
-  - get_preferences: filtered list with hints
-  - get_learned_rules: filtered rules with hints
-  - get_project_maturity: composite 0-100 score + level + hint
-  - get_session_context: aggregated context with roadmap, changesets, global intelligence
-  - _interpret_confidence: boundary tests for interpretation strings
-  - _compute_maturity_score: weighted formula verification
-  - _maturity_level: threshold-based level classification
+  - get_session_context:     "catch me up" aggregator
+  - record_decision:         capture a new decision (+ tags / do_not_revert)
+  - supersede_decision:      retire an old decision, link to its replacement
+  - _interpret_confidence:   internal interpretation helper
+
+v2.x tools deleted in the audit (test classes removed from this file):
+  - get_preferences, get_learned_rules, get_project_maturity
+  - _compute_maturity_score, _maturity_level, _maturity_hint
+
+The maturity scoring + preferences + rules helpers all relied on
+preference_signals and learned_rules counts that are always zero in
+v3.0.0 (the underlying record paths were removed in the same audit).
 """
 
 from __future__ import annotations
@@ -63,7 +67,13 @@ def _seed_outcomes(db: SQLiteGraph, outcomes: list[tuple[str, str, str]]) -> Non
 
 
 def _seed_full_project(db: SQLiteGraph) -> None:
-    """Create a project with sessions, outcomes, preferences, rules, and files."""
+    """Create a project with sessions, outcomes, and files.
+
+    v3.0.0 audit cleanup: dropped the preference / learned-rule seed
+    calls (the SQLiteGraph methods that wrote them were deleted in
+    the 2026-05-22 surface-cut audit). Sessions + outcomes + nodes
+    are still seeded for the session_context tests.
+    """
     # Files
     db.add_node("file:src/api.py", "file", "api.py", "src/api.py", layer="api")
     db.add_node("file:src/core.py", "file", "core.py", "src/core.py", layer="core")
@@ -107,16 +117,6 @@ def _seed_full_project(db: SQLiteGraph) -> None:
     db.record_outcome("s2", "src/core.py", "kept")
     db.record_outcome("s3", "src/api.py", "modified")
 
-    # Preferences
-    db.record_preference("naming", "Prefers snake_case", example="src/api.py")
-    db.record_preference("naming", "Prefers snake_case")  # frequency -> 2
-    db.record_preference("structure", "Uses early returns")
-
-    # Learned rules
-    db.add_learned_rule("Test files in tests/", 0.8, ["s1", "s2"], category="testing")
-    db.add_learned_rule("Import order: stdlib first", 0.6, ["s1"], category="imports")
-    db.add_learned_rule("Low confidence rule", 0.2, ["s3"], category="naming")
-
 
 # =====================================================================
 # _interpret_confidence
@@ -158,147 +158,19 @@ class TestInterpretConfidence:
 # =====================================================================
 
 
-class TestComputeMaturityScore:
-    def test_zero_maturity(self):
-        maturity = {
-            "session_count": 0,
-            "coverage": 0.0,
-            "overall_confidence": 0.0,
-            "learned_rules": 0,
-            "preference_signals": 0,
-        }
-        score = learning._compute_maturity_score(maturity)
-        assert score == 0.0
-
-    def test_max_maturity(self):
-        maturity = {
-            "session_count": 20,
-            "coverage": 1.0,
-            "overall_confidence": 1.0,
-            "learned_rules": 10,
-            "preference_signals": 10,
-        }
-        score = learning._compute_maturity_score(maturity)
-        assert score == 100.0
-
-    def test_sessions_capped_at_20pts(self):
-        maturity = {
-            "session_count": 100,
-            "coverage": 0.0,
-            "overall_confidence": 0.0,
-            "learned_rules": 0,
-            "preference_signals": 0,
-        }
-        score = learning._compute_maturity_score(maturity)
-        assert score == 20.0  # max(100*2, 20) = 20
-
-    def test_coverage_contributes_30pts(self):
-        maturity = {
-            "session_count": 0,
-            "coverage": 1.0,
-            "overall_confidence": 0.0,
-            "learned_rules": 0,
-            "preference_signals": 0,
-        }
-        score = learning._compute_maturity_score(maturity)
-        assert score == 30.0
-
-    def test_confidence_contributes_25pts(self):
-        maturity = {
-            "session_count": 0,
-            "coverage": 0.0,
-            "overall_confidence": 1.0,
-            "learned_rules": 0,
-            "preference_signals": 0,
-        }
-        score = learning._compute_maturity_score(maturity)
-        assert score == 25.0
-
-    def test_rules_capped_at_15pts(self):
-        maturity = {
-            "session_count": 0,
-            "coverage": 0.0,
-            "overall_confidence": 0.0,
-            "learned_rules": 100,
-            "preference_signals": 0,
-        }
-        score = learning._compute_maturity_score(maturity)
-        assert score == 15.0
-
-    def test_preferences_capped_at_10pts(self):
-        maturity = {
-            "session_count": 0,
-            "coverage": 0.0,
-            "overall_confidence": 0.0,
-            "learned_rules": 0,
-            "preference_signals": 100,
-        }
-        score = learning._compute_maturity_score(maturity)
-        assert score == 10.0
-
-    def test_total_capped_at_100(self):
-        """Even with overflowing inputs, score should not exceed 100."""
-        maturity = {
-            "session_count": 1000,
-            "coverage": 5.0,
-            "overall_confidence": 5.0,
-            "learned_rules": 1000,
-            "preference_signals": 1000,
-        }
-        score = learning._compute_maturity_score(maturity)
-        assert score == 100.0
-
-    def test_partial_maturity(self):
-        """5 sessions=10pts, 50% coverage=15pts, 0.4 confidence=10pts, 2 rules=6pts, 1 pref=2pts."""
-        maturity = {
-            "session_count": 5,
-            "coverage": 0.5,
-            "overall_confidence": 0.4,
-            "learned_rules": 2,
-            "preference_signals": 1,
-        }
-        score = learning._compute_maturity_score(maturity)
-        expected = 10.0 + 15.0 + 10.0 + 6.0 + 2.0
-        assert score == expected
+# v3.0.0 audit cleanup (2026-05-22): TestComputeMaturityScore,
+# TestMaturityLevel, TestMaturityHint, TestGetProjectMaturity all
+# deleted. The underlying functions (_compute_maturity_score,
+# _maturity_level, _maturity_hint, get_project_maturity) were
+# removed in the surface-cut audit because two of their three
+# inputs (learned_rules count + preference signal count) are
+# always zero in v3.0.0 — the MCP tools that wrote those counts
+# were deleted in the same audit.
 
 
 # =====================================================================
 # _maturity_level
 # =====================================================================
-
-
-class TestMaturityLevel:
-    def test_new_project(self):
-        result = learning._maturity_level(10)
-        assert "New" in result
-
-    def test_growing_project(self):
-        result = learning._maturity_level(35)
-        assert "Growing" in result
-
-    def test_intermediate_project(self):
-        result = learning._maturity_level(65)
-        assert "Intermediate" in result
-
-    def test_expert_project(self):
-        result = learning._maturity_level(90)
-        assert "Expert" in result
-
-    def test_boundary_20(self):
-        result = learning._maturity_level(20)
-        assert "Growing" in result
-
-    def test_boundary_50(self):
-        result = learning._maturity_level(50)
-        assert "Intermediate" in result
-
-    def test_boundary_80(self):
-        result = learning._maturity_level(80)
-        assert "Expert" in result
-
-    def test_zero(self):
-        result = learning._maturity_level(0)
-        assert "New" in result
 
 
 # =====================================================================
@@ -375,37 +247,6 @@ class TestGetDecisionConfidence:
 # =====================================================================
 # get_project_maturity (tool-level)
 # =====================================================================
-
-
-class TestGetProjectMaturity:
-    def test_fresh_project_maturity(self, tmp_path, monkeypatch):
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        db.close()
-        result = learning.get_project_maturity()
-        assert result["maturity_score"] == 0.0
-        assert "New" in result["maturity_level"]
-        assert "hint" in result
-
-    def test_mature_project(self, tmp_path, monkeypatch):
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        _seed_full_project(db)
-        db.close()
-        result = learning.get_project_maturity()
-        assert result["maturity_score"] > 0
-        assert result["session_count"] == 3
-        assert "hint" in result
-
-    def test_maturity_includes_all_fields(self, tmp_path, monkeypatch):
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        db.close()
-        result = learning.get_project_maturity()
-        assert "maturity_score" in result
-        assert "maturity_level" in result
-        assert "session_count" in result
-        assert "coverage" in result
-        assert "overall_confidence" in result
-        assert "learned_rules" in result
-        assert "preference_signals" in result
 
 
 # =====================================================================
@@ -723,28 +564,6 @@ class TestGetSessionContextExceptions:
 # =====================================================================
 # _maturity_hint boundary coverage (lines 233, 237)
 # =====================================================================
-
-
-class TestMaturityHint:
-    def test_score_above_80_returns_mature_hint(self):
-        """Score >= 80 returns the 'mature' hint string."""
-        result = learning._maturity_hint(80.0)
-        assert "mature" in result.lower() or "learned patterns" in result.lower()
-
-    def test_score_between_50_and_80_returns_good_progress_hint(self):
-        """Score >= 50 but < 80 returns the 'good progress' hint."""
-        result = learning._maturity_hint(60.0)
-        assert "confidence" in result.lower() or "progress" in result.lower()
-
-    def test_score_between_20_and_50_returns_building_hint(self):
-        """Score >= 20 but < 50 returns the 'still building' hint (line 237)."""
-        result = learning._maturity_hint(30.0)
-        assert "building" in result.lower() or "memory" in result.lower()
-
-    def test_score_below_20_returns_fresh_start_hint(self):
-        """Score < 20 returns the 'fresh start' hint."""
-        result = learning._maturity_hint(5.0)
-        assert "fresh" in result.lower() or "every session" in result.lower()
 
 
 # =====================================================================

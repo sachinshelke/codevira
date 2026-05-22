@@ -1360,33 +1360,31 @@ def cmd_status(check_stale: bool = False, show_global: bool = False):
 
 
 def _print_global_status(console, Table, Panel):
-    """Print cross-project intelligence + launchd service status.
+    """Print cross-project inventory + launchd service status.
 
-    P0-3 + P2-9 (rc.5): "Projects Tracked" now reads from the canonical
-    inventory helper so the number agrees with `codevira projects` and
-    `codevira clean --dry-run`. We also break the panel into TWO rows
-    (cross-project memory vs project inventory) so the user can tell
-    which scope is which.
+    P0-3 + P2-9 (rc.5): "Projects Tracked" reads from the canonical
+    inventory helper so the number agrees with `codevira projects`
+    and `codevira clean --dry-run`. Ghost / orphan numbers shown
+    alongside so the user has the full picture.
+
+    v3.0.0 (2026-05-22 surface-cut audit): the "Global Preferences"
+    and "Global Rules" rows were removed. The audit deleted the
+    preferences + learned_rules surface; those counts were always
+    zero, taking up a row each for no signal.
     """
     try:
-        from mcp_server.global_sync import get_global_stats
         from mcp_server._project_inventory import enumerate_projects, summarize
 
-        stats = get_global_stats() or {}
         inventory = summarize(enumerate_projects())
+        error: str | None = None
     except Exception as e:
-        stats = {"error": str(e)}
         inventory = {"tracked": 0, "ghost": 0, "orphan": 0, "stale": 0, "total": 0}
+        error = str(e)
 
     g_table = Table(show_header=False, box=None)
-    if "error" in stats:
-        g_table.add_row(
-            "[cyan]Cross-Project Memory:[/cyan]", f"[dim]error: {stats['error']}[/dim]"
-        )
+    if error is not None:
+        g_table.add_row("[cyan]Project Inventory:[/cyan]", f"[dim]error: {error}[/dim]")
     else:
-        # Project counts come from the canonical inventory (disk + global.db
-        # joined). "tracked" = registered AND project_root still valid.
-        # Ghost / orphan numbers shown alongside so the user has full picture.
         proj_summary = (
             f"{inventory['tracked']} tracked"
             + (
@@ -1401,11 +1399,6 @@ def _print_global_status(console, Table, Panel):
             )
         )
         g_table.add_row("[cyan]Projects Tracked:[/cyan]", proj_summary)
-        # Cross-project shared memory (preferences + rules learned across all projects).
-        g_table.add_row(
-            "[cyan]Global Preferences:[/cyan]", str(stats.get("total_preferences", 0))
-        )
-        g_table.add_row("[cyan]Global Rules:[/cyan]", str(stats.get("total_rules", 0)))
 
     # Launchd service status (macOS only)
     try:

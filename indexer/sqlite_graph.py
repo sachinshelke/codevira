@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import sqlite3
 import logging
 from pathlib import Path
@@ -571,211 +570,21 @@ class SQLiteGraph:
             "confidence": round(confidence, 3),
         }
 
-    # ------------------------------------------------------------------
-    # Developer preferences
-    # ------------------------------------------------------------------
-
-    def record_preference(
-        self,
-        category: str,
-        signal: str,
-        example: str | None = None,
-        source: str = "local",
-    ):
-        existing = self.conn.execute(
-            "SELECT id, frequency FROM preferences WHERE category = ? AND signal = ?",
-            (category, signal),
-        ).fetchone()
-
-        if existing:
-            with self.transaction() as conn:
-                conn.execute(
-                    """
-                    UPDATE preferences SET frequency = frequency + 1, last_seen = CURRENT_TIMESTAMP, example = COALESCE(?, example)
-                    WHERE id = ?
-                """,
-                    (example, existing["id"]),
-                )
-        else:
-            with self.transaction() as conn:
-                conn.execute(
-                    """
-                    INSERT INTO preferences (category, signal, example, source) VALUES (?, ?, ?, ?)
-                """,
-                    (category, signal, example, source),
-                )
-
-    def get_preferences(
-        self, category: str | None = None, min_frequency: int = 1
-    ) -> list[dict]:
-        if category:
-            cur = self.conn.execute(
-                """
-                SELECT * FROM preferences WHERE category = ? AND frequency >= ?
-                ORDER BY frequency DESC
-            """,
-                (category, min_frequency),
-            )
-        else:
-            cur = self.conn.execute(
-                """
-                SELECT * FROM preferences WHERE frequency >= ? ORDER BY frequency DESC
-            """,
-                (min_frequency,),
-            )
-        return [dict(r) for r in cur.fetchall()]
+    # v3.0.0 (2026-05-22 surface-cut audit): preferences + learned_rules
+    # methods deleted. The MCP tools that exposed them (get_preferences,
+    # get_learned_rules, retire_rule) and the engine policies that
+    # consumed them (LiveStyleEnforcement, AIPromotionScore) were all
+    # deleted in the audit — see CHANGELOG ``[Unreleased]`` Removed
+    # section for the full list. The `preferences` and `learned_rules`
+    # SQLite tables remain in the schema for back-compat (an old graph.db
+    # opened by v3.0.0 should still load cleanly), but they're never
+    # written or read by any v3.0.0 code path.
 
     # ------------------------------------------------------------------
-    # Learned rules
-    # ------------------------------------------------------------------
-
-    def add_learned_rule(
-        self,
-        rule_text: str,
-        confidence: float,
-        source_sessions: list[str],
-        category: str | None = None,
-        file_pattern: str | None = None,
-    ):
-        with self.transaction() as conn:
-            conn.execute(
-                """
-                INSERT INTO learned_rules (rule_text, confidence, source_sessions, category, file_pattern)
-                VALUES (?, ?, ?, ?, ?)
-            """,
-                (
-                    rule_text,
-                    confidence,
-                    json.dumps(source_sessions),
-                    category,
-                    file_pattern,
-                ),
-            )
-
-    def update_learned_rule(
-        self,
-        rule_id: int,
-        confidence: float | None = None,
-        source_sessions: list[str] | None = None,
-    ):
-        updates: list[str] = []
-        values: list[Any] = []
-        if confidence is not None:
-            updates.append("confidence = ?")
-            values.append(confidence)
-        if source_sessions is not None:
-            updates.append("source_sessions = ?")
-            values.append(json.dumps(source_sessions))
-        if updates:
-            updates.append("updated_at = CURRENT_TIMESTAMP")
-            values.append(rule_id)
-            with self.transaction() as conn:
-                conn.execute(
-                    f'UPDATE learned_rules SET {", ".join(updates)} WHERE id = ?',
-                    values,
-                )
-
-    def get_learned_rules(
-        self,
-        category: str | None = None,
-        file_pattern: str | None = None,
-        min_confidence: float = 0.0,
-        include_retired: bool = False,
-    ) -> list[dict]:
-        """List active (non-retired) learned rules by default.
-
-        v2.0-rc.3 (Bug 3): retired rules are excluded from the default
-        result set. Pass ``include_retired=True`` for audit/admin views.
-        """
-        query = "SELECT * FROM learned_rules WHERE confidence >= ?"
-        params: list = [min_confidence]
-        if not include_retired:
-            query += " AND retired_at IS NULL"
-        if category:
-            query += " AND category = ?"
-            params.append(category)
-        if file_pattern:
-            query += " AND (file_pattern IS NULL OR ? LIKE file_pattern)"
-            params.append(file_pattern)
-        query += " ORDER BY confidence DESC"
-        cur = self.conn.execute(query, params)
-        return [dict(r) for r in cur.fetchall()]
-
-    def retire_learned_rule(self, rule_id: int, reason: str | None = None) -> bool:
-        """Mark a learned rule as retired.
-
-        Retired rules remain in the table (audit trail) but are filtered
-        from ``get_learned_rules()`` by default so they stop firing as
-        active high-confidence signals on deleted/refactored code.
-
-        Returns True if a row was updated, False if rule_id not found.
-
-        Bug 3 (v2.0-rc.3): exposed via the new ``retire_rule`` MCP tool.
-        """
-        with self.transaction() as conn:
-            cur = conn.execute(
-                "UPDATE learned_rules "
-                "SET retired_at = CURRENT_TIMESTAMP, retired_reason = ? "
-                "WHERE id = ? AND retired_at IS NULL",
-                (reason, rule_id),
-            )
-            return cur.rowcount > 0
-
-    def unretire_learned_rule(self, rule_id: int) -> bool:
-        """Reverse a retire_learned_rule. Returns True if a row was updated."""
-        with self.transaction() as conn:
-            cur = conn.execute(
-                "UPDATE learned_rules "
-                "SET retired_at = NULL, retired_reason = NULL "
-                "WHERE id = ? AND retired_at IS NOT NULL",
-                (rule_id,),
-            )
-            return cur.rowcount > 0
-
-    # ------------------------------------------------------------------
-    # Project maturity metrics
-    # ------------------------------------------------------------------
-
-    def get_project_maturity(self) -> dict:
-        """Compute overall project maturity based on outcomes and coverage."""
-        # Overall confidence
-        confidence = self.get_decision_confidence()
-
-        # File coverage: files with at least one session decision
-        total_files = self.conn.execute(
-            'SELECT COUNT(*) as c FROM nodes WHERE kind = "file"'
-        ).fetchone()["c"]
-        covered_files = self.conn.execute(
-            "SELECT COUNT(DISTINCT file_path) as c FROM decisions WHERE file_path IS NOT NULL"
-        ).fetchone()["c"]
-
-        # Learned rules count
-        rule_count = self.conn.execute(
-            "SELECT COUNT(*) as c FROM learned_rules WHERE confidence >= 0.5"
-        ).fetchone()["c"]
-
-        # Preference signals count
-        pref_count = self.conn.execute(
-            "SELECT COUNT(*) as c FROM preferences WHERE frequency >= 2"
-        ).fetchone()["c"]
-
-        # Session count
-        session_count = self.conn.execute(
-            "SELECT COUNT(*) as c FROM sessions"
-        ).fetchone()["c"]
-
-        coverage = round(covered_files / total_files, 3) if total_files > 0 else 0.0
-
-        return {
-            "session_count": session_count,
-            "total_files": total_files,
-            "covered_files": covered_files,
-            "coverage": coverage,
-            "overall_confidence": confidence["confidence"],
-            "outcome_breakdown": confidence,
-            "learned_rules": rule_count,
-            "preference_signals": pref_count,
-        }
+    # v3.0.0 audit cleanup: get_project_maturity deleted along with the
+    # MCP tool of the same name. It read learned_rules + preferences
+    # counts, both of which are always zero in v3.0.0 (the surface for
+    # those was deleted in the 2026-05-22 audit).
 
     # ------------------------------------------------------------------
     # Session helpers

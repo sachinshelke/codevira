@@ -368,21 +368,24 @@ def run_http_server(
         except Exception:
             pass
 
+    # v3.0.0 audit cleanup: dropped `run_rule_inference()` (module
+    # deleted in 2026-05-22 audit). Outcome tracking stays — feeds
+    # AntiRegression + decision-confidence.
     try:
         from indexer.outcome_tracker import analyze_session_outcomes
-        from indexer.rule_learner import run_rule_inference
 
         analyze_session_outcomes()
-        run_rule_inference()
     except Exception as e:
-        logger.warning("Could not run startup learning: %s", e)
+        logger.warning("Could not run startup outcome analysis: %s", e)
 
+    # v3.0.0: project registration (was: bidirectional preference /
+    # rule sync). Best-effort; doesn't block startup.
     try:
-        from mcp_server.global_sync import import_global_to_project
+        from mcp_server.global_sync import register_current_project
 
-        import_global_to_project()
+        register_current_project()
     except Exception as e:
-        logger.warning("Could not sync global memory: %s", e)
+        logger.warning("Could not register project in global inventory: %s", e)
 
     # v1.7: Enforce logs.retention_days (opt-in, default 0 = keep forever)
     try:
@@ -414,7 +417,6 @@ def run_http_server(
 
     # ---- Print registration instructions ----
     scheme = "https" if use_https else "http"
-    url = f"{scheme}://{host}:{port}/mcp"
     display_host = "localhost" if host in ("127.0.0.1", "::1") else host
     display_url = f"{scheme}://{display_host}:{port}/mcp"
 

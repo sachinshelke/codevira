@@ -477,8 +477,6 @@ class TestRunHttpServer:
         ), patch(
             "indexer.index_codebase.start_background_watcher", return_value=MagicMock()
         ), patch("indexer.outcome_tracker.analyze_session_outcomes"), patch(
-            "indexer.rule_learner.run_rule_inference"
-        ), patch(
             "mcp_server.global_sync.import_global_to_project", return_value=None
         ), patch("uvicorn.run"):
             run_http_server()  # Must not raise
@@ -493,8 +491,6 @@ class TestRunHttpServer:
         ) as mock_migrate, patch(
             "indexer.index_codebase.start_background_watcher", return_value=MagicMock()
         ), patch("indexer.outcome_tracker.analyze_session_outcomes"), patch(
-            "indexer.rule_learner.run_rule_inference"
-        ), patch(
             "mcp_server.global_sync.import_global_to_project", return_value=None
         ), patch("uvicorn.run"):
             run_http_server()
@@ -507,8 +503,6 @@ class TestRunHttpServer:
         ), patch(
             "indexer.index_codebase.start_background_watcher", return_value=MagicMock()
         ), patch("indexer.outcome_tracker.analyze_session_outcomes"), patch(
-            "indexer.rule_learner.run_rule_inference"
-        ), patch(
             "mcp_server.global_sync.import_global_to_project", return_value=None
         ), patch("uvicorn.run"):
             run_http_server()  # Must not raise
@@ -520,8 +514,6 @@ class TestRunHttpServer:
             "indexer.index_codebase.start_background_watcher",
             side_effect=ImportError("watchdog missing"),
         ), patch("indexer.outcome_tracker.analyze_session_outcomes"), patch(
-            "indexer.rule_learner.run_rule_inference"
-        ), patch(
             "mcp_server.global_sync.import_global_to_project", return_value=None
         ), patch("uvicorn.run"):
             run_http_server()  # Must not raise
@@ -534,7 +526,7 @@ class TestRunHttpServer:
         ), patch(
             "indexer.outcome_tracker.analyze_session_outcomes",
             side_effect=RuntimeError("learning fail"),
-        ), patch("indexer.rule_learner.run_rule_inference"), patch(
+        ), patch(
             "mcp_server.global_sync.import_global_to_project", return_value=None
         ), patch("uvicorn.run"):
             run_http_server()  # Must not raise
@@ -545,8 +537,6 @@ class TestRunHttpServer:
         ), patch(
             "indexer.index_codebase.start_background_watcher", return_value=MagicMock()
         ), patch("indexer.outcome_tracker.analyze_session_outcomes"), patch(
-            "indexer.rule_learner.run_rule_inference"
-        ), patch(
             "mcp_server.global_sync.import_global_to_project",
             side_effect=RuntimeError("sync fail"),
         ), patch("uvicorn.run"):
@@ -565,8 +555,6 @@ class TestRunHttpServer:
         ), patch(
             "indexer.index_codebase.start_background_watcher", return_value=MagicMock()
         ), patch("indexer.outcome_tracker.analyze_session_outcomes"), patch(
-            "indexer.rule_learner.run_rule_inference"
-        ), patch(
             "mcp_server.global_sync.import_global_to_project", return_value=None
         ), patch("mcp_server.http_server._certs_exist", return_value=False), patch(
             "mcp_server.http_server.generate_mkcert_certs"
@@ -585,8 +573,6 @@ class TestRunHttpServer:
         ), patch(
             "indexer.index_codebase.start_background_watcher", return_value=MagicMock()
         ), patch("indexer.outcome_tracker.analyze_session_outcomes"), patch(
-            "indexer.rule_learner.run_rule_inference"
-        ), patch(
             "mcp_server.global_sync.import_global_to_project", return_value=None
         ), patch("mcp_server.http_server._certs_exist", return_value=False), patch(
             "mcp_server.http_server.generate_mkcert_certs",
@@ -609,8 +595,6 @@ class TestRunHttpServer:
         ), patch(
             "indexer.index_codebase.start_background_watcher", return_value=MagicMock()
         ), patch("indexer.outcome_tracker.analyze_session_outcomes"), patch(
-            "indexer.rule_learner.run_rule_inference"
-        ), patch(
             "mcp_server.global_sync.import_global_to_project", return_value=None
         ), patch("mcp_server.http_server._certs_exist", return_value=True), patch(
             "mcp_server.http_server.generate_mkcert_certs"
@@ -631,8 +615,6 @@ class TestRunHttpServer:
         ), patch(
             "indexer.index_codebase.start_background_watcher", return_value=MagicMock()
         ), patch("indexer.outcome_tracker.analyze_session_outcomes"), patch(
-            "indexer.rule_learner.run_rule_inference"
-        ), patch(
             "mcp_server.global_sync.import_global_to_project", return_value=None
         ), patch("uvicorn.run"):
             run_http_server(project_dir=tmp_path)
@@ -647,8 +629,6 @@ class TestRunHttpServer:
         ), patch(
             "indexer.index_codebase.start_background_watcher", return_value=MagicMock()
         ), patch("indexer.outcome_tracker.analyze_session_outcomes"), patch(
-            "indexer.rule_learner.run_rule_inference"
-        ), patch(
             "mcp_server.global_sync.import_global_to_project", return_value=None
         ), patch("uvicorn.run"):
             run_http_server()

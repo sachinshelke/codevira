@@ -1,12 +1,21 @@
 """
 Learning tools — MCP tools for Codevira's adaptive memory system.
 
-These tools expose the feedback loop to AI agents:
-  - get_decision_confidence: How confident is the system about decisions in an area?
-  - get_preferences: What coding style does the developer prefer?
-  - get_learned_rules: Auto-generated rules from observed patterns
-  - get_project_maturity: Overall project intelligence score
-  - get_session_context: Single "catch me up" call for cross-tool continuity
+v3.0.0 surface (2026-05-22 surface-cut audit):
+  - record_decision    : capture an architectural decision (+ tags / do_not_revert)
+  - supersede_decision : retire an old decision and link to its replacement
+  - get_session_context: single "catch me up" call for cross-tool continuity
+
+v2.x tools deleted in the audit and NOT exposed here:
+  - get_decision_confidence: surfaced a number nobody acted on
+  - get_preferences        : returned noise more often than signal
+  - get_learned_rules      : same — see ``retire_rule`` decision
+  - get_project_maturity   : vanity metric; no policy consumed it
+  - retire_rule            : was the cleanup for get_learned_rules
+
+The internal helper ``get_decision_confidence`` is kept (used by
+``get_session_context``'s confidence summary block); the standalone
+MCP tool that exposed it is gone.
 """
 
 from __future__ import annotations
@@ -284,20 +293,10 @@ def supersede_decision(
 # learned-rules surface is gone from the MCP tool list.
 
 
-def get_project_maturity() -> dict:
-    """Get overall project intelligence and maturity metrics."""
-    db = _get_db()
-    try:
-        maturity = db.get_project_maturity()
-        score = _compute_maturity_score(maturity)
-        return {
-            **maturity,
-            "maturity_score": score,
-            "maturity_level": _maturity_level(score),
-            "hint": _maturity_hint(score),
-        }
-    finally:
-        db.close()
+# v3.0.0 audit cleanup: get_project_maturity + _compute_maturity_score
+# + _maturity_level + _maturity_hint deleted. The MCP tool wrapper was
+# already removed in the 2026-05-22 audit (server.py dispatcher gone);
+# the underlying functions had no other callers.
 
 
 def _truncate(text: str | None, max_chars: int = 120) -> str | None:
@@ -598,43 +597,8 @@ def _interpret_confidence(score: float) -> str:
     return "No data — this is new territory. Decisions here will build the baseline."
 
 
-def _compute_maturity_score(maturity: dict) -> float:
-    """Compute a 0-100 maturity score from multiple signals."""
-    score = 0.0
-
-    # Sessions (max 20 points)
-    score += min(maturity["session_count"] * 2, 20)
-
-    # Coverage (max 30 points)
-    score += maturity["coverage"] * 30
-
-    # Confidence (max 25 points)
-    score += maturity["overall_confidence"] * 25
-
-    # Learned rules (max 15 points)
-    score += min(maturity["learned_rules"] * 3, 15)
-
-    # Preferences (max 10 points)
-    score += min(maturity["preference_signals"] * 2, 10)
-
-    return round(min(score, 100), 1)
-
-
-def _maturity_level(score: float) -> str:
-    if score >= 80:
-        return "Expert — agents have rich context and high confidence."
-    elif score >= 50:
-        return "Intermediate — good coverage, patterns emerging."
-    elif score >= 20:
-        return "Growing — some sessions logged, building baseline."
-    return "New — fresh project, minimal agent memory."
-
-
-def _maturity_hint(score: float) -> str:
-    if score >= 80:
-        return "Project memory is mature. Agents should rely on learned patterns and confidence scores."
-    elif score >= 50:
-        return "Good progress. Continue using Codevira — confidence and rules will keep improving."
-    elif score >= 20:
-        return "Still building memory. Run more agent sessions and outcomes will start influencing confidence."
-    return "This is a fresh start. Every session logs decisions that future agents will learn from."
+# v3.0.0 audit cleanup: _compute_maturity_score / _maturity_level /
+# _maturity_hint deleted along with get_project_maturity. They scored
+# the project on session count, coverage, learned_rules count, and
+# preference signal count — three of those inputs are zero in v3.0.0
+# because their MCP tools were deleted in the 2026-05-22 audit.

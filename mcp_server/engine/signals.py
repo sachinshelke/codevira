@@ -2,7 +2,7 @@
 signals.py — SignalContext lazy accessor.
 
 Every HookEvent carries a SignalContext that policies use to read codevira's
-data sources (graph, decisions, fix history, preferences, etc.). Two
+data sources (graph, decisions, recent fixes, token budget). Two
 non-negotiable design properties:
 
 1. **Lazy.** Loading the graph SQLite or running a `get_impact` query is
@@ -64,7 +64,9 @@ class SignalContext:
     _impact_cache: dict[Path, Any] = field(default_factory=dict, repr=False)
     _decisions_cache: dict[tuple, Any] = field(default_factory=dict, repr=False)
     _fixes_cache: dict[Path, Any] = field(default_factory=dict, repr=False)
-    _prefs_cache: dict[str, Any] = field(default_factory=dict, repr=False)
+    # v3.0.0 audit cleanup: _prefs_cache dropped. The preferences()
+    # method was deleted along with the get_preferences MCP tool in
+    # the 2026-05-22 surface-cut audit; no remaining policy reads it.
 
     # ---------------------------------------------------------------
     # Graph + impact
@@ -282,76 +284,14 @@ class SignalContext:
         self._fixes_cache[file_path] = result
         return result
 
-    # ---------------------------------------------------------------
-    # Preferences
-    # ---------------------------------------------------------------
-
-    def preferences(self, category: str = "") -> list[dict[str, Any]]:
-        """Return preferences in the given category (or all if empty)."""
-        if category in self._prefs_cache:
-            return self._prefs_cache[category]
-        result: list[dict[str, Any]] = []
-        try:
-            from mcp_server.tools.learning import get_preferences  # type: ignore[attr-defined]
-
-            data = get_preferences(category=category) if category else get_preferences()
-            # Existing tool returns a dict with "preferences" key.
-            if isinstance(data, dict):
-                result = data.get("preferences", [])  # type: ignore[assignment]
-            elif isinstance(data, list):
-                result = data
-        except Exception:  # noqa: BLE001
-            result = []
-        self._prefs_cache[category] = result
-        return result
-
-    # ---------------------------------------------------------------
-    # Outcomes + learned rules (Hero 10 — AI Promotion Score)
-    # ---------------------------------------------------------------
-
-    def outcomes(
-        self,
-        *,
-        since_days: int = 30,
-        min_outcomes: int = 2,
-        limit: int = 100,
-    ) -> list[dict[str, Any]]:
-        """Aggregate outcome records into per-decision rows + scores.
-
-        Used by Hero 10's SessionStart inject. Reads via
-        ``mcp_server.engine.promotion_score.aggregate_decision_outcomes``
-        which queries ``decisions LEFT JOIN outcomes`` (already indexed).
-
-        Cached by argument tuple so the policy + the CLI subprocess in
-        the same process don't hit the DB twice. Returns empty list
-        when graph is unavailable or table is empty.
-        """
-        # v2.2.0+: promotion_score module deleted along with Hero 10
-        # (AIPromotionScore policy). outcomes() now returns an empty list;
-        # callers that depended on the aggregator have been removed.
-        cache_key = ("outcomes", int(since_days), int(min_outcomes), int(limit))
-        if cache_key in self._decisions_cache:
-            return self._decisions_cache[cache_key]
-        result: list[dict[str, Any]] = []
-        self._decisions_cache[cache_key] = result
-        return result
-
-    def learned_rules(
-        self,
-        *,
-        min_confidence: float = 0.7,
-        max_items: int = 3,
-    ) -> list[dict[str, Any]]:
-        """v2.2.0+: returns [] — learned_rules surface removed.
-
-        Companion to outcomes(); both were Hero 10 inputs. Both gone.
-        """
-        cache_key = ("rules", float(min_confidence), int(max_items))
-        if cache_key in self._decisions_cache:
-            return self._decisions_cache[cache_key]
-        result: list[dict[str, Any]] = []
-        self._decisions_cache[cache_key] = result
-        return result
+    # v3.0.0 audit cleanup: preferences(), outcomes(), learned_rules()
+    # all deleted. They were no-op stubs (or, in the preferences case,
+    # a broken stub that imported a non-existent symbol) left over
+    # from the v2.2.0 surface cut. The corresponding MCP tools
+    # (get_preferences, get_learned_rules) were removed in the
+    # 2026-05-22 audit; the AIPromotionScore policy that consumed
+    # outcomes() was deleted in the same audit. No remaining code
+    # reads any of these signals.
 
     # ---------------------------------------------------------------
     # Token budget meter

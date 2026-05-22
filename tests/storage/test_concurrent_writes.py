@@ -206,6 +206,103 @@ class TestManifestLostUpdates:
 # =====================================================================
 
 
+class TestRoadmapLostUpdates:
+    """Verifies the v3.0.0 round-3 atomic-write + flock fix in
+    ``mcp_server/tools/roadmap.py``.
+
+    Pre-fix the ``_save_roadmap`` helper did an unguarded
+    ``with open(... "w") + yaml.dump``. Two concurrent
+    ``update_phase_status`` calls (which happens at session-end when
+    two IDEs are wrapping up together) both read the same starting
+    state and the last save() won — losing the other update.
+
+    Fix verified: ``_roadmap_lock()`` wraps each mutation in
+    ``atomic.file_lock`` (Posix flock + Windows sentinel fallback)
+    AND ``_save_roadmap`` now goes through ``atomic.atomic_write_text``.
+
+    This test pins the same shape as ``TestManifestLostUpdates``,
+    just on a different storage surface.
+    """
+
+    def test_no_lost_phases_under_concurrent_add(
+        self,
+        isolated_project: Path,
+    ) -> None:
+        from mcp_server.tools import roadmap
+        from mcp_server.tools.roadmap import _roadmap_file
+
+        def add_one(i: int) -> dict:
+            return roadmap.add_phase(
+                phase=100 + i,  # 100..149 — outside the placeholder's "1"
+                name=f"Concurrent phase {i}",
+                description=f"added by worker {i}",
+            )
+
+        n = 50
+        with ThreadPoolExecutor(max_workers=10) as pool:
+            results = list(pool.map(add_one, range(n)))
+
+        # Every call must have returned success.
+        failures = [r for r in results if not r.get("success")]
+        assert failures == [], (
+            f"add_phase failed for {len(failures)} of {n} calls "
+            f"under concurrency — race detected. Sample: {failures[:3]}"
+        )
+
+        # roadmap.yaml must reflect ALL 50 phases (pre-fix: ~37 of 50,
+        # last-writer-wins).
+        rm_path = _roadmap_file()
+        assert rm_path.is_file(), f"roadmap.yaml missing: {rm_path}"
+        rm = yaml.safe_load(rm_path.read_text())
+        upcoming = rm.get("upcoming_phases") or []
+        added_numbers = {p.get("phase") for p in upcoming}
+        expected = {100 + i for i in range(n)}
+        missing = expected - added_numbers
+        assert missing == set(), (
+            f"roadmap dropped {len(missing)} of {n} phases under "
+            f"concurrency — lock around _save_roadmap regressed. "
+            f"Missing: {sorted(missing)[:10]}..."
+        )
+
+    def test_concurrent_update_phase_status_no_partial_yaml(
+        self,
+        isolated_project: Path,
+    ) -> None:
+        """A concurrent ``update_phase_status`` storm must never produce
+        a partial or malformed roadmap.yaml. Pre-fix the un-atomic
+        write could leave a half-written file if a crash hit between
+        the open(..., 'w') truncate and the dump finish."""
+        from mcp_server.tools import roadmap
+        from mcp_server.tools.roadmap import _roadmap_file
+
+        # Seed with one real phase.
+        roadmap.add_phase(
+            phase=200,
+            name="Seed",
+            description="seed phase for update_phase_status race test",
+        )
+
+        def update_one(i: int) -> dict:
+            return roadmap.update_phase_status(
+                status=("pending" if i % 2 == 0 else "in_progress"),
+            )
+
+        n = 50
+        with ThreadPoolExecutor(max_workers=10) as pool:
+            list(pool.map(update_one, range(n)))
+
+        # File must still be valid YAML — a partial write would
+        # surface as yaml.YAMLError here.
+        rm_path = _roadmap_file()
+        rm = yaml.safe_load(rm_path.read_text())
+        # Status must be one of the two values; never None / missing.
+        status = rm.get("current_phase", {}).get("status")
+        assert status in ("pending", "in_progress"), (
+            f"expected pending/in_progress, got {status!r} — implies "
+            f"a partial write or last-writer corruption"
+        )
+
+
 class TestCanonicalStoreSurvivesEvenIfCacheFails:
     """Even when the cache update fails (simulated via a corrupted
     manifest.yaml), the decision MUST still land in decisions.jsonl.

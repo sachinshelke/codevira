@@ -19,16 +19,22 @@ Performance notes:
     every subsequent call for the same root is a dict lookup (~0µs).
   - Call invalidate_data_dir_cache() after init/migration to force re-resolution.
 """
+
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
 
 # Allow overriding project directory via CLI flag (e.g. for Google Antigravity
-# which doesn't support the `cwd` option in its MCP config).
+# which doesn't support the `cwd` option in its MCP config) or via the
+# CODEVIRA_PROJECT_DIR env var (v3.0.0 round-3 — for IDE MCP configs like
+# Claude Desktop's mcpServers entry that pass no CLI args and have no
+# meaningful working directory to anchor on).
 _project_dir_override: Path | None = None
+_PROJECT_DIR_ENV = "CODEVIRA_PROJECT_DIR"
 
 
 def set_project_dir(path: str | Path) -> None:
@@ -47,14 +53,16 @@ def set_project_dir(path: str | Path) -> None:
 # ---------------------------------------------------------------------------
 
 #: Markers that identify a project root when walking upward.
-_PROJECT_MARKERS = frozenset({
-    ".git",
-    "pyproject.toml",
-    "package.json",
-    "go.mod",
-    "Cargo.toml",
-    ".codevira",
-})
+_PROJECT_MARKERS = frozenset(
+    {
+        ".git",
+        "pyproject.toml",
+        "package.json",
+        "go.mod",
+        "Cargo.toml",
+        ".codevira",
+    }
+)
 
 
 #: Maximum length of the human-readable portion of a project key.
@@ -86,6 +94,7 @@ def _sanitize_path_key(abs_path: str | Path) -> str:
     well under 255-byte ENAMETOOLONG limit on common filesystems.
     """
     import hashlib
+
     resolved = str(Path(abs_path).resolve())
     # Hash the FULL resolved path (before any lossy transforms) for uniqueness
     path_hash = hashlib.sha256(resolved.encode()).hexdigest()[:8]
@@ -146,6 +155,7 @@ def _find_project_by_git_remote(remote_url: str) -> Path | None:
 # Project root discovery
 # ---------------------------------------------------------------------------
 
+
 def _discover_project_root(start: Path) -> Path:
     """Walk upward from *start* to find the nearest project root.
 
@@ -166,11 +176,24 @@ def _discover_project_root(start: Path) -> Path:
 def get_project_root() -> Path:
     """Return the project root directory.
 
-    Uses --project-dir override if set (for Google Antigravity),
-    otherwise falls back to the current working directory.
+    Resolution order:
+      1. ``--project-dir`` CLI flag (via ``set_project_dir()``) — wins
+         over everything else.
+      2. ``$CODEVIRA_PROJECT_DIR`` env var — for IDE MCP configs
+         (Claude Desktop, Codex, etc.) that spawn ``codevira serve``
+         with no CLI args and no meaningful cwd to anchor on. Added in
+         v3.0.0 round-3 after the AgentStore Claude-Desktop pin caught
+         that ``env`` blocks in MCP config were being silently ignored.
+      3. ``Path.cwd()`` — discover from current working directory by
+         walking upward looking for project markers (.git,
+         pyproject.toml, package.json, etc.). Falls back to cwd
+         if no marker found.
     """
     if _project_dir_override is not None:
         return _discover_project_root(_project_dir_override)
+    env_override = os.environ.get(_PROJECT_DIR_ENV)
+    if env_override:
+        return _discover_project_root(Path(env_override).resolve())
     return _discover_project_root(Path.cwd())
 
 
@@ -187,19 +210,21 @@ def get_project_root() -> Path:
 #: ``/home -> /System/Volumes/Data/home``) so the resolved forms are
 #: listed too — ``Path("/etc").resolve()`` returns ``/private/etc`` on
 #: macOS, and our equality check has to catch that.
-_FORBIDDEN_PROJECT_ROOTS: frozenset[Path] = frozenset({
-    Path("/"),
-    Path("/Users"),
-    Path("/home"),
-    Path("/System/Volumes/Data/home"),  # macOS resolved /home
-    Path("/tmp"),
-    Path("/private/tmp"),  # macOS resolved /tmp
-    Path("/var"),
-    Path("/private/var"),  # macOS resolved /var
-    Path("/etc"),
-    Path("/private/etc"),  # macOS resolved /etc
-    Path("/opt"),
-})
+_FORBIDDEN_PROJECT_ROOTS: frozenset[Path] = frozenset(
+    {
+        Path("/"),
+        Path("/Users"),
+        Path("/home"),
+        Path("/System/Volumes/Data/home"),  # macOS resolved /home
+        Path("/tmp"),
+        Path("/private/tmp"),  # macOS resolved /tmp
+        Path("/var"),
+        Path("/private/var"),  # macOS resolved /var
+        Path("/etc"),
+        Path("/private/etc"),  # macOS resolved /etc
+        Path("/opt"),
+    }
+)
 
 
 def is_invalid_project_root(p: Path) -> str | None:

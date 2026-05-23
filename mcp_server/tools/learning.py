@@ -285,6 +285,52 @@ def supersede_decision(
     )
 
 
+def set_decision_flag(
+    decision_id: str,
+    *,
+    do_not_revert: bool | None = None,
+    tags: list[str] | None = None,
+) -> dict:
+    """v3.0.0 (2026-05-23 RC-audit follow-up): lightweight in-place
+    update for do_not_revert and/or tags on an existing decision.
+
+    Earlier the only way to flip ``do_not_revert`` was
+    ``supersede_decision(old_id, new_decision, reason, do_not_revert=...)``
+    which requires rewriting the full decision text and a reason — heavy
+    for a one-flag toggle. ``set_decision_flag`` appends a single
+    amendment record to ``.codevira/decisions.jsonl`` and rebuilds the
+    indexes.
+
+    For semantic rewrites (different intent or scope), keep using
+    ``supersede_decision`` — that preserves the lineage history.
+
+    Args:
+        decision_id: ID of the decision to amend (e.g. ``"D000007"``).
+        do_not_revert: New flag value (True / False / None to leave
+            unchanged).
+        tags: New tag list (replaces the existing set; None to leave
+            unchanged).
+
+    Returns ``{success, decision_id, updates}`` where ``updates`` lists
+    only the fields actually changed. No-op if no fields are supplied.
+    """
+    if not decision_id or not isinstance(decision_id, str):
+        return {"success": False, "error": "decision_id must be a non-empty string"}
+    if do_not_revert is None and tags is None:
+        return {
+            "success": False,
+            "error": "supply at least one of do_not_revert / tags",
+        }
+
+    from mcp_server.storage import decisions_store
+
+    return decisions_store.set_flag(
+        decision_id=decision_id,
+        do_not_revert=do_not_revert,
+        tags=tags,
+    )
+
+
 # v2.2.0+ (2026-05-22 surface-cut audit batch 6):
 #   - record_decisions (batch) deleted: agents called single endpoints
 #     in practice; batch saved theoretical round-trips that never

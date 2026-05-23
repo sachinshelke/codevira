@@ -400,6 +400,52 @@ def mark_protected(decision_id: str) -> dict[str, Any]:
     return {"success": True, "decision_id": decision_id, "do_not_revert": True}
 
 
+def set_flag(
+    decision_id: str,
+    *,
+    do_not_revert: bool | None = None,
+    tags: list[str] | None = None,
+) -> dict[str, Any]:
+    """Lightweight in-place flag/tag updates via an amendment line.
+
+    v3.0 RC-audit follow-up: ``supersede`` is the only general-purpose
+    way to change a decision in v2.2/v3.0, but it requires you to
+    rewrite the full decision text and a reason — overkill for flipping
+    ``do_not_revert`` from True → False or correcting a tag typo.
+    ``set_flag`` writes a single amendment record that the read path
+    (``_read_merged``) merges into the canonical view.
+
+    Returns ``{success, decision_id, updates}`` where ``updates`` is the
+    dict of fields actually changed. No-op (returns ``updates={}``) if
+    the caller passed no field updates.
+    """
+    paths.ensure_dirs()
+    existing = get(decision_id)
+    if existing is None:
+        return {"success": False, "error": f"decision {decision_id} not found"}
+
+    updates: dict[str, Any] = {}
+    if do_not_revert is not None:
+        updates["do_not_revert"] = bool(do_not_revert)
+    if tags is not None:
+        if not isinstance(tags, list) or not all(isinstance(t, str) for t in tags):
+            return {"success": False, "error": "tags must be a list[str]"}
+        updates["tags"] = tags
+
+    if not updates:
+        return {"success": True, "decision_id": decision_id, "updates": {}}
+
+    amendment = {
+        "id": decision_id,
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "_amendment_to_id": decision_id,
+        **updates,
+    }
+    jsonl_store.append(paths.decisions_path(), amendment)
+    rebuild_indexes()
+    return {"success": True, "decision_id": decision_id, "updates": updates}
+
+
 def supersede(
     old_id: str,
     new_decision: str,

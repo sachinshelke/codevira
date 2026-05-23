@@ -604,6 +604,36 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="set_decision_flag",
+            description=(
+                "v3.0.0 lightweight flag/tag update for an existing decision. "
+                "Use this when you only need to toggle do_not_revert or "
+                "correct a tag list — avoids supersede_decision's mandatory "
+                "rewrite of the decision text + reason. Writes a single "
+                "amendment record to .codevira/decisions.jsonl. For "
+                "semantic rewrites use supersede_decision instead."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "decision_id": {
+                        "type": "string",
+                        "description": "Decision id to amend (e.g. 'D000007')",
+                    },
+                    "do_not_revert": {
+                        "type": "boolean",
+                        "description": "New flag value (omit to leave unchanged)",
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Replacement tag list (omit to leave unchanged)",
+                    },
+                },
+                "required": ["decision_id"],
+            },
+        ),
+        Tool(
             name="check_conflict",
             description=(
                 "v2.1.2 Item 20: check whether a proposed decision contradicts "
@@ -1081,6 +1111,16 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 file_path=arguments.get("file_path"),
                 context=arguments.get("context"),
                 do_not_revert=arguments.get("do_not_revert", False),
+                tags=arguments.get("tags"),
+            )
+        elif name == "set_decision_flag":
+            # v3.0.0 (2026-05-23 RC-audit follow-up): lightweight in-place
+            # toggle for do_not_revert / tags. Less surgery than supersede.
+            from mcp_server.tools.learning import set_decision_flag
+
+            result = set_decision_flag(
+                decision_id=arguments["decision_id"],
+                do_not_revert=arguments.get("do_not_revert"),
                 tags=arguments.get("tags"),
             )
         elif name == "check_conflict":

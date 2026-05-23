@@ -63,12 +63,39 @@ def cmd_init(*, yes: bool = False, dry_run: bool = False) -> int:
     # Detect existing state.
     cv_exists = cv_dir.is_dir()
     gitignore_path = project / ".gitignore"
-    gitignore_has_cache = (
-        gitignore_path.is_file()
-        and ".codevira-cache" in gitignore_path.read_text(encoding="utf-8")
+    gitignore_text = (
+        gitignore_path.read_text(encoding="utf-8") if gitignore_path.is_file() else ""
     )
+    gitignore_has_cache = ".codevira-cache" in gitignore_text
+    # v3.0 hardening (2026-05-23 RC audit): detect when .codevira/ ITSELF
+    # is gitignored. That defeats codevira's "shared in-repo memory"
+    # promise — decisions.jsonl, sessions.jsonl, manifest.yaml never get
+    # committed, so collaborators / other machines / other AI tools see
+    # an empty memory store. Heuristic: any non-comment line that exactly
+    # matches `.codevira`, `.codevira/`, `/.codevira`, or `/.codevira/`
+    # (with optional trailing comment). Doesn't catch every edge case
+    # (e.g. wildcard like `*codevira*`) but covers the common gitignore
+    # pattern users land on by reflex.
+    gitignore_blocks_codevira = False
+    for raw_line in gitignore_text.splitlines():
+        line = raw_line.split("#", 1)[0].strip()
+        if line in {".codevira", ".codevira/", "/.codevira", "/.codevira/"}:
+            gitignore_blocks_codevira = True
+            break
     agents_md_path = project / "AGENTS.md"
     agents_md_exists = agents_md_path.is_file()
+
+    # Loud surface — the user must see this BEFORE the plan.
+    if gitignore_blocks_codevira:
+        print("  ⚠  WARNING: .codevira/ is listed in your .gitignore")
+        print("     This defeats codevira's core promise. Without committing")
+        print("     .codevira/decisions.jsonl, manifest.yaml, and friends,")
+        print("     your memory is local-machine-only — collaborators and")
+        print("     other AI tools (Cursor, Windsurf, etc.) won't see any of")
+        print("     your decisions. Remove `.codevira/` from .gitignore")
+        print("     and keep only `.codevira-cache/` ignored (cache is")
+        print("     rebuildable; .codevira/ is the canonical store).")
+        print()
 
     if cv_exists:
         print(f"  ⚠ .codevira/ already exists at {cv_dir}")

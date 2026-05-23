@@ -376,12 +376,24 @@ def run_http_server(
     # v3.0.0 audit cleanup: dropped `run_rule_inference()` (module
     # deleted in 2026-05-22 audit). Outcome tracking stays — feeds
     # AntiRegression + decision-confidence.
-    try:
-        from indexer.outcome_tracker import analyze_session_outcomes
+    #
+    # v3.0 perf: runs in a daemon thread so HTTP `/` first response
+    # isn't blocked by git subprocess fanout. Same fix as stdio server.
+    def _run_startup_outcome_analysis() -> None:
+        try:
+            from indexer.outcome_tracker import analyze_session_outcomes
 
-        analyze_session_outcomes()
-    except Exception as e:
-        logger.warning("Could not run startup outcome analysis: %s", e)
+            analyze_session_outcomes()
+        except Exception as e:
+            logger.warning("Could not run startup outcome analysis: %s", e)
+
+    import threading
+
+    threading.Thread(
+        target=_run_startup_outcome_analysis,
+        name="codevira-startup-outcome-analysis",
+        daemon=True,
+    ).start()
 
     # v3.0.0: project registration (was: bidirectional preference /
     # rule sync). Best-effort; doesn't block startup.

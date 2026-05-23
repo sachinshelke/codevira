@@ -1270,16 +1270,32 @@ def main():
     # was removed. The rule-learner module was deleted in the
     # 2026-05-22 surface-cut audit because the MCP tools that consumed
     # its output (get_learned_rules, retire_rule) were also deleted.
-    try:
-        from indexer.outcome_tracker import analyze_session_outcomes
+    #
+    # v3.0 perf: moved to a daemon thread so the MCP `initialize`
+    # handshake returns immediately. Synchronous startup blocked for
+    # seconds when many sessions had unanalyzed decisions — git
+    # subprocess fanout in _analyze_single_session with no overall
+    # timeout. Surfaced via "looks hanged on first tool call" during
+    # Claude Desktop dogfood (2026-05-23).
+    def _run_startup_outcome_analysis() -> None:
+        try:
+            from indexer.outcome_tracker import analyze_session_outcomes
 
-        analyze_session_outcomes()
-        logger.info("Outcome analysis complete")
-    except Exception as e:
-        logger.warning("Could not run startup outcome analysis: %s", e)
-        from mcp_server._safe_crash import safe_log_crash
+            analyze_session_outcomes()
+            logger.info("Outcome analysis complete (background)")
+        except Exception as e:
+            logger.warning("Could not run startup outcome analysis: %s", e)
+            from mcp_server._safe_crash import safe_log_crash
 
-        safe_log_crash(e, context="startup outcome analysis")
+            safe_log_crash(e, context="startup outcome analysis")
+
+    import threading
+
+    threading.Thread(
+        target=_run_startup_outcome_analysis,
+        name="codevira-startup-outcome-analysis",
+        daemon=True,
+    ).start()
 
     # v1.5 → v3.0.0: register this project in the cross-machine inventory
     # so `codevira projects` can enumerate it. Best-effort; never breaks

@@ -359,19 +359,26 @@ def run_http_server(
     except Exception as e:
         logger.warning("Could not run storage migration: %s", e)
 
-    try:
-        from indexer.index_codebase import start_background_watcher
+    # v3.0 escape hatch: CODEVIRA_NO_WATCHER=1 skips the watcher.
+    # See stdio server equivalent for rationale.
+    import os as _os
 
-        start_background_watcher(quiet=True)
-        logger.info("Live file watcher active")
-    except Exception as e:
-        logger.warning("Could not start background watcher: %s", e)
+    if _os.environ.get("CODEVIRA_NO_WATCHER", "0") == "1":
+        logger.info("Background watcher disabled via CODEVIRA_NO_WATCHER=1")
+    else:
         try:
-            from mcp_server.crash_logger import log_crash
+            from indexer.index_codebase import start_background_watcher
 
-            log_crash(e, context="http serve: background watcher")
-        except Exception:
-            pass
+            start_background_watcher(quiet=True)
+            logger.info("Live file watcher active")
+        except Exception as e:
+            logger.warning("Could not start background watcher: %s", e)
+            try:
+                from mcp_server.crash_logger import log_crash
+
+                log_crash(e, context="http serve: background watcher")
+            except Exception:
+                pass
 
     # v3.0.0 audit cleanup: dropped `run_rule_inference()` (module
     # deleted in 2026-05-22 audit). Outcome tracking stays — feeds

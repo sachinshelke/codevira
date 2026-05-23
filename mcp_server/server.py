@@ -1249,18 +1249,33 @@ def main():
 
     # Auto-start background file watcher so the index stays fresh
     # on every file save — no manual trigger or git commit needed.
+    #
+    # v3.0 escape hatch: CODEVIRA_NO_WATCHER=1 skips the watcher
+    # entirely. For users on huge repos, low-power machines, or
+    # multi-MCP-instance setups where N codevira processes each
+    # register their own fsevents observers and compound CPU usage.
+    # The graph still re-reads files on demand; you just don't get
+    # automatic incremental reindex on save.
+    import os as _os
+
     watcher = None
-    try:
-        from indexer.index_codebase import start_background_watcher
+    if _os.environ.get("CODEVIRA_NO_WATCHER", "0") == "1":
+        logger.info(
+            "Background watcher disabled via CODEVIRA_NO_WATCHER=1 — "
+            "graph will not auto-refresh on file save"
+        )
+    else:
+        try:
+            from indexer.index_codebase import start_background_watcher
 
-        watcher = start_background_watcher(quiet=True)
-        logger.info("Live file watcher active — index updates on save")
-    except Exception as e:
-        # Watcher is best-effort; don't block server startup
-        logger.warning("Could not start background watcher: %s", e)
-        from mcp_server._safe_crash import safe_log_crash
+            watcher = start_background_watcher(quiet=True)
+            logger.info("Live file watcher active — index updates on save")
+        except Exception as e:
+            # Watcher is best-effort; don't block server startup
+            logger.warning("Could not start background watcher: %s", e)
+            from mcp_server._safe_crash import safe_log_crash
 
-        safe_log_crash(e, context="background watcher startup")
+            safe_log_crash(e, context="background watcher startup")
 
     # v1.4: Run outcome analysis on startup. This processes any sessions
     # that haven't been analyzed yet so AntiRegression + decision-

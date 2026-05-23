@@ -364,6 +364,20 @@ After Weeks 1-4 integrated QA:
     `Path.write_text` / `open(..., 'w')` outside the helper module is
     a review flag.
 
+    **Update (v3.0.0 RC audit rounds 2 + 3, 2026-05-22):** the helper
+    was extracted to `mcp_server/storage/atomic.py` with three public
+    functions: `atomic_write_text(path, content, *, mode=None)`,
+    `atomic_write_bytes(path, content, *, mode=None)`, and
+    `file_lock(path, *, exclusive=True)` (context manager — Posix
+    fcntl.flock + Windows sentinel-file fallback). All 16 then-known
+    write sites were repointed at it. Two regression suites pin the
+    invariants: `tests/storage/test_concurrent_writes.py` (50-thread
+    in-process) and `tests/storage/test_cross_process_writes.py`
+    (20 subprocesses via multiprocessing.spawn). Plus an adversarial
+    chaos harness at `scripts/chaos_smoke.py` (8 attack categories,
+    29 sub-tests). Any new write site introduced after v3.0.0 MUST go
+    through `storage.atomic` or surface as a code-review red flag.
+
 After Week-5 retrospective (the "have you done QC seriously?" round):
 
 15. **Per-week QA can't substitute for real-DB integration testing.**

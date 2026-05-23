@@ -1,7 +1,13 @@
-# Codevira v2.2.0 — Architecture
+# Codevira v3.0.0 — Architecture
 
-> v2.2.0 ships codevira as a lean cross-IDE decision-enforcement layer.
-> ~1 MB per project. In your repo. No cloud. No vectors. MIT.
+> v3.0.0 ships codevira as a lean cross-IDE decision-enforcement layer.
+> ~1-2 MB per project. In your repo. No cloud. No vectors. MIT.
+>
+> Changed from v2.2.0: tool surface contracted from 33 → 23 (changesets,
+> preferences, and learned_rules tools removed per the 2026-05-22
+> surface-cut audit). Storage write paths consolidated through
+> `mcp_server/storage/atomic.py` for crash-safety + concurrent-writer
+> safety on both Posix and Windows.
 
 ## The three layers (top to bottom)
 
@@ -18,38 +24,43 @@
 │  CODEVIRA MCP SERVER                                              │
 │  ~85 MB pipx install, <100ms cold start                           │
 │                                                                   │
-│  Tools (33):                                                      │
-│    Decisions: record/record_many/search/list/list_tags/           │
-│               check_conflict/supersede/mark_protected             │
-│    Sessions:  write_session_log(s) / get_session_context          │
-│    Phases:    get/add/update/complete/defer + bulk_import_phases  │
-│    Changesets: start/update/complete/list_open                    │
-│    Code graph: get_node/get_impact/query_graph/get_signature/     │
-│                get_code/get_playbook                              │
+│  Tools (23 surfaced to AI clients):                               │
+│    Decisions: record_decision / search_decisions / list_decisions │
+│               / list_tags / supersede_decision / check_conflict   │
+│               / get_history                                       │
+│    Sessions:  write_session_log / get_session_context             │
+│    Phases:    get_roadmap / get_phase / add_phase /               │
+│               update_phase_status / defer_phase / complete_phase  │
+│               / bulk_import_phases / update_next_action           │
+│    Code graph: get_node / get_impact / query_graph                │
+│               / get_signature / get_code / get_playbook           │
 │                                                                   │
-│  Hooks (engine policies):                                         │
-│    PreToolUse  → DecisionLock blocks Edit/Write that violate      │
-│                  do_not_revert. (THE moat — no competitor blocks) │
+│  Hooks (6 active engine policies):                                │
+│    PreToolUse → DecisionLock blocks Edit/Write that violate       │
+│                 do_not_revert. (THE moat — no competitor blocks)  │
+│                 + AntiRegression blocks reintroducing a fix       │
+│                 + BlastRadiusVeto warns on high-impact edits      │
 │    UserPromptSubmit → RelevanceInject injects ≤3 decisions or     │
 │                       0 tokens off-topic                          │
-│    PostToolUse → outcome / scope tracking                         │
+│    PostToolUse → PostEditGraphRefresh keeps code graph fresh      │
+│                  + TokenBudgetPersist for session budgets         │
 └───────────────────────────────────────────────────────────────────┘
                             │
-                            │  read/write
+                            │  read/write — all writes go through
+                            │  mcp_server.storage.atomic for crash-
+                            │  safety + cross-process file locking
                             ↓
 ┌───────────────────────────────────────────────────────────────────┐
 │  YOUR REPO  (committed)                                           │
 │                                                                   │
 │  .codevira/                                                       │
-│    decisions.jsonl       ← canonical decision log (append-only)   │
+│    decisions.jsonl       ← canonical decision log (append-only,   │
+│                            fcntl-locked appends, line-atomic)     │
 │    outcomes.jsonl        ← git-observed kept/reverted             │
 │    sessions.jsonl        ← session events                         │
-│    changesets.jsonl      ← multi-file work tracking               │
-│    preferences.jsonl     ← extracted style preferences            │
-│    learned_rules.jsonl   ← regex-extracted patterns               │
 │    digest.jsonl          ← slim per-decision (regenerable)        │
 │    manifest.yaml         ← tag/file → id index (regenerable)      │
-│    roadmap.yaml          ← phase tracking                         │
+│    roadmap.yaml          ← phase tracking (mutation lock-guarded) │
 │    enforcement.yaml      ← per-decision enforcement policy        │
 │    config.yaml           ← project settings                       │
 │                                                                   │
@@ -58,10 +69,52 @@
 │                                                                   │
 │  .codevira-cache/        ← gitignored, rebuildable                │
 │    fts5.sqlite           ← BM25 keyword search index              │
-│    graph.sqlite          ← tree-sitter code graph                 │
 │    hash-cache.db         ← file-hash change detection             │
 └───────────────────────────────────────────────────────────────────┘
 ```
+
+> Note on the code graph: the spec target is
+> `<project>/.codevira-cache/graph.sqlite`, but v3.0.0 still ships
+> with `indexer/` writing to the centralized location
+> `~/.codevira/projects/<key>/graph/graph.db` and `signals.graph`
+> reading from there via a fallback chain. Functional behavior is
+> correct; the spec/impl reconciliation is a v3.1 follow-up.
+
+## Concurrent-write safety
+
+Every on-disk write in the product surface goes through one of two
+helpers in `mcp_server/storage/atomic.py`:
+
+| Helper | Use |
+|---|---|
+| `atomic_write_text(path, content, *, mode=None)` | Whole-file replacement (yaml, json, config). Writes to a unique tmp via `tempfile.mkstemp` in the same dir, `fsync` if supported, then `os.replace(tmp, path)` — atomic on Posix, near-atomic on Windows. |
+| `atomic_write_bytes(path, content, *, mode=None)` | Same, for binary payloads. |
+| `file_lock(path, *, exclusive=True)` (context manager) | Held around any read-modify-write of a shared file. Posix uses `fcntl.flock`; Windows uses a sentinel `.lock` file with a 5-second retry. Acquires the in-process `threading.Lock` first so two threads in the same process can't both pass through the OS-level lock (which on macOS is per-fd, not per-process). |
+
+This contract was consolidated in the v3.0.0 RC hardening rounds
+after the audit caught two distinct race shapes under 50-thread
+stress: an *atomic-rename race* (fixed `.tmp` suffix racing on
+`os.replace`) and a *lost-update race* (unlocked read-modify-write
+on `manifest.yaml` and `roadmap.yaml`). Both are now provably-fixed
+via regression tests in `tests/storage/test_concurrent_writes.py`
+(in-process) and `tests/storage/test_cross_process_writes.py`
+(20 subprocesses via `multiprocessing.spawn`).
+
+The append-only paths (`decisions.jsonl`, `outcomes.jsonl`,
+`sessions.jsonl`) get the same locking through
+`jsonl_store.append` / `append_many`, which delegate to
+`atomic.file_lock`. The append itself is line-atomic — concurrent
+appenders never interleave bytes.
+
+For an adversarial probe of the storage layer (process kill mid-lock,
+corrupt files, symlink traversal, malformed MCP payloads, etc.), see
+`scripts/chaos_smoke.py`. Run with:
+
+```bash
+.venv/bin/python scripts/chaos_smoke.py
+```
+
+The current commit passes 29 of 29 attacks.
 
 ## Source-of-truth vs cache
 

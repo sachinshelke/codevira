@@ -244,12 +244,28 @@ Branch prefixes:
 - Follow the existing code style
 - If you add a new MCP tool, register it in `mcp_server/server.py`
 - If you change tool behavior, update the relevant section in `README.md`
+- **If your change writes to disk, use `mcp_server.storage.atomic`.**
+  Every product-surface write site goes through this helper for
+  crash-safety + concurrent-writer safety. Hand-rolling
+  `open(..., "w")` or fixed `<path>.tmp` patterns is the bug shape
+  the v3.0.0 RC audit caught; don't re-introduce it. See
+  `docs/architecture.md` § "Concurrent-write safety" for the contract.
 
 ### 4. Test your changes
 
 ```bash
-# Run the test suite
-python -m pytest tests/ -v
+# Unit + integration suite (fast — ~1 min)
+python -m pytest tests/ -v --ignore=tests/e2e
+
+# E2e suite (~30s)
+python -m pytest tests/e2e/ -v
+
+# Release gauntlet (G1-G4; ~2 min)
+make release-gauntlet
+
+# Adversarial probe (chaos smoke — ~30s; 29 attacks)
+# Use this if your change touches storage / engine / MCP transport.
+.venv/bin/python scripts/chaos_smoke.py
 
 # Verify the MCP server starts and all tools register
 python -m mcp_server
@@ -258,6 +274,14 @@ python -m mcp_server
 codevira index --full
 codevira status
 ```
+
+**Concurrent-write changes specifically:** if your change touches a
+read-modify-write path on any shared file, extend
+`tests/storage/test_concurrent_writes.py` (50-thread stress) and
+`tests/storage/test_cross_process_writes.py` (20-subprocess stress)
+with a regression case. The chaos harness in `scripts/chaos_smoke.py`
+is also a good place to add an adversarial scenario (SIGKILL mid-lock,
+corrupt-file recovery, etc.).
 
 ### 5. Commit and push
 

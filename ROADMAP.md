@@ -250,9 +250,49 @@ Key changes:
   `mcp_server/engine/signals.py::preferences` (broken — imported a
   non-existent symbol) deleted.
 
-Full plan + audit: [`docs/audit-2026-05-22.md`](docs/audit-2026-05-22.md)
+### Pre-publish hardening (RC audit rounds 2 + 3)
+
+The release candidate went through two additional audit passes
+before shipping to PyPI. Both surfaced classes of silent failures
+the structured test suite hadn't covered:
+
+- **Round 2** (concurrent-write race). A 50-thread stress run of
+  `record_decision` exposed `[Errno 2]` warnings on the cache files
+  (`manifest.yaml`, `digest.jsonl`, `AGENTS.md`) — fixed-suffix
+  `.tmp` rename race + unlocked read-modify-write on the manifest.
+  Decisions stayed safe in JSONL (canonical append-only path was
+  always fcntl-locked); only the cache files lost data.
+- **Round 3** (sweep + harden). Found the same race shape in
+  `roadmap.yaml` and 11 more unguarded write sites. Consolidated
+  all 16 writers through a single `mcp_server/storage/atomic.py`
+  helper (atomic write + Posix/Windows file lock). Proved
+  cross-process safety with 20 subprocesses. Added
+  `scripts/chaos_smoke.py` adversarial harness — 29 attacks pass.
+
+Two regression test files pin the invariants:
+`tests/storage/test_concurrent_writes.py` (in-process) and
+`tests/storage/test_cross_process_writes.py` (subprocesses).
+
+Full v3.0.0 plan + RC-audit story: [`docs/plans/v3.0.0.md`](docs/plans/v3.0.0.md).
+Full surface-cut audit: [`docs/audit-2026-05-22.md`](docs/audit-2026-05-22.md)
 + [`docs/surface-cuts-2026-05-22.md`](docs/surface-cuts-2026-05-22.md).
 Full v3.0.0 entry in [CHANGELOG.md](CHANGELOG.md).
+
+### Known limitations carried into v3.0.0
+
+- **Graph spec vs implementation drift.** The v3.0.0 spec
+  documents the code graph at `<project>/.codevira-cache/graph.sqlite`,
+  but `indexer/` still writes to `<data_dir>/graph/graph.db`
+  (centralized v1.6 location). Runtime is correct — everyone
+  agrees on the centralized location — but the spec-truthfulness
+  gap should be reconciled in v3.1 with a migration step.
+- **No decision-input sanitization.** Null bytes, 1 MB text, path
+  traversal in `file_path`, control chars are accepted today.
+  Trust-the-agent design choice; v3.1 candidate for hardening.
+- **Cross-process flock tested on macOS + Linux CI only.** Windows
+  uses the sentinel-file fallback (proved by a monkey-patched
+  `sys.platform` unit test) but hasn't been exercised on real
+  Windows under load.
 
 ---
 

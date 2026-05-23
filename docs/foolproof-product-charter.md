@@ -134,8 +134,9 @@ What still works when each subsystem fails:
 
 | Down | Still works |
 |---|---|
-| **ChromaDB corrupt** | Keyword search via SQLite, decisions, graph, roadmap, changesets |
-| **HuggingFace network down** | Cached model continues to work |
+| **Cache file corrupt** (manifest.yaml, digest.jsonl, AGENTS.md) | Decisions persist in canonical JSONL (P9 invariant). Cache regenerates via `codevira sync` after corruption. Read paths log + skip bad lines (`jsonl_store`) — they never crash. v3.0.0+ writers go through `mcp_server.storage.atomic` for crash + concurrency safety. |
+| **Two MCP servers racing** (Claude Desktop + Cursor on same project) | All writes go through `atomic.file_lock` (Posix `fcntl.flock` + Windows sentinel). 20-subprocess cross-process stress test pins the contract. Last-writer-wins replaced with serialized read-modify-write. |
+| **HuggingFace network down** | n/a in v2.2.0+ (sentence-transformers removed). Historical pain point — keeping the row for context. |
 | **`~/.codevira/global.db` corrupt** | Auto-reinit + warn; per-project state preserved |
 | **Watcher crash** | All MCP tools; manual `codevira index --full` available |
 | **One hook script broken** | MCP server alone; other hooks continue |

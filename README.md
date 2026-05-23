@@ -48,6 +48,16 @@ AI tool.
   sentence-transformers, no torch. FTS5 SQLite for decision search,
   individual tree-sitter grammars (TS/JS/Go/Rust) for the code graph.
   MCP server starts in <100 ms.
+* 🔐 **Concurrent-safe under multi-IDE load.** Every on-disk write
+  goes through `mcp_server/storage/atomic.py` — crash-safe atomic
+  writes + Posix `fcntl.flock` (Windows sentinel fallback). Two
+  IDEs hitting the same project don't race on `manifest.yaml` /
+  `roadmap.yaml` / `AGENTS.md`. Pinned by an in-process 50-thread
+  stress test, a 20-subprocess cross-process stress test, and an
+  adversarial chaos harness (`scripts/chaos_smoke.py` — 29 attacks
+  including SIGKILL during lock, symlink traversal, malformed
+  MCP payloads). See [`docs/architecture.md`](docs/architecture.md)
+  § "Concurrent-write safety".
 
 ---
 
@@ -403,6 +413,8 @@ The opt-in extra `pip install 'codevira[all-languages]'` re-adds the
 | FTS5 decision search with BM25 ranking | Real-time multi-machine sync — by design, codevira is local-first; for team sharing, commit `.codevira/` to git |
 | Per-project + cross-machine project inventory (`global.db`) | Web UI for browsing decisions — use the `codevira://decisions` MCP resource in Claude Desktop, or `codevira replay --format html` for a static file |
 | All 24 MCP tools (23 AI-facing + 1 admin) + 15 CLI commands + 6 engine policies | The HTTP server (`codevira serve`) is single-project per launch — for daily use, stick with stdio via `codevira setup` |
+| Concurrent-safe storage layer (Posix `fcntl.flock` + Windows sentinel fallback). Proven against 50-thread + 20-subprocess stress + 29-attack chaos harness | The cross-process file-lock contract has been exercised on macOS + Linux CI; the Windows sentinel-file fallback is verified via unit-test simulation but hasn't been load-tested on real Windows yet |
+| Code graph data store is functional but the v3.0.0 spec target (`<project>/.codevira-cache/graph.sqlite`) and the actual location (`<data_dir>/graph/graph.db`) drifted during the surface-cut audit. Tracked for v3.1 reconciliation | n/a (functional today; spec-truthfulness gap only) |
 
 ---
 

@@ -1,5 +1,103 @@
 # Migrating to Codevira
 
+## Upgrading to 3.0.0
+
+**v3.0.0 is a tool-surface contraction.** Existing `.codevira/`
+data (decisions, sessions, roadmap, manifest, AGENTS.md) is
+fully compatible — no on-disk migration needed. What changes is
+the MCP tool surface your AI sees + a few CLI subcommands that
+were renamed or removed.
+
+### What to do after `pipx install codevira==3.0.0`
+
+```bash
+# 1. Force-reinstall to pick up the new wheel (3.0.0 dropped chromadb
+#    transitive deps; pipx may need the explicit force).
+pipx install --force codevira==3.0.0
+
+# 2. Re-run setup. v3.0.0 hardened IDE auto-detection — re-detection
+#    + re-registration keeps the per-IDE configs consistent with the
+#    new behavior.
+codevira setup -y
+
+# 3. Verify health on every project you use codevira on.
+cd /path/to/your-project
+codevira doctor   # should report ≥11 checks pass
+```
+
+### What's removed in v3.0.0 (breaking)
+
+The 2026-05-22 surface-cut audit deleted 21 MCP tools and 8 CLI
+subcommands that nobody called in real-world usage. Full list in
+`docs/surface-cuts-2026-05-22.md`. Highlights:
+
+- **MCP tools deleted:** `start_changeset` / `update_changeset_progress` /
+  `complete_changeset` / `list_open_changesets`,
+  `record_preference` / `search_preferences` / `delete_preference`,
+  `record_learned_rule` / `search_learned_rules` / `retire_rule`,
+  `record_project_maturity` / `query_project_maturity`,
+  `list_nodes` / `add_node` / `update_node` / `export_graph`,
+  `record_decisions` (batch — use `record_decision` in a loop),
+  `write_session_logs` (batch — same),
+  `mark_decision_protected` (use `supersede_decision(..., do_not_revert=True)`
+  for the same flip + an audit trail).
+- **CLI subcommands deleted:** `heal` (use `reset`), `budget`,
+  `agents`, `hooks`, `register`, `configure`, `report` (folded into
+  `doctor`), `calibrate`.
+- **Per-IDE nudge files collapsed.** v2.x wrote `CLAUDE.md` /
+  `GEMINI.md` / `.windsurfrules` / `.cursorrules` etc. v3.0.0 writes
+  exactly one nudge file: `AGENTS.md`. The per-IDE duplicates are
+  preserved if they already exist (no auto-deletion) but `setup` no
+  longer creates new ones.
+
+If your CI / scripts depended on any of the removed tools / commands,
+they need to be rewritten before upgrading.
+
+### What's new (non-breaking)
+
+- **`codevira uninstall`** — reverses every system write made by
+  `init` / `setup`. Drops the MCP entry from `~/.claude.json`, deletes
+  `~/.claude/hooks/codevira-*.sh`, strips codevira-tagged
+  registrations from `~/.claude/settings.json`, removes per-project
+  `.codevira/` + `.codevira-cache/` dirs, and strips the codevira
+  marker block from each project's `AGENTS.md` (preserves user
+  content outside the markers byte-for-byte). Optional
+  `--keep-data` skips per-user `~/.codevira/`.
+
+- **`codevira setup --force`** — escape hatch for the rare case
+  where codevira's IDE detector misses an install (portable binary
+  not on PATH, non-standard config location). Without `--force`,
+  passing `--ide cursor` on a machine where Cursor isn't
+  auto-detected raises a clear error instead of silently failing.
+
+- **Storage layer concurrent-write safety** (RC audit hardening,
+  rounds 2 + 3). Every on-disk write in the product surface now
+  goes through `mcp_server/storage/atomic.py` — crash-safe atomic
+  writes + Posix `fcntl.flock` (Windows sentinel-file fallback).
+  Two `codevira` MCP server processes (Claude Desktop + Cursor
+  running side by side) writing to the same project no longer race
+  on `manifest.yaml` / `roadmap.yaml` / `AGENTS.md`. See
+  `docs/plans/v3.0.0.md` for the full RC-audit story and
+  `tests/storage/test_concurrent_writes.py` +
+  `tests/storage/test_cross_process_writes.py` for the regression
+  guards.
+
+### Known limitations carried into v3.0.0
+
+See [ROADMAP.md § Known limitations](ROADMAP.md) — short version:
+
+1. The code graph still lives at `<data_dir>/graph/graph.db`
+   (centralized) rather than the documented v3.0.0 spec location
+   `<project>/.codevira-cache/graph.sqlite`. Runtime is correct;
+   reconciliation is a v3.1 follow-up.
+2. No decision-input sanitization (null bytes / 1 MB text /
+   `../../etc/passwd` in `file_path` all accepted today).
+3. Cross-process file locking tested on macOS + Linux CI;
+   Windows sentinel-file path verified via unit-test simulation
+   but not yet exercised on real Windows under load.
+
+---
+
 ## Upgrading to 2.2.0
 
 **v2.2.0 is a clean-break upgrade. No automatic migration from v2.1.x decisions.**

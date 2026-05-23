@@ -4,6 +4,16 @@
 
 ---
 
+> **Note (2026-05-22):** This piece references the v2.x tool surface
+> (~33 tools, with changesets and adaptive-learning modules). The
+> 2026-05-22 surface-cut audit narrowed codevira to 23 AI-facing MCP
+> tools — changesets, preferences, and learned_rules were removed
+> because nobody called them in real-world usage. See
+> [CHANGELOG.md](../CHANGELOG.md) v3.0.0 entry for the current shape;
+> the architectural narrative below still holds.
+
+---
+
 Let me describe a scene you might recognise.
 
 You open Claude Code. You type a task. The agent starts reading files. `memory.md`. `journal.md`. `consumer.py`. `prompts.py`. `model_builder.py`. Five minutes later — it's still reading. The context indicator is climbing. It hasn't written a single line of code yet.

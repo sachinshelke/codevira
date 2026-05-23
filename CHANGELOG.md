@@ -11,7 +11,137 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-(no unreleased changes pending)
+### Hardened (RC audit — rounds 2 + 3, pre-publish)
+
+> Three rounds of audit ran against the v3.0.0 release candidate
+> before publishing. Round 1 was the surface-cut + dead-code sweep
+> already recorded in the 3.0.0 entry below. Rounds 2 and 3 were
+> "what could silently break in production?" — and surfaced a
+> family of concurrent-write bugs in the storage layer that the
+> structured unit tests didn't catch.
+
+- **NEW `mcp_server/storage/atomic.py`** — single canonical source
+  for crash-safe file writes + Posix/Windows file locks. Every
+  storage / tool / cli module that touches the on-disk product
+  state now goes through this helper. Public API:
+  `atomic_write_text(path, content, *, mode=None)`,
+  `atomic_write_bytes(path, content, *, mode=None)`, and
+  `file_lock(path, *, exclusive=True)` (context manager — Posix
+  `fcntl.flock` + Windows sentinel-file fallback). Replaces 5
+  hand-rolled copies that had drifted (manifest, digest,
+  agents_md_generator, setup_wizard, jsonl_store). 11 unit tests
+  pin the contract (basic write, utf-8, overwrite, mkdir, mode
+  bits, no-leaked-tmp, 50-thread concurrency, binary, in-process
+  serialization, auto-anchor, exception release, Windows-sentinel
+  codepath via monkey-patched `sys.platform`).
+
+- **Concurrent-write race fixes (rounds 2 + 3).** Two distinct
+  race shapes were caught under 50-thread stress:
+  - *Atomic-rename race* (round 2). `manifest.yaml`, `digest.jsonl`,
+    and `AGENTS.md` writers used a fixed `<path>.tmp` suffix; two
+    threads' `os.replace()` calls raced on the rename target,
+    producing `FileNotFoundError: <path>.tmp` warnings. The
+    decisions themselves still landed safely (`jsonl_store.append`
+    uses fcntl-locked I/O); only the CACHE files lost data. Fixed
+    by per-write unique tmp via `tempfile.mkstemp` (and now
+    consolidated through `storage/atomic`).
+  - *Lost-update race* (round 2 caught manifest; round 3 caught
+    roadmap). Read-modify-write paths (`manifest.incremental_add`,
+    `roadmap._save_roadmap`) had no lock — 50 concurrent updates
+    landed as ~37 because the last save() won. Fixed by
+    `atomic.file_lock` around the whole read-modify-write. Three
+    new regression tests in `tests/storage/test_concurrent_writes.py`
+    pin the invariants: zero rename warnings under 50-thread
+    record_decision, manifest counts match JSONL, roadmap phases
+    all land. P9 invariant test (corrupt manifest → decision
+    still persists in JSONL) added too.
+
+- **Cross-process safety proved** (`tests/storage/test_cross_process_writes.py`).
+  Round-2 fixes were thread-safe but not yet proven process-safe —
+  two `codevira` MCP server processes (Claude Desktop + Cursor
+  running together) racing on the same project's roadmap could
+  still lose updates if the `fcntl.flock` contract didn't survive
+  process boundaries. Two new tests spawn 20 subprocesses via
+  `multiprocessing.spawn` and assert: 20 concurrent
+  `decisions_store.record` → 20 unique IDs; 20 concurrent
+  `roadmap.add_phase` → all 20 phases land in roadmap.yaml.
+
+- **Engine policy storage-correctness audit.** Each of the 6 active
+  engine policies (`anti_regression`, `blast_radius`,
+  `decision_lock`, `post_edit_refresh`, `relevance_inject`,
+  `token_budget`) was read line-by-line to confirm it reads from
+  the v3.0.0 storage layer, not the legacy SQLiteGraph paths.
+  One drift found: `signals.graph` round-2 fix added v3.0.0
+  `.codevira-cache/graph.sqlite` as the priority-1 resolution
+  tier — pre-fix it only checked v1.5 / v1.6 paths, structurally
+  silencing `BlastRadiusVeto` and the `DecisionLock` no-rationale
+  branch on every v3.0.0 project. Similarly `signals.decisions`
+  was rewired to read JSONL (was reading a SQL table that no
+  longer exists in v3.0.0).
+
+- **MCP tools/list inputSchema audit.** All 23 surfaced MCP tools
+  validated for schema consistency (every required field in
+  properties, every tool has a description, every schema is
+  `type: object`). Zero issues.
+
+- **NEW `scripts/chaos_smoke.py`** — adversarial probe of the
+  storage layer with 8 attack categories / 29 sub-tests (null
+  bytes, 1 MB decision text, path traversal in `file_path`,
+  control chars, SIGKILL during fcntl.flock, manually-corrupted
+  JSONL/YAML/AGENTS.md, 200-thread mixed-op storm, 20-thread
+  lock contention, symlink traversal via
+  `AGENTS.md → /etc/passwd`, 7 malformed JSON-RPC payloads to
+  `codevira serve`, read-only `.codevira/` dir). Result on
+  current commit: 29 PASS / 0 FAIL. Notable findings (not bugs,
+  design choices worth surfacing):
+  - All adversarial decision inputs are accepted (no validation
+    today; trust-the-agent design). v3.1 candidate for sanitization.
+  - Symlink safety is automatic: `atomic.os.replace` replaces the
+    symlink itself, not the target, so an attacker who plants
+    `AGENTS.md → /etc/passwd` can't escape the project root.
+  - fcntl.flock survives SIGKILL of the holder (kernel reaps
+    fd-bound locks).
+
+- **Repointed 11 more unguarded writes at `storage.atomic`** —
+  the round-3 write-site sweep found `auto_init` (config.yaml +
+  metadata.json), `cli_init` (config.yaml + enforcement.yaml +
+  .gitignore), `http_server` (bearer token, +0o600 mode),
+  `cli_uninstall` (settings.json + AGENTS.md, 3 sites),
+  `cli_hooks_admin` (settings.json — was fixed-suffix tmp race),
+  `cli.py` (legacy `cmd_configure` + git hook write), `cli_export`
+  (JSON + SQL exports — both had fixed-suffix tmp races),
+  `cli_replay`, `log_retention`, `migrate`, and
+  `indexer/graph_generator` (roadmap stub). All now crash-safe via
+  the shared helper.
+
+- **Doctor dogfooded against a real project + a fresh init.**
+  Fresh `codevira init` followed by `codevira doctor` = 13 pass /
+  1 warn (pre-existing ghost dirs from earlier testing) / 0 fail.
+
+### Known limitations (documented for v3.1+ follow-up)
+
+- **Graph spec vs implementation drift.** `paths.graph_cache_path()`
+  documents the v3.0.0 spec location as
+  `<project>/.codevira-cache/graph.sqlite`, but `indexer/` and
+  `tools/graph.py` still write to / read from
+  `<data_dir>/graph/graph.db` (the legacy v1.6 centralized
+  location). Runtime behavior is correct — everyone agrees on the
+  centralized location and `signals._load_graph()` finds it via
+  the fallback chain. The spec-truthfulness gap should be
+  reconciled in v3.1 with a migration step for existing installs.
+
+- **Decision input sanitization is deliberately absent.** Null
+  bytes, 1 MB text, path traversal in `file_path`, control
+  characters, and empty strings are accepted today. The chaos
+  harness surfaced this; a v3.1 hardening pass could add
+  per-field validation without breaking the trust-the-agent
+  default.
+
+- **Cross-process flock tested on macOS only.** The
+  `multiprocessing.spawn` context is the same on Linux CI, but
+  the cross-process test has not been exercised on Windows
+  (where the helper uses the sentinel-file fallback instead of
+  fcntl).
 
 ---
 

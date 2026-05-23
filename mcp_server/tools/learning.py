@@ -447,31 +447,43 @@ def get_session_context(since: str | None = None) -> dict:
         # v2.2.0+: changesets removed (never reached real usage). Focus
         # inference uses only the current phase's next_action.
         focus, focus_source = _infer_focus(current_phase)
+        # v3.0.0 round-3 (2026-05-23 system-test finding): rewired to
+        # read recent decisions from the JSONL canonical store via
+        # decisions_store, NOT the legacy SQLiteGraph decisions table.
+        # Pre-fix, every v3.0.0 project saw recent_decisions=[] in the
+        # session-context payload because the SQLite decisions table is
+        # never populated in v3.0.0 (all writes go to .codevira/decisions.jsonl).
+        # Caught during the AgentStore system test in
+        # scripts/system_test_agentstore.py::A8.
+        from mcp_server.storage import decisions_store
+
         recent_decisions: list[dict] = []
         if focus:
             try:
-                recent_decisions = db.search_decisions(
-                    focus,
-                    limit=3,
-                    since=since,
-                )
+                hits = decisions_store.search(focus, limit=3, since=since)
+                recent_decisions = list(hits)
             except Exception:
                 recent_decisions = []
-        # Fallback / pad to 3 with chronological recent decisions
+        # Fallback / pad to 3 with chronological-recent decisions from JSONL.
         if len(recent_decisions) < 3:
-            seen_ids: set[tuple] = {
-                (r.get("file_path"), r.get("decision"), r.get("created_at"))
-                for r in recent_decisions
+            seen_ids: set[str] = {
+                str(r.get("id") or "") for r in recent_decisions if r.get("id")
             }
-            for d in db.get_recent_decisions(limit=10 if since else 3):
-                # v2.1.2 Item 25: skip rows older than since cutoff.
-                if since and (d.get("created_at") or "") <= since:
-                    continue
-                key = (d.get("file_path"), d.get("decision"), d.get("created_at"))
-                if key in seen_ids:
+            try:
+                page = decisions_store.list_all(
+                    limit=10 if since else 3,
+                    since=since,
+                    full=False,
+                )
+                all_recent = page.get("decisions", []) if page else []
+            except Exception:
+                all_recent = []
+            for d in all_recent:
+                did = str(d.get("id") or "")
+                if not did or did in seen_ids:
                     continue
                 recent_decisions.append(d)
-                seen_ids.add(key)
+                seen_ids.add(did)
                 if len(recent_decisions) >= 3:
                     break
 

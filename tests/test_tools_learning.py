@@ -69,50 +69,40 @@ def _seed_outcomes(db: SQLiteGraph, outcomes: list[tuple[str, str, str]]) -> Non
 def _seed_full_project(db: SQLiteGraph) -> None:
     """Create a project with sessions, outcomes, and files.
 
-    v3.0.0 audit cleanup: dropped the preference / learned-rule seed
-    calls (the SQLiteGraph methods that wrote them were deleted in
-    the 2026-05-22 surface-cut audit). Sessions + outcomes + nodes
-    are still seeded for the session_context tests.
+    v3.0.0 round-3 (2026-05-23): the 3 ``log_session`` calls used to
+    seed the legacy SQLite ``decisions`` table — invisible to
+    get_session_context after the v3.0.0 wire-up to JSONL. Replaced
+    with ``decisions_store.record`` so the seed reaches the canonical
+    store the read path actually queries. Nodes + outcomes still go
+    through SQLiteGraph since those subsystems haven't moved.
     """
-    # Files
+    # Files (SQLite graph — still the storage layer for the code graph).
     db.add_node("file:src/api.py", "file", "api.py", "src/api.py", layer="api")
     db.add_node("file:src/core.py", "file", "core.py", "src/core.py", layer="core")
 
-    # Sessions with decisions
-    db.log_session(
-        "s1",
-        "First session",
-        "1",
-        [
-            {
-                "file_path": "src/api.py",
-                "decision": "Use REST",
-                "context": "api design",
-            },
-        ],
+    # Decisions — write through the v3.0.0 JSONL canonical store.
+    from mcp_server.storage import decisions_store as _decisions_store
+
+    _decisions_store.record(
+        decision="Use REST",
+        file_path="src/api.py",
+        context="api design",
+        session_id="s1",
     )
-    db.log_session(
-        "s2",
-        "Second session",
-        "2",
-        [
-            {"file_path": "src/core.py", "decision": "Add caching", "context": "perf"},
-        ],
+    _decisions_store.record(
+        decision="Add caching",
+        file_path="src/core.py",
+        context="perf",
+        session_id="s2",
     )
-    db.log_session(
-        "s3",
-        "Third session",
-        "2",
-        [
-            {
-                "file_path": "src/api.py",
-                "decision": "Add validation",
-                "context": "security",
-            },
-        ],
+    _decisions_store.record(
+        decision="Add validation",
+        file_path="src/api.py",
+        context="security",
+        session_id="s3",
     )
 
-    # Outcomes
+    # Outcomes (SQLite — outcome subsystem hasn't moved to JSONL yet).
     db.record_outcome("s1", "src/api.py", "kept")
     db.record_outcome("s2", "src/core.py", "kept")
     db.record_outcome("s3", "src/api.py", "modified")
@@ -492,32 +482,33 @@ class TestGetSessionContext:
         must round-trip through get_session_context with file_path intact
         (not silently coerced to None). Field-test Report 4 #8 flagged
         the serialization quirk; this test guards against regression.
+
+        v3.0.0 round-3 (2026-05-23): rewrote to use the v3.0.0 canonical
+        store (decisions_store.record → .codevira/decisions.jsonl) since
+        get_session_context now reads from JSONL, not the legacy SQLiteGraph
+        decisions table. The AgentStore system test in
+        scripts/system_test_agentstore.py::A8 caught that recent_decisions
+        was always empty in v3.0.0 — this test was passing because it set
+        up data via db.log_session (legacy SQL path) which is invisible to
+        the v3.0.0 read code.
         """
         project, data_dir, db = _setup_project(tmp_path, monkeypatch)
-        db.log_session(
-            "s-fp",
-            "file_path round-trip session",
-            "1",
-            [
-                {
-                    "file_path": "src/widgets.py",
-                    "decision": "Use vue3 composables",
-                    "context": "",
-                },
-                {
-                    "file_path": "src/api.py",
-                    "decision": "REST not GraphQL",
-                    "context": "",
-                },
-            ],
-        )
-        db.close()
+        db.close()  # we don't need the SQLite handle in v3.0.0
 
-        with patch(
-            "mcp_server.tools.changesets.list_open_changesets",
-            return_value={"open_changesets": [], "count": 0, "warning": None},
-        ):
-            result = learning.get_session_context()
+        from mcp_server.storage import decisions_store as _decisions_store
+
+        _decisions_store.record(
+            decision="Use vue3 composables",
+            file_path="src/widgets.py",
+            session_id="s-fp",
+        )
+        _decisions_store.record(
+            decision="REST not GraphQL",
+            file_path="src/api.py",
+            session_id="s-fp",
+        )
+
+        result = learning.get_session_context()
 
         recent = result["recent_decisions"]
         assert recent, "expected recent_decisions to be non-empty after log_session"

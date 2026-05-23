@@ -84,3 +84,7 @@ test_incremental.py
 
 # Codevira cache (gitignored; rebuilt by `codevira sync`)
 .codevira-cache/
+
+# Understand-Anything plugin analysis output (ephemeral, rebuildable
+# via `/understand`); not meaningful to commit.
+.understand-anything/

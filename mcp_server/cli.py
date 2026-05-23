@@ -28,6 +28,7 @@ from __future__ import annotations
 import indexer  # noqa: F401  — fork-safety side-effect import
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -1207,6 +1208,38 @@ def main() -> None:
         ),
     )
 
+    hooks_parser = subparsers.add_parser(
+        "hooks",
+        help="Manage Claude Code hook scripts (list / install / uninstall)",
+        description=(
+            "Inspect, refresh, or remove the codevira Claude Code "
+            "lifecycle hook scripts at ~/.claude/hooks/codevira-*.sh. "
+            "Run `codevira hooks install` after upgrading codevira to "
+            "pick up template changes without re-running the full init "
+            "wizard."
+        ),
+    )
+    hooks_sub = hooks_parser.add_subparsers(dest="hooks_action")
+    hooks_sub.add_parser(
+        "list",
+        help="Show installed hook scripts and their settings.json registration.",
+    )
+    hooks_sub.add_parser(
+        "install",
+        help="Refresh installed hook scripts from bundled v3.0 templates "
+        "(idempotent — skips byte-identical files).",
+    )
+    hooks_uninstall_parser = hooks_sub.add_parser(
+        "uninstall",
+        help="Remove codevira hook scripts and unregister from settings.json.",
+    )
+    hooks_uninstall_parser.add_argument(
+        "--dry-run", action="store_true", help="Print the plan; don't write anything"
+    )
+    hooks_uninstall_parser.add_argument(
+        "-y", "--yes", action="store_true", help="Skip the confirmation prompt"
+    )
+
     engine_parser = subparsers.add_parser(
         "engine",
         help="Internal: lifecycle-hook engine entry (called by hook scripts)",
@@ -1230,6 +1263,20 @@ def main() -> None:
         help="Claude Code event name (PreToolUse, PostToolUse, SessionStart, "
         "UserPromptSubmit, Stop)",
     )
+    engine_sub.add_parser(
+        "disable",
+        help="Persistently disable hook engine policies (creates "
+        "~/.codevira/engine.disabled). Same effect as CODEVIRA_ENGINE=0 "
+        "but survives across shells.",
+    )
+    engine_sub.add_parser(
+        "enable",
+        help="Re-enable hook engine policies (removes " "~/.codevira/engine.disabled).",
+    )
+    engine_sub.add_parser(
+        "status",
+        help="Show whether the hook engine is currently active.",
+    )
 
     args = parser.parse_args(raw_args)
 
@@ -1245,6 +1292,7 @@ def main() -> None:
         "setup",
         "clean",
         "engine",
+        "hooks",  # hooks subcommands are admin ops on ~/.claude/hooks
         "register",
         "configure",
         "uninstall",  # don't bootstrap state on our way to wiping it
@@ -1434,9 +1482,32 @@ def main() -> None:
             keep_data=getattr(args, "keep_data", False),
         )
         sys.exit(rc)
+    elif args.command == "hooks":
+        hooks_action = getattr(args, "hooks_action", None)
+        if hooks_action == "list":
+            from mcp_server.cli_hooks_admin import cmd_hooks_list
+
+            sys.exit(cmd_hooks_list())
+        if hooks_action == "install":
+            from mcp_server.cli_hooks_admin import cmd_hooks_install
+
+            sys.exit(cmd_hooks_install())
+        if hooks_action == "uninstall":
+            from mcp_server.cli_hooks_admin import cmd_hooks_uninstall
+
+            sys.exit(
+                cmd_hooks_uninstall(
+                    dry_run=getattr(args, "dry_run", False),
+                    yes=getattr(args, "yes", False),
+                )
+            )
+        # Unknown hooks action — print usage.
+        hooks_parser.print_help()
+        sys.exit(2)
     elif args.command == "engine":
         # Internal — Claude Code hook scripts call us with `engine handle <event>`.
-        if getattr(args, "engine_action", None) == "handle":
+        engine_action = getattr(args, "engine_action", None)
+        if engine_action == "handle":
             # Register every Hero policy that ships enabled-by-default.
             # Without this, the hook runs the engine but ZERO policies
             # are registered → every edit gets ALLOW silently. (Week-4
@@ -1461,6 +1532,53 @@ def main() -> None:
             )
 
             sys.exit(engine_handle(args.event_type))
+        # v3.0 persistent on/off switch backed by ~/.codevira/engine.disabled.
+        # The hook scripts check this sentinel and fast-exit ~5ms when
+        # present — useful for users who want the MCP server without
+        # paying ~100ms Python cold-start tax per hook.
+        if engine_action in {"disable", "enable", "status"}:
+            sentinel = Path.home() / ".codevira" / "engine.disabled"
+            env_disabled = os.environ.get("CODEVIRA_ENGINE", "1") == "0"
+            if engine_action == "disable":
+                sentinel.parent.mkdir(parents=True, exist_ok=True)
+                sentinel.touch()
+                print(f"Engine disabled (sentinel: {sentinel}).")
+                print(
+                    'Hook scripts will fast-exit with `{"continue": true}` '
+                    "until you run `codevira engine enable`."
+                )
+                sys.exit(0)
+            if engine_action == "enable":
+                try:
+                    sentinel.unlink()
+                    print(f"Engine enabled (removed sentinel: {sentinel}).")
+                except FileNotFoundError:
+                    print(f"Engine already enabled (no sentinel at {sentinel}).")
+                if env_disabled:
+                    print(
+                        "Note: CODEVIRA_ENGINE=0 is still set in your "
+                        "environment — unset it for the change to take effect."
+                    )
+                sys.exit(0)
+            # status
+            file_disabled = sentinel.is_file()
+            if env_disabled or file_disabled:
+                print("Engine: DISABLED")
+                if env_disabled:
+                    print("  reason: CODEVIRA_ENGINE=0 in environment")
+                if file_disabled:
+                    print(f"  reason: sentinel exists at {sentinel}")
+                print(
+                    '  effect: hook scripts return `{"continue": true}` '
+                    "without invoking codevira (~5ms vs ~100ms)."
+                )
+            else:
+                print("Engine: ENABLED")
+                print(
+                    "  effect: hook scripts run codevira engine policies "
+                    "(BlastRadiusVeto, DecisionLock, AntiRegression, ...)"
+                )
+            sys.exit(0)
         # Unknown engine action — print usage.
         engine_parser.print_help()
         sys.exit(2)

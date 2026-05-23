@@ -1,8 +1,13 @@
-"""``codevira hooks list / uninstall`` — P2-6 (rc.5 audit, 2026-05-13).
+"""``codevira hooks list / install / uninstall`` — P2-6 (rc.5 audit, 2026-05-13).
 
 Pre-fix, ``codevira hooks`` only supported ``install``. Removing hooks meant
 deleting files in ``~/.claude/hooks/`` AND hand-editing
 ``~/.claude/settings.json``. These admin subcommands close that gap.
+
+v3.0: ``install`` re-added as a lightweight refresh path. It copies the
+bundled ``mcp_server/data/hooks/*.sh`` templates over the user's installed
+scripts so codevira upgrades pick up new fast-path checks (engine.disabled
+sentinel etc.) without forcing the user to re-run the full ``init`` wizard.
 
 Kept in its own module so additions don't inflate the public surface of
 ``mcp_server.cli`` (high blast radius).
@@ -11,6 +16,7 @@ Kept in its own module so additions don't inflate the public surface of
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 # All five hook events codevira installs. Kept in sync with
@@ -83,6 +89,66 @@ def cmd_hooks_list() -> int:
             "settings.json — run `codevira hooks install` to re-register."
         )
     return 0
+
+
+def cmd_hooks_install() -> int:
+    """Refresh installed Claude Code hook scripts from bundled templates.
+
+    Idempotent: if a script is byte-identical to the bundled version, it's
+    skipped. Use this after upgrading codevira to pick up template changes
+    (e.g. v3.0's engine.disabled sentinel fast-path) without re-running
+    the full ``codevira init`` wizard.
+
+    Does NOT modify ``~/.claude/settings.json`` — settings.json
+    registration is owned by the setup wizard. This command only refreshes
+    the script files at ``~/.claude/hooks/codevira-*.sh``.
+    """
+    hooks_dir = _hook_dir()
+    bundled_dir = Path(__file__).resolve().parent / "data" / "hooks"
+
+    print()
+    print("  Codevira — Refresh Claude Code Hook Scripts")
+    print("  " + "─" * 40)
+
+    if not bundled_dir.is_dir():
+        print(f"  ✗ bundled templates missing: {bundled_dir}")
+        return 1
+
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    refreshed = 0
+    unchanged = 0
+    failed = 0
+    for name in _HOOK_NAMES:
+        source = bundled_dir / f"{name}.sh"
+        target = hooks_dir / f"codevira-{name}.sh"
+        if not source.is_file():
+            print(f"  ✗ {target.name}: bundled template missing")
+            failed += 1
+            continue
+        try:
+            if target.is_file() and target.read_bytes() == source.read_bytes():
+                unchanged += 1
+                continue
+            shutil.copy2(source, target)
+            mode = target.stat().st_mode
+            target.chmod(mode | 0o111)
+            print(f"  ✓ refreshed {target.name}")
+            refreshed += 1
+        except OSError as e:
+            print(f"  ✗ {target.name}: {e}")
+            failed += 1
+
+    print()
+    print(
+        f"  Done: {refreshed} refreshed, {unchanged} already up-to-date, "
+        f"{failed} failed."
+    )
+    if refreshed > 0:
+        print(
+            "  Note: hook scripts are picked up by Claude Code on next "
+            "session start — no restart needed for already-running sessions."
+        )
+    return 0 if failed == 0 else 1
 
 
 def cmd_hooks_uninstall(*, dry_run: bool = False, yes: bool = False) -> int:

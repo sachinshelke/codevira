@@ -16,6 +16,14 @@ if [[ "${CODEVIRA_ENGINE:-1}" == "0" ]]; then
   exit 0
 fi
 
+# v3.0: file-based engine disable. Same effect as CODEVIRA_ENGINE=0
+# but persists across shells. Toggle with `codevira engine disable` /
+# `codevira engine enable`.
+if [[ -f "${HOME}/.codevira/engine.disabled" ]]; then
+  printf '{"continue": true}\n'
+  exit 0
+fi
+
 CODEVIRA=""
 if [[ -x "${HOME}/.local/bin/codevira" ]]; then
   CODEVIRA="${HOME}/.local/bin/codevira"

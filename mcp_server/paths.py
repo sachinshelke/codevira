@@ -310,8 +310,24 @@ def get_data_dir() -> Path:
     After the first call for a given project root the result is cached in
     _data_dir_cache.  Subsequent calls are O(1) dict lookups with no I/O.
     Call invalidate_data_dir_cache() after init or migration to force refresh.
+
+    v3.0 hardening (2026-05-23 audit): refuses invalid roots (``$HOME``,
+    system top-levels). Pre-fix, this function happily resolved to
+    ``~/.codevira/projects/<sanitized-$HOME-key>/`` for an invalid root
+    and callers then created ghost dirs there — the v1.8.0 production
+    crash class. Now raises ``ValueError`` with the rejection reason
+    instead. Callers that need graceful degradation should call
+    ``is_invalid_project_root(p)`` first.
     """
     project_root = get_project_root()
+
+    rejection = is_invalid_project_root(project_root)
+    if rejection:
+        raise ValueError(
+            f"get_data_dir() refuses invalid project root: {rejection} "
+            f"(root resolved to {project_root}). Set CODEVIRA_PROJECT_DIR "
+            f"or cd into a real project subdirectory."
+        )
 
     # Fast path — already resolved for this root
     if project_root in _data_dir_cache:

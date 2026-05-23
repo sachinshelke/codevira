@@ -1158,7 +1158,14 @@ def cmd_status(check_stale: bool = False, show_global: bool = False):
         show_global: Add a panel showing cross-project intelligence stats
                      and the macOS launchd service status (if running).
     """
-    data_dir = get_data_dir()
+    # v3.0 hardening: get_data_dir now refuses invalid roots ($HOME, system
+    # tops). `codevira status` is documented as "works anywhere", so degrade
+    # gracefully instead of crashing.
+    try:
+        data_dir = get_data_dir()
+    except ValueError as e:
+        print(f"  Not initialized — {e}")
+        return
     graph_db_path = data_dir / "graph" / "graph.db"
 
     # Fast path: project has no local index yet. Skip rich/sqlite/chromadb imports

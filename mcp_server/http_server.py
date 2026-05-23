@@ -402,6 +402,30 @@ def run_http_server(
         daemon=True,
     ).start()
 
+    # v3.0 (2026-05-23 RC-audit follow-up): register HTTP MCP process in
+    # the running-MCP registry so `codevira doctor` can detect stale
+    # in-memory code vs the installed wheel.
+    try:
+        from mcp_server._mcp_registry import register, unregister
+        from mcp_server.paths import get_project_root
+        from mcp_server import __version__ as _ver
+        import atexit as _atexit
+        import os as _os
+
+        try:
+            _project_root_for_registry = get_project_root()
+        except Exception:
+            _project_root_for_registry = None
+        register(transport="http", project_root=_project_root_for_registry)
+        _atexit.register(unregister)
+        logger.info(
+            "Codevira MCP server v%s starting (pid %d, http)",
+            _ver,
+            _os.getpid(),
+        )
+    except Exception as _reg_err:
+        logger.warning("MCP registry write skipped: %s", _reg_err)
+
     # v3.0.0: project registration (was: bidirectional preference /
     # rule sync). Best-effort; doesn't block startup.
     try:

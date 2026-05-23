@@ -1352,6 +1352,31 @@ def main():
         daemon=True,
     ).start()
 
+    # v3.0 (2026-05-23 RC-audit follow-up): register this MCP process in
+    # the running-MCP registry so `codevira doctor` can detect when our
+    # in-memory code is stale relative to the installed wheel — surfaces
+    # the "restart Claude Code after pipx --force" failure mode that
+    # otherwise bites users silently.
+    try:
+        from mcp_server._mcp_registry import register, unregister
+        from mcp_server.paths import get_project_root
+        import atexit as _atexit
+        import os as _os
+
+        try:
+            _project_root_for_registry = get_project_root()
+        except Exception:
+            _project_root_for_registry = None
+        register(transport="stdio", project_root=_project_root_for_registry)
+        _atexit.register(unregister)
+        logger.info(
+            "Codevira MCP server v%s starting (pid %d, stdio)",
+            _codevira_version,
+            _os.getpid(),
+        )
+    except Exception as _reg_err:
+        logger.warning("MCP registry write skipped: %s", _reg_err)
+
     # v1.5 → v3.0.0: register this project in the cross-machine inventory
     # so `codevira projects` can enumerate it. Best-effort; never breaks
     # startup. v3.0.0 simplified the previous "import global intelligence"

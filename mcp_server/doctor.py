@@ -797,6 +797,58 @@ def check_agents_md_size() -> CheckResult:
     )
 
 
+def check_mcp_running_versions() -> CheckResult:
+    """v3.0.0 RC-audit follow-up (D-pipx-stale-mcp).
+
+    When a user runs ``pipx install --force codevira`` after their IDE
+    has already spawned an MCP stdio child, the new wheel sits on disk
+    but the running child keeps serving the OLD code from its
+    ``sys.modules`` cache. The user's edits don't take effect until
+    they restart Claude Code / Cursor / Antigravity.
+
+    Each MCP server writes its version to ``~/.codevira/run/<pid>.json``
+    on startup. This check reads the registry, compares each running
+    MCP's version to the currently-installed wheel, and warns when
+    they drift.
+    """
+    try:
+        from mcp_server._mcp_registry import list_running
+        from mcp_server import __version__ as wheel_version
+    except Exception as e:
+        return CheckResult(
+            "mcp_running_versions",
+            _WARN,
+            f"registry unavailable: {e}",
+        )
+
+    running = list_running()
+    if not running:
+        return CheckResult(
+            "mcp_running_versions",
+            _PASS,
+            "no running MCP servers registered (no IDE active or "
+            "registry hasn't been populated yet)",
+        )
+
+    stale = [m for m in running if m.get("version") != wheel_version]
+    if not stale:
+        return CheckResult(
+            "mcp_running_versions",
+            _PASS,
+            f"{len(running)} running MCP(s) all on wheel version {wheel_version}",
+        )
+
+    pids = ", ".join(f"pid {m.get('pid')} (v{m.get('version', '?')})" for m in stale)
+    return CheckResult(
+        "mcp_running_versions",
+        _WARN,
+        f"{len(stale)} of {len(running)} running MCP(s) on a stale version "
+        f"(wheel is v{wheel_version}): {pids}. Restart Claude Code / Cursor "
+        f"/ Antigravity to load the new code.",
+        fix_command="# Restart your IDE to reload the MCP subprocess",
+    )
+
+
 _CHECKS: tuple[Callable[[], CheckResult], ...] = (
     check_python_version,
     check_codevira_data_dir,
@@ -810,6 +862,7 @@ _CHECKS: tuple[Callable[[], CheckResult], ...] = (
     check_watcher_circuit,
     check_engine_kill_switch,
     check_claude_mcp_visibility,  # rc.4 (Bug 10)
+    check_mcp_running_versions,  # v3.0.0 (2026-05-23 RC-audit follow-up)
     # v2.2.0: check_codeindex_freshness + check_semantic_search_health
     # removed (chromadb deleted in Phase E).
     check_ghost_projects,  # rc.4 (Bug 21c)

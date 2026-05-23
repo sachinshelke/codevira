@@ -109,8 +109,27 @@ def enforce_retention(data_dir: Path | None = None, *, force: bool = False) -> d
     if not force and not _should_run_cleanup(data_dir):
         return result
 
-    # Enforce retention via SQL
-    graph_db = data_dir / "graph" / "graph.db"
+    # v3.0 silent-storage note (2026-05-23 RC audit): the SQL paths below
+    # operate on legacy SQLiteGraph decisions/sessions tables. In v3.0,
+    # writes go to .codevira/decisions.jsonl + .codevira/sessions.jsonl
+    # via JSONL stores — the SQLite tables are empty for greenfield v3.0
+    # projects. Retention here still works for users with migrated v2.x
+    # data, but won't trim v3.0 JSONL records. Surface this explicitly
+    # so a v3.0 user setting retention_days doesn't silently get nothing.
+    jsonl_decisions = data_dir.parent.parent / ".codevira" / "decisions.jsonl"
+    legacy_decisions_db = data_dir / "graph" / "graph.db"
+    if jsonl_decisions.is_file() and not legacy_decisions_db.exists():
+        logger.warning(
+            "logs.retention_days=%d is set but the project uses v3.0 JSONL "
+            "storage (.codevira/*.jsonl). Time-based retention on JSONL is "
+            "not yet supported. For privacy cleanup, use `git rm` on the "
+            "JSONL files or rotate them via external tooling.",
+            retention_days,
+        )
+        return result
+
+    # Enforce retention via SQL (legacy/migrated installs only)
+    graph_db = legacy_decisions_db
     if not graph_db.exists():
         return result
 

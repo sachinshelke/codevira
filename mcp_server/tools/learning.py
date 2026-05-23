@@ -49,13 +49,17 @@ def get_decision_confidence(
         confidence = db.get_decision_confidence(file_path=file_path, pattern=pattern)
         label = file_path or pattern or "project-wide"
         # Diagnostic counts so the user can tell which case they're in.
+        # v3.0 silent-storage fix (2026-05-23 RC audit): pre-fix this read
+        # `SELECT COUNT(*) FROM decisions` against legacy SQLiteGraph which
+        # is empty in v3.0 (all decision writes go to JSONL via
+        # decisions_store). Users saw "No data — new territory" even with
+        # dozens of decisions. Now reads the JSONL store directly.
         try:
-            decisions_total = db.conn.execute(
-                "SELECT COUNT(*) FROM decisions"
-            ).fetchone()[0]
-            decisions_with_file = db.conn.execute(
-                "SELECT COUNT(*) FROM decisions WHERE file_path IS NOT NULL"
-            ).fetchone()[0]
+            from mcp_server.storage import jsonl_store, paths as _storage_paths
+
+            decision_records = jsonl_store.read_all(_storage_paths.decisions_path())
+            decisions_total = len(decision_records)
+            decisions_with_file = sum(1 for d in decision_records if d.get("file_path"))
             decisions_eligible_for_outcomes = decisions_with_file
         except Exception:
             decisions_total = decisions_with_file = decisions_eligible_for_outcomes = 0
@@ -419,11 +423,23 @@ def get_session_context(since: str | None = None) -> dict:
     """
     db = _get_db()
     try:
-        recent_sessions = db.get_recent_sessions(limit=2)
+        # v3.0 silent-storage fix (2026-05-23 RC audit): pre-fix this read
+        # sessions from SQLiteGraph which is empty in v3.0 (all session
+        # writes go to .codevira/sessions.jsonl). Users saw recent_sessions=[]
+        # in get_session_context even after recording sessions. Now reads
+        # the JSONL store.
+        try:
+            from mcp_server.storage import sessions_store as _sessions_store
+
+            recent_sessions = _sessions_store.read_recent(limit=2)
+        except Exception:
+            recent_sessions = []
         # v2.1.2 Item 25: post-filter recent_sessions by since-cutoff if provided.
         if since:
             recent_sessions = [
-                s for s in recent_sessions if (s.get("created_at") or "") > since
+                s
+                for s in recent_sessions
+                if (s.get("created_at") or s.get("ts") or "") > since
             ]
         confidence = db.get_decision_confidence()
         # v2.2.0+: preferences + learned_rules dropped from session context

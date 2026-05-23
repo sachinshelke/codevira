@@ -102,6 +102,30 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   - fcntl.flock survives SIGKILL of the holder (kernel reaps
     fd-bound locks).
 
+- **`check_conflict` asymmetric-overlap detector for contradictions
+  against `do_not_revert` decisions.** The original v2.2.0 implementation
+  used pure symmetric Jaccard similarity with a 0.60 threshold — which
+  misses the common contradiction shape where a terse new decision
+  shares 3 of its 4 content tokens with a longer protected decision
+  (Jaccard = 3/9 = 0.333, below threshold; overlap coefficient =
+  3/min(4,8) = 0.75, above threshold). Caught by the AgentStore
+  system test (`scripts/system_test_agentstore.py::A9`).
+
+  Fix adds an asymmetric overlap-coefficient path that fires ONLY
+  for candidates with `do_not_revert=True` AND with at least 3 shared
+  tokens AND with symmetric Jaccard below 0.60 (the
+  re-affirmation filter — re-recording a protected decision verbatim
+  still hits the duplicate path, not the new asymmetric path).
+  Duplicate detection itself (against any decision) stays symmetric +
+  conservative (Jaccard ≥ 0.60) — the change is conflict-specific.
+
+  Response shape adds `match_shape` (`"duplicate"` |
+  `"asymmetric-conflict"`), `jaccard`, `overlap_coefficient`,
+  `shared_tokens` per match entry + a top-level `thresholds` dict.
+  Existing `threshold_used` field preserved for v2.x callers.
+  17 new unit tests in `tests/test_check_conflict.py` pin both
+  regimes + the re-affirmation filter.
+
 - **Repointed 11 more unguarded writes at `storage.atomic`** —
   the round-3 write-site sweep found `auto_init` (config.yaml +
   metadata.json), `cli_init` (config.yaml + enforcement.yaml +

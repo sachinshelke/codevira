@@ -8,10 +8,35 @@ on top of decisions stored in ``.codevira/decisions.jsonl``.
 
 Definitions:
 
-- A *duplicate* is a decision whose Jaccard similarity to ANY existing
-  decision is ≥ DUP_THRESHOLD (default 0.6).
-- A *conflict* is a decision whose Jaccard similarity to a
-  ``do_not_revert=True`` decision is ≥ DUP_THRESHOLD.
+- A *duplicate* is a decision whose **symmetric Jaccard** similarity
+  to ANY existing decision is ≥ DUP_THRESHOLD (default 0.60).
+  Symmetric is the right shape for re-records: the two decisions are
+  saying roughly the same thing in similar amounts of text.
+
+- A *conflict* (v3.0.0 round-3 expansion) is a decision that either:
+  (a) is a duplicate of a ``do_not_revert=True`` existing decision, OR
+  (b) has **asymmetric overlap** with a ``do_not_revert=True``
+      decision: at least CONFLICT_OVERLAP_THRESHOLD (0.60) of the
+      smaller token set's tokens are shared, with at least
+      CONFLICT_MIN_SHARED_TOKENS (3) shared tokens, AND symmetric
+      Jaccard is below DUP_THRESHOLD (so we only flag the contradiction
+      shape, not re-affirmations).
+
+Why the asymmetric path: pure Jaccard misses the common contradiction
+shape where a TERSE new decision ("Switch from pnpm to npm" — 4
+content tokens) overlaps with a LONGER protected decision ("AgentStore
+uses pnpm workspaces — DO NOT switch package manager" — 8 content
+tokens). Their intersection is 3 tokens (agentstore, pnpm, switch);
+Jaccard is 3/9 = 0.333 (below 0.60, miss); overlap coefficient is
+3/min(4,8) = 0.75 (fires at 0.60). This is exactly the shape that
+caught the AgentStore system test in
+``scripts/system_test_agentstore.py::A9``.
+
+The Jaccard-below-0.60 guard in the asymmetric path is the
+re-affirmation filter: if the new decision is essentially saying the
+same thing as the protected one (high symmetric similarity), it's a
+duplicate, not a conflict — agents re-record protected decisions
+defensively all the time; we shouldn't treat that as a contradiction.
 
 Why FTS5 + Jaccard, not embeddings:
 
@@ -34,11 +59,12 @@ import re
 from typing import Any
 
 
-# Tunable thresholds. Conservative defaults — better to under-warn than
-# over-warn (user can always force=True; can never un-skip a
-# user-frustrating false positive).
-_DUP_THRESHOLD = 0.60  # Jaccard ≥ 0.60 → duplicate
-_CONFLICT_BOOST = 0.0  # No conflict boost — same threshold for conflict
+# Tunable thresholds. Duplicate path stays conservative; conflict path
+# (against do_not_revert decisions only) adds the asymmetric-overlap
+# detector with its own thresholds.
+_DUP_THRESHOLD = 0.60  # symmetric Jaccard ≥ 0.60 → duplicate
+_CONFLICT_OVERLAP_THRESHOLD = 0.60  # asymmetric overlap ≥ 0.60 → conflict
+_CONFLICT_MIN_SHARED_TOKENS = 3  # floor on |A∩B| to avoid 1- or 2-token noise
 
 # Stop-word list for tokenization (English + common code words).
 _STOPWORDS = frozenset(
@@ -113,6 +139,28 @@ def _jaccard(a: set[str], b: set[str]) -> float:
     return len(inter) / len(union) if union else 0.0
 
 
+def _overlap_coefficient(a: set[str], b: set[str]) -> float:
+    """Asymmetric overlap coefficient: |A∩B| / min(|A|, |B|) ∈ [0, 1].
+
+    Catches the contradiction shape where a terse new decision shares
+    most of its tokens with a longer protected decision. Pure Jaccard
+    misses this because the protected decision's extra context tokens
+    dilute the symmetric union.
+
+    Example (v3.0.0 round-3 system-test finding):
+      A = "AgentStore should switch from pnpm to npm" — 4 content tokens
+      B = "AgentStore uses pnpm workspaces — DO NOT switch package manager"
+          — 8 content tokens
+      |A∩B| = 3 (agentstore, pnpm, switch)
+      Jaccard = 3/9 = 0.333  (below DUP threshold — miss)
+      Overlap = 3/min(4,8) = 0.75  (fires at CONFLICT_OVERLAP threshold)
+    """
+    if not a or not b:
+        return 0.0
+    inter = a & b
+    return len(inter) / min(len(a), len(b))
+
+
 def check_conflict(
     decision_text: str,
     file_path: str | None = None,
@@ -157,6 +205,11 @@ def check_conflict(
             "conflicts": [],
             "duplicates": [],
             "threshold_used": _DUP_THRESHOLD,
+            "thresholds": {
+                "duplicate_jaccard": _DUP_THRESHOLD,
+                "conflict_overlap": _CONFLICT_OVERLAP_THRESHOLD,
+                "conflict_min_shared_tokens": _CONFLICT_MIN_SHARED_TOKENS,
+            },
         }
 
     query_tokens = _tokenize(decision_text)
@@ -166,18 +219,43 @@ def check_conflict(
     for cand in candidates:
         cand_text = cand.get("decision") or ""
         cand_tokens = _tokenize(cand_text)
-        similarity = _jaccard(query_tokens, cand_tokens)
-        if similarity < _DUP_THRESHOLD:
+        jaccard = _jaccard(query_tokens, cand_tokens)
+        overlap = _overlap_coefficient(query_tokens, cand_tokens)
+        shared = len(query_tokens & cand_tokens)
+        is_protected = bool(cand.get("do_not_revert", False))
+
+        # Duplicate path: high SYMMETRIC similarity (re-record shape).
+        # Conflict path: against do_not_revert AND either symmetric
+        # high similarity OR ASYMMETRIC overlap (the contradiction
+        # shape — terse new decision shares core tokens with a longer
+        # protected decision). The Jaccard-below-DUP guard on the
+        # asymmetric branch is the re-affirmation filter.
+        is_duplicate = jaccard >= _DUP_THRESHOLD
+        is_asymmetric_conflict = (
+            is_protected
+            and overlap >= _CONFLICT_OVERLAP_THRESHOLD
+            and shared >= _CONFLICT_MIN_SHARED_TOKENS
+            and jaccard < _DUP_THRESHOLD
+        )
+        if not (is_duplicate or is_asymmetric_conflict):
             continue
+
+        # Report the stronger of the two scores so the agent can see
+        # both regimes (symmetric high vs asymmetric high).
+        display_similarity = max(jaccard, overlap)
         entry = {
             "decision_id": cand.get("id"),
-            "similarity": round(similarity, 3),
-            "do_not_revert": bool(cand.get("do_not_revert", False)),
+            "similarity": round(display_similarity, 3),
+            "jaccard": round(jaccard, 3),
+            "overlap_coefficient": round(overlap, 3),
+            "shared_tokens": shared,
+            "match_shape": "duplicate" if is_duplicate else "asymmetric-conflict",
+            "do_not_revert": is_protected,
             "summary": (cand_text[:80] + "…") if len(cand_text) > 80 else cand_text,
             "file_path": cand.get("file_path"),
             "decision": cand_text,
         }
-        if entry["do_not_revert"]:
+        if is_protected:
             conflicts.append(entry)
         else:
             duplicates.append(entry)
@@ -197,5 +275,12 @@ def check_conflict(
         "status": status,
         "conflicts": conflicts,
         "duplicates": duplicates,
+        # ``threshold_used`` is kept for v2.x back-compat. New callers
+        # should read ``thresholds`` (dict) which surfaces both regimes.
         "threshold_used": _DUP_THRESHOLD,
+        "thresholds": {
+            "duplicate_jaccard": _DUP_THRESHOLD,
+            "conflict_overlap": _CONFLICT_OVERLAP_THRESHOLD,
+            "conflict_min_shared_tokens": _CONFLICT_MIN_SHARED_TOKENS,
+        },
     }

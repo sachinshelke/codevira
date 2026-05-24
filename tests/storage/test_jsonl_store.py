@@ -174,6 +174,53 @@ class TestMonotonicIDs:
             jsonl_store.append_with_generated_id(jsonl_path, {"x": 1})
         assert jsonl_store.last_id(jsonl_path) == "D000005"
 
+    def test_amendment_record_does_not_steal_next_id(self, jsonl_path: Path) -> None:
+        """v3.0.0 regression (2026-05-25): `_compute_next_id_locked` used to
+        tail-read the last record and increment its id, but amendment
+        records re-use an existing decision's id (carrying `_amendment_to_id`).
+        That caused next = amended_id + 1 — a collision with an already-
+        issued sequential id. Bug surfaced when `set_decision_flag` was
+        called before a fresh `record_decision`: the new decision got the
+        old id and silently overwrote it in the merged view.
+        """
+        # 3 fresh records → D000001, D000002, D000003
+        jsonl_store.append_with_generated_id(jsonl_path, {"decision": "first"})
+        jsonl_store.append_with_generated_id(jsonl_path, {"decision": "second"})
+        jsonl_store.append_with_generated_id(jsonl_path, {"decision": "third"})
+        # Amendment to D000002 (carries `_amendment_to_id`)
+        jsonl_store.append(
+            jsonl_path,
+            {
+                "id": "D000002",
+                "_amendment_to_id": "D000002",
+                "do_not_revert": True,
+            },
+        )
+        # Next fresh record must be D000004, not D000003 (collision pre-fix).
+        new_id = jsonl_store.append_with_generated_id(
+            jsonl_path, {"decision": "fourth"}
+        )
+        assert new_id == "D000004"
+
+    def test_multiple_amendments_then_new_id(self, jsonl_path: Path) -> None:
+        """Walking-back past N consecutive amendments must still find the
+        most-recent ORIGINAL record and increment from there."""
+        jsonl_store.append_with_generated_id(jsonl_path, {"decision": "a"})
+        jsonl_store.append_with_generated_id(jsonl_path, {"decision": "b"})
+        # Three amendments to D000001 in a row (e.g., a tags update, then
+        # do_not_revert flip, then another tags update).
+        for _ in range(3):
+            jsonl_store.append(
+                jsonl_path,
+                {
+                    "id": "D000001",
+                    "_amendment_to_id": "D000001",
+                    "tags": ["any"],
+                },
+            )
+        new_id = jsonl_store.append_with_generated_id(jsonl_path, {"decision": "c"})
+        assert new_id == "D000003"
+
 
 class TestConcurrency:
     def test_concurrent_appenders_no_corruption(self, jsonl_path: Path) -> None:

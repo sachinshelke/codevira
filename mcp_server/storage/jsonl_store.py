@@ -352,6 +352,15 @@ def _compute_next_id_locked(
             line + "\n" for line in tail.decode("utf-8", errors="ignore").splitlines()
         ]
 
+    # v3.0.0 fix (2026-05-25): skip amendment records when computing the
+    # next ID. Amendments (records carrying ``_amendment_to_id``) re-use
+    # an EXISTING decision's id; treating the last amendment as the
+    # "last id" caused next = amended_id + 1, which collided with an
+    # already-issued sequential id. Bug exposed by set_decision_flag
+    # writes followed by a fresh record_decision call: the new decision
+    # got the old D000004's id and silently overwrote it in the merged
+    # view. Tail-read is preserved; we just keep walking back until we
+    # find a non-amendment record.
     last_val: str | None = None
     for raw in reversed(lines):
         raw = raw.strip()
@@ -362,6 +371,8 @@ def _compute_next_id_locked(
         except json.JSONDecodeError:
             continue
         if isinstance(rec, dict):
+            if rec.get("_amendment_to_id") is not None:
+                continue  # amendment — id is borrowed from an earlier record
             val = rec.get(id_field)
             if val is not None:
                 last_val = str(val)

@@ -167,6 +167,19 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   (where the helper uses the sentinel-file fallback instead of
   fcntl).
 
+- **`relevance_inject` can surface weakly-related decisions on
+  short prompts.** The current SessionStart / UserPromptSubmit
+  injection scores tag + file + FTS5-BM25; with the v3.0 default
+  `min_score=0.10`, the top FTS5 hit alone (~0.10) is enough to
+  clear the gate on prompts with no tag or file overlap. Tightening
+  the gate naively breaks the core cross-tool wedge
+  (`tests/e2e/test_cross_tool_universality.py`) — FTS-only recall
+  IS the keyword-search path for tagless / file-less queries from
+  Cursor / Windsurf / Antigravity. A proper fix needs a
+  precision/recall benchmark with a corpus of real prompts +
+  decisions and a multi-prompt e2e test added BEFORE the threshold
+  change. Deferred to v3.0.1.
+
 ---
 
 ## [3.0.0] — 2026-05-22 — Lean, audited, opinionated

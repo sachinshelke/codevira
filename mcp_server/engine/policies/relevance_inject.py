@@ -66,25 +66,9 @@ logger = logging.getLogger(__name__)
 _DEFAULT_MODE = "inject"
 _DEFAULT_MAX_DECISIONS = 3
 _DEFAULT_MAX_TOKENS = 600
-# v3.0 hardening (2026-05-23 RC audit): raised from 0.10 → 0.25 because
-# 0.10 == (top FTS hit × default un-digested weight) = 0.20 × 0.5, which
-# meant ANY decision that ranked first in FTS5 BM25 against any prompt
-# token would pass the gate. Live-observed 3× false positives in a
-# single session ("i have some observations" surfaced D000002/D000006/
-# D000009 — none semantically related). 0.25 requires multi-source
-# evidence: tag-only (0.4) only passes when weight ≥ 0.625 (i.e. mostly
-# kept); file-only same; FTS-only maxes at 0.2 and now fails the gate.
-_DEFAULT_MIN_SCORE = 0.25
+_DEFAULT_MIN_SCORE = 0.10  # decisions below this never inject
 _MIN_PROMPT_CHARS = 10  # ignore tiny prompts (e.g. "ok", "thanks")
 _MODES = ("off", "inject")
-# v3.0 hardening: FTS-only matches (no tag, no file) cap out at the
-# top FTS contribution of 0.20 and represent the noisiest signal —
-# any prompt that happens to share a BM25-rankable token with a
-# decision summary hits this path. Refuse to inject pure-FTS matches
-# unless they're EXCEPTIONALLY strong (top FTS hit with weight=1.0
-# kept decisions). Default off — set CODEVIRA_INJECT_ALLOW_FTS_ONLY=1
-# to restore pre-3.0 behavior.
-_ALLOW_FTS_ONLY = False
 
 # Per-component weights for the merged relevance score.
 _TAG_WEIGHT = 0.4
@@ -363,20 +347,8 @@ class RelevanceInject(Policy):
             fts_score[did] = fts_score.get(did, 0.0) + _FTS_WEIGHT * (0.5**i)
 
         all_ids = set(tag_score) | set(file_score) | set(fts_score)
-        # v3.0 hardening: gate FTS-only matches behind explicit opt-in.
-        # FTS-only (no tag, no file) is the noisiest signal — any prompt
-        # token that BM25-ranks against a decision summary triggers it.
-        # Default off; CODEVIRA_INJECT_ALLOW_FTS_ONLY=1 restores legacy.
-        allow_fts_only_env = os.environ.get(
-            "CODEVIRA_INJECT_ALLOW_FTS_ONLY", ""
-        ).strip().lower() in {"1", "true", "yes"}
         scored: list[dict[str, Any]] = []
         for did in all_ids:
-            has_tag = tag_score.get(did, 0.0) > 0
-            has_file = file_score.get(did, 0.0) > 0
-            if not has_tag and not has_file and not allow_fts_only_env:
-                # FTS-only candidate — refuse unless legacy mode enabled.
-                continue
             base = (
                 tag_score.get(did, 0.0)
                 + file_score.get(did, 0.0)

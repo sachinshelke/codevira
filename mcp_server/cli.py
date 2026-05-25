@@ -1208,38 +1208,6 @@ def main() -> None:
         ),
     )
 
-    hooks_parser = subparsers.add_parser(
-        "hooks",
-        help="Manage Claude Code hook scripts (list / install / uninstall)",
-        description=(
-            "Inspect, refresh, or remove the codevira Claude Code "
-            "lifecycle hook scripts at ~/.claude/hooks/codevira-*.sh. "
-            "Run `codevira hooks install` after upgrading codevira to "
-            "pick up template changes without re-running the full init "
-            "wizard."
-        ),
-    )
-    hooks_sub = hooks_parser.add_subparsers(dest="hooks_action")
-    hooks_sub.add_parser(
-        "list",
-        help="Show installed hook scripts and their settings.json registration.",
-    )
-    hooks_sub.add_parser(
-        "install",
-        help="Refresh installed hook scripts from bundled v3.0 templates "
-        "(idempotent — skips byte-identical files).",
-    )
-    hooks_uninstall_parser = hooks_sub.add_parser(
-        "uninstall",
-        help="Remove codevira hook scripts and unregister from settings.json.",
-    )
-    hooks_uninstall_parser.add_argument(
-        "--dry-run", action="store_true", help="Print the plan; don't write anything"
-    )
-    hooks_uninstall_parser.add_argument(
-        "-y", "--yes", action="store_true", help="Skip the confirmation prompt"
-    )
-
     engine_parser = subparsers.add_parser(
         "engine",
         help="Internal: lifecycle-hook engine entry (called by hook scripts)",
@@ -1277,6 +1245,13 @@ def main() -> None:
         "status",
         help="Show whether the hook engine is currently active.",
     )
+    engine_sub.add_parser(
+        "install-hooks",
+        help="Refresh installed Claude Code hook scripts from bundled "
+        "v3.0 templates (idempotent — skips byte-identical files). "
+        "Use after upgrading codevira to pick up template changes "
+        "without re-running the full `codevira init` wizard.",
+    )
 
     args = parser.parse_args(raw_args)
 
@@ -1292,7 +1267,6 @@ def main() -> None:
         "setup",
         "clean",
         "engine",
-        "hooks",  # hooks subcommands are admin ops on ~/.claude/hooks
         "register",
         "configure",
         "uninstall",  # don't bootstrap state on our way to wiping it
@@ -1482,28 +1456,6 @@ def main() -> None:
             keep_data=getattr(args, "keep_data", False),
         )
         sys.exit(rc)
-    elif args.command == "hooks":
-        hooks_action = getattr(args, "hooks_action", None)
-        if hooks_action == "list":
-            from mcp_server.cli_hooks_admin import cmd_hooks_list
-
-            sys.exit(cmd_hooks_list())
-        if hooks_action == "install":
-            from mcp_server.cli_hooks_admin import cmd_hooks_install
-
-            sys.exit(cmd_hooks_install())
-        if hooks_action == "uninstall":
-            from mcp_server.cli_hooks_admin import cmd_hooks_uninstall
-
-            sys.exit(
-                cmd_hooks_uninstall(
-                    dry_run=getattr(args, "dry_run", False),
-                    yes=getattr(args, "yes", False),
-                )
-            )
-        # Unknown hooks action — print usage.
-        hooks_parser.print_help()
-        sys.exit(2)
     elif args.command == "engine":
         # Internal — Claude Code hook scripts call us with `engine handle <event>`.
         engine_action = getattr(args, "engine_action", None)
@@ -1579,6 +1531,16 @@ def main() -> None:
                     "(BlastRadiusVeto, DecisionLock, AntiRegression, ...)"
                 )
             sys.exit(0)
+        # v3.0 (2026-05-25): refresh installed hook scripts from bundled
+        # templates. Lives under `engine` (kept top-level by the
+        # 2026-05-22 surface cut) rather than re-introducing a deleted
+        # top-level `hooks` namespace. The full reinstall path is still
+        # `codevira init` / `codevira setup` — this is the lighter, upgrade-
+        # focused subset that only refreshes the hook script bodies.
+        if engine_action == "install-hooks":
+            from mcp_server.cli_hooks_admin import cmd_hooks_install
+
+            sys.exit(cmd_hooks_install())
         # Unknown engine action — print usage.
         engine_parser.print_help()
         sys.exit(2)

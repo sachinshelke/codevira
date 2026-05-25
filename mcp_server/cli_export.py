@@ -309,6 +309,11 @@ def cmd_export(
     except FileNotFoundError as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
+    except ValueError as e:
+        # v3.0 hardening: get_data_dir refuses invalid project roots
+        # ($HOME, system top-levels). Run from a real project directory.
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
 
     if out is None:
         from mcp_server.paths import get_data_dir

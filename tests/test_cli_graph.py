@@ -33,8 +33,30 @@ class TestBuildGraph:
             {"id": "D000002", "decision": "new"},
         ]
         g = _build_graph(decisions)
-        assert len(g["nodes"]) == 2
-        assert {"source": "D000001", "target": "D000002"} in g["edges"]
+        assert len(g["nodes"]) == 2  # no file_path → no file-overlay nodes
+        assert {
+            "source": "D000001",
+            "target": "D000002",
+            "kind": "supersedes",
+        } in g["edges"]
+
+    def test_file_overlay_adds_file_nodes_and_touches_edges(self):
+        decisions = [
+            {"id": "D1", "decision": "a", "file_path": "src/x.py"},
+            {"id": "D2", "decision": "b", "file_path": "src/x.py"},
+        ]
+        g = _build_graph(decisions, with_files=True)
+        files = [n for n in g["nodes"] if n.get("type") == "file"]
+        assert len(files) == 1  # both decisions share one file node
+        assert files[0]["id"] == "file:src/x.py"
+        touches = [e for e in g["edges"] if e.get("kind") == "touches"]
+        assert len(touches) == 2  # each decision → the shared file
+
+    def test_with_files_false_is_decisions_only(self):
+        decisions = [{"id": "D1", "decision": "a", "file_path": "src/x.py"}]
+        g = _build_graph(decisions, with_files=False)
+        assert all(n.get("type") == "decision" for n in g["nodes"])
+        assert all(e.get("kind") != "touches" for e in g["edges"])
 
     def test_dangling_superseded_by_is_dropped(self):
         """A superseded_by pointing at a missing id must not create an edge."""
@@ -130,6 +152,11 @@ class TestCmdGraph:
         h = out.read_text(encoding="utf-8")
         m = re.search(r"const DATA = (\{.*?\});\n", h, re.S)
         data = json.loads(m.group(1))
-        # Original + replacement nodes, and exactly one supersedes edge.
-        assert len(data["nodes"]) == 2
-        assert len(data["edges"]) == 1
+        types = [n.get("type") for n in data["nodes"]]
+        kinds = [e.get("kind") for e in data["edges"]]
+        # 2 decisions (original + replacement) + 1 shared file node (a.py).
+        assert types.count("decision") == 2
+        assert types.count("file") == 1
+        # Exactly one supersedes edge; both decisions touch the file.
+        assert kinds.count("supersedes") == 1
+        assert kinds.count("touches") == 2

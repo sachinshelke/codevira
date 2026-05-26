@@ -50,28 +50,75 @@ def _load_decisions() -> list[dict[str, Any]]:
     return result.get("decisions", [])
 
 
-def _build_graph(decisions: list[dict[str, Any]]) -> dict[str, Any]:
+def _load_code_graph_edges(file_paths: set[str]) -> list[tuple[str, str]]:
+    """Best-effort file→file dependency edges from the code graph.
+
+    Reads the tree-sitter code graph (``<data_dir>/graph/graph.db``) and
+    returns ``(src_file, tgt_file)`` pairs where BOTH endpoints are in
+    ``file_paths`` — so the overlay only links files that already carry
+    decisions, keeping it focused. Degrades to ``[]`` if the graph store
+    is missing or unreadable (P9: the viewer must still render from the
+    canonical decision data even when the rebuildable graph cache is
+    absent or its location has drifted).
+    """
+    if not file_paths:
+        return []
+    try:
+        import sqlite3
+
+        from mcp_server.paths import get_data_dir
+
+        db = get_data_dir() / "graph" / "graph.db"
+        if not db.is_file():
+            return []
+        conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        try:
+            id_to_file = {
+                row[0]: row[1]
+                for row in conn.execute("SELECT id, file_path FROM nodes")
+                if row[1]
+            }
+            out: set[tuple[str, str]] = set()
+            for src, tgt in conn.execute("SELECT source_id, target_id FROM edges"):
+                sf, tf = id_to_file.get(src), id_to_file.get(tgt)
+                if sf and tf and sf != tf and sf in file_paths and tf in file_paths:
+                    out.add((sf, tf))
+            return sorted(out)
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001 — overlay is best-effort, never fatal
+        return []
+
+
+def _build_graph(
+    decisions: list[dict[str, Any]], *, with_files: bool = True
+) -> dict[str, Any]:
     """Shape raw decision records into ``{nodes, edges}`` for the viewer.
 
-    Edges encode supersession: an arrow from the retired decision to its
-    replacement (``superseded_by``). Only edges whose endpoints both
-    exist in the node set are emitted (defensive — a dangling
-    ``superseded_by`` shouldn't crash the render).
+    Decision edges encode supersession (retired → replacement). When
+    ``with_files`` is set, the graph also overlays code structure: a
+    ``file`` node per distinct ``file_path``, a ``touches`` edge from each
+    decision to the file it pertains to, and best-effort ``depends``
+    edges between those files pulled from the code graph. Dangling
+    references are dropped defensively.
     """
     ids = {str(d.get("id")) for d in decisions if d.get("id")}
     nodes: list[dict[str, Any]] = []
     edges: list[dict[str, str]] = []
+    file_set: set[str] = set()
 
     for d in decisions:
         did = str(d.get("id") or "")
         if not did:
             continue
         text = (d.get("decision") or "").strip()
+        fp = d.get("file_path") or ""
         nodes.append(
             {
                 "id": did,
+                "type": "decision",
                 "decision": text,
-                "file_path": d.get("file_path") or "",
+                "file_path": fp,
                 "tags": d.get("tags") or [],
                 "do_not_revert": bool(d.get("do_not_revert", False)),
                 "is_superseded": bool(d.get("is_superseded") or d.get("superseded_by")),
@@ -81,7 +128,25 @@ def _build_graph(decisions: list[dict[str, Any]]) -> dict[str, Any]:
         )
         sup_by = d.get("superseded_by")
         if sup_by and str(sup_by) in ids:
-            edges.append({"source": did, "target": str(sup_by)})
+            edges.append({"source": did, "target": str(sup_by), "kind": "supersedes"})
+        if with_files and fp:
+            file_set.add(fp)
+            edges.append({"source": did, "target": f"file:{fp}", "kind": "touches"})
+
+    if with_files:
+        for fp in sorted(file_set):
+            nodes.append(
+                {
+                    "id": f"file:{fp}",
+                    "type": "file",
+                    "file_path": fp,
+                    "label": fp.rsplit("/", 1)[-1],
+                }
+            )
+        for sf, tf in _load_code_graph_edges(file_set):
+            edges.append(
+                {"source": f"file:{sf}", "target": f"file:{tf}", "kind": "depends"}
+            )
 
     return {"nodes": nodes, "edges": edges}
 
@@ -122,8 +187,11 @@ _TEMPLATE = """<!DOCTYPE html>
   svg { width:100%; height:100%; display:block; cursor:grab; }
   .node circle { stroke:#0f1115; stroke-width:1.5px; cursor:pointer; }
   .node text { fill:#cdd2dd; font-size:10px; pointer-events:none; }
-  .edge { stroke:#4a4f5c; stroke-width:1.2px; marker-end:url(#arrow); }
-  .dim { opacity:0.12; }
+  .edge { stroke:#4a4f5c; stroke-width:1.2px; }
+  .edge-supersedes { marker-end:url(#arrow); }
+  .edge-touches { stroke:#3a3f4b; stroke-dasharray:3 3; }
+  .edge-depends { stroke:#2f6f4f; }
+  .dim { opacity:0.1; }
 </style>
 </head>
 <body>
@@ -137,6 +205,7 @@ _TEMPLATE = """<!DOCTYPE html>
     <span><i class="dot" style="background:#e5534b"></i>protected</span>
     <span><i class="dot" style="background:#539bf5"></i>active</span>
     <span><i class="dot" style="background:#6b7280"></i>superseded</span>
+    <span><i class="dot" style="background:#d29922"></i>file</span>
   </div>
   <div id="detail"></div>
 </div>
@@ -196,6 +265,7 @@ function layout() {
 }
 
 function color(n) {
+  if (n.type === 'file') return '#d29922';
   if (n.is_superseded) return '#6b7280';
   if (n.do_not_revert) return '#e5534b';
   return '#539bf5';
@@ -207,7 +277,7 @@ function render() {
     const s = byId[e.source], t = byId[e.target];
     if (!s || !t) return;
     const l = document.createElementNS(NS,'line');
-    l.setAttribute('class','edge');
+    l.setAttribute('class','edge edge-' + (e.kind || 'supersedes'));
     l.setAttribute('x1',s.x); l.setAttribute('y1',s.y);
     l.setAttribute('x2',t.x); l.setAttribute('y2',t.y);
     l.dataset.s = e.source; l.dataset.t = e.target;
@@ -218,10 +288,11 @@ function render() {
     g.setAttribute('class','node'); g.dataset.id = n.id;
     g.setAttribute('transform', `translate(${n.x},${n.y})`);
     const c = document.createElementNS(NS,'circle');
-    c.setAttribute('r', n.do_not_revert ? 9 : 7);
+    c.setAttribute('r', n.type==='file' ? 6 : (n.do_not_revert ? 9 : 7));
     c.setAttribute('fill', color(n));
     const tx = document.createElementNS(NS,'text');
-    tx.setAttribute('x', 11); tx.setAttribute('y', 3); tx.textContent = n.id;
+    tx.setAttribute('x', 11); tx.setAttribute('y', 3);
+    tx.textContent = n.type === 'file' ? n.label : n.id;
     g.appendChild(c); g.appendChild(tx);
     g.addEventListener('click', () => showDetail(n));
     svg.appendChild(g);
@@ -233,6 +304,13 @@ function esc(s){ const d=document.createElement('div'); d.textContent=s==null?''
 function showDetail(n) {
   const d = document.getElementById('detail');
   d.style.display = 'block';
+  if (n.type === 'file') {
+    d.innerHTML =
+      `<h2>📄 ${esc(n.label)}</h2>` +
+      `<div class="k">${esc(n.file_path)}</div>` +
+      `<div class="txt">Code file referenced by one or more decisions. Dashed edges link decisions that touch it; green edges are code dependencies between files.</div>`;
+    return;
+  }
   const tags = (n.tags||[]).map(t => `<span class="tag">${esc(t)}</span>`).join('');
   d.innerHTML =
     `<h2>${esc(n.id)} ${n.do_not_revert?'🔒':''}</h2>` +
@@ -251,9 +329,10 @@ function applyFilter() {
   const matchIds = new Set();
   DATA.nodes.forEach(n => {
     let ok = true;
-    if (protOnly.checked && !n.do_not_revert) ok = false;
+    if (protOnly.checked && !(n.type !== 'file' && n.do_not_revert)) ok = false;
     if (ok && term) {
-      const hay = (n.id+' '+n.decision+' '+(n.tags||[]).join(' ')+' '+n.file_path).toLowerCase();
+      const hay = (n.id+' '+(n.decision||'')+' '+(n.tags||[]).join(' ')+' '
+                   +(n.file_path||'')+' '+(n.label||'')).toLowerCase();
       ok = hay.includes(term);
     }
     if (ok) matchIds.add(n.id);
@@ -262,8 +341,10 @@ function applyFilter() {
     g.classList.toggle('dim', !matchIds.has(g.dataset.id)));
   document.querySelectorAll('.edge').forEach(l =>
     l.classList.toggle('dim', !(matchIds.has(l.dataset.s) && matchIds.has(l.dataset.t))));
+  const nFiles = DATA.nodes.filter(n => n.type === 'file').length;
+  const nDec = DATA.nodes.length - nFiles;
   document.getElementById('stats').textContent =
-    `${matchIds.size} / ${DATA.nodes.length} decisions shown · ${DATA.edges.length} supersedes links`;
+    `${matchIds.size} / ${DATA.nodes.length} shown · ${nDec} decisions · ${nFiles} files · ${DATA.edges.length} links`;
 }
 q.addEventListener('input', applyFilter);
 protOnly.addEventListener('change', applyFilter);
@@ -275,12 +356,16 @@ layout(); render(); applyFilter();
 """
 
 
-def render_graph_html(decisions: list[dict[str, Any]]) -> str:
+def render_graph_html(
+    decisions: list[dict[str, Any]], *, with_files: bool = True
+) -> str:
     """Render the self-contained viewer HTML for ``decisions``.
 
-    Pure function (no I/O) so it is directly unit-testable.
+    ``with_files`` overlays code-file nodes (and best-effort file→file
+    code-dependency edges). Pure function (no I/O) so it is directly
+    unit-testable.
     """
-    graph = _build_graph(decisions)
+    graph = _build_graph(decisions, with_files=with_files)
     generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     # Escape ``<`` as ``<`` in the inlined JSON so decision text
     # containing a literal ``</script>`` (or ``<!--``) can't break out of
@@ -294,8 +379,13 @@ def render_graph_html(decisions: list[dict[str, Any]]) -> str:
     )
 
 
-def cmd_graph(out: str | None = None, *, dry_run: bool = False) -> int:
+def cmd_graph(
+    out: str | None = None, *, dry_run: bool = False, with_files: bool = True
+) -> int:
     """``codevira graph`` — write the interactive memory viewer to an HTML file.
+
+    ``with_files`` overlays code-file nodes (default on; ``--no-files``
+    turns it off for a decisions-only view).
 
     Returns a POSIX exit code: 0 success, 1 error, 2 nothing to show.
     """
@@ -343,7 +433,7 @@ def cmd_graph(out: str | None = None, *, dry_run: bool = False) -> int:
         from mcp_server.storage.atomic import atomic_write_text
 
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_text(out_path, render_graph_html(decisions))
+        atomic_write_text(out_path, render_graph_html(decisions, with_files=with_files))
     except Exception as exc:  # noqa: BLE001
         print(f"Error: failed to write viewer: {exc}", file=sys.stderr)
         return 1

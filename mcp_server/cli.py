@@ -1134,6 +1134,12 @@ def main() -> None:
         help="Output HTML path (default: <project>/.codevira-cache/memory-graph.html)",
     )
     graph_parser.add_argument(
+        "--no-files",
+        dest="with_files",
+        action="store_false",
+        help="Decisions-only view (omit the code-file overlay)",
+    )
+    graph_parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Show what would be rendered without writing",
@@ -1462,6 +1468,7 @@ def main() -> None:
         rc = cmd_graph(
             out=getattr(args, "out", None),
             dry_run=getattr(args, "dry_run", False),
+            with_files=getattr(args, "with_files", True),
         )
         sys.exit(rc)
     elif args.command == "sync":

@@ -224,6 +224,7 @@ The v3.0.0 CLI surface is 15 commands:
 | `codevira clean` | Remove orphaned project data |
 | `codevira reset` | Destructive cleanup (auto-exports decisions first) |
 | `codevira export` | Standalone decision backup (JSON / SQL) |
+| `codevira graph` | Render an interactive, self-contained HTML viewer of decision memory (offline, queryable) |
 | `codevira uninstall` | Reverse every system write codevira made (see ["Uninstall"](#uninstall)) |
 | `codevira serve` | Start MCP HTTP server (single-project; stdio is the daily mode) |
 | `codevira engine` | Internal — invoked by Claude Code lifecycle hook scripts |
@@ -312,11 +313,18 @@ data:
   `full=true` for the entire rules array.
 - `get_impact(path)` — 10 affected files. Pass `summary_only=true`
   for just counts (~80 tokens) before deciding to dig deeper.
-- `search_decisions(query)` — 5 truncated matches by default. Pass
-  `full=true` for verbatim text; pass `summary_only=true` for just
-  IDs and one-line summaries.
+- `search_decisions(query)` / `list_decisions()` — truncated matches
+  by default. Pass `full=true` for verbatim text; pass
+  `summary_only=true` for just IDs and one-line summaries.
 
 The agent always asks for what it needs, in the size it needs.
+
+**Shrink the tool surface itself.** The advertised MCP `tools/list` is a
+fixed per-session cost (~4K tokens for the full 24-tool surface). Set
+`CODEVIRA_TOOL_PROFILE=lean` in the MCP server's `env` block to advertise
+only the 11 daily-driver tools (~46% smaller); hidden tools still work
+when called explicitly. Bigger wins usually come from disabling MCP
+servers you aren't actively using.
 
 ---
 

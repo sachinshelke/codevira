@@ -142,6 +142,39 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Fresh `codevira init` followed by `codevira doctor` = 13 pass /
   1 warn (pre-existing ghost dirs from earlier testing) / 0 fail.
 
+### Added (2026-05-26 dogfood batch)
+
+- **`codevira graph`** — render the project's decision memory as a
+  single self-contained, interactive HTML file (nodes = decisions,
+  edges = supersedes lineage) with a client-side query/filter box and
+  details panel. Zero runtime dependencies, no server, works offline;
+  reads the canonical `.codevira/decisions.jsonl`. Inlined JSON escapes
+  `<` so decision text can't break out of the data island. Output
+  defaults to `.codevira-cache/memory-graph.html`. (D000016)
+- **`summary_only` on `list_decisions`** — parity with
+  `search_decisions`: returns the tiny `{id, summary, do_not_revert}`
+  shape and takes precedence over `full`. (D000015)
+- **`CODEVIRA_TOOL_PROFILE=lean`** — opt-in environment variable that
+  trims the advertised MCP `tools/list` from 24 to 11 daily-driver
+  tools (~46%, ~1.9K fewer tokens per session). Default advertises all
+  tools; hidden tools still work when called explicitly. (D000018)
+
+### Fixed (2026-05-26 dogfood batch)
+
+- **`ensure_dirs()` refuses a forbidden project root** ($HOME / system
+  dirs) on the v3.0.0 JSONL write path — the WRITE-side counterpart of
+  the guard `get_data_dir()` already applied. Closes a trap where a
+  *global* MCP config (e.g. Claude Desktop, no cwd, no
+  `CODEVIRA_PROJECT_DIR`) resolved the root to `/` and silently created
+  `/.codevira` or `$HOME/.codevira`. Raises a WHAT+WHY+FIX error naming
+  `CODEVIRA_PROJECT_DIR`; read paths stay graceful. (D000012)
+
+### Changed (2026-05-26 dogfood batch)
+
+- Trimmed the longest MCP tool description (`record_decision`) to cut
+  per-session token cost while preserving its `do_not_revert` +
+  `supersede`/`set_decision_flag` guidance. (D000018)
+
 ### Known limitations (documented for v3.1+ follow-up)
 
 - **Graph spec vs implementation drift.** `paths.graph_cache_path()`

@@ -93,11 +93,11 @@ def detect_installed_ides(project_root: Path) -> list[str]:
     if any(p.is_file() for p in windsurf_paths):
         found.append("windsurf")
 
-    # Google Antigravity: require the antigravity-specific config file,
-    # not just ~/.gemini/. The bare ~/.gemini/ dir gets created by
-    # any Google-CLI gemini install; antigravity is a specific subdir.
-    antigravity_cfg = Path.home() / ".gemini" / "antigravity" / "mcp_config.json"
-    if antigravity_cfg.is_file() and _is_valid_json(antigravity_cfg):
+    # Google Antigravity 2.0: the MCP config lives in the shared
+    # ~/.gemini/config/ dir and/or the per-app ~/.gemini/antigravity/ dir
+    # (not the bare ~/.gemini/, which any Gemini-CLI install creates).
+    # Detect either specific config file.
+    if any(p.is_file() and _is_valid_json(p) for p in _antigravity_config_candidates()):
         found.append("antigravity")
 
     # ---- Tier 2 (nudge-file integration only) ----
@@ -252,8 +252,38 @@ def _windsurf_global_config_path() -> Path:
     return Path.home() / ".windsurf" / "mcp_config.json"
 
 
+def _antigravity_config_candidates() -> list[Path]:
+    """Antigravity 2.0 MCP-config locations, in priority order.
+
+    Antigravity 2.0 unified configuration under the shared
+    ``~/.gemini/config/`` directory (used across the Gemini CLI, the IDE
+    and the SDK) while keeping a per-app ``~/.gemini/antigravity/`` file.
+    Which one a given install reads can vary, so codevira reads from /
+    writes to BOTH wherever they're present rather than guessing.
+    """
+    gemini = Path.home() / ".gemini"
+    return [
+        gemini / "config" / "mcp_config.json",  # 2.0 shared (CLI+IDE+SDK)
+        gemini / "antigravity" / "mcp_config.json",  # per-app
+    ]
+
+
+def _antigravity_write_targets() -> list[Path]:
+    """Config files to write codevira into.
+
+    Every candidate whose parent directory already exists (so we only
+    write where the user actually has that Antigravity surface); or, if
+    none exist yet, the per-app path as the create target (preserves the
+    pre-2.0 behavior of bootstrapping ``~/.gemini/antigravity/``).
+    """
+    candidates = _antigravity_config_candidates()
+    targets = [p for p in candidates if p.parent.is_dir()]
+    return targets or [candidates[-1]]
+
+
 def _antigravity_config_path() -> Path:
-    return Path.home() / ".gemini" / "antigravity" / "mcp_config.json"
+    """Primary Antigravity write target (kept for callers needing one path)."""
+    return _antigravity_write_targets()[0]
 
 
 # ---------------------------------------------------------------------------
@@ -558,9 +588,6 @@ def _inject_antigravity(
 
     Antigravity does not support 'cwd', so always use --project-dir args.
     """
-    config_path = _antigravity_config_path()
-    existing = _read_json_safe(config_path)
-
     # Sanitize project name: lowercase, replace anything non-alphanumeric with hyphens
     safe_name = re.sub(r"[^a-z0-9-]", "-", project_name.lower())
     safe_name = re.sub(r"-{2,}", "-", safe_name).strip("-")
@@ -574,9 +601,15 @@ def _inject_antigravity(
         **base_config,
     }
 
-    merged = _merge_mcp_config(existing, server_name, server_config)
-    _write_json_safe(config_path, merged)
-    return str(config_path)
+    # Antigravity 2.0: write into every config surface the user has
+    # (shared ~/.gemini/config/ and/or per-app ~/.gemini/antigravity/).
+    written: list[str] = []
+    for config_path in _antigravity_write_targets():
+        existing = _read_json_safe(config_path)
+        merged = _merge_mcp_config(existing, server_name, server_config)
+        _write_json_safe(config_path, merged)
+        written.append(str(config_path))
+    return "; ".join(written) if written else None
 
 
 # ---------------------------------------------------------------------------
@@ -755,16 +788,20 @@ def inject_global_antigravity(cmd_path: str, python_exe: str) -> str | None:
     Uses a single 'codevira' entry with no project path. Antigravity
     sets the working directory when it starts the MCP server process.
     """
-    config_path = _antigravity_config_path()
-    existing = _read_json_safe(config_path)
     base_config = _build_global_server_config(cmd_path, python_exe)
     server_config = {
         "$typeName": "exa.cascade_plugins_pb.CascadePluginCommandTemplate",
         **base_config,
     }
-    merged = _merge_mcp_config(existing, "codevira", server_config)
-    _write_json_safe(config_path, merged)
-    return str(config_path)
+    # Antigravity 2.0: write into every config surface the user has
+    # (shared ~/.gemini/config/ and/or per-app ~/.gemini/antigravity/).
+    written: list[str] = []
+    for config_path in _antigravity_write_targets():
+        existing = _read_json_safe(config_path)
+        merged = _merge_mcp_config(existing, "codevira", server_config)
+        _write_json_safe(config_path, merged)
+        written.append(str(config_path))
+    return "; ".join(written) if written else None
 
 
 def inject_claude_http_url(url: str) -> str | None:

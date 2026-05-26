@@ -433,7 +433,9 @@ class TestAntigravityNameSanitization:
         import re as re_mod
 
         config_file = tmp_path / "mcp_config.json"
-        monkeypatch.setattr(ide_inject, "_antigravity_config_path", lambda: config_file)
+        monkeypatch.setattr(
+            ide_inject, "_antigravity_write_targets", lambda: [config_file]
+        )
 
         project = tmp_path / "proj"
         project.mkdir()
@@ -453,7 +455,9 @@ class TestAntigravityNameSanitization:
 
     def test_spaces_become_hyphens(self, tmp_path, monkeypatch):
         config_file = tmp_path / "mcp_config.json"
-        monkeypatch.setattr(ide_inject, "_antigravity_config_path", lambda: config_file)
+        monkeypatch.setattr(
+            ide_inject, "_antigravity_write_targets", lambda: [config_file]
+        )
 
         project = tmp_path / "proj"
         project.mkdir()
@@ -467,7 +471,9 @@ class TestAntigravityNameSanitization:
 
     def test_no_double_hyphens(self, tmp_path, monkeypatch):
         config_file = tmp_path / "mcp_config.json"
-        monkeypatch.setattr(ide_inject, "_antigravity_config_path", lambda: config_file)
+        monkeypatch.setattr(
+            ide_inject, "_antigravity_write_targets", lambda: [config_file]
+        )
 
         project = tmp_path / "proj"
         project.mkdir()
@@ -481,7 +487,9 @@ class TestAntigravityNameSanitization:
 
     def test_uppercase_lowercased(self, tmp_path, monkeypatch):
         config_file = tmp_path / "mcp_config.json"
-        monkeypatch.setattr(ide_inject, "_antigravity_config_path", lambda: config_file)
+        monkeypatch.setattr(
+            ide_inject, "_antigravity_write_targets", lambda: [config_file]
+        )
 
         project = tmp_path / "proj"
         project.mkdir()
@@ -495,7 +503,9 @@ class TestAntigravityNameSanitization:
 
     def test_antigravity_uses_project_dir_not_cwd(self, tmp_path, monkeypatch):
         config_file = tmp_path / "mcp_config.json"
-        monkeypatch.setattr(ide_inject, "_antigravity_config_path", lambda: config_file)
+        monkeypatch.setattr(
+            ide_inject, "_antigravity_write_targets", lambda: [config_file]
+        )
 
         project = tmp_path / "proj"
         project.mkdir()
@@ -510,7 +520,9 @@ class TestAntigravityNameSanitization:
 
     def test_antigravity_has_typename_field(self, tmp_path, monkeypatch):
         config_file = tmp_path / "mcp_config.json"
-        monkeypatch.setattr(ide_inject, "_antigravity_config_path", lambda: config_file)
+        monkeypatch.setattr(
+            ide_inject, "_antigravity_write_targets", lambda: [config_file]
+        )
 
         project = tmp_path / "proj"
         project.mkdir()
@@ -1212,7 +1224,9 @@ class TestChaosIdeInject:
     def test_inject_with_unicode_project_name(self, tmp_path, monkeypatch):
         """Unicode in project name should not crash Antigravity sanitization."""
         config_file = tmp_path / "mcp_config.json"
-        monkeypatch.setattr(ide_inject, "_antigravity_config_path", lambda: config_file)
+        monkeypatch.setattr(
+            ide_inject, "_antigravity_write_targets", lambda: [config_file]
+        )
 
         project = tmp_path / "proj"
         project.mkdir()
@@ -1541,3 +1555,53 @@ class TestAtomicWriteHardening:
             f"P3 regression: atomic rename should produce a new inode; "
             f"got same inode {new_inode} (looks like truncate-rewrite, not atomic)"
         )
+
+
+class TestAntigravity20Paths:
+    """v3.0.0: Antigravity 2.0 split config into the shared ~/.gemini/config/
+    and per-app ~/.gemini/antigravity/. codevira must detect + write both.
+    """
+
+    def _home(self, tmp_path, monkeypatch):
+        fakehome = tmp_path / "home"
+        fakehome.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: fakehome)
+        return fakehome
+
+    def test_write_targets_includes_both_when_both_dirs_exist(
+        self, tmp_path, monkeypatch
+    ):
+        home = self._home(tmp_path, monkeypatch)
+        (home / ".gemini" / "config").mkdir(parents=True)
+        (home / ".gemini" / "antigravity").mkdir(parents=True)
+        targets = ide_inject._antigravity_write_targets()
+        names = {str(p) for p in targets}
+        assert any("config/mcp_config.json" in n for n in names)
+        assert any("antigravity/mcp_config.json" in n for n in names)
+
+    def test_write_targets_defaults_to_per_app_when_none_exist(
+        self, tmp_path, monkeypatch
+    ):
+        self._home(tmp_path, monkeypatch)  # no .gemini subdirs created
+        targets = ide_inject._antigravity_write_targets()
+        assert len(targets) == 1
+        assert str(targets[0]).endswith("antigravity/mcp_config.json")
+
+    def test_detect_via_shared_config_only(self, tmp_path, monkeypatch):
+        home = self._home(tmp_path, monkeypatch)
+        shared = home / ".gemini" / "config" / "mcp_config.json"
+        shared.parent.mkdir(parents=True)
+        shared.write_text("{}")
+        assert "antigravity" in ide_inject.detect_installed_ides(tmp_path)
+
+    def test_inject_writes_into_every_existing_surface(self, tmp_path, monkeypatch):
+        home = self._home(tmp_path, monkeypatch)
+        (home / ".gemini" / "config").mkdir(parents=True)
+        (home / ".gemini" / "antigravity").mkdir(parents=True)
+        project = tmp_path / "proj"
+        project.mkdir()
+        ide_inject._inject_antigravity(project, "/usr/bin/codevira", "python3", "demo")
+        for sub in ("config", "antigravity"):
+            cfg = home / ".gemini" / sub / "mcp_config.json"
+            data = json.loads(cfg.read_text())
+            assert any(k.startswith("codevira-") for k in data["mcpServers"])

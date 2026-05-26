@@ -461,13 +461,12 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="search_decisions",
             description=(
-                "Search past decisions across sessions and roadmap phases. "
-                "v2.1.1: hybrid BM25+semantic with RRF. v2.1.2 Item 1: applies a "
-                "self-calibrating similarity threshold so gibberish queries return "
-                "zero results (not 'least bad' matches). v2.1.2 Item 28: pass "
-                "summary_only=true for a ~70% smaller payload (triage queries). "
-                "Default: 5 matches with truncated context (~500 tokens). "
-                "Pass full=true for untruncated text. Answers 'has anyone decided this before?'"
+                "Search past decisions across sessions and roadmap phases "
+                "(hybrid BM25 + semantic; a self-calibrating threshold returns "
+                "zero results for gibberish rather than 'least bad' matches). "
+                "Default: 5 truncated matches (~500 tokens). Pass full=true for "
+                "untruncated text, or summary_only=true for a ~70%-smaller "
+                "{id, summary, score} payload. Answers 'has anyone decided this before?'"
             ),
             inputSchema={
                 "type": "object",
@@ -644,13 +643,12 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="check_conflict",
             description=(
-                "v2.1.2 Item 20: check whether a proposed decision contradicts "
-                "any existing do_not_revert=True decision OR duplicates an "
-                "existing one. Returns {status: novel|duplicate|conflict, "
-                "conflicts: [...], duplicates: [...]}. Call this BEFORE "
-                "record_decision when you want to surface conflicts proactively. "
-                "(record_decision also runs this internally and surfaces a "
-                "_conflict_warning unless force=true.)"
+                "Check whether a proposed decision contradicts any "
+                "do_not_revert=True decision OR duplicates an existing one. "
+                "Returns {status: novel|duplicate|conflict, conflicts, "
+                "duplicates}. Call BEFORE record_decision to surface conflicts "
+                "proactively (record_decision also runs this internally and "
+                "surfaces _conflict_warning unless force=true)."
             ),
             inputSchema={
                 "type": "object",

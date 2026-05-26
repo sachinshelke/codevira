@@ -1114,6 +1114,31 @@ def main() -> None:
         help="Show what would be done without writing",
     )
 
+    # v3.0.1 (D000016): `codevira graph` — self-contained interactive HTML
+    # viewer of decision memory (zero deps, offline, queryable).
+    graph_parser = subparsers.add_parser(
+        "graph",
+        help="Render an interactive HTML viewer of this project's decision memory",
+        description=(
+            "Generate a single self-contained HTML file visualizing the "
+            "project's decision memory as an interactive, queryable graph "
+            "(nodes = decisions, edges = supersedes lineage). Zero runtime "
+            "dependencies, no server, works offline. Filter client-side by "
+            "id / text / tag / file_path / protected. Reads the canonical "
+            "`.codevira/decisions.jsonl` store."
+        ),
+    )
+    graph_parser.add_argument(
+        "--out",
+        default=None,
+        help="Output HTML path (default: <project>/.codevira-cache/memory-graph.html)",
+    )
+    graph_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be rendered without writing",
+    )
+
     # 2026-05-19 v2.2.0 Phase D: `codevira sync` — regenerate AGENTS.md
     # + manifest + digest + FTS5 from decisions.jsonl. Manual / recovery
     # path; every record_decision triggers this synchronously by default.
@@ -1426,6 +1451,15 @@ def main() -> None:
         rc = cmd_export(
             target=getattr(args, "target", "decisions"),
             fmt=getattr(args, "format", "json"),
+            out=getattr(args, "out", None),
+            dry_run=getattr(args, "dry_run", False),
+        )
+        sys.exit(rc)
+    elif args.command == "graph":
+        # v3.0.1 (D000016): self-contained interactive memory viewer.
+        from mcp_server.cli_graph import cmd_graph
+
+        rc = cmd_graph(
             out=getattr(args, "out", None),
             dry_run=getattr(args, "dry_run", False),
         )

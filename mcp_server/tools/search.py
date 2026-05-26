@@ -150,11 +150,15 @@ def list_decisions(
     tags: list[str] | None = None,
     include_superseded: bool = False,
     full: bool = False,
+    summary_only: bool = False,
 ) -> dict[str, Any]:
     """Enumerate decisions with optional filters (v2.2.0: from JSONL).
 
     All filters AND together — only decisions matching every constraint
     are returned. ``tags`` is intersection (all tags must match).
+
+    Three verbosity tiers (mirrors ``search_decisions``):
+    ``summary_only`` (tiny) < default slim (~50 tok/row) < ``full``.
 
     Args:
         limit: max rows (clamped to [1, 200]).
@@ -164,9 +168,15 @@ def list_decisions(
         session_id: single-session filter.
         tags: intersection — match ALL of the supplied tags.
         include_superseded: default False (hide soft-deleted).
-        full: full record vs slim shape.
+        full: full untruncated record vs the default slim shape.
+        summary_only: smallest payload — only ``{id, summary (80 chars),
+            do_not_revert}`` per row. v3.0.1 parity with
+            ``search_decisions``: the param existed there but was missing
+            here, so agents who'd used ``search_decisions(summary_only=True)``
+            reasonably assumed it worked on ``list_decisions`` too. Takes
+            precedence over ``full`` when both are set.
 
-    Returns ``{count, has_more, decisions, filters_applied}``.
+    Returns ``{count, has_more, decisions, filters_applied, [mode]}``.
     """
     limit = max(1, min(int(limit), 200))
 
@@ -180,22 +190,41 @@ def list_decisions(
         session_id=session_id,
         tags=tags,
         include_superseded=include_superseded,
-        full=full,
+        full=full and not summary_only,
     )
+
+    filters_applied = {
+        "since_date": since_date,
+        "file_pattern": file_pattern,
+        "protected_only": protected_only,
+        "session_id": session_id,
+        "tags": list(tags) if tags else None,
+        "include_superseded": include_superseded,
+        "limit": limit,
+    }
+
+    if summary_only:
+        decisions: list[dict[str, Any]] = [
+            {
+                "id": d.get("id"),
+                "summary": (d.get("decision") or "")[:80],
+                "do_not_revert": bool(d.get("do_not_revert", False)),
+            }
+            for d in result["decisions"]
+        ]
+        return {
+            "count": result["count"],
+            "has_more": result["has_more"],
+            "decisions": decisions,
+            "mode": "summary_only",
+            "filters_applied": filters_applied,
+        }
 
     return {
         "count": result["count"],
         "has_more": result["has_more"],
         "decisions": result["decisions"],
-        "filters_applied": {
-            "since_date": since_date,
-            "file_pattern": file_pattern,
-            "protected_only": protected_only,
-            "session_id": session_id,
-            "tags": list(tags) if tags else None,
-            "include_superseded": include_superseded,
-            "limit": limit,
-        },
+        "filters_applied": filters_applied,
     }
 
 

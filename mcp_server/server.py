@@ -541,6 +541,14 @@ async def list_tools() -> list[Tool]:
                         "type": "boolean",
                         "description": "Untruncated decision text",
                     },
+                    "summary_only": {
+                        "type": "boolean",
+                        "description": (
+                            "Smallest payload — only {id, summary, "
+                            "do_not_revert} per row (parity with "
+                            "search_decisions). Takes precedence over full."
+                        ),
+                    },
                 },
             },
         ),
@@ -1095,6 +1103,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 tags=arguments.get("tags"),
                 include_superseded=arguments.get("include_superseded", False),
                 full=arguments.get("full", False),
+                summary_only=arguments.get("summary_only", False),
             )
         elif name == "list_tags":
             result = list_tags()

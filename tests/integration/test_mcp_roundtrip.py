@@ -375,6 +375,43 @@ class TestV212MCPRoundTrip:
             )
         assert r.get("mode") == "summary_only"
 
+    def test_list_decisions_summary_only_returns_slim_payload(self, isolated_codevira):
+        """v3.0.1: list_decisions gains summary_only for parity with
+        search_decisions (the param existed there but not here, so agents
+        who'd used search_decisions(summary_only=True) reasonably assumed
+        it worked on list_decisions). summary_only drops everything except
+        id+summary+do_not_revert and takes precedence over full.
+        """
+        record_many(
+            [
+                {
+                    "decision": "X" * 300,
+                    "file_path": "a.py",
+                    "context": "some context",
+                    "do_not_revert": True,
+                    "tags": ["sec"],
+                },
+            ]
+        )
+        # summary_only wins even when full is also passed.
+        r = call_tool(
+            "list_decisions",
+            {"limit": 50, "summary_only": True, "full": True},
+        )
+        assert r.get("mode") == "summary_only"
+        assert r.get("count", 0) >= 1
+        first = r["decisions"][0]
+        allowed_keys = {"id", "summary", "do_not_revert"}
+        assert (
+            set(first.keys()) <= allowed_keys
+        ), f"summary_only leaked extra keys: {set(first.keys()) - allowed_keys}"
+        assert len(first["summary"]) <= 80
+
+        # Default (no flags) keeps the richer slim shape — no regression.
+        d = call_tool("list_decisions", {"limit": 50})
+        assert d.get("mode") is None
+        assert "file_path" in d["decisions"][0]
+
     def test_write_session_logs_via_loop(self, isolated_codevira):
         """v2.2.0+: the batch `write_session_logs` MCP tool was deleted
         in the 2026-05-22 surface-cut audit. The replacement is a

@@ -28,6 +28,8 @@ import sys
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
+import pytest
+
 
 import mcp_server.paths as paths
 from mcp_server.paths import (
@@ -981,3 +983,76 @@ class TestIsInvalidProjectRoot:
         result = is_invalid_project_root(link)
         assert result is not None
         assert "$HOME" in result
+
+
+# ===================================================================
+# storage.paths.ensure_dirs — write-path forbidden-root guard (v3.0.0)
+# ===================================================================
+
+
+class TestEnsureDirsRefusesForbiddenRoot:
+    """The v3.0.0 JSONL store WRITE path must refuse forbidden roots.
+
+    Regression for the 2026-05-25 G5 dogfood finding: a *global* MCP
+    config in Claude Desktop (no ``cwd`` option, no
+    ``CODEVIRA_PROJECT_DIR``) resolves the project root to ``/`` and
+    ``ensure_dirs`` would silently ``mkdir("/.codevira")`` — or, with a
+    writable inherited cwd, ``$HOME/.codevira``, colliding with the
+    per-user centralized state dir. The guard
+    ``mcp_server.paths.get_data_dir`` applies to the legacy store had no
+    counterpart on the JSONL write path until this fix.
+    """
+
+    def test_refuses_system_root_passed_explicitly(self):
+        from mcp_server.storage import paths as store_paths
+
+        with pytest.raises(ValueError) as exc:
+            store_paths.ensure_dirs(Path("/"))
+        msg = str(exc.value)
+        assert "system directory" in msg
+        # P8: the error must hand the user the actual fix.
+        assert "CODEVIRA_PROJECT_DIR" in msg
+
+    def test_refuses_home_and_creates_nothing(self, tmp_path, monkeypatch):
+        from mcp_server.storage import paths as store_paths
+
+        fake_home = tmp_path / "fake-home"
+        fake_home.mkdir()
+        monkeypatch.setattr("pathlib.Path.home", lambda: fake_home)
+        with pytest.raises(ValueError) as exc:
+            store_paths.ensure_dirs(fake_home)
+        assert "$HOME" in str(exc.value)
+        # Nothing scaffolded under the forbidden root.
+        assert not (fake_home / ".codevira").exists()
+        assert not (fake_home / ".codevira-cache").exists()
+
+    def test_refuses_when_resolved_from_cwd_with_no_anchor(self, monkeypatch):
+        """No explicit root + root resolves to ``/`` → refuse (the Desktop trap)."""
+        from mcp_server.storage import paths as store_paths
+
+        monkeypatch.setattr(paths, "_project_dir_override", None)
+        monkeypatch.delenv("CODEVIRA_PROJECT_DIR", raising=False)
+        # Simulate get_project_root() falling back to a system cwd.
+        monkeypatch.setattr(store_paths, "get_project_root", lambda: Path("/"))
+        with pytest.raises(ValueError):
+            store_paths.ensure_dirs()
+
+    def test_accepts_real_project_and_creates_both_dirs(self, tmp_path):
+        """A normal project root still scaffolds .codevira/ + cache (no regression)."""
+        from mcp_server.storage import paths as store_paths
+
+        project = tmp_path / "real-project"
+        project.mkdir()
+        store_paths.ensure_dirs(project)
+        assert (project / ".codevira").is_dir()
+        assert (project / ".codevira-cache").is_dir()
+
+    def test_idempotent_on_valid_root(self, tmp_path):
+        """Second call on an already-scaffolded valid root is a no-op, not an error."""
+        from mcp_server.storage import paths as store_paths
+
+        project = tmp_path / "real-project"
+        project.mkdir()
+        store_paths.ensure_dirs(project)
+        store_paths.ensure_dirs(project)  # must not raise
+        assert (project / ".codevira").is_dir()

@@ -32,7 +32,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from mcp_server.paths import get_project_root
+from mcp_server.paths import get_project_root, is_invalid_project_root
 
 CODEVIRA_DIR_NAME = ".codevira"
 CODEVIRA_CACHE_DIR_NAME = ".codevira-cache"
@@ -118,9 +118,38 @@ def ensure_dirs(project_root: Path | None = None) -> None:
 
     Idempotent. Called by storage write helpers on first use so callers
     don't have to track whether the dirs exist.
+
+    v3.0.0 (2026-05-25 G5 dogfood finding): refuses to scaffold the store
+    at a forbidden project root (``$HOME``, ``/`` and other system
+    top-levels). This is the WRITE-side counterpart of the guard
+    ``mcp_server.paths.get_data_dir`` already applies to the legacy
+    centralized store — the v3.0.0 JSONL write path previously bypassed
+    it. Without this, a codevira launched with no project anchor (most
+    often a *global* MCP config in Claude Desktop: no ``cwd`` option and
+    no ``CODEVIRA_PROJECT_DIR``) resolves the root to ``/`` — or whatever
+    cwd the GUI subprocess inherited — and silently creates ``/.codevira``
+    or ``$HOME/.codevira``, detaching decisions from the real project.
+    Read paths (``is_initialized``, list/search) deliberately stay
+    guard-free so they degrade to empty rather than raise (P9).
+
+    Raises:
+        ValueError: with a WHAT + WHY + FIX message if the resolved root
+            is a forbidden system directory or ``$HOME``.
     """
-    codevira_dir(project_root).mkdir(parents=True, exist_ok=True)
-    codevira_cache_dir(project_root).mkdir(parents=True, exist_ok=True)
+    root = (project_root if project_root is not None else get_project_root()).resolve()
+    rejection = is_invalid_project_root(root)
+    if rejection:
+        raise ValueError(
+            f"Refusing to create the codevira store: {rejection} "
+            f"(project root resolved to {root}). codevira was launched "
+            f"without a project anchor — most often a global MCP config "
+            f"(e.g. Claude Desktop) with no working directory. "
+            f"Fix: set CODEVIRA_PROJECT_DIR=<your project path> in the MCP "
+            f"server's env block, or run codevira from inside a real "
+            f"project directory."
+        )
+    codevira_dir(root).mkdir(parents=True, exist_ok=True)
+    codevira_cache_dir(root).mkdir(parents=True, exist_ok=True)
 
 
 def is_initialized(project_root: Path | None = None) -> bool:

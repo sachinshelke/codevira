@@ -866,3 +866,56 @@ class TestServerMain:
 # deleted per surface-cut audit). The do_not_revert protection mechanism
 # now lives exclusively on record_decision(do_not_revert=True), which is
 # the recommended decision-level API.
+
+
+class TestLeanToolProfile:
+    """v3.0.0 (D000018): CODEVIRA_TOOL_PROFILE=lean trims the advertised
+    tool surface to the daily-driver set to cut the tools/list token cost.
+    """
+
+    def test_lean_is_strict_subset_with_core_kept_admin_hidden(self, monkeypatch):
+        from mcp_server.server import list_tools
+
+        monkeypatch.delenv("CODEVIRA_TOOL_PROFILE", raising=False)
+        full = {t.name for t in _run(list_tools())}
+
+        monkeypatch.setenv("CODEVIRA_TOOL_PROFILE", "lean")
+        lean = {t.name for t in _run(list_tools())}
+
+        assert lean < full, "lean must be a strict subset of the full surface"
+        assert len(lean) <= 12
+        # Daily-driver tools survive.
+        for core in (
+            "get_session_context",
+            "record_decision",
+            "search_decisions",
+            "get_impact",
+            "complete_phase",
+            "update_phase_status",
+        ):
+            assert core in lean, f"lean profile dropped core tool {core}"
+        # Admin / rare tools are hidden.
+        for admin in (
+            "add_phase",
+            "bulk_import_phases",
+            "supersede_decision",
+            "query_graph",
+            "list_tags",
+        ):
+            assert admin not in lean, f"lean profile leaked admin tool {admin}"
+
+    def test_default_profile_advertises_full_surface(self, monkeypatch):
+        from mcp_server.server import list_tools
+
+        monkeypatch.delenv("CODEVIRA_TOOL_PROFILE", raising=False)
+        names = {t.name for t in _run(list_tools())}
+        # Admin tools are present when no lean profile is set.
+        assert "add_phase" in names
+        assert "query_graph" in names
+
+    def test_unknown_profile_value_falls_back_to_full(self, monkeypatch):
+        from mcp_server.server import list_tools
+
+        monkeypatch.setenv("CODEVIRA_TOOL_PROFILE", "banana")
+        names = {t.name for t in _run(list_tools())}
+        assert "add_phase" in names  # only the exact value "lean" trims

@@ -696,17 +696,11 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="record_decision",
             description=(
-                "Record a single architectural decision and (optionally) mark "
-                "it as protected with do_not_revert=true so future AI sessions "
-                "treat it as an architectural constraint. Use this for "
-                "decisions you want to LOCK across sessions and across IDEs "
-                "(e.g. 'use Postgres for the cortex metadata store, not "
-                "SQLite — we need multi-host operator access'). Lighter-"
-                "weight than write_session_log, ideal for ad-hoc captures. "
-                "Returns {decision_id, session_id}. To change the "
-                "do_not_revert flag later or update the decision text, "
-                "use supersede_decision(old_id, new_decision, reason, "
-                "do_not_revert=...) — it preserves the audit trail."
+                "Record one architectural decision. Set do_not_revert=true to "
+                "lock it across sessions and IDEs. Returns {decision_id, "
+                "session_id}. To change it later use supersede_decision "
+                "(preserves the audit trail) or set_decision_flag (toggle "
+                "do_not_revert / tags)."
             ),
             inputSchema={
                 "type": "object",
@@ -975,6 +969,28 @@ async def list_tools() -> list[Tool]:
         # they no longer exist.
     }
     tools = [t for t in tools if t.name not in _ADMIN_TOOLS]
+
+    # v3.0.0 (D000018): opt-in lean tool surface. The default advertises
+    # every tool; CODEVIRA_TOOL_PROFILE=lean trims the ~4.1K-token
+    # tools/list to the daily-driver set. Hidden tools still work when
+    # called explicitly via call_tool — they're just not advertised.
+    import os
+
+    if os.environ.get("CODEVIRA_TOOL_PROFILE", "").strip().lower() == "lean":
+        _lean_surface = {
+            "get_session_context",
+            "get_impact",
+            "get_node",
+            "get_roadmap",
+            "search_decisions",
+            "list_decisions",
+            "record_decision",
+            "update_phase_status",
+            "complete_phase",
+            "update_next_action",
+            "write_session_log",
+        }
+        tools = [t for t in tools if t.name in _lean_surface]
 
     return tools
 

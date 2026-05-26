@@ -1,7 +1,7 @@
 """
 cli_graph.py — `codevira graph` : self-contained interactive memory viewer.
 
-v3.0.1 (D000016): render the project's decision memory as a single
+v3.0.0 (D000016): render the project's decision memory as a single
 self-contained HTML file — zero runtime dependencies, no server, works
 offline. Data is read through the canonical JSONL store
 (``decisions_store.list_all`` — honors D000002) and inlined as JSON; the

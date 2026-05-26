@@ -1114,7 +1114,7 @@ def main() -> None:
         help="Show what would be done without writing",
     )
 
-    # v3.0.1 (D000016): `codevira graph` — self-contained interactive HTML
+    # v3.0.0 (D000016): `codevira graph` — self-contained interactive HTML
     # viewer of decision memory (zero deps, offline, queryable).
     graph_parser = subparsers.add_parser(
         "graph",
@@ -1456,7 +1456,7 @@ def main() -> None:
         )
         sys.exit(rc)
     elif args.command == "graph":
-        # v3.0.1 (D000016): self-contained interactive memory viewer.
+        # v3.0.0 (D000016): self-contained interactive memory viewer.
         from mcp_server.cli_graph import cmd_graph
 
         rc = cmd_graph(

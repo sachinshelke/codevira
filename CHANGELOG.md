@@ -175,7 +175,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   per-session token cost while preserving its `do_not_revert` +
   `supersede`/`set_decision_flag` guidance. (D000018)
 
-### Known limitations (documented for v3.1+ follow-up)
+### Known limitations (shipping in 3.0.0; tracked for a later release)
 
 - **Graph spec vs implementation drift.** `paths.graph_cache_path()`
   documents the v3.0.0 spec location as

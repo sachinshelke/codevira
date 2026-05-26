@@ -170,7 +170,7 @@ def list_decisions(
         include_superseded: default False (hide soft-deleted).
         full: full untruncated record vs the default slim shape.
         summary_only: smallest payload — only ``{id, summary (80 chars),
-            do_not_revert}`` per row. v3.0.1 parity with
+            do_not_revert}`` per row. v3.0.0 parity with
             ``search_decisions``: the param existed there but was missing
             here, so agents who'd used ``search_decisions(summary_only=True)``
             reasonably assumed it worked on ``list_decisions`` too. Takes

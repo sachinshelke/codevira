@@ -376,7 +376,7 @@ class TestV212MCPRoundTrip:
         assert r.get("mode") == "summary_only"
 
     def test_list_decisions_summary_only_returns_slim_payload(self, isolated_codevira):
-        """v3.0.1: list_decisions gains summary_only for parity with
+        """v3.0.0: list_decisions gains summary_only for parity with
         search_decisions (the param existed there but not here, so agents
         who'd used search_decisions(summary_only=True) reasonably assumed
         it worked on list_decisions). summary_only drops everything except

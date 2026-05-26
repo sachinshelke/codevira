@@ -18,13 +18,14 @@
 - **D000003** get_project_root() honors CODEVIRA_PROJECT_DIR env var as priority-2 (after --project-dir CLI flag, before cwd discover…  ·  _ide-integration, mcp-config, paths, v3.0.0-rc-audit, env-var_
 - **D000004** check_conflict uses TWO similarity regimes: (1) symmetric Jaccard ≥ 0.60 for duplicates, (2) asymmetric overlap_coeffic…  ·  _check_conflict, similarity, v3.0.0-rc-audit_
 - **D000005** v3.0.0 is NOT yet published to PyPI. .release-evidence/3.0.0.json::G5_human_confirmed=false. The PreToolUse hook blocks…
-- **D000011** v3.0.1 candidate fix list (a/b/c from the v3-rc-dogfood session) verified EMPTY on 2026-05-25 — no code work needed. (a…  ·  _decisions-store, no-op, v3.0.1, verification_
-- **D000015** list_decisions already DEFAULTS to a summary shape (full=False ⇒ slim ~50 tok/row: id, 200-char decision, file_path, do…  ·  _api-consistency, list-decisions, mcp-tools, search-decisions, token-efficiency, v3.0.1_
-- **D000016** v3.0.1 will add an interactive, queryable HTML viewer for codevira memory. Design (agreed 2026-05-26): self-contained S…  ·  _cli, cytoscape, export, feature, memory-viewer, v3.0.1, visualization_
-- **D000017** [supersedes D000014: D000014 premise was factually wrong: verified the committed code uses ~/.gemini/antigravity/, neve…  ·  `mcp_server/ide_inject.py`  ·  _antigravity, broken-integration, cross-tool, ide-inject, setup-wizard, v3.0.1_
+- **D000011** v3.0.1 candidate fix list (a/b/c from the v3-rc-dogfood session) verified EMPTY on 2026-05-25 — no code work needed. (a…  ·  _decisions-store, no-op, v3.0.0, verification_
+- **D000015** list_decisions already DEFAULTS to a summary shape (full=False ⇒ slim ~50 tok/row: id, 200-char decision, file_path, do…  ·  _api-consistency, list-decisions, mcp-tools, search-decisions, token-efficiency, v3.0.0_
+- **D000016** v3.0.1 will add an interactive, queryable HTML viewer for codevira memory. Design (agreed 2026-05-26): self-contained S…  ·  _cli, cytoscape, export, feature, memory-viewer, v3.0.0, visualization_
+- **D000017** [supersedes D000014: D000014 premise was factually wrong: verified the committed code uses ~/.gemini/antigravity/, neve…  ·  `mcp_server/ide_inject.py`  ·  _antigravity, broken-integration, cross-tool, ide-inject, setup-wizard, v3.0.0_
 - **D000018** Measured codevira startup token footprint (2026-05-26, chars/4 estimate): MCP tools/list = 16,454 chars ≈ 4,100 tokens …
 - **D000019** IMPLEMENTED (commit 7a2bdd4) the D000018 token reduction. New env var CODEVIRA_TOOL_PROFILE=lean trims the advertised M…
 - **D00001A** RELEASE SCOPING (per Sachin 2026-05-26): ALL of this session's work ships in the SINGLE 3.0.0 release — there is no sep…
+- **D00001B** CORRECTION: the release gauntlet is GREEN, not broken. The 53 'failures' I reported earlier were NOT test rot, NOT test…
 
 
 For the full decision log + outcomes + reverts, see `.codevira/decisions.jsonl` or run `codevira list-decisions`.

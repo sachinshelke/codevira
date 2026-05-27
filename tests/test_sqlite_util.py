@@ -10,7 +10,6 @@ Contract test for ``indexer._sqlite_util.enable_wal_with_retry``:
 from __future__ import annotations
 
 import sqlite3
-import time
 import unittest.mock as mock
 
 import pytest

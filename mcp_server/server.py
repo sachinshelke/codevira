@@ -1,19 +1,16 @@
 """
 Codevira MCP Server
 
-Exposes the project context graph, roadmap, code index, and changeset tracker
-as MCP tools — usable by any MCP-compatible AI coding tool.
+Exposes the project context graph, roadmap, and code index as MCP tools —
+usable by any MCP-compatible AI coding tool.
 
 Tools:
   get_node(file_path)                    → graph node: role, connections, rules
   get_impact(file_path)                  → blast radius before touching a file
-  get_roadmap()                          → current phase, next action, open changesets
-  search_codebase(query, limit, layer)   → semantic search via local ChromaDB
-  list_open_changesets()                 → check for unfinished multi-file work
-  start_changeset(id, desc, files)       → begin tracking a multi-file fix
-  update_changeset_progress(id, file)    → mark a file done within a changeset
-  complete_changeset(id, decisions)      → mark changeset done, record decisions
-  update_node(file_path, changes)        → update graph node after session
+  get_roadmap()                          → current phase, next action, recent decisions
+  # search_codebase removed in v2.2.0 — agents grep + Read directly
+  # changesets removed in v2.2.0 — never reached real usage
+  # update_node / add_node / list_nodes removed in v2.2.0 — graph generator owns mutations
   update_next_action(next_action)        → update roadmap next action
   refresh_graph(file_paths?)             → auto-generate graph nodes for new files
   get_signature(file_path)               → skeleton: public symbols, signatures, line ranges
@@ -54,19 +51,11 @@ import json
 from mcp_server.tools.graph import (
     get_node,
     get_impact,
-    list_nodes,
-    add_node,
-    update_node,
     refresh_graph,
-    export_graph,
-    get_graph_diff,
     query_graph as query_graph_tool,
-    analyze_changes as analyze_changes_tool,
-    find_hotspots as find_hotspots_tool,
 )
 from mcp_server.tools.roadmap import (
     get_roadmap,
-    get_full_roadmap,
     get_phase,
     add_phase,
     update_phase_status,
@@ -75,28 +64,25 @@ from mcp_server.tools.roadmap import (
     update_next_action,
 )
 from mcp_server.tools.search import (
-    search_codebase,
-    refresh_index,
     search_decisions,
     get_history,
     write_session_log,
-    write_session_logs,  # v2.1.2 Item 24
     list_decisions,
     list_tags,  # v2.1.2 Items 11 + 27
 )
-from mcp_server.tools.changesets import (
-    start_changeset,
-    update_changeset_progress,
-    complete_changeset,
-    list_open_changesets,
-)
+# v2.2.0+ (2026-05-22 surface-cut audit batch 6) — dropped imports:
+#   - get_full_roadmap (rarely needed by agents; `get_roadmap` is the
+#     daily driver; agents wanting full history use `get_phase(n)`)
+#   - refresh_index (chromadb-era; v2.2.0 has nothing to refresh —
+#     `_check_search_deps` returns False always; the code-graph
+#     refresh is the separate `refresh_graph` MCP tool)
+#   - write_session_logs (batch endpoint that nobody used)
+
+# v2.2.0: search_codebase removed. AI agents grep + read files; semantic
+# code search was the source of 90%+ of v2.1.x disk + bug surface.
 from mcp_server.tools.playbook import get_playbook
 from mcp_server.tools.code_reader import get_signature, get_code
 from mcp_server.tools.learning import (
-    get_decision_confidence as learning_get_decision_confidence,
-    get_preferences as learning_get_preferences,
-    get_learned_rules as learning_get_learned_rules,
-    get_project_maturity as learning_get_project_maturity,
     get_session_context as learning_get_session_context,
 )
 
@@ -200,7 +186,6 @@ async def handle_read_resource(uri):
     yield a degraded result, not a broken client experience.
     """
     from mcp_server.decision_replay import build_timeline, render_html
-    from mcp_server.paths import get_data_dir
 
     uri_str = str(uri)
     query: str | None = None
@@ -219,16 +204,12 @@ async def handle_read_resource(uri):
         raise ValueError(f"Unknown codevira resource: {uri_str!r}")
 
     try:
-        from indexer.sqlite_graph import SQLiteGraph
-
-        graph_db = get_data_dir() / "graph" / "graph.db"
-        if not graph_db.exists():
-            return render_html([], title=title)
-        g = SQLiteGraph(graph_db)
-        try:
-            timeline = build_timeline(g.conn, query=query, since_days=30, limit=20)
-        finally:
-            g.close()
+        # v2.2.0+: JSONL is the only storage layer. The legacy graph.db
+        # fallback was removed once the v2.1.x carryover user base
+        # dropped to zero. If `.codevira/` isn't present, build_timeline
+        # returns an empty list and the renderer shows the friendly
+        # placeholder.
+        timeline = build_timeline(query=query, since_days=30, limit=20)
         return render_html(timeline, title=title)
     except Exception as e:  # noqa: BLE001
         # Bug-X-shape defense: never let resource-read crash the MCP
@@ -306,60 +287,18 @@ async def list_tools() -> list[Tool]:
             name="get_roadmap",
             description=(
                 "Get current project state: phase number, name, status, next action, "
-                "open changesets, and upcoming phases. Call at the START of every session."
+                "and upcoming phases. Call at the START of every session."
             ),
             inputSchema={"type": "object", "properties": {}},
         ),
-        Tool(
-            name="search_codebase",
-            description=(
-                "Semantic search over the codebase. Returns file+symbol pointers "
-                "by default (~300 tokens for 5 matches). Call get_code(file_path, symbol) "
-                "to read source for a specific match. Pass include_content=true to inline "
-                "source code in results (500-3000 tokens per match — use sparingly)."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Natural language or code query",
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "Number of results (default 5, max 20)",
-                        "default": 5,
-                    },
-                    "include_content": {
-                        "type": "boolean",
-                        "description": "Inline chunk source code in results (default false)",
-                    },
-                    "layer": {
-                        "type": "string",
-                        "description": "Filter by architectural layer",
-                    },
-                },
-                "required": ["query"],
-            },
-        ),
-        Tool(
-            name="get_full_roadmap",
-            description=(
-                "Get the roadmap with current phase, upcoming, deferred, and a summary "
-                "of completed phases. By default completed phases are summarized "
-                "(name + number) to keep response small. Pass include_decisions=true "
-                "for full history, or use get_phase(number) for one specific phase."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "include_decisions": {
-                        "type": "boolean",
-                        "description": "Include full key_decisions from all completed phases (default false)",
-                    },
-                },
-            },
-        ),
+        # v2.2.0: search_codebase tool removed. AI agents grep + read files
+        # natively; semantic code search added 90%+ of v2.1.x's disk footprint
+        # + bug surface for a feature usage data showed was near-zero.
+        #
+        # v2.2.0+ (2026-05-22 surface-cut audit batch 6): get_full_roadmap
+        # removed. The audit found near-zero use; `get_roadmap` covers the
+        # 95% case, and agents wanting one phase's detail use
+        # `get_phase(n)` (which already returns key_decisions when present).
         Tool(
             name="get_phase",
             description="Get full details of any phase by number — completed, current, or upcoming.",
@@ -516,194 +455,18 @@ async def list_tools() -> list[Tool]:
                 "required": ["phases"],
             },
         ),
-        Tool(
-            name="list_open_changesets",
-            description=(
-                "List all in-progress multi-file changesets. "
-                "Call at session start to check for unfinished work from previous sessions."
-            ),
-            inputSchema={"type": "object", "properties": {}},
-        ),
-        Tool(
-            name="start_changeset",
-            description=(
-                "Begin tracking a multi-file fix. Call BEFORE touching any files. "
-                "Creates a changeset record for cross-session continuity."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "changeset_id": {
-                        "type": "string",
-                        "description": "Short slug (e.g. 'auth-refactor')",
-                    },
-                    "description": {"type": "string"},
-                    "files": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "All files that will be modified",
-                    },
-                    "trigger": {
-                        "type": "string",
-                        "enum": ["small_fix", "medium_change", "large_change"],
-                        "default": "medium_change",
-                    },
-                },
-                "required": ["changeset_id", "description", "files"],
-            },
-        ),
-        Tool(
-            name="update_changeset_progress",
-            description="Mark a file as done within an active changeset.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "changeset_id": {"type": "string"},
-                    "file_done": {
-                        "type": "string",
-                        "description": "File path that was completed",
-                    },
-                    "blocker": {
-                        "type": "string",
-                        "description": "Optional blocker note if session ending early",
-                    },
-                },
-                "required": ["changeset_id", "file_done"],
-            },
-        ),
-        Tool(
-            name="complete_changeset",
-            description=(
-                "Mark a changeset as complete and record key decisions. "
-                "Call at session end after all files in the changeset are done."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "changeset_id": {"type": "string"},
-                    "decisions": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Key decisions made (preserved for future agents)",
-                    },
-                },
-                "required": ["changeset_id", "decisions"],
-            },
-        ),
-        Tool(
-            name="update_node",
-            description=(
-                "Update a graph node after modifying a file. "
-                "Use changes={'do_not_revert': true} to PROTECT a FILE from "
-                "future AI edits that would undo architectural decisions "
-                "(Hero 1 / Decision Lock enforces it). "
-                "For DECISION-LEVEL protection (a specific decision rather "
-                "than the whole file), use record_decision(do_not_revert=true) "
-                "instead — that's lighter and lets one file hold multiple "
-                "independently-protected decisions. "
-                "Call at session end for each file you changed."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "file_path": {"type": "string"},
-                    "changes": {
-                        "type": "object",
-                        "description": (
-                            "Fields to update: do_not_revert (bool — "
-                            "protect file from AI reverts), "
-                            "last_changed_by (str), new_rules (list)"
-                        ),
-                    },
-                },
-                "required": ["file_path", "changes"],
-            },
-        ),
-        Tool(
-            name="list_nodes",
-            description=(
-                "List nodes in the context graph (PAGINATED: 50 per call by default). "
-                "Returns total count, layer distribution, and the requested page of nodes. "
-                "Use filters (layer, stability, do_not_revert) to narrow results. "
-                "For a specific file's full details, call get_node(file_path) instead."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "layer": {
-                        "type": "string",
-                        "description": "Filter by architectural layer",
-                    },
-                    "do_not_revert": {
-                        "type": "boolean",
-                        "description": "If true, return only protected nodes",
-                    },
-                    "stability": {
-                        "type": "string",
-                        "description": "Filter by stability: low | medium | high",
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "Max nodes to return per page (default 50, max 500)",
-                    },
-                    "offset": {
-                        "type": "integer",
-                        "description": "Number of nodes to skip (for pagination)",
-                    },
-                },
-            },
-        ),
-        Tool(
-            name="add_node",
-            description=(
-                "Add a new node to the context graph for a newly created file. "
-                "Call this after creating a new file. Graph file is auto-inferred from path."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "file_path": {
-                        "type": "string",
-                        "description": "Relative file path",
-                    },
-                    "role": {
-                        "type": "string",
-                        "description": "One-line description of what the file does",
-                    },
-                    "layer": {"type": "string", "description": "Architectural layer"},
-                    "stability": {
-                        "type": "string",
-                        "description": "low | medium | high",
-                        "default": "medium",
-                    },
-                    "node_type": {
-                        "type": "string",
-                        "description": "file | service | schema | event",
-                        "default": "file",
-                    },
-                    "key_functions": {"type": "array", "items": {"type": "string"}},
-                    "connects_to": {
-                        "type": "array",
-                        "items": {"type": "object"},
-                        "description": "Edge list: [{target, edge, via}]",
-                    },
-                    "rules": {"type": "array", "items": {"type": "string"}},
-                    "do_not_revert": {"type": "boolean", "default": False},
-                    "tests": {"type": "array", "items": {"type": "string"}},
-                },
-                "required": ["file_path", "role", "layer"],
-            },
-        ),
+        # v2.2.0+: update_node, list_nodes deleted (manual graph mutation
+        # was never load-bearing; query_graph covers list use case).
+        # v2.2.0+: add_node deleted (graph generator owns node creation).
         Tool(
             name="search_decisions",
             description=(
-                "Search past decisions across sessions, changesets, and roadmap phases. "
-                "v2.1.1: hybrid BM25+semantic with RRF. v2.1.2 Item 1: applies a "
-                "self-calibrating similarity threshold so gibberish queries return "
-                "zero results (not 'least bad' matches). v2.1.2 Item 28: pass "
-                "summary_only=true for a ~70% smaller payload (triage queries). "
-                "Default: 5 matches with truncated context (~500 tokens). "
-                "Pass full=true for untruncated text. Answers 'has anyone decided this before?'"
+                "Search past decisions across sessions and roadmap phases "
+                "(hybrid BM25 + semantic; a self-calibrating threshold returns "
+                "zero results for gibberish rather than 'least bad' matches). "
+                "Default: 5 truncated matches (~500 tokens). Pass full=true for "
+                "untruncated text, or summary_only=true for a ~70%-smaller "
+                "{id, summary, score} payload. Answers 'has anyone decided this before?'"
             ),
             inputSchema={
                 "type": "object",
@@ -777,6 +540,14 @@ async def list_tools() -> list[Tool]:
                         "type": "boolean",
                         "description": "Untruncated decision text",
                     },
+                    "summary_only": {
+                        "type": "boolean",
+                        "description": (
+                            "Smallest payload — only {id, summary, "
+                            "do_not_revert} per row (parity with "
+                            "search_decisions). Takes precedence over full."
+                        ),
+                    },
                 },
             },
         ),
@@ -789,46 +560,13 @@ async def list_tools() -> list[Tool]:
             ),
             inputSchema={"type": "object", "properties": {}},
         ),
-        Tool(
-            name="record_decisions",
-            description=(
-                "v2.1.2 Item 23: batch variant of record_decision. Cuts ~26 "
-                "round trips on memory-dump sessions to ONE. Each item accepts "
-                "the same fields as record_decision (decision, file_path, "
-                "context, do_not_revert, session_id, tags, force). Returns "
-                "{count, recorded:[ids], errors:[...]}."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "decisions": {
-                        "type": "array",
-                        "items": {"type": "object"},
-                        "description": "List of decision dicts",
-                    },
-                },
-                "required": ["decisions"],
-            },
-        ),
-        Tool(
-            name="write_session_logs",
-            description=(
-                "v2.1.2 Item 24: batch variant of write_session_log. Each item: "
-                "{session_id, task, phase, files_changed?, decisions?, "
-                "next_steps?}. Returns {count, session_ids, errors}."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "logs": {
-                        "type": "array",
-                        "items": {"type": "object"},
-                        "description": "List of session-log dicts",
-                    },
-                },
-                "required": ["logs"],
-            },
-        ),
+        # v2.2.0+ (2026-05-22 surface-cut audit batch 6): the batch
+        # endpoints `record_decisions` and `write_session_logs` were
+        # deleted. They saved network round-trips that the audit data
+        # showed were not happening in practice (memory-dump sessions
+        # weren't using the batch APIs; agents called single endpoints
+        # repeatedly anyway). Use ``record_decision`` /
+        # ``write_session_log`` directly.
         Tool(
             name="supersede_decision",
             description=(
@@ -840,7 +578,16 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "old_id": {"type": "integer", "description": "Decision to retire"},
+                    "old_id": {
+                        "type": "string",
+                        "description": (
+                            "Decision id to retire (e.g. 'D000001'). v3.0.0 "
+                            "uses zero-padded string IDs returned by "
+                            "record_decision. v2.x integer IDs are not "
+                            "accepted — they live in graph.db which v3.0.0 "
+                            "no longer reads."
+                        ),
+                    },
                     "new_decision": {
                         "type": "string",
                         "description": "Replacement decision text",
@@ -864,15 +611,44 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="set_decision_flag",
+            description=(
+                "v3.0.0 lightweight flag/tag update for an existing decision. "
+                "Use this when you only need to toggle do_not_revert or "
+                "correct a tag list — avoids supersede_decision's mandatory "
+                "rewrite of the decision text + reason. Writes a single "
+                "amendment record to .codevira/decisions.jsonl. For "
+                "semantic rewrites use supersede_decision instead."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "decision_id": {
+                        "type": "string",
+                        "description": "Decision id to amend (e.g. 'D000007')",
+                    },
+                    "do_not_revert": {
+                        "type": "boolean",
+                        "description": "New flag value (omit to leave unchanged)",
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Replacement tag list (omit to leave unchanged)",
+                    },
+                },
+                "required": ["decision_id"],
+            },
+        ),
+        Tool(
             name="check_conflict",
             description=(
-                "v2.1.2 Item 20: check whether a proposed decision contradicts "
-                "any existing do_not_revert=True decision OR duplicates an "
-                "existing one. Returns {status: novel|duplicate|conflict, "
-                "conflicts: [...], duplicates: [...]}. Call this BEFORE "
-                "record_decision when you want to surface conflicts proactively. "
-                "(record_decision also runs this internally and surfaces a "
-                "_conflict_warning unless force=true.)"
+                "Check whether a proposed decision contradicts any "
+                "do_not_revert=True decision OR duplicates an existing one. "
+                "Returns {status: novel|duplicate|conflict, conflicts, "
+                "duplicates}. Call BEFORE record_decision to surface conflicts "
+                "proactively (record_decision also runs this internally and "
+                "surfaces _conflict_warning unless force=true)."
             ),
             inputSchema={
                 "type": "object",
@@ -918,16 +694,11 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="record_decision",
             description=(
-                "Record a single architectural decision and (optionally) mark "
-                "it as protected with do_not_revert=true so future AI sessions "
-                "treat it as an architectural constraint. Use this for "
-                "decisions you want to LOCK across sessions and across IDEs "
-                "(e.g. 'use Postgres for the cortex metadata store, not "
-                "SQLite — we need multi-host operator access'). Lighter-"
-                "weight than write_session_log, ideal for ad-hoc captures. "
-                "Returns {decision_id, session_id} for follow-up edits via "
-                "mark_decision_protected. The flag is surfaced in subsequent "
-                "search_decisions() calls so other AI sessions see it."
+                "Record one architectural decision. Set do_not_revert=true to "
+                "lock it across sessions and IDEs. Returns {decision_id, "
+                "session_id}. To change it later use supersede_decision "
+                "(preserves the audit trail) or set_decision_flag (toggle "
+                "do_not_revert / tags)."
             ),
             inputSchema={
                 "type": "object",
@@ -957,34 +728,36 @@ async def list_tools() -> list[Tool]:
                         "type": "string",
                         "description": "Optional session id to attach to (auto-generated if omitted)",
                     },
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Optional list of tag strings (e.g. "
+                            '["security", "auth"]). Surfaces in '
+                            "list_decisions / list_tags filters."
+                        ),
+                    },
+                    "force": {
+                        "type": "boolean",
+                        "description": (
+                            "If true, skip the implicit `check_conflict` "
+                            "duplicate/conflict warning step. Use when "
+                            "you've already reviewed a conflict and want "
+                            "to record anyway."
+                        ),
+                    },
                 },
                 "required": ["decision"],
             },
         ),
-        Tool(
-            name="mark_decision_protected",
-            description=(
-                "Flip the do_not_revert flag on an existing decision by id. "
-                "Use to retroactively protect a decision that was originally "
-                "logged without do_not_revert, or to UNprotect one that no "
-                "longer applies (pass do_not_revert=false). Find the id via "
-                "search_decisions()."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "decision_id": {
-                        "type": "integer",
-                        "description": "Decision id from search_decisions output",
-                    },
-                    "do_not_revert": {
-                        "type": "boolean",
-                        "description": "true to protect, false to unprotect",
-                    },
-                },
-                "required": ["decision_id", "do_not_revert"],
-            },
-        ),
+        # v2.2.0+ (2026-05-22 surface-cut audit batch 6):
+        # mark_decision_protected was deleted. To toggle do_not_revert
+        # on an existing decision, use `supersede_decision(old_id,
+        # new_decision, reason, do_not_revert=true)` — that's the
+        # canonical "I want to update this decision" path and gives
+        # you the audit trail (supersession reason) for free. Setting
+        # the flag in isolation without a reason was the use case;
+        # the audit found 0 such calls in real data.
         Tool(
             name="write_session_log",
             description=(
@@ -1028,26 +801,12 @@ async def list_tools() -> list[Tool]:
                 ],
             },
         ),
-        Tool(
-            name="refresh_index",
-            description=(
-                "Trigger an incremental reindex of changed files. "
-                "Always refreshes the context graph (no extra deps needed). "
-                "Also updates the semantic search index if chromadb is installed. "
-                "Call when get_node() returns index_status.stale=true, or before searching "
-                "files you know have changed. Pass file_paths to reindex specific files only."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "file_paths": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Specific files to reindex. Omit to reindex all changed files.",
-                    }
-                },
-            },
-        ),
+        # v2.2.0+ (2026-05-22 surface-cut audit batch 6):
+        # refresh_index was deleted. It was the chromadb-era
+        # "reindex the semantic search" tool. v2.2.0 has no semantic
+        # search index to refresh; the code-graph refresh lives at
+        # `refresh_graph` (still present below) which is what callers
+        # actually want.
         Tool(
             name="get_playbook",
             description=(
@@ -1147,160 +906,14 @@ async def list_tools() -> list[Tool]:
                 "required": ["file_path"],
             },
         ),
-        # ---- v1.4: Graph Visualization & Diff ----
-        Tool(
-            name="export_graph",
-            description=(
-                "Export the dependency graph as a Mermaid or DOT diagram. "
-                "Use for documentation, PR descriptions, or onboarding. "
-                "Pass scope to limit to a directory (e.g. 'src/services/')."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "format": {
-                        "type": "string",
-                        "enum": ["mermaid", "dot"],
-                        "description": "Output format: 'mermaid' or 'dot'",
-                        "default": "mermaid",
-                    },
-                    "scope": {
-                        "type": "string",
-                        "description": "Filter to files under this directory prefix",
-                    },
-                },
-            },
-        ),
-        Tool(
-            name="get_graph_diff",
-            description=(
-                "Show which graph nodes changed between two git refs and their blast radius. "
-                "Use before opening a PR to understand the impact of your changes. "
-                "Defaults to comparing main...HEAD."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "base_ref": {
-                        "type": "string",
-                        "description": "Base git ref (default: 'main')",
-                        "default": "main",
-                    },
-                    "head_ref": {
-                        "type": "string",
-                        "description": "Head git ref (default: 'HEAD')",
-                        "default": "HEAD",
-                    },
-                },
-            },
-        ),
-        # ---- v1.4: Learning & Adaptive Memory ----
-        Tool(
-            name="get_decision_confidence",
-            description=(
-                "Get confidence scores for a file or pattern based on outcome history. "
-                "Returns how often past decisions were kept, modified, or reverted. "
-                "Call this before making decisions in an area to gauge reliability."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "file_path": {
-                        "type": "string",
-                        "description": "Specific file to check confidence for",
-                    },
-                    "pattern": {
-                        "type": "string",
-                        "description": "Directory or file pattern to check (e.g. 'src/api/')",
-                    },
-                },
-            },
-        ),
-        Tool(
-            name="get_preferences",
-            description=(
-                "Get learned developer preferences from past correction patterns. "
-                "Returns coding style signals: naming conventions, structural preferences, patterns. "
-                "Call this before writing code to match the developer's style."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "category": {
-                        "type": "string",
-                        "description": "Filter by category: 'naming' | 'structure' | 'patterns' | 'formatting'",
-                    },
-                },
-            },
-        ),
-        Tool(
-            name="get_learned_rules",
-            description=(
-                "Get auto-generated rules from observed patterns across sessions. "
-                "These rules are learned from what works — test pairing patterns, import rules, "
-                "co-change patterns. Higher confidence = more reliable. "
-                "Use alongside get_playbook() for comprehensive guidance. "
-                "Each rule comes with a numeric `id` — pass that to retire_rule() "
-                "if a rule has gone stale (e.g. pinned to a deleted directory)."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "file_path": {
-                        "type": "string",
-                        "description": "File path to get rules for (matches by pattern)",
-                    },
-                    "category": {
-                        "type": "string",
-                        "description": "Filter: 'testing' | 'imports' | 'structure' | 'patterns' | 'naming'",
-                    },
-                    "include_retired": {
-                        "type": "boolean",
-                        "description": "Include rules previously retired (default false — audit only)",
-                    },
-                },
-            },
-        ),
-        Tool(
-            name="retire_rule",
-            description=(
-                "Retire a stale learned rule by its numeric id. The rule is "
-                "marked retired (kept in the table for audit) and stops "
-                "appearing in get_learned_rules() / get_session_context() "
-                "and stops firing as a high-confidence signal in policies. "
-                "Call this when get_learned_rules surfaces a rule pinned to "
-                "a directory or pattern that no longer exists in the codebase. "
-                "Provide a short reason so future sessions understand why it was retired."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "rule_id": {
-                        "type": "integer",
-                        "description": "Numeric id from get_learned_rules() output",
-                    },
-                    "reason": {
-                        "type": "string",
-                        "description": "Why the rule is being retired (e.g. 'src/control/cli/ deleted in Plan 1 Week 2')",
-                    },
-                },
-                "required": ["rule_id"],
-            },
-        ),
-        Tool(
-            name="get_project_maturity",
-            description=(
-                "Get overall project intelligence and maturity metrics. "
-                "Shows session count, file coverage, confidence score, learned rules, "
-                "and preference signals. The higher the score, the less ambiguous agent decisions are."
-            ),
-            inputSchema={"type": "object", "properties": {}},
-        ),
+        # v2.2.0+: export_graph, get_graph_diff, get_decision_confidence,
+        # get_project_maturity tools deleted per 2026-05-22 surface-cut
+        # audit. Vestigial / never-used / dashboard-only surfaces.
         Tool(
             name="get_session_context",
             description=(
                 "Single 'catch me up' call for cross-tool continuity. "
-                "Returns current roadmap phase, open changesets, recent decisions with confidence, "
+                "Returns current roadmap phase, recent decisions with confidence, "
                 "learned preferences, and active rules — everything a new session needs. "
                 "Call this at the START of every session instead of multiple separate calls. "
                 "Works seamlessly across AI tools: Cursor, Claude Code, Windsurf, Antigravity."
@@ -1334,47 +947,7 @@ async def list_tools() -> list[Tool]:
                 "required": ["file_path"],
             },
         ),
-        Tool(
-            name="analyze_changes",
-            description=(
-                "Function-level risk-scored change analysis. Maps git diff to affected functions, "
-                "counts callers, flags test coverage gaps, assigns risk scores (high/medium/low). "
-                "Use before code review or pre-commit."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "base_ref": {
-                        "type": "string",
-                        "description": "Base git ref (default: main)",
-                        "default": "main",
-                    },
-                    "head_ref": {
-                        "type": "string",
-                        "description": "Head git ref (default: HEAD)",
-                        "default": "HEAD",
-                    },
-                },
-            },
-        ),
-        Tool(
-            name="find_hotspots",
-            description=(
-                "Find complexity and risk hotspots: large functions (exceeding line threshold), "
-                "high fan-in symbols (many callers = risky to change), and high fan-out files "
-                "(many dependencies = fragile)."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "threshold": {
-                        "type": "integer",
-                        "description": "Min lines for large function (default: 50)",
-                        "default": 50,
-                    },
-                },
-            },
-        ),
+        # v2.2.0+: analyze_changes + find_hotspots deleted (vestigial).
     ]
 
     # Filter out tools whose optional dependencies aren't installed.
@@ -1388,20 +961,34 @@ async def list_tools() -> list[Tool]:
     # Humans access them via the CLI (codevira index, codevira status) or
     # dedicated MCP prompts (architecture_overview, pre_commit_check).
     _ADMIN_TOOLS = {
-        "list_nodes",  # replaced by get_node(path) targeted queries
-        "add_node",  # auto-generated by refresh_graph
         "refresh_graph",  # background/automatic
-        "refresh_index",  # background/automatic
-        "export_graph",  # 5k-50k token Mermaid/DOT dump
-        "get_graph_diff",  # PR review — use prompt instead
-        "analyze_changes",  # PR review — use prompt instead
-        "find_hotspots",  # dashboard metric — use prompt instead
-        "get_project_maturity",  # dashboard metric
-        "get_preferences",  # included in get_session_context
-        "get_learned_rules",  # included in get_session_context
-        "get_full_roadmap",  # rarely needed by agents — use get_phase(n)
+        # v2.2.0+ (2026-05-22 surface-cut audit batch 6): refresh_index
+        # and get_full_roadmap deleted; no longer need hiding because
+        # they no longer exist.
     }
     tools = [t for t in tools if t.name not in _ADMIN_TOOLS]
+
+    # v3.0.0 (D000018): opt-in lean tool surface. The default advertises
+    # every tool; CODEVIRA_TOOL_PROFILE=lean trims the ~4.1K-token
+    # tools/list to the daily-driver set. Hidden tools still work when
+    # called explicitly via call_tool — they're just not advertised.
+    import os
+
+    if os.environ.get("CODEVIRA_TOOL_PROFILE", "").strip().lower() == "lean":
+        _lean_surface = {
+            "get_session_context",
+            "get_impact",
+            "get_node",
+            "get_roadmap",
+            "search_decisions",
+            "list_decisions",
+            "record_decision",
+            "update_phase_status",
+            "complete_phase",
+            "update_next_action",
+            "write_session_log",
+        }
+        tools = [t for t in tools if t.name in _lean_surface]
 
     return tools
 
@@ -1462,10 +1049,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             )
         elif name == "get_roadmap":
             result = get_roadmap()
-        elif name == "get_full_roadmap":
-            result = get_full_roadmap(
-                include_decisions=arguments.get("include_decisions", False),
-            )
+        # v2.2.0+ batch 6: get_full_roadmap dispatch deleted (tool gone).
         elif name == "get_phase":
             result = get_phase(arguments["phase_number"])
         elif name == "add_phase":
@@ -1503,57 +1087,16 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
             result = bulk_import_phases(phases=arguments["phases"])
         elif name == "search_codebase":
-            result = search_codebase(
-                arguments["query"],
-                top_k=arguments.get("limit", 5),
-                include_content=arguments.get("include_content", False),
-            )
-        elif name == "list_open_changesets":
-            result = list_open_changesets()
-        elif name == "start_changeset":
-            result = start_changeset(
-                arguments["changeset_id"],
-                arguments["description"],
-                arguments["files"],
-                trigger=arguments.get("trigger", "medium_change"),
-            )
-        elif name == "update_changeset_progress":
-            result = update_changeset_progress(
-                arguments["changeset_id"],
-                arguments["file_done"],
-                blocker=arguments.get("blocker"),
-            )
-        elif name == "complete_changeset":
-            result = complete_changeset(
-                arguments["changeset_id"],
-                arguments["decisions"],
-            )
-        elif name == "update_node":
-            result = update_node(
-                arguments["file_path"],
-                arguments["changes"],
-            )
-        elif name == "list_nodes":
-            result = list_nodes(
-                layer=arguments.get("layer"),
-                do_not_revert=arguments.get("do_not_revert"),
-                stability=arguments.get("stability"),
-                limit=arguments.get("limit", 50),
-                offset=arguments.get("offset", 0),
-            )
-        elif name == "add_node":
-            result = add_node(
-                file_path=arguments["file_path"],
-                role=arguments["role"],
-                layer=arguments["layer"],
-                stability=arguments.get("stability", "medium"),
-                node_type=arguments.get("node_type", "file"),
-                key_functions=arguments.get("key_functions"),
-                connects_to=arguments.get("connects_to"),
-                rules=arguments.get("rules"),
-                do_not_revert=arguments.get("do_not_revert", False),
-                tests=arguments.get("tests"),
-            )
+            # v2.2.0: search_codebase removed. If anyone still calls it,
+            # return a friendly explanation.
+            result = {
+                "error": (
+                    "search_codebase was removed in v2.2.0. AI agents grep + "
+                    "read files natively. Use the standard Read/Grep tools "
+                    "instead. For decisions, use search_decisions(query)."
+                ),
+                "removed_in": "v2.2.0",
+            }
         elif name == "search_decisions":
             result = search_decisions(
                 arguments["query"],
@@ -1574,17 +1117,12 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 tags=arguments.get("tags"),
                 include_superseded=arguments.get("include_superseded", False),
                 full=arguments.get("full", False),
+                summary_only=arguments.get("summary_only", False),
             )
         elif name == "list_tags":
             result = list_tags()
-        elif name == "record_decisions":
-            # v2.1.2 Item 23.
-            from mcp_server.tools.learning import record_decisions
-
-            result = record_decisions(decisions=arguments["decisions"])
-        elif name == "write_session_logs":
-            # v2.1.2 Item 24.
-            result = write_session_logs(logs=arguments["logs"])
+        # v2.2.0+ batch 6: record_decisions (batch) and write_session_logs
+        # (batch) dispatchers deleted along with the tools.
         elif name == "supersede_decision":
             # v2.1.2 Item 26.
             from mcp_server.tools.learning import supersede_decision
@@ -1596,6 +1134,16 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 file_path=arguments.get("file_path"),
                 context=arguments.get("context"),
                 do_not_revert=arguments.get("do_not_revert", False),
+                tags=arguments.get("tags"),
+            )
+        elif name == "set_decision_flag":
+            # v3.0.0 (2026-05-23 RC-audit follow-up): lightweight in-place
+            # toggle for do_not_revert / tags. Less surgery than supersede.
+            from mcp_server.tools.learning import set_decision_flag
+
+            result = set_decision_flag(
+                decision_id=arguments["decision_id"],
+                do_not_revert=arguments.get("do_not_revert"),
                 tags=arguments.get("tags"),
             )
         elif name == "check_conflict":
@@ -1627,24 +1175,23 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 record_decision as learning_record_decision,
             )
 
+            # v2.2.0+ batch 6: the batch endpoint `record_decisions` was
+            # deleted, so single-record `record_decision` now needs to
+            # forward EVERY field the batch endpoint used to support
+            # (tags, force) — otherwise users loop-calling this endpoint
+            # silently drop those fields.
             result = learning_record_decision(
                 decision=arguments["decision"],
                 file_path=arguments.get("file_path"),
                 context=arguments.get("context"),
                 do_not_revert=arguments.get("do_not_revert", False),
                 session_id=arguments.get("session_id"),
+                tags=arguments.get("tags"),
+                force=arguments.get("force", False),
             )
-        elif name == "mark_decision_protected":
-            from mcp_server.tools.learning import (
-                mark_decision_protected as learning_mark_decision_protected,
-            )
-
-            result = learning_mark_decision_protected(
-                decision_id=arguments["decision_id"],
-                do_not_revert=arguments["do_not_revert"],
-            )
-        elif name == "refresh_index":
-            result = refresh_index(file_paths=arguments.get("file_paths") or [])
+        # v2.2.0+ batch 6: mark_decision_protected dispatch deleted
+        # (use supersede_decision with do_not_revert=True). refresh_index
+        # dispatch deleted (use refresh_graph; semantic index is gone).
         elif name == "get_playbook":
             result = get_playbook(arguments["task_type"])
         elif name == "update_next_action":
@@ -1655,58 +1202,17 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             result = get_signature(arguments["file_path"])
         elif name == "get_code":
             result = get_code(arguments["file_path"], symbol=arguments.get("symbol"))
-        # ---- v1.4: Graph Visualization & Diff ----
-        elif name == "export_graph":
-            result = export_graph(
-                format=arguments.get("format", "mermaid"),
-                scope=arguments.get("scope"),
-            )
-        elif name == "get_graph_diff":
-            result = get_graph_diff(
-                base_ref=arguments.get("base_ref", "main"),
-                head_ref=arguments.get("head_ref", "HEAD"),
-            )
-        # ---- v1.4: Learning & Adaptive Memory ----
-        elif name == "get_decision_confidence":
-            result = learning_get_decision_confidence(
-                file_path=arguments.get("file_path"),
-                pattern=arguments.get("pattern"),
-            )
-        elif name == "get_preferences":
-            result = learning_get_preferences(category=arguments.get("category"))
-        elif name == "get_learned_rules":
-            result = learning_get_learned_rules(
-                file_path=arguments.get("file_path"),
-                category=arguments.get("category"),
-                include_retired=arguments.get("include_retired", False),
-            )
-        elif name == "retire_rule":
-            from mcp_server.tools.learning import retire_rule as learning_retire_rule
-
-            result = learning_retire_rule(
-                rule_id=arguments["rule_id"],
-                reason=arguments.get("reason"),
-            )
-        elif name == "get_project_maturity":
-            result = learning_get_project_maturity()
+        # v2.2.0+: export_graph, get_graph_diff, get_decision_confidence,
+        # get_project_maturity, analyze_changes, find_hotspots dispatchers
+        # deleted per surface-cut audit.
         elif name == "get_session_context":
             # v2.1.2 Item 25: pass through optional since= cutoff.
             result = learning_get_session_context(since=arguments.get("since"))
-        # ---- v1.5: Deep Graph Intelligence ----
         elif name == "query_graph":
             result = query_graph_tool(
                 file_path=arguments["file_path"],
                 symbol=arguments.get("symbol"),
                 query_type=arguments.get("query_type", "callees"),
-            )
-        elif name == "analyze_changes":
-            result = analyze_changes_tool(
-                base_ref=arguments.get("base_ref", "main"),
-                head_ref=arguments.get("head_ref", "HEAD"),
-            )
-        elif name == "find_hotspots":
-            result = find_hotspots_tool(
-                threshold=arguments.get("threshold", 50),
             )
         else:
             result = {"error": f"Unknown tool: {name}"}
@@ -1806,50 +1312,108 @@ def main():
 
     # Auto-start background file watcher so the index stays fresh
     # on every file save — no manual trigger or git commit needed.
+    #
+    # v3.0 escape hatch: CODEVIRA_NO_WATCHER=1 skips the watcher
+    # entirely. For users on huge repos, low-power machines, or
+    # multi-MCP-instance setups where N codevira processes each
+    # register their own fsevents observers and compound CPU usage.
+    # The graph still re-reads files on demand; you just don't get
+    # automatic incremental reindex on save.
+    import os as _os
+
     watcher = None
-    try:
-        from indexer.index_codebase import start_background_watcher
+    if _os.environ.get("CODEVIRA_NO_WATCHER", "0") == "1":
+        logger.info(
+            "Background watcher disabled via CODEVIRA_NO_WATCHER=1 — "
+            "graph will not auto-refresh on file save"
+        )
+    else:
+        try:
+            from indexer.index_codebase import start_background_watcher
 
-        watcher = start_background_watcher(quiet=True)
-        logger.info("Live file watcher active — index updates on save")
+            watcher = start_background_watcher(quiet=True)
+            logger.info("Live file watcher active — index updates on save")
+        except Exception as e:
+            # Watcher is best-effort; don't block server startup
+            logger.warning("Could not start background watcher: %s", e)
+            from mcp_server._safe_crash import safe_log_crash
+
+            safe_log_crash(e, context="background watcher startup")
+
+    # v1.4: Run outcome analysis on startup. This processes any sessions
+    # that haven't been analyzed yet so AntiRegression + decision-
+    # confidence have fresh data.
+    #
+    # v3.0.0 audit cleanup: the companion ``run_rule_inference()`` call
+    # was removed. The rule-learner module was deleted in the
+    # 2026-05-22 surface-cut audit because the MCP tools that consumed
+    # its output (get_learned_rules, retire_rule) were also deleted.
+    #
+    # v3.0 perf: moved to a daemon thread so the MCP `initialize`
+    # handshake returns immediately. Synchronous startup blocked for
+    # seconds when many sessions had unanalyzed decisions — git
+    # subprocess fanout in _analyze_single_session with no overall
+    # timeout. Surfaced via "looks hanged on first tool call" during
+    # Claude Desktop dogfood (2026-05-23).
+    def _run_startup_outcome_analysis() -> None:
+        try:
+            from indexer.outcome_tracker import analyze_session_outcomes
+
+            analyze_session_outcomes()
+            logger.info("Outcome analysis complete (background)")
+        except Exception as e:
+            logger.warning("Could not run startup outcome analysis: %s", e)
+            from mcp_server._safe_crash import safe_log_crash
+
+            safe_log_crash(e, context="startup outcome analysis")
+
+    import threading
+
+    threading.Thread(
+        target=_run_startup_outcome_analysis,
+        name="codevira-startup-outcome-analysis",
+        daemon=True,
+    ).start()
+
+    # v3.0 (2026-05-23 RC-audit follow-up): register this MCP process in
+    # the running-MCP registry so `codevira doctor` can detect when our
+    # in-memory code is stale relative to the installed wheel — surfaces
+    # the "restart Claude Code after pipx --force" failure mode that
+    # otherwise bites users silently.
+    try:
+        from mcp_server._mcp_registry import register, unregister
+        from mcp_server.paths import get_project_root
+        import atexit as _atexit
+        import os as _os
+
+        try:
+            _project_root_for_registry = get_project_root()
+        except Exception:
+            _project_root_for_registry = None
+        register(transport="stdio", project_root=_project_root_for_registry)
+        _atexit.register(unregister)
+        logger.info(
+            "Codevira MCP server v%s starting (pid %d, stdio)",
+            _codevira_version,
+            _os.getpid(),
+        )
+    except Exception as _reg_err:
+        logger.warning("MCP registry write skipped: %s", _reg_err)
+
+    # v1.5 → v3.0.0: register this project in the cross-machine inventory
+    # so `codevira projects` can enumerate it. Best-effort; never breaks
+    # startup. v3.0.0 simplified the previous "import global intelligence"
+    # path — preferences + rules sync was deleted in the audit; project
+    # registration is the one piece of cross-project state that survives.
+    try:
+        from mcp_server.global_sync import register_current_project
+
+        register_current_project()
     except Exception as e:
-        # Watcher is best-effort; don't block server startup
-        logger.warning("Could not start background watcher: %s", e)
+        logger.warning("Could not register project in global inventory: %s", e)
         from mcp_server._safe_crash import safe_log_crash
 
-        safe_log_crash(e, context="background watcher startup")
-
-    # v1.4: Run outcome analysis and rule inference on startup
-    # This processes any sessions that haven't been analyzed yet.
-    try:
-        from indexer.outcome_tracker import analyze_session_outcomes
-        from indexer.rule_learner import run_rule_inference
-
-        analyze_session_outcomes()
-        run_rule_inference()
-        logger.info("Outcome analysis and rule inference complete")
-    except Exception as e:
-        logger.warning("Could not run startup learning: %s", e)
-        from mcp_server._safe_crash import safe_log_crash
-
-        safe_log_crash(e, context="startup learning pipeline")
-
-    # v1.5: Import global intelligence from cross-project memory
-    try:
-        from mcp_server.global_sync import import_global_to_project
-
-        stats = import_global_to_project()
-        if stats.get("preferences_imported") or stats.get("rules_imported"):
-            logger.info(
-                "Global memory: imported %d preferences, %d rules",
-                stats["preferences_imported"],
-                stats["rules_imported"],
-            )
-    except Exception as e:
-        logger.warning("Could not sync global memory: %s", e)
-        from mcp_server._safe_crash import safe_log_crash
-
-        safe_log_crash(e, context="global memory import")
+        safe_log_crash(e, context="cross-project registration")
 
     # v1.7: Enforce logs.retention_days from config (opt-in, default 0 = keep forever)
     try:

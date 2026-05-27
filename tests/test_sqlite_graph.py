@@ -22,7 +22,6 @@ Covers:
 
 from __future__ import annotations
 
-import json
 import threading
 
 
@@ -211,41 +210,13 @@ class TestConfidenceScoring:
 # ===========================================================================
 
 
-class TestPreferences:
-    def test_record_and_retrieve_preference(self, project_env):
-        _, _, db = project_env
-        db.record_preference("naming", "Prefers snake_case", example="src/api.py")
-
-        prefs = db.get_preferences(category="naming")
-        assert len(prefs) == 1
-        assert prefs[0]["signal"] == "Prefers snake_case"
-        assert prefs[0]["frequency"] == 1
-
-    def test_preference_frequency_increases(self, project_env):
-        _, _, db = project_env
-        db.record_preference("naming", "Prefers snake_case")
-        db.record_preference("naming", "Prefers snake_case")
-        db.record_preference("naming", "Prefers snake_case")
-
-        prefs = db.get_preferences(category="naming")
-        assert len(prefs) == 1
-        assert prefs[0]["frequency"] == 3
-
-    def test_preference_filter_by_min_frequency(self, project_env):
-        _, _, db = project_env
-        db.record_preference("naming", "Prefers snake_case")
-        db.record_preference("structure", "Uses early returns")
-        db.record_preference("structure", "Uses early returns")
-
-        prefs = db.get_preferences(min_frequency=2)
-        assert len(prefs) == 1
-        assert prefs[0]["signal"] == "Uses early returns"
-
-    def test_preference_source_field(self, project_env):
-        _, _, db = project_env
-        db.record_preference("naming", "camelCase", source="global")
-        prefs = db.get_preferences(category="naming")
-        assert prefs[0]["source"] == "global"
+# v3.0.0 audit cleanup (2026-05-22 surface-cut): test classes for
+# deleted SQLiteGraph features removed: TestPreferences,
+# TestLearnedRules, TestProjectMaturity, TestGraphVisualization.
+# Their underlying methods + MCP tools were deleted in the audit.
+# Surviving tests cover: edges, outcomes, confidence, sessions,
+# nodes, file-hash tracking, decision search, transactions, edge
+# cases (non-prefs), symbols + call graph, dedup, WAL.
 
 
 # ===========================================================================
@@ -253,131 +224,14 @@ class TestPreferences:
 # ===========================================================================
 
 
-class TestLearnedRules:
-    def test_add_and_retrieve_rule(self, project_env):
-        _, _, db = project_env
-        db.add_learned_rule(
-            "Files in src/api/ should have tests",
-            confidence=0.8,
-            source_sessions=["s1", "s2"],
-            category="testing",
-            file_pattern="src/api/*",
-        )
-
-        rules = db.get_learned_rules(category="testing")
-        assert len(rules) == 1
-        assert rules[0]["confidence"] == 0.8
-        assert "src/api" in rules[0]["rule_text"]
-
-    def test_rules_filter_by_confidence(self, project_env):
-        _, _, db = project_env
-        db.add_learned_rule("Low confidence rule", 0.2, [], category="testing")
-        db.add_learned_rule("High confidence rule", 0.9, [], category="testing")
-
-        rules = db.get_learned_rules(min_confidence=0.5)
-        assert len(rules) == 1
-        assert rules[0]["rule_text"] == "High confidence rule"
-
-    def test_update_rule_confidence(self, project_env):
-        _, _, db = project_env
-        db.add_learned_rule("A rule", 0.5, ["s1"], category="testing")
-
-        rules = db.get_learned_rules()
-        rule_id = rules[0]["id"]
-        db.update_learned_rule(rule_id, confidence=0.9)
-
-        updated = db.get_learned_rules()
-        assert updated[0]["confidence"] == 0.9
-
-    def test_update_rule_source_sessions(self, project_env):
-        _, _, db = project_env
-        db.add_learned_rule("A rule", 0.5, ["s1"], category="testing")
-
-        rules = db.get_learned_rules()
-        rule_id = rules[0]["id"]
-        db.update_learned_rule(rule_id, source_sessions=["s1", "s2", "s3"])
-
-        updated = db.get_learned_rules()
-        sessions = json.loads(updated[0]["source_sessions"])
-        assert sessions == ["s1", "s2", "s3"]
-
-
 # ===========================================================================
 # Project Maturity Tests
 # ===========================================================================
 
 
-class TestProjectMaturity:
-    def test_empty_project_maturity(self, project_env):
-        _, _, db = project_env
-        maturity = db.get_project_maturity()
-        assert maturity["session_count"] == 0
-        assert maturity["coverage"] == 0.0
-        assert maturity["overall_confidence"] == 0.0
-
-    def test_maturity_with_sessions(self, project_env):
-        _, _, db = project_env
-        db.add_node("file:a.py", "file", "a.py", "a.py")
-        db.add_node("file:b.py", "file", "b.py", "b.py")
-        db.log_session(
-            "s1",
-            "Session 1",
-            "1",
-            [{"file_path": "a.py", "decision": "d1", "context": "c"}],
-        )
-
-        maturity = db.get_project_maturity()
-        assert maturity["session_count"] == 1
-        assert maturity["total_files"] == 2
-        assert maturity["covered_files"] == 1
-        assert maturity["coverage"] == 0.5
-
-    def test_maturity_includes_learned_rules_and_prefs(self, project_env):
-        _, _, db = project_env
-        db.add_learned_rule("rule1", 0.8, ["s1"], category="testing")
-        db.add_learned_rule("rule2", 0.3, ["s1"], category="testing")  # below 0.5
-        db.record_preference("naming", "snake_case")
-        db.record_preference("naming", "snake_case")  # frequency=2
-
-        maturity = db.get_project_maturity()
-        assert maturity["learned_rules"] == 1  # only >= 0.5
-        assert maturity["preference_signals"] == 1  # only freq >= 2
-
-
 # ===========================================================================
 # Graph Visualization Tests
 # ===========================================================================
-
-
-class TestGraphVisualization:
-    def test_export_mermaid(self, project_env):
-        from mcp_server.tools.graph import export_graph
-
-        _, _, db = project_env
-        db.add_node("file:src/a.py", "file", "a.py", "src/a.py", layer="core")
-        db.add_node("file:src/b.py", "file", "b.py", "src/b.py", layer="api")
-        db.add_edge("file:src/a.py", "file:src/b.py", kind="imports")
-        db.close()
-
-        result = export_graph(format="mermaid")
-        assert result["format"] == "mermaid"
-        assert result["node_count"] == 2
-        assert result["edge_count"] == 1
-        assert "graph LR" in result["output"]
-        assert "-->" in result["output"]
-
-    def test_export_dot(self, project_env):
-        from mcp_server.tools.graph import export_graph
-
-        _, _, db = project_env
-        db.add_node("file:src/a.py", "file", "a.py", "src/a.py", layer="core")
-        db.add_node("file:src/b.py", "file", "b.py", "src/b.py", layer="api")
-        db.add_edge("file:src/a.py", "file:src/b.py", kind="imports")
-        db.close()
-
-        result = export_graph(format="dot")
-        assert "digraph codevira" in result["output"]
-        assert "->" in result["output"]
 
 
 # ===========================================================================
@@ -775,13 +629,12 @@ class TestEdgeCases:
         confidence = db.get_decision_confidence(file_path="a.py")
         assert confidence["confidence"] == 0.0
 
-    def test_preference_with_none_example(self, project_env):
-        """Recording a preference with no example should work."""
-        _, _, db = project_env
-        db.record_preference("naming", "Uses camelCase", example=None)
-        prefs = db.get_preferences()
-        assert len(prefs) == 1
-        assert prefs[0]["example"] is None
+    # v3.0.0 audit cleanup: test_preference_with_none_example,
+    # test_maturity_no_files, test_learned_rule_empty_file_pattern
+    # removed. The underlying SQLiteGraph methods (record_preference,
+    # get_preferences, get_project_maturity, add_learned_rule,
+    # get_learned_rules) were deleted in the 2026-05-22 surface-cut
+    # audit. The non-preferences, non-rules edge cases stay.
 
     def test_blast_radius_no_edges(self, project_env):
         """Blast radius on a node with no edges should return empty."""
@@ -789,22 +642,6 @@ class TestEdgeCases:
         db.add_node("file:isolated.py", "file", "isolated.py", "isolated.py")
         blast = db.get_blast_radius("file:isolated.py")
         assert blast == []
-
-    def test_maturity_no_files(self, project_env):
-        """Maturity with zero files should not divide by zero."""
-        _, _, db = project_env
-        maturity = db.get_project_maturity()
-        assert maturity["coverage"] == 0.0
-        assert maturity["total_files"] == 0
-
-    def test_learned_rule_empty_file_pattern(self, project_env):
-        """Rules with no file_pattern should still be retrievable."""
-        _, _, db = project_env
-        db.add_learned_rule(
-            "General rule", 0.7, [], category="patterns", file_pattern=None
-        )
-        rules = db.get_learned_rules(category="patterns")
-        assert len(rules) == 1
 
 
 # ===========================================================================

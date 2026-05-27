@@ -13,11 +13,11 @@ Implementation notes:
 - Failure is non-fatal: cleanup errors are logged to crash_logger but
   don't prevent the server from starting
 """
+
 from __future__ import annotations
 
 import logging
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -45,11 +45,12 @@ def _should_run_cleanup(data_dir: Path) -> bool:
 
 
 def _mark_cleanup_done(data_dir: Path) -> None:
-    """Record that cleanup just ran."""
+    """Record that cleanup just ran (atomic)."""
+    from mcp_server.storage.atomic import atomic_write_text
+
     marker = _marker_path(data_dir)
     try:
-        marker.parent.mkdir(parents=True, exist_ok=True)
-        marker.write_text(str(time.time()))
+        atomic_write_text(marker, str(time.time()))
     except OSError:
         pass
 
@@ -61,6 +62,7 @@ def _read_retention_days(data_dir: Path) -> int:
         return 0
     try:
         import yaml
+
         with open(config_path) as f:
             raw = yaml.safe_load(f) or {}
         return int(raw.get("logs", {}).get("retention_days", 0))
@@ -107,19 +109,37 @@ def enforce_retention(data_dir: Path | None = None, *, force: bool = False) -> d
     if not force and not _should_run_cleanup(data_dir):
         return result
 
-    # Enforce retention via SQL
-    graph_db = data_dir / "graph" / "graph.db"
+    # v3.0 silent-storage note (2026-05-23 RC audit): the SQL paths below
+    # operate on legacy SQLiteGraph decisions/sessions tables. In v3.0,
+    # writes go to .codevira/decisions.jsonl + .codevira/sessions.jsonl
+    # via JSONL stores — the SQLite tables are empty for greenfield v3.0
+    # projects. Retention here still works for users with migrated v2.x
+    # data, but won't trim v3.0 JSONL records. Surface this explicitly
+    # so a v3.0 user setting retention_days doesn't silently get nothing.
+    jsonl_decisions = data_dir.parent.parent / ".codevira" / "decisions.jsonl"
+    legacy_decisions_db = data_dir / "graph" / "graph.db"
+    if jsonl_decisions.is_file() and not legacy_decisions_db.exists():
+        logger.warning(
+            "logs.retention_days=%d is set but the project uses v3.0 JSONL "
+            "storage (.codevira/*.jsonl). Time-based retention on JSONL is "
+            "not yet supported. For privacy cleanup, use `git rm` on the "
+            "JSONL files or rotate them via external tooling.",
+            retention_days,
+        )
+        return result
+
+    # Enforce retention via SQL (legacy/migrated installs only)
+    graph_db = legacy_decisions_db
     if not graph_db.exists():
         return result
 
     try:
         import sqlite3
+
         conn = sqlite3.connect(str(graph_db))
         conn.row_factory = sqlite3.Row
 
-        cutoff_sql = (
-            "datetime('now', ?)"
-        )
+        cutoff_sql = "datetime('now', ?)"
         cutoff_arg = f"-{retention_days} days"
 
         # Count first so we can return accurate stats
@@ -164,6 +184,7 @@ def enforce_retention(data_dir: Path | None = None, *, force: bool = False) -> d
         logger.warning("Retention cleanup failed: %s", e)
         try:
             from mcp_server.crash_logger import log_crash
+
             log_crash(e, context="log_retention.enforce_retention")
         except Exception:
             pass

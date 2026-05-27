@@ -111,6 +111,9 @@ class TestLoadConfig:
 class TestCheckSearchDeps:
     """Return True/False based on chromadb availability."""
 
+    @pytest.mark.skip(
+        reason="v2.2.0: tests deprecated feature (search_codebase / _check_search_deps / graph.db backend)"
+    )
     def test_returns_true_when_available(self):
         """When both chromadb and sentence_transformers can be imported."""
         mock_chromadb = MagicMock()
@@ -1106,29 +1109,33 @@ class TestCmdStatusBugC:
 
 
 class TestGlobalStatusRendersRealNumbers:
-    """Regression guard for Bug 19 (rc.4 dogfood, 2026-05-13).
+    """Regression guard for Bug 19 (rc.4 dogfood, 2026-05-13) — adapted
+    for v3.0.0.
 
-    `codevira status --global` rendered "Projects Tracked: 0 / Global Preferences: 0 /
-    Global Rules: 0" even on heavily-indexed projects because the renderer read
-    `projects_count` / `preferences_count` / `rules_count` while `GlobalDB.get_stats()`
-    writes `project_count` / `total_preferences` / `total_rules`. The bug was invisible
-    to all existing tests because they assert on the dict, never on the rendered
-    string. This test asserts on the rendered Rich-table output.
+    The original bug: `codevira status --global` rendered "Projects
+    Tracked: 0 / Global Preferences: 0 / Global Rules: 0" even on
+    heavily-indexed projects because the renderer read wrong keys.
+
+    v3.0.0 (2026-05-22 surface-cut audit): the "Global Preferences"
+    and "Global Rules" rows were REMOVED — they always read zero
+    after the preferences / learned-rules MCP tools were deleted
+    in the audit. The "Projects Tracked" row stays. The original
+    keys-mismatch bug regression-guard now lives on that single row.
     """
 
-    def test_global_status_renders_keys_from_get_stats(self, project_env, capsys):
-        """All three Global Status numbers must reflect their canonical sources.
-
-        rc.5 (P0-3 audit): "Projects Tracked" now reads from the canonical
-        project inventory (`mcp_server._project_inventory`), not from
-        `stats['project_count']`. The "Global Preferences" + "Global Rules"
-        rows still read from `get_global_stats()`. This test asserts ALL
-        THREE rendered numbers match their (different) sources.
-        """
+    def test_projects_tracked_reads_from_inventory_not_stats(self, project_env, capsys):
+        """v3.0.0: "Projects Tracked" reads from the canonical project
+        inventory (`mcp_server._project_inventory`), not from any
+        global-stats dict. Mock the inventory and confirm the row
+        renders the right number."""
         _project, _data_dir, db = project_env
-        stats = {"project_count": 99, "total_preferences": 13, "total_rules": 22}
-        # Mock the inventory helper so we control "Projects Tracked".
-        inv_summary = {"tracked": 7, "ghost": 0, "orphan": 0, "stale": 0, "total": 7}
+        inv_summary = {
+            "tracked": 7,
+            "ghost": 0,
+            "orphan": 0,
+            "stale": 0,
+            "total": 7,
+        }
         mock_client = MagicMock()
         mock_collection = MagicMock()
         mock_collection.count.return_value = 0
@@ -1138,32 +1145,31 @@ class TestGlobalStatusRendersRealNumbers:
         ), patch(
             "indexer.index_codebase._get_embedding_fn", return_value=MagicMock()
         ), patch("indexer.index_codebase._get_changed_files", return_value=[]), patch(
-            "mcp_server.global_sync.get_global_stats", return_value=stats
-        ), patch(
             "mcp_server._project_inventory.enumerate_projects", return_value=[]
         ), patch("mcp_server._project_inventory.summarize", return_value=inv_summary):
             from indexer.index_codebase import cmd_status
 
             cmd_status(show_global=True)
         out = capsys.readouterr().out
-        # P0-3: Projects Tracked reads from inventory, NOT from stats.
-        # Even though stats says 99, the rendered value should be 7 (inventory).
         assert (
             "Projects Tracked" in out and " 7 " in out
-        ), f"Expected 'Projects Tracked: 7 tracked' in rendered output, got:\n{out}"
-        assert " 99" not in out, (
-            "Should NOT use stats['project_count'] as source — P0-3 fix means "
-            "Projects Tracked is sourced from the project inventory helper."
+        ), f"Expected 'Projects Tracked: 7 tracked', got:\n{out}"
+        # v3.0.0: the Global Preferences + Global Rules rows are gone.
+        # If they ever reappear (regression), surface it loudly.
+        assert "Global Preferences" not in out, (
+            "v3.0.0 audit removed the Global Preferences row — its "
+            "reappearance is a regression of the 2026-05-22 surface cut."
         )
-        assert (
-            "Global Preferences" in out and " 13" in out
-        ), f"Expected 'Global Preferences: 13' in rendered output, got:\n{out}"
-        assert (
-            "Global Rules" in out and " 22" in out
-        ), f"Expected 'Global Rules: 22' in rendered output, got:\n{out}"
+        assert "Global Rules" not in out, (
+            "v3.0.0 audit removed the Global Rules row — its reappearance "
+            "is a regression of the 2026-05-22 surface cut."
+        )
 
-    def test_global_status_shows_zero_when_stats_missing(self, project_env, capsys):
-        """When get_global_stats() returns None (no global.db yet), numbers default to 0."""
+    def test_global_status_handles_inventory_failure_gracefully(
+        self, project_env, capsys
+    ):
+        """When the inventory helper raises, fall back to showing an
+        error row rather than crashing the status command."""
         _project, _data_dir, db = project_env
         mock_client = MagicMock()
         mock_collection = MagicMock()
@@ -1174,16 +1180,15 @@ class TestGlobalStatusRendersRealNumbers:
         ), patch(
             "indexer.index_codebase._get_embedding_fn", return_value=MagicMock()
         ), patch("indexer.index_codebase._get_changed_files", return_value=[]), patch(
-            "mcp_server.global_sync.get_global_stats", return_value=None
+            "mcp_server._project_inventory.enumerate_projects",
+            side_effect=RuntimeError("inventory fail"),
         ):
             from indexer.index_codebase import cmd_status
 
             cmd_status(show_global=True)
         out = capsys.readouterr().out
-        # All three numbers should default to 0 when stats absent.
-        assert "Projects Tracked" in out
-        assert "Global Preferences" in out
-        assert "Global Rules" in out
+        assert "Project Inventory" in out
+        assert "inventory fail" in out
 
 
 # ---------------------------------------------------------------------------
@@ -1255,7 +1260,7 @@ class TestStartBackgroundWatcher:
             mock_observer_cls.return_value = mock_observer
             from indexer.index_codebase import start_background_watcher
 
-            result = start_background_watcher(quiet=True)
+            start_background_watcher(quiet=True)
         mock_observer.start.assert_called_once()
 
     def test_watcher_does_not_start_for_missing_dirs(self, project_env):
@@ -1569,7 +1574,10 @@ class TestDebouncedHandlerEvents:
 
         fake_mods = self._fake_watchdog_mods()
         mock_obs = MagicMock()
-        mock_timer = MagicMock()
+        # v3.0.0 cleanup: previously kept a `mock_timer = MagicMock()`
+        # local that nothing referenced. The real timer mock is the
+        # `mock_timer_cls` patch context manager below — that's what
+        # the assertion actually inspects.
 
         # Patch watchdog modules into sys.modules so the local import inside
         # start_background_watcher succeeds, then patch the Observer class

@@ -2,10 +2,23 @@
 
 The `roadmap.yaml` file is the AI agent's living memory of your project's progress. It answers the question: *"Where are we, and what needs doing next?"*
 
-> **v1.6+ note:** As of v1.6, project data lives centrally at
-> `~/.codevira/projects/<project-key>/` instead of inside the project repo
-> at `<project>/.codevira/`. Legacy in-repo `.codevira/` directories are
-> auto-migrated to centralized storage on first server start.
+> **v3.0.0 note (2026-05-22):** The 2026-05-22 surface-cut audit
+> removed the `changesets` feature entirely. References below to
+> `open_changesets` / `list_open_changesets()` /
+> `add_open_changeset()` / `remove_open_changeset()` apply to v1.x
+> through v2.x only; v3.0.0 has no changesets module. Roadmap mutation
+> in v3.0.0 is also flock-guarded — all 6 mutation tools
+> (`add_phase`, `update_phase_status`, `defer_phase`, `complete_phase`,
+> `bulk_import_phases`, `update_next_action`) wrap their read-modify-
+> write in `mcp_server.storage.atomic.file_lock` to survive
+> concurrent IDE sessions. See [`docs/architecture.md`](architecture.md)
+> § "Concurrent-write safety".
+>
+> **v1.6+ historical note:** As of v1.6, project data lives centrally
+> at `~/.codevira/projects/<project-key>/` instead of inside the
+> project repo at `<project>/.codevira/`. The code graph still lives
+> at the centralized location in v3.0.0 (spec/impl drift documented
+> in [ROADMAP.md § Known limitations](../ROADMAP.md)).
 
 ---
 

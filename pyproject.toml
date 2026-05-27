@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "codevira"
-version = "2.1.2"
-description = "Stop re-explaining your project to AI agents every session. Codevira gives Claude Code, Cursor, Windsurf, and Antigravity shared persistent memory of your codebase — locally, no signup, MIT-licensed. One install configures every AI tool."
+version = "3.0.0"
+description = "Cross-IDE decision enforcement for AI coding agents. 1 MB per project, in your repo, no cloud, no vectors. Claude Code, Cursor, Windsurf, Antigravity, Codex all share the same in-repo memory; hooks block AI tool calls that violate prior decisions. MIT, local-first."
 readme = "README.md"
 license = { text = "MIT" }
 authors = [
@@ -22,9 +22,9 @@ keywords = [
   "cursor",
   "windsurf",
   "code-intelligence",
-  "semantic-search",
+  "enforcement",
+  "agents-md",
   "context-graph",
-  "chromadb",
   "agentic",
   "coding-assistant",
   "knowledge-graph"
@@ -46,23 +46,35 @@ dependencies = [
   "pyyaml>=6.0",
   "mcp>=1.0.0",
   "watchdog>=3.0.0",
+  # tomllib is stdlib on 3.11+; tomli is the backport for the declared
+  # 3.10 support (used to read pyproject.toml project name).
+  "tomli>=2.0; python_version < '3.11'",
   "tree-sitter>=0.23.0",
-  "tree-sitter-language-pack>=0.13.0,<1.0.0",
+  # v2.2.0: switched from tree-sitter-language-pack (351 MB, 17 grammars) to
+  # individual grammar packages for the 4 most-used non-Python languages
+  # (Python parsing uses stdlib `ast`). Total grammar footprint ~10-15 MB
+  # instead of 351 MB — the v2.2.0 ≤55 MB pipx budget (G1) depends on it.
+  # Long-tail languages (Java/C/C++/Ruby/PHP/Kotlin/Swift/Solidity) are
+  # available as an opt-in extra: `pip install codevira[all-languages]`.
+  "tree-sitter-typescript>=0.23.0",
+  "tree-sitter-javascript>=0.23.0",
+  "tree-sitter-go>=0.23.0",
+  "tree-sitter-rust>=0.23.0",
   "rich>=13.0.0",
   "uvicorn>=0.27.0",
   "starlette>=0.36.0",
   "pathspec>=0.12.0",
-  # Semantic search — required so all 36 MCP tools work out of the box.
-  # Adds ~500MB (includes ML runtime). Downloads ~90MB model on first use.
-  # For a minimal install without semantic search, see:
-  # https://github.com/sachinshelke/codevira#minimal-install
-  "chromadb>=0.5.0",
-  "sentence-transformers>=2.7.0",
+  # v2.2.0: chromadb / sentence-transformers / torch REMOVED. Decision
+  # search uses SQLite FTS5 (stdlib). 200 MB pipx install → ~50 MB.
+  # Code search isn't a codevira concern — AI agents grep + Read directly.
 ]
 
 [project.optional-dependencies]
-# Kept as no-op aliases for backwards compatibility with `pip install codevira[search]`.
-# Semantic search deps are now part of the base install.
+# Kept as no-op aliases so old `pip install codevira[search]` doesn't error.
+# v2.2.0+ has no optional semantic-search extras and no [all-languages]
+# extra (the legacy tree-sitter-language-pack was removed along with the
+# v2.1.x carryover user base). v2.3.0 may re-introduce specific
+# long-tail grammars as individual deps if real demand emerges.
 search = []
 all = []
 # Dev dependencies for contributors. Installed via: pip install -e ".[dev]"

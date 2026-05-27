@@ -3,9 +3,9 @@ decision_replay.py — Hero 8: Decision Replay timeline + renderers.
 
 Pure data path:
   build_timeline(query, since_days, limit) -> list[dict]
-    SQL aggregation joining decisions LEFT JOIN outcomes LEFT JOIN
-    sessions LEFT JOIN nodes; returns each decision with outcome
-    counts, score (Hero 10's score_decision), session summary, and
+    Reads .codevira/decisions.jsonl + outcomes.jsonl + sessions.jsonl,
+    aggregates outcome counts per decision_id, returns each decision
+    with score (Hero 10's score_decision), session summary, and
     do_not_revert flag.
 
 Three renderers:
@@ -20,13 +20,16 @@ HTML rendering escapes every untrusted field via html.escape() —
 decision text or file paths could conceivably contain ``<script>``
 content if a user pasted adversarial input into a prompt that became
 a decision. Tested.
+
+v2.2.0: the legacy graph.db SQL backend was removed entirely. The only
+storage layer is the JSONL store under .codevira/. No fallback paths.
 """
+
 from __future__ import annotations
 
 import html
 import logging
 import shutil
-import sqlite3
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -101,7 +104,6 @@ def _score(kept: int, modified: int, reverted: int) -> float:
 
 
 def build_timeline(
-    conn: sqlite3.Connection,
     *,
     query: str | None = None,
     since_days: int = _DEFAULT_SINCE_DAYS,
@@ -109,8 +111,14 @@ def build_timeline(
 ) -> list[dict[str, Any]]:
     """Build a per-decision timeline with outcomes attached.
 
-    Pure: takes a `sqlite3.Connection` (caller owns it). Used by
-    the MCP resource handler, the CLI, and tests.
+    Reads ``.codevira/decisions.jsonl`` + ``.codevira/outcomes.jsonl``
+    + ``.codevira/sessions.jsonl`` from the active project (resolved
+    via ``mcp_server.storage.paths``). Aggregates outcome counts per
+    decision_id and applies a case-insensitive substring filter on
+    (decision | file_path | context) if ``query`` is given. Sorted
+    descending by timestamp.
+
+    Used by the MCP resource handler, the CLI, and tests.
 
     Returns a list of dicts; empty if no decisions match. Never raises
     — Hero 8 is a browse surface; data layer flakiness must yield
@@ -119,61 +127,101 @@ def build_timeline(
     since_days = _clamp_since_days(since_days)
     limit = _clamp_limit(limit)
 
-    sql_parts = [
-        """
-        SELECT
-            d.id            AS id,
-            d.decision      AS decision,
-            d.file_path     AS file_path,
-            d.context       AS context,
-            d.created_at    AS created_at,
-            d.session_id    AS session_id,
-            s.summary       AS session_summary,
-            COALESCE(n.do_not_revert, 0) AS locked,
-            COUNT(o.id)     AS total,
-            COALESCE(SUM(CASE WHEN o.outcome_type = 'kept'     THEN 1 ELSE 0 END), 0) AS kept,
-            COALESCE(SUM(CASE WHEN o.outcome_type = 'modified' THEN 1 ELSE 0 END), 0) AS modified,
-            COALESCE(SUM(CASE WHEN o.outcome_type = 'reverted' THEN 1 ELSE 0 END), 0) AS reverted
-        FROM decisions d
-        LEFT JOIN outcomes o  ON o.decision_id = d.id
-        LEFT JOIN sessions s  ON s.session_id  = d.session_id
-        LEFT JOIN nodes    n  ON n.file_path   = d.file_path
-        WHERE d.created_at >= datetime('now', ?)
-        """,
-    ]
-    params: list[Any] = [f"-{since_days} days"]
-    if query:
-        sql_parts.append(
-            " AND (d.decision LIKE ? OR d.file_path LIKE ? OR d.context LIKE ?)"
-        )
-        like = f"%{query}%"
-        params.extend([like, like, like])
-    sql_parts.append(
-        """
-        GROUP BY d.id
-        ORDER BY d.created_at DESC
-        LIMIT ?
-        """
-    )
-    params.append(limit)
-
-    sql = "".join(sql_parts)
+    from datetime import datetime, timedelta, timezone
 
     try:
-        rows = conn.execute(sql, params).fetchall()
-    except sqlite3.Error as e:
-        logger.warning("decision_replay.build_timeline failed: %s", e)
+        from mcp_server.storage import (
+            decisions_store,
+            jsonl_store,
+            paths as store_paths,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("decision_replay.build_timeline: import failed: %s", exc)
         return []
 
-    out: list[dict[str, Any]] = []
-    for r in rows:
-        d = dict(r)
-        d["score"] = _score(
-            d.get("kept", 0), d.get("modified", 0), d.get("reverted", 0),
+    if not store_paths.is_initialized():
+        return []
+
+    # since-days lower bound in ISO 8601 UTC
+    cutoff = datetime.now(timezone.utc) - timedelta(days=since_days)
+    cutoff_iso = cutoff.isoformat()
+
+    try:
+        merged = decisions_store._read_merged()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "decision_replay.build_timeline: read decisions failed: %s",
+            exc,
         )
-        d["locked"] = bool(d.get("locked"))
-        out.append(d)
-    return out
+        return []
+
+    # Outcome aggregation: count {kept, modified, reverted} per decision_id
+    counts: dict[str, dict[str, int]] = {}
+    try:
+        outcomes = jsonl_store.read_all(store_paths.outcomes_path())
+    except Exception:  # noqa: BLE001
+        outcomes = []
+    for o in outcomes:
+        did = str(o.get("decision_id") or "")
+        if not did:
+            continue
+        bucket = counts.setdefault(did, {"kept": 0, "modified": 0, "reverted": 0})
+        otype = str(o.get("outcome_type") or "")
+        if otype in bucket:
+            bucket[otype] += 1
+
+    # Session summary lookup
+    session_summary: dict[str, str] = {}
+    try:
+        sessions = jsonl_store.read_all(store_paths.sessions_path())
+    except Exception:  # noqa: BLE001
+        sessions = []
+    for s in sessions:
+        sid = str(s.get("session_id") or "")
+        summary = s.get("summary")
+        if sid and summary and sid not in session_summary:
+            session_summary[sid] = str(summary)
+
+    query_lower = (query or "").lower().strip() or None
+
+    timeline: list[dict[str, Any]] = []
+    for d in merged:
+        if d.get("is_superseded") or d.get("superseded_by"):
+            continue
+        ts = str(d.get("ts") or "")
+        if ts and ts < cutoff_iso:
+            continue
+        if query_lower:
+            haystack = " ".join(
+                str(d.get(f) or "") for f in ("decision", "file_path", "context")
+            ).lower()
+            if query_lower not in haystack:
+                continue
+        did = str(d.get("id") or "")
+        c = counts.get(did, {"kept": 0, "modified": 0, "reverted": 0})
+        total = c["kept"] + c["modified"] + c["reverted"]
+        sid = str(d.get("session_id") or "")
+        timeline.append(
+            {
+                "id": did,
+                "decision": d.get("decision"),
+                "file_path": d.get("file_path"),
+                "context": d.get("context"),
+                "created_at": ts,
+                "session_id": sid,
+                "session_summary": session_summary.get(sid),
+                "locked": bool(d.get("do_not_revert")),
+                "total": total,
+                "kept": c["kept"],
+                "modified": c["modified"],
+                "reverted": c["reverted"],
+                "score": _score(c["kept"], c["modified"], c["reverted"]),
+            }
+        )
+
+    # Sort desc by created_at; cap to limit.
+    timeline.sort(key=lambda r: r.get("created_at") or "", reverse=True)
+    return timeline[:limit]
 
 
 # ---------------------------------------------------------------------
@@ -217,14 +265,18 @@ def render_terminal(
         score = d.get("score", 0.0)
         locked = d.get("locked", False)
         marker = "🔒 " if locked and not ascii_mode else ("[locked] " if locked else "")
-        prefix = ("⚠ " if score == 0.0 and d.get("total", 0) > 0 else "📌 ")
+        prefix = "⚠ " if score == 0.0 and d.get("total", 0) > 0 else "📌 "
         if ascii_mode:
-            prefix = "[reverted] " if score == 0.0 and d.get("total", 0) > 0 else "[stable]   "
+            prefix = (
+                "[reverted] "
+                if score == 0.0 and d.get("total", 0) > 0
+                else "[stable]   "
+            )
         out.append(f"{prefix}{date} — {marker}{file_path}")
 
         # Decision text
         decision = _truncate(d.get("decision"), max(20, width - 4))
-        out.append(f"   \"{decision}\"")
+        out.append(f'   "{decision}"')
 
         # Outcomes line
         kept = d.get("kept", 0)
@@ -243,7 +295,7 @@ def render_terminal(
         sid = d.get("session_id") or "(unknown)"
         summary = _truncate(d.get("session_summary"), max(20, width - 24))
         if summary:
-            out.append(f"   session {sid}: \"{summary}\"")
+            out.append(f'   session {sid}: "{summary}"')
         else:
             out.append(f"   session {sid}")
 
@@ -296,9 +348,7 @@ def render_markdown(
         lines.append(f"> {decision}")
         lines.append("")
         if total > 0:
-            lines.append(
-                f"- **Score**: {score:.2f}"
-            )
+            lines.append(f"- **Score**: {score:.2f}")
             lines.append(
                 f"- **Outcomes**: {total} total — {kept} kept, "
                 f"{modified} modified, {reverted} reverted"
@@ -328,7 +378,7 @@ def render_html(
     output can be embedded in another page (or in an MCP-Apps iframe).
     """
     body_parts: list[str] = []
-    body_parts.append(f'<h1>{html.escape(title)}</h1>')
+    body_parts.append(f"<h1>{html.escape(title)}</h1>")
 
     if not timeline:
         # Lesson #19 + Bug-6 lesson: no empty section headers
@@ -355,35 +405,35 @@ def render_html(
                 css_class += " reverted"
 
             body_parts.append(f'<article class="{css_class}">')
-            body_parts.append(f'  <header>')
+            body_parts.append("  <header>")
             body_parts.append(f'    <span class="date">{date}</span>')
             body_parts.append(f'    <span class="file">{file_path}</span>')
             if locked:
                 body_parts.append(
-                    f'    <span class="lock-marker" title="locked">🔒</span>'
+                    '    <span class="lock-marker" title="locked">🔒</span>'
                 )
-            body_parts.append(f'  </header>')
-            body_parts.append(f'  <blockquote>{decision}</blockquote>')
+            body_parts.append("  </header>")
+            body_parts.append(f"  <blockquote>{decision}</blockquote>")
             if total > 0:
                 body_parts.append(
-                    f'  <footer>'
+                    f"  <footer>"
                     f'<span class="score">score {score:.2f}</span> · '
                     f'<span class="outcomes">{total} outcome(s): '
-                    f'{kept} kept, {modified} modified, {reverted} reverted</span> · '
+                    f"{kept} kept, {modified} modified, {reverted} reverted</span> · "
                     f'<span class="session">session <code>{sid}</code></span>'
-                    f'</footer>'
+                    f"</footer>"
                 )
             else:
                 body_parts.append(
-                    f'  <footer>'
+                    f"  <footer>"
                     f'<span class="no-outcomes">no outcomes yet</span> · '
                     f'<span class="session">session <code>{sid}</code></span>'
-                    f'</footer>'
+                    f"</footer>"
                 )
             if summary:
                 body_parts.append(f'  <p class="session-summary">{summary}</p>')
-            body_parts.append(f'</article>')
-        body_parts.append('</div>')
+            body_parts.append("</article>")
+        body_parts.append("</div>")
 
     body = "\n".join(body_parts)
 

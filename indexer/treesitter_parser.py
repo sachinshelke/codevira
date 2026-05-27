@@ -1,8 +1,16 @@
 """
-treesitter_parser.py — Unified tree-sitter parser using tree-sitter-language-pack.
+treesitter_parser.py — Unified tree-sitter parser.
 
-Supports parsing AST nodes (classes, functions, methods, imports) across many languages.
-Python files are NOT handled here — they use the stdlib `ast` module.
+Supports parsing AST nodes (classes, functions, methods, imports) across
+several languages. Python files are NOT handled here — they use the stdlib
+`ast` module.
+
+v2.2.0: switched from ``tree-sitter-language-pack`` (351 MB, 17 grammars)
+to individual grammar packages for the 4 most-used non-Python languages
+(TypeScript / JavaScript / Go / Rust). Total grammar disk footprint
+~10-15 MB. Users who need long-tail languages (Java, C, C++, Ruby, PHP,
+Kotlin, Swift, Solidity) can opt in via ``pip install codevira[all-languages]``
+— that brings back ``tree-sitter-language-pack`` and the legacy grammar set.
 """
 
 from __future__ import annotations
@@ -12,8 +20,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import tree_sitter_language_pack as tslp
-from tree_sitter import Node
+from tree_sitter import Language, Node, Parser
 
 logger = logging.getLogger(__name__)
 
@@ -53,32 +60,60 @@ class ParsedFile:
 # Language registry
 # ---------------------------------------------------------------------------
 
+# Languages shipped in v2.2.0+ (individual tree-sitter-* grammars).
+# The legacy long-tail (Java / C / C++ / Ruby / PHP / Kotlin / Swift /
+# Solidity / Vue) was dropped along with the v2.1.x tree-sitter-language-pack.
+# v2.3.0 may re-introduce specific long-tail grammars as needed.
+_BASE_LANGUAGES = ("typescript", "tsx", "javascript", "go", "rust")
+
 EXTENSION_MAP: dict[str, str] = {
     ".ts": "typescript",
     ".tsx": "tsx",
-    ".go": "go",
-    ".rs": "rust",
-    ".java": "java",
-    ".cs": "csharp",
-    ".rb": "ruby",
-    ".cpp": "cpp",
-    ".cc": "cpp",
-    ".cxx": "cpp",
-    ".c": "c",
-    ".h": "c",
-    ".hpp": "cpp",
-    ".kt": "kotlin",
-    ".swift": "swift",
-    ".php": "php",
-    ".sol": "solidity",
-    ".vue": "vue",
     ".js": "javascript",
     ".jsx": "javascript",
+    ".go": "go",
+    ".rs": "rust",
 }
 
 
 def get_language(extension: str) -> str | None:
     return EXTENSION_MAP.get(extension.lower())
+
+
+def _load_parser_for(language: str) -> Parser:
+    """Resolve a tree-sitter Parser for ``language``.
+
+    v2.2.0+: only the 5 base languages (typescript / tsx / javascript /
+    go / rust) ship with codevira. Other languages raise ValueError
+    with an actionable message. Python is handled by the stdlib `ast`
+    module, not this parser.
+    """
+    if language == "typescript":
+        import tree_sitter_typescript as _ts
+
+        return Parser(Language(_ts.language_typescript()))
+    if language == "tsx":
+        import tree_sitter_typescript as _ts
+
+        return Parser(Language(_ts.language_tsx()))
+    if language == "javascript":
+        import tree_sitter_javascript as _js
+
+        return Parser(Language(_js.language()))
+    if language == "go":
+        import tree_sitter_go as _go
+
+        return Parser(Language(_go.language()))
+    if language == "rust":
+        import tree_sitter_rust as _rs
+
+        return Parser(Language(_rs.language()))
+
+    raise ValueError(
+        f"No tree-sitter grammar bundled for language '{language}'. "
+        f"v2.2.0+ ships only: {', '.join(_BASE_LANGUAGES)}. "
+        f"Python files are parsed via the stdlib `ast` module."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -161,7 +196,10 @@ def parse_file(file_path: str, language: str | None = None) -> ParsedFile:
             raise ValueError(f"Cannot infer language for extension: {path.suffix}")
 
     try:
-        parser = tslp.get_parser(language)  # type: ignore[arg-type]
+        parser = _load_parser_for(language)
+    except ValueError:
+        # Already a user-actionable ValueError (e.g. "Install codevira[all-languages]")
+        raise
     except Exception as e:
         raise ValueError(f"Failed to load parser for {language}: {e}")
 

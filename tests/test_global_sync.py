@@ -1,325 +1,152 @@
 """
-Tests for mcp_server/global_sync.py — cross-project intelligence sync.
+test_global_sync.py — v3.0.0 ``mcp_server.global_sync`` coverage.
 
-Creates both GlobalDB and SQLiteGraph in tmp_path. Patches path helpers
-in mcp_server.paths (where they are defined) since global_sync.py uses
-lazy imports from that module inside each function.
+v3.0.0 (2026-05-22 surface-cut audit) gutted ``global_sync.py`` from
+a 187-line preference / learned-rule bidirectional sync to a ~90-line
+project-registry helper. The 320-line v2.x test file was rewritten
+in the same audit because the features it tested no longer exist
+(``export_project_to_global``, ``get_global_stats``,
+``TestImportGlobalToProject`` cross-project preference + rule
+copies — all gone with the MCP tools that consumed them).
+
+What's kept in v3.0.0:
+  * ``register_current_project()`` — best-effort registration in
+    ``~/.codevira/global.db`` so ``codevira projects`` can list
+    every project on the machine
+  * ``import_global_to_project()`` — backwards-compat alias for the
+    above so external callers / mocks keep working
+
+What this file verifies:
+  * register_current_project succeeds against an isolated tmp HOME
+  * register_current_project never raises when the global DB init
+    fails (best-effort contract)
+  * The legacy ``import_global_to_project`` alias returns the same
+    shape and routes to register_current_project
+  * ``_get_project_language`` reads config.yaml + degrades gracefully
 """
+
 from __future__ import annotations
 
-import yaml
 from pathlib import Path
-from unittest.mock import patch
 
-from indexer.global_db import GlobalDB
-from indexer.sqlite_graph import SQLiteGraph
+import pytest
+
 from mcp_server.global_sync import (
-    import_global_to_project,
-    export_project_to_global,
-    get_global_stats,
     _get_project_language,
+    import_global_to_project,
+    register_current_project,
 )
 
 
-def _setup_env(tmp_path):
-    """Create isolated project + global database files and return paths."""
-    project_root = tmp_path / "my-project"
-    project_root.mkdir()
+@pytest.fixture
+def isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Pin ~/.codevira/ under tmp_path so the real one stays clean."""
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
 
-    data_dir = tmp_path / "data"
-    data_dir.mkdir()
-    (data_dir / "graph").mkdir(parents=True)
+    project = tmp_path / "myproject"
+    project.mkdir()
+    (project / "pyproject.toml").write_text("[project]\nname='roundtrip'\n")
 
-    global_db_path = tmp_path / "global.db"
+    from mcp_server import paths as paths_mod
 
-    # Write a config.yaml so _get_project_language() works
-    config = {"project": {"name": "test", "language": "python"}}
-    (data_dir / "config.yaml").write_text(yaml.dump(config))
-
-    return project_root, data_dir, global_db_path
-
-
-def _apply_patches(project_root, data_dir, global_db_path):
-    """Return a combined context manager patching the three path helpers at their source."""
-    from contextlib import ExitStack
-    stack = ExitStack()
-    stack.enter_context(patch("mcp_server.paths.get_global_db_path", return_value=global_db_path))
-    stack.enter_context(patch("mcp_server.paths.get_data_dir", return_value=data_dir))
-    stack.enter_context(patch("mcp_server.paths.get_project_root", return_value=project_root))
-    return stack
-
-
-# =====================================================================
-# import_global_to_project
-# =====================================================================
-
-class TestImportGlobalToProject:
-    def test_import_prefs_above_threshold(self, tmp_path):
-        project_root, data_dir, global_db_path = _setup_env(tmp_path)
-        gdb = GlobalDB(global_db_path)
-        gdb.upsert_preference("naming", "snake_case", None, "/other", frequency=3)
-        gdb.upsert_preference("naming", "camelCase", None, "/other", frequency=1)  # below threshold
-        gdb.close()
-        pdb = SQLiteGraph(data_dir / "graph" / "graph.db")
-        pdb.close()
-
-        with _apply_patches(project_root, data_dir, global_db_path):
-            stats = import_global_to_project()
-
-        assert stats["preferences_imported"] == 1
-
-    def test_import_rules_above_confidence(self, tmp_path):
-        project_root, data_dir, global_db_path = _setup_env(tmp_path)
-        gdb = GlobalDB(global_db_path)
-        gdb.upsert_rule("Always use type hints", 0.9, "/other", category="patterns", language="python")
-        gdb.upsert_rule("Low confidence rule", 0.3, "/other", category="patterns", language="python")
-        gdb.close()
-        pdb = SQLiteGraph(data_dir / "graph" / "graph.db")
-        pdb.close()
-
-        with _apply_patches(project_root, data_dir, global_db_path):
-            stats = import_global_to_project()
-
-        assert stats["rules_imported"] == 1
-
-    def test_confidence_decay_on_import(self, tmp_path):
-        """Imported rules get 0.8x confidence decay: 0.8 * 0.8 = 0.64."""
-        project_root, data_dir, global_db_path = _setup_env(tmp_path)
-        gdb = GlobalDB(global_db_path)
-        gdb.upsert_rule("Type hint rule", 0.8, "/other", category="patterns", language="python")
-        gdb.close()
-        pdb = SQLiteGraph(data_dir / "graph" / "graph.db")
-        pdb.close()
-
-        with _apply_patches(project_root, data_dir, global_db_path):
-            import_global_to_project()
-
-        pdb = SQLiteGraph(data_dir / "graph" / "graph.db")
-        rules = pdb.get_learned_rules(min_confidence=0.0)
-        pdb.close()
-        matching = [r for r in rules if r["rule_text"] == "Type hint rule"]
-        assert len(matching) == 1
-        assert abs(matching[0]["confidence"] - 0.64) < 0.01
-
-    def test_import_skips_existing_preference(self, tmp_path):
-        """Re-importing the same preference does not duplicate it."""
-        project_root, data_dir, global_db_path = _setup_env(tmp_path)
-        gdb = GlobalDB(global_db_path)
-        gdb.upsert_preference("naming", "snake_case", None, "/other", frequency=5)
-        gdb.close()
-        pdb = SQLiteGraph(data_dir / "graph" / "graph.db")
-        pdb.record_preference("naming", "snake_case")
-        pdb.close()
-
-        with _apply_patches(project_root, data_dir, global_db_path):
-            stats = import_global_to_project()
-
-        assert stats["preferences_imported"] == 0
-
-    def test_import_skips_existing_rule(self, tmp_path):
-        """Re-importing the same rule does not duplicate it."""
-        project_root, data_dir, global_db_path = _setup_env(tmp_path)
-        gdb = GlobalDB(global_db_path)
-        gdb.upsert_rule("Use type hints", 0.9, "/other", category="patterns", language="python")
-        gdb.close()
-        pdb = SQLiteGraph(data_dir / "graph" / "graph.db")
-        pdb.add_learned_rule("Use type hints", 0.7, ["s1"], category="patterns")
-        pdb.close()
-
-        with _apply_patches(project_root, data_dir, global_db_path):
-            stats = import_global_to_project()
-
-        assert stats["rules_imported"] == 0
-
-    def test_no_global_db_returns_empty_stats(self, tmp_path):
-        """When global.db doesn't exist, import returns zeros."""
-        project_root, data_dir, _ = _setup_env(tmp_path)
-        nonexistent = tmp_path / "no-such-global.db"
-
-        with patch("mcp_server.paths.get_global_db_path", return_value=nonexistent), \
-             patch("mcp_server.paths.get_data_dir", return_value=data_dir), \
-             patch("mcp_server.paths.get_project_root", return_value=project_root):
-            stats = import_global_to_project()
-
-        assert stats == {"preferences_imported": 0, "rules_imported": 0}
-
-    def test_no_project_db_returns_empty_stats(self, tmp_path):
-        """When project graph.db doesn't exist, import returns zeros."""
-        project_root, data_dir, global_db_path = _setup_env(tmp_path)
-        gdb = GlobalDB(global_db_path)
-        gdb.close()
-        import shutil
-        shutil.rmtree(data_dir / "graph")
-
-        with patch("mcp_server.paths.get_global_db_path", return_value=global_db_path), \
-             patch("mcp_server.paths.get_data_dir", return_value=data_dir), \
-             patch("mcp_server.paths.get_project_root", return_value=project_root):
-            stats = import_global_to_project()
-
-        assert stats == {"preferences_imported": 0, "rules_imported": 0}
-
-    def test_no_qualifying_rules_imports_nothing(self, tmp_path):
-        """Rules all below confidence threshold => nothing imported."""
-        project_root, data_dir, global_db_path = _setup_env(tmp_path)
-        gdb = GlobalDB(global_db_path)
-        gdb.upsert_rule("Weak rule", 0.3, "/other", language="python")
-        gdb.upsert_rule("Weak rule 2", 0.5, "/other", language="python")
-        gdb.close()
-        pdb = SQLiteGraph(data_dir / "graph" / "graph.db")
-        pdb.close()
-
-        with _apply_patches(project_root, data_dir, global_db_path):
-            stats = import_global_to_project()
-
-        assert stats["rules_imported"] == 0
+    paths_mod.set_project_dir(project)
+    paths_mod.invalidate_data_dir_cache()
+    monkeypatch.setattr(paths_mod, "get_global_home", lambda: fake_home / ".codevira")
+    monkeypatch.setattr(
+        paths_mod,
+        "get_global_db_path",
+        lambda: fake_home / ".codevira" / "global.db",
+    )
+    # Make sure the global home exists before the test runs.
+    (fake_home / ".codevira").mkdir()
+    return fake_home
 
 
-# =====================================================================
-# export_project_to_global
-# =====================================================================
+class TestRegisterCurrentProject:
+    def test_returns_registered_true_on_happy_path(self, isolated_home: Path) -> None:
+        """A normal project with a resolvable root registers cleanly."""
+        result = register_current_project()
+        assert result["registered"] is True
+        assert "project_root" in result
+        assert Path(result["project_root"]).is_dir()
 
-class TestExportProjectToGlobal:
-    def test_export_prefs_above_threshold(self, tmp_path):
-        project_root, data_dir, global_db_path = _setup_env(tmp_path)
-        pdb = SQLiteGraph(data_dir / "graph" / "graph.db")
-        # Record preference 3x so frequency = 3 (>= 2 threshold)
-        pdb.record_preference("naming", "snake_case")
-        pdb.record_preference("naming", "snake_case")
-        pdb.record_preference("naming", "snake_case")
-        pdb.close()
+    def test_project_row_appears_in_global_db(self, isolated_home: Path) -> None:
+        """After register, the project should be queryable by name."""
+        register_current_project()
 
-        with _apply_patches(project_root, data_dir, global_db_path):
-            stats = export_project_to_global()
+        from indexer.global_db import GlobalDB
+        from mcp_server.paths import get_global_db_path
 
-        assert stats["preferences_exported"] == 1
+        gdb = GlobalDB(get_global_db_path())
+        try:
+            rows = gdb.conn.execute("SELECT path, name FROM projects").fetchall()
+        finally:
+            gdb.close()
+        names = {r["name"] for r in rows}
+        assert "myproject" in names
 
-    def test_export_rules_above_confidence(self, tmp_path):
-        project_root, data_dir, global_db_path = _setup_env(tmp_path)
-        pdb = SQLiteGraph(data_dir / "graph" / "graph.db")
-        pdb.add_learned_rule("Good rule", 0.7, ["s1"], category="patterns")
-        pdb.add_learned_rule("Bad rule", 0.3, ["s1"], category="patterns")  # below 0.5
-        pdb.close()
+    def test_never_raises_when_global_db_init_fails(
+        self,
+        isolated_home: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Best-effort contract — any error inside is logged + reported,
+        never raised. The server's startup path depends on this."""
 
-        with _apply_patches(project_root, data_dir, global_db_path):
-            stats = export_project_to_global()
+        def boom(*args, **kwargs):
+            raise RuntimeError("simulated global.db corruption")
 
-        assert stats["rules_exported"] == 1
-
-    def test_no_project_db_returns_empty_stats(self, tmp_path):
-        project_root, data_dir, global_db_path = _setup_env(tmp_path)
-        import shutil
-        shutil.rmtree(data_dir / "graph")
-
-        with _apply_patches(project_root, data_dir, global_db_path):
-            stats = export_project_to_global()
-
-        assert stats == {"preferences_exported": 0, "rules_exported": 0}
-
-    def test_export_then_import_roundtrip(self, tmp_path):
-        """Export from project A, import into project B, verify data arrives."""
-        project_root, data_dir, global_db_path = _setup_env(tmp_path)
-        pdb = SQLiteGraph(data_dir / "graph" / "graph.db")
-        pdb.add_learned_rule("Always lint before commit", 0.85, ["s1"], category="patterns")
-        pdb.close()
-
-        with _apply_patches(project_root, data_dir, global_db_path):
-            export_stats = export_project_to_global()
-        assert export_stats["rules_exported"] == 1
-
-        # Project B: fresh project DB
-        data_dir_b = tmp_path / "data-b"
-        data_dir_b.mkdir()
-        (data_dir_b / "graph").mkdir(parents=True)
-        config_b = {"project": {"name": "project-b", "language": "python"}}
-        (data_dir_b / "config.yaml").write_text(yaml.dump(config_b))
-        project_root_b = tmp_path / "project-b"
-        project_root_b.mkdir()
-        pdb_b = SQLiteGraph(data_dir_b / "graph" / "graph.db")
-        pdb_b.close()
-
-        with patch("mcp_server.paths.get_global_db_path", return_value=global_db_path), \
-             patch("mcp_server.paths.get_data_dir", return_value=data_dir_b), \
-             patch("mcp_server.paths.get_project_root", return_value=project_root_b):
-            import_stats = import_global_to_project()
-
-        assert import_stats["rules_imported"] == 1
-
-        pdb_b = SQLiteGraph(data_dir_b / "graph" / "graph.db")
-        rules = pdb_b.get_learned_rules(min_confidence=0.0)
-        pdb_b.close()
-        matching = [r for r in rules if r["rule_text"] == "Always lint before commit"]
-        assert len(matching) == 1
-        # 0.85 * 0.8 = 0.68
-        assert abs(matching[0]["confidence"] - 0.68) < 0.01
+        monkeypatch.setattr("indexer.global_db.GlobalDB.__init__", boom)
+        result = register_current_project()
+        assert result["registered"] is False
+        assert "error" in result
+        assert "simulated" in result["error"]
 
 
-# =====================================================================
-# get_global_stats
-# =====================================================================
+class TestBackwardsCompatAlias:
+    """The v2.x function name ``import_global_to_project`` is preserved
+    so external code (tests mocking it, third-party scripts) keeps
+    working through v3.0.0. It must route through to the new
+    register_current_project and return the same dict shape."""
 
-class TestGetGlobalStats:
-    def test_returns_stats_when_db_exists(self, tmp_path):
-        global_db_path = tmp_path / "global.db"
-        gdb = GlobalDB(global_db_path)
-        gdb.register_project("/p1", "proj1", "python")
-        gdb.register_project("/p2", "proj2", "go")
-        gdb.upsert_preference("naming", "snake", None, "/p1")
-        gdb.upsert_rule("Use type hints", 0.8, "/p1")
-        gdb.close()
+    def test_alias_returns_same_shape_as_register(self, isolated_home: Path) -> None:
+        legacy = import_global_to_project()
+        canonical = register_current_project()
+        assert set(legacy.keys()) == set(canonical.keys())
+        assert legacy["registered"] is True
+        assert canonical["registered"] is True
 
-        with patch("mcp_server.paths.get_global_db_path", return_value=global_db_path):
-            stats = get_global_stats()
-
-        assert stats is not None
-        assert stats["project_count"] == 2
-        assert stats["total_preferences"] == 1
-        assert stats["total_rules"] == 1
-
-    def test_returns_none_when_no_global_db(self, tmp_path):
-        nonexistent = tmp_path / "no-such.db"
-        with patch("mcp_server.paths.get_global_db_path", return_value=nonexistent):
-            stats = get_global_stats()
-        assert stats is None
-
-
-# =====================================================================
-# _get_project_language
-# =====================================================================
 
 class TestGetProjectLanguage:
-    def test_reads_language_from_config(self, tmp_path):
-        data_dir = tmp_path / "data"
-        data_dir.mkdir()
-        config = {"project": {"name": "test", "language": "go"}}
-        (data_dir / "config.yaml").write_text(yaml.dump(config))
+    def test_returns_language_from_config_yaml(
+        self,
+        isolated_home: Path,
+    ) -> None:
+        """When config.yaml has a `language` field, return it."""
+        import yaml
 
-        with patch("mcp_server.paths.get_data_dir", return_value=data_dir):
-            lang = _get_project_language()
-        assert lang == "go"
+        from mcp_server.paths import get_data_dir
 
-    def test_missing_config_returns_none(self, tmp_path):
-        data_dir = tmp_path / "empty-data"
-        data_dir.mkdir()
+        data_dir = get_data_dir()
+        data_dir.mkdir(parents=True, exist_ok=True)
+        config_path = data_dir / "config.yaml"
+        config_path.write_text(yaml.safe_dump({"project": {"language": "python"}}))
+        assert _get_project_language() == "python"
 
-        with patch("mcp_server.paths.get_data_dir", return_value=data_dir):
-            lang = _get_project_language()
-        assert lang is None
+    def test_returns_none_when_config_missing(self, isolated_home: Path) -> None:
+        """No config → no language → None. Best-effort, no raise."""
+        # config.yaml deliberately absent under this isolated_home
+        assert _get_project_language() is None
 
-    def test_config_without_language_key_returns_none(self, tmp_path):
-        data_dir = tmp_path / "data"
-        data_dir.mkdir()
-        config = {"project": {"name": "test"}}
-        (data_dir / "config.yaml").write_text(yaml.dump(config))
+    def test_returns_none_on_malformed_yaml(self, isolated_home: Path) -> None:
+        """Malformed config → None, no raise. The startup path can't
+        crash because the user's yaml has a typo."""
+        from mcp_server.paths import get_data_dir
 
-        with patch("mcp_server.paths.get_data_dir", return_value=data_dir):
-            lang = _get_project_language()
-        assert lang is None
-
-    def test_corrupt_yaml_returns_none(self, tmp_path):
-        data_dir = tmp_path / "data"
-        data_dir.mkdir()
-        (data_dir / "config.yaml").write_text("{{invalid yaml: [")
-
-        with patch("mcp_server.paths.get_data_dir", return_value=data_dir):
-            lang = _get_project_language()
-        assert lang is None
+        data_dir = get_data_dir()
+        data_dir.mkdir(parents=True, exist_ok=True)
+        (data_dir / "config.yaml").write_text("this: is: : not valid yaml ]]]]")
+        assert _get_project_language() is None

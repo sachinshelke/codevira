@@ -14,7 +14,6 @@ filesystem watcher needed for these). Verifies:
 """
 from __future__ import annotations
 
-import time
 
 import pytest
 

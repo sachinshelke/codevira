@@ -2,7 +2,7 @@
 signals.py — SignalContext lazy accessor.
 
 Every HookEvent carries a SignalContext that policies use to read codevira's
-data sources (graph, decisions, fix history, preferences, etc.). Two
+data sources (graph, decisions, recent fixes, token budget). Two
 non-negotiable design properties:
 
 1. **Lazy.** Loading the graph SQLite or running a `get_impact` query is
@@ -20,6 +20,7 @@ mcp_server.engine`` fast.
 
 See docs/heroes/00-engine.md "Signals" for the full surface.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -63,7 +64,9 @@ class SignalContext:
     _impact_cache: dict[Path, Any] = field(default_factory=dict, repr=False)
     _decisions_cache: dict[tuple, Any] = field(default_factory=dict, repr=False)
     _fixes_cache: dict[Path, Any] = field(default_factory=dict, repr=False)
-    _prefs_cache: dict[str, Any] = field(default_factory=dict, repr=False)
+    # v3.0.0 audit cleanup: _prefs_cache dropped. The preferences()
+    # method was deleted along with the get_preferences MCP tool in
+    # the 2026-05-22 surface-cut audit; no remaining policy reads it.
 
     # ---------------------------------------------------------------
     # Graph + impact
@@ -85,41 +88,51 @@ class SignalContext:
         return self._graph
 
     def _load_graph(self) -> Any:
-        """Locate and open the project's graph.db.
+        """Locate and open the project's code graph SQLite DB.
 
-        Resolution priority (matches mcp_server.paths.get_data_dir):
-          1. Centralized: ``~/.codevira/projects/<slug>/graph/graph.db``
-             (v1.6+ default)
-          2. Legacy in-project: ``<project_root>/.codevira/graph/graph.db``
-             (v1.5 and earlier — still in use on un-migrated projects)
-          3. None — uninitialized project; signal returns None to policies.
+        v3.0.0 (2026-05-22 round-2): added the v3.0.0 location as the
+        PRIMARY tier. Pre-fix the resolution only checked v1.5 and
+        v1.6 paths; v3.0.0 writes the code graph to
+        ``<project>/.codevira-cache/graph.sqlite`` (gitignored,
+        rebuildable). signals.graph returned None on every v3.0.0
+        project, which structurally broke BlastRadiusVeto + the
+        DecisionLock no-rationale branch. Caught during the
+        round-2 G5 audit immediately after the
+        signals.decisions-reads-JSONL fix.
 
-        We resolve manually (rather than calling ``get_data_dir()``) so
-        that this signal works for ANY ``project_root``, not just the
-        process-global one. Multi-project use cases (running tests,
-        future daemon) need this.
+        Resolution priority:
+          1. v3.0.0: ``<project>/.codevira-cache/graph.sqlite``
+          2. Centralized v1.6+: ``~/.codevira/projects/<slug>/graph/graph.db``
+          3. Legacy in-project v1.5: ``<project>/.codevira/graph/graph.db``
+          4. None — uninitialized project; signals returns None.
+
+        We resolve manually (rather than calling ``get_data_dir()``)
+        so this signal works for ANY ``project_root``, not just the
+        process-global one (multi-project use cases need this).
         """
         try:
-            from indexer.sqlite_graph import SQLiteGraph  # local import — slow on cold path
+            from indexer.sqlite_graph import (
+                SQLiteGraph,
+            )  # local import — slow on cold path
             from mcp_server.paths import _sanitize_path_key, get_global_home
 
-            # 1. Centralized location (v1.6+).
+            # 1. v3.0.0 location (preferred).
+            v3 = self.project_root / ".codevira-cache" / "graph.sqlite"
+            if v3.exists():
+                return SQLiteGraph(v3)
+
+            # 2. Centralized location (v1.6+).
             key = _sanitize_path_key(self.project_root)
-            centralized = (
-                get_global_home() / "projects" / key / "graph" / "graph.db"
-            )
+            centralized = get_global_home() / "projects" / key / "graph" / "graph.db"
             if centralized.exists():
                 return SQLiteGraph(centralized)
 
-            # 2. Legacy in-project location (v1.5 and earlier). Honors
-            #    users who haven't been migrated yet — without this
-            #    fallback, every signal-using policy silently no-ops on
-            #    legacy projects.
+            # 3. Legacy in-project location (v1.5 and earlier).
             legacy = self.project_root / ".codevira" / "graph" / "graph.db"
             if legacy.exists():
                 return SQLiteGraph(legacy)
 
-            # 3. Uninitialized — return None so policies skip silently.
+            # 4. Uninitialized — return None so policies skip silently.
             return None
         except Exception:  # noqa: BLE001 — signal layer must never crash a policy
             return None
@@ -172,77 +185,91 @@ class SignalContext:
         Shape: list of dicts with keys ``id``, ``file_path``, ``decision``,
         ``context``, ``locked`` (bool, mirrors do_not_revert), ``timestamp``.
 
+        v3.0.0 (2026-05-22): rewired to read ``.codevira/decisions.jsonl``
+        via ``mcp_server.storage.decisions_store`` — the v2.x SQL path
+        that queried ``graph.db`` was structurally broken in v2.2.0 onward
+        because record_decision writes to JSONL, not the SQL table. The
+        bug went undetected because every engine-policy unit test mocked
+        SignalContext with ``_FakeSignals``; the only real exercise was
+        this round-2 G5 verification, which surfaced ``DecisionLock``
+        silently failing open. Don't add back-compat for the SQL path:
+        the JSONL is the v3.0.0 source of truth.
+
         Round-4 QA HIGH #3: ``limit`` is clamped to [1, 1000] to prevent
-        a misbehaving policy from issuing ``limit=-1`` (SQLite returns
-        all rows) or ``limit=10**9`` (memory exhaustion). Honest bound;
-        no real policy needs >1000 decisions in one call.
+        a misbehaving policy from issuing ``limit=-1`` or
+        ``limit=10**9`` (memory exhaustion).
 
         Cached by argument tuple.
         """
-        # Defensive clamp before SQL — caller may pass negative or huge.
         limit = max(1, min(int(limit), 1000))
         cache_key = (str(file) if file is not None else None, locked_only, limit)
         if cache_key in self._decisions_cache:
             return self._decisions_cache[cache_key]
+
         result: list[dict[str, Any]] = []
         try:
-            graph = self.graph
-            if graph is None:
+            from mcp_server.storage import (
+                decisions_store,
+                paths as store_paths,
+            )
+
+            decisions_path = store_paths.decisions_path()
+            if not decisions_path.is_file():
+                # .codevira/ not initialised; no decisions to evaluate.
                 self._decisions_cache[cache_key] = result
                 return result
-            # Direct SQL — the existing search_decisions doesn't expose a
-            # locked_only filter cleanly, so we go to the source.
-            # Schema note: the decisions table column is ``created_at``
-            # (not ``timestamp``). The original SELECT ``d.timestamp``
-            # was a Week-1 bug that survived 5 weeks because every test
-            # used a _FakeSignals stub instead of a real graph DB. The
-            # column-not-found error was swallowed by the broad
-            # ``except Exception`` below, returning ``[]`` — which made
-            # Hero 1 (Decision Lock) silently fail-open against any
-            # real project. Caught by Week-5 R8-redo (live integration
-            # against a real SQLiteGraph instance).
-            sql = """
-                SELECT d.id, d.file_path, d.decision, d.context,
-                       COALESCE(n.do_not_revert, 0) AS locked,
-                       d.created_at AS timestamp
-                FROM decisions d
-                LEFT JOIN nodes n ON n.file_path = d.file_path
-                WHERE 1=1
-            """
-            params: list[Any] = []
-            if file is not None:
-                sql += " AND d.file_path = ?"
-                params.append(str(file) if isinstance(file, Path) else file)
-            if locked_only:
-                sql += " AND COALESCE(n.do_not_revert, 0) = 1"
-            sql += " ORDER BY d.created_at DESC LIMIT ?"
-            params.append(limit)
-            rows = graph.conn.execute(sql, params).fetchall()
-            result = [dict(r) for r in rows]
-        except Exception:  # noqa: BLE001
+
+            # Build a normalised file-path filter. The decision_lock policy
+            # passes the project-relative form; the JSONL stores the same.
+            file_str = str(file) if file is not None else None
+
+            # decisions_store.list_all applies amendments + superseded
+            # filtering automatically. We use the public API rather than
+            # re-reading the JSONL ourselves so any future schema changes
+            # land in one place.
+            raw = decisions_store.list_all(
+                limit=limit,
+                file_pattern=file_str,
+                protected_only=locked_only,
+                include_superseded=False,
+                full=True,
+            )
+            for d in raw.get("decisions", []):
+                # The engine-policy contract expects these specific keys.
+                # Map v3.0.0 JSONL shape → engine shape.
+                result.append(
+                    {
+                        "id": d.get("id"),
+                        "file_path": d.get("file_path"),
+                        "decision": d.get("decision"),
+                        "context": d.get("context"),
+                        "locked": bool(d.get("do_not_revert")),
+                        "timestamp": d.get("ts"),
+                    }
+                )
+        except Exception:  # noqa: BLE001 — signals must never raise
             result = []
         self._decisions_cache[cache_key] = result
         return result
 
     def search_decisions(
-        self, query: str, *, limit: int = 5,
+        self,
+        query: str,
+        *,
+        limit: int = 5,
     ) -> list[dict[str, Any]]:
-        """Substring-search decisions by query string.
+        """BM25-ranked FTS5 search over the JSONL decision store.
 
-        Used by Hero 5 (Cross-Session Consistency) to surface prior
-        decisions relevant to the current user prompt. Wraps
-        ``indexer.sqlite_graph.SQLiteGraph.search_decisions`` which does
-        relevance-tiered LIKE matching (file_path → decision text →
-        context → summary).
+        v2.2.0+: uses ``mcp_server.storage.decisions_store.search()``
+        (JSONL + FTS5 backend). The legacy SQLiteGraph fallback was
+        removed once the v2.1.x carryover user base dropped to zero.
 
         Cached by ``(query, limit)`` so multiple policies asking the
         same question pay once. Returns empty list on any error or
-        when graph is unavailable.
+        when ``.codevira/`` is not initialised.
 
-        Limit is clamped to [1, 20] — same defensive bound as the
-        existing ``tools.search.search_decisions``.
+        Limit is clamped to [1, 20].
         """
-        # Cache + defensive clamp
         limit = max(1, min(int(limit), 20))
         cache_key = ("search", query, limit)
         cached = self._decisions_cache.get(cache_key)
@@ -250,11 +277,10 @@ class SignalContext:
             return cached
         result: list[dict[str, Any]] = []
         try:
-            graph = self.graph
-            if graph is None:
-                self._decisions_cache[cache_key] = result
-                return result
-            result = graph.search_decisions(query, limit=limit)
+            from mcp_server.storage import decisions_store, paths as store_paths
+
+            if store_paths.is_initialized():
+                result = decisions_store.search(query, limit=limit)
         except Exception:  # noqa: BLE001
             result = []
         self._decisions_cache[cache_key] = result
@@ -276,108 +302,21 @@ class SignalContext:
         result: list[dict[str, Any]] = []
         try:
             from indexer.fix_history import lookup as fix_lookup
+
             result = fix_lookup(self.project_root, file_path)
         except Exception:  # noqa: BLE001
             result = []
         self._fixes_cache[file_path] = result
         return result
 
-    # ---------------------------------------------------------------
-    # Preferences
-    # ---------------------------------------------------------------
-
-    def preferences(self, category: str = "") -> list[dict[str, Any]]:
-        """Return preferences in the given category (or all if empty)."""
-        if category in self._prefs_cache:
-            return self._prefs_cache[category]
-        result: list[dict[str, Any]] = []
-        try:
-            from mcp_server.tools.learning import get_preferences  # type: ignore[attr-defined]
-
-            data = get_preferences(category=category) if category else get_preferences()
-            # Existing tool returns a dict with "preferences" key.
-            if isinstance(data, dict):
-                result = data.get("preferences", [])  # type: ignore[assignment]
-            elif isinstance(data, list):
-                result = data
-        except Exception:  # noqa: BLE001
-            result = []
-        self._prefs_cache[category] = result
-        return result
-
-    # ---------------------------------------------------------------
-    # Outcomes + learned rules (Hero 10 — AI Promotion Score)
-    # ---------------------------------------------------------------
-
-    def outcomes(
-        self,
-        *,
-        since_days: int = 30,
-        min_outcomes: int = 2,
-        limit: int = 100,
-    ) -> list[dict[str, Any]]:
-        """Aggregate outcome records into per-decision rows + scores.
-
-        Used by Hero 10's SessionStart inject. Reads via
-        ``mcp_server.engine.promotion_score.aggregate_decision_outcomes``
-        which queries ``decisions LEFT JOIN outcomes`` (already indexed).
-
-        Cached by argument tuple so the policy + the CLI subprocess in
-        the same process don't hit the DB twice. Returns empty list
-        when graph is unavailable or table is empty.
-        """
-        cache_key = ("outcomes", int(since_days), int(min_outcomes), int(limit))
-        if cache_key in self._decisions_cache:  # reuse decisions cache slot
-            return self._decisions_cache[cache_key]
-        result: list[dict[str, Any]] = []
-        try:
-            graph = self.graph
-            if graph is None:
-                self._decisions_cache[cache_key] = result
-                return result
-            from mcp_server.engine.promotion_score import (
-                aggregate_decision_outcomes,
-            )
-            result = aggregate_decision_outcomes(
-                graph.conn,
-                since_days=since_days,
-                min_outcomes=min_outcomes,
-                limit=limit,
-            )
-        except Exception:  # noqa: BLE001
-            result = []
-        self._decisions_cache[cache_key] = result
-        return result
-
-    def learned_rules(
-        self,
-        *,
-        min_confidence: float = 0.7,
-        max_items: int = 3,
-    ) -> list[dict[str, Any]]:
-        """Top-N learned rules above a confidence threshold.
-
-        Companion to ``outcomes()`` for Hero 10's inject.
-        """
-        cache_key = ("rules", float(min_confidence), int(max_items))
-        if cache_key in self._decisions_cache:
-            return self._decisions_cache[cache_key]
-        result: list[dict[str, Any]] = []
-        try:
-            graph = self.graph
-            if graph is None:
-                self._decisions_cache[cache_key] = result
-                return result
-            from mcp_server.engine.promotion_score import top_rules
-            result = top_rules(
-                graph.conn,
-                min_confidence=min_confidence,
-                max_items=max_items,
-            )
-        except Exception:  # noqa: BLE001
-            result = []
-        self._decisions_cache[cache_key] = result
-        return result
+    # v3.0.0 audit cleanup: preferences(), outcomes(), learned_rules()
+    # all deleted. They were no-op stubs (or, in the preferences case,
+    # a broken stub that imported a non-existent symbol) left over
+    # from the v2.2.0 surface cut. The corresponding MCP tools
+    # (get_preferences, get_learned_rules) were removed in the
+    # 2026-05-22 audit; the AIPromotionScore policy that consumed
+    # outcomes() was deleted in the same audit. No remaining code
+    # reads any of these signals.
 
     # ---------------------------------------------------------------
     # Token budget meter
@@ -394,6 +333,7 @@ class SignalContext:
         if self._token_budget is _UNCOMPUTED:
             try:
                 from mcp_server.engine.token_meter import get_session_meter
+
                 self._token_budget = get_session_meter()
             except Exception:  # noqa: BLE001
                 self._token_budget = None
@@ -405,20 +345,14 @@ class SignalContext:
 
     @property
     def scope_contract(self) -> Any:
-        """The current session's scope contract, or ``None``.
+        """v2.2.0+: always returns None.
 
-        Populated by Hero 3 (Scope Contract Lock) on UserPromptSubmit.
-        Other policies (esp. Hero 4 Blast-Radius) may read this to refine
-        their own decisions ("AI is in tight scope; don't be lenient").
-        Returns ``None`` until Hero 3 ships and is enabled.
+        Hero 3 (ProactiveScopeContractLock) was deleted in the
+        2026-05-22 surface-cut audit. The signal slot is retained
+        as a no-op so existing policy code that probes it doesn't
+        need updating.
         """
-        if self._scope_contract is _UNCOMPUTED:
-            try:
-                from mcp_server.engine.scope_contract import current_contract
-                self._scope_contract = current_contract()
-            except Exception:  # noqa: BLE001
-                self._scope_contract = None
-        return self._scope_contract
+        return None
 
     # ---------------------------------------------------------------
     # Current session context
@@ -430,6 +364,7 @@ class SignalContext:
         if self._current_session is _UNCOMPUTED:
             try:
                 from mcp_server.tools.learning import get_session_context  # type: ignore[attr-defined]
+
                 self._current_session = get_session_context() or {}
             except Exception:  # noqa: BLE001
                 self._current_session = {}

@@ -80,6 +80,37 @@ if [ ! -x "$TMP/venv/bin/codevira" ]; then
 fi
 echo "✓ wheel installed; codevira entry point present"
 
+# ─── Step 2.5: venv size budget (v2.2.0 G1 — ≤100 MB target) ───────
+# v2.2.0 architectural promise: dropping chromadb / sentence-transformers /
+# torch lands install at ≤100 MB (was ~450 MB on v2.1.2 with
+# tree-sitter-language-pack + chromadb stack). 100 MB matches the
+# practical floor in a 2026-05 dep tree: mcp pulls cryptography
+# (24 MB) + pydantic (4 MB) + httpx (1 MB); pip itself takes 11 MB;
+# rich pulls pygments (9 MB); the 4 individual tree-sitter grammars
+# (TS/JS/Go/Rust) total ~5 MB; codevira itself is ~3 MB; the rest is
+# transitive (~40 MB). Earlier planning numbers (≤55 MB) didn't
+# account for mcp's 2026 dep growth.
+#
+# If a future dep change inflates the venv beyond the budget, fail
+# loudly here so the regression doesn't reach users via PyPI. Override
+# with CODEVIRA_VENV_SIZE_MAX_MB=NNN for local experimentation.
+echo
+echo "═══ Step 2.5: venv size budget (≤${CODEVIRA_VENV_SIZE_MAX_MB:-100} MB) ═══"
+VENV_SIZE_MB="$(du -sm "$TMP/venv" | awk '{print $1}')"
+VENV_SIZE_LIMIT_MB="${CODEVIRA_VENV_SIZE_MAX_MB:-100}"
+if [ "$VENV_SIZE_MB" -le "$VENV_SIZE_LIMIT_MB" ]; then
+    echo "✓ venv size: ${VENV_SIZE_MB} MB (under ${VENV_SIZE_LIMIT_MB} MB budget)"
+else
+    echo "✗ FAIL: venv size ${VENV_SIZE_MB} MB exceeds budget ${VENV_SIZE_LIMIT_MB} MB"
+    echo "  Top 5 packages contributing to the bloat:"
+    du -sh "$TMP/venv/lib"/*/site-packages/* 2>/dev/null \
+        | sort -rh | awk 'NR<=5 {print "    "$0}'
+    echo
+    echo "  To diagnose: pip install --target ./_inspect $WHEEL && du -sh _inspect/*"
+    echo "  To override the gate (dev only): CODEVIRA_VENV_SIZE_MAX_MB=NNN $0"
+    exit 1
+fi
+
 # ─── Step 3: version ───────────────────────────────────────────────
 echo
 echo "═══ Step 3: --version ═══"
@@ -94,22 +125,47 @@ echo "✓ codevira --version → $ACTUAL_VERSION"
 echo
 echo "═══ Step 4: subcommand registration ═══"
 HELP_OUT="$("$TMP/venv/bin/codevira" --help 2>&1)"
-# v2.1.2 must surface: reset, export, calibrate (the new commands)
-for cmd in reset export calibrate heal doctor projects clean insights replay budget; do
+# v2.2.0+ (2026-05-22 surface-cut audit): the daily-driver CLI surface
+# is 15 commands. Assert each one is registered. The deleted commands
+# (heal, budget, agents, hooks, register, configure, report, calibrate,
+# insights) MUST NOT be present — regression-guarded below.
+for cmd in init index status serve setup doctor projects replay clean reset \
+           export sync observe-git uninstall engine; do
     if echo "$HELP_OUT" | grep -q "$cmd"; then
         echo "✓ $cmd present in top-level --help"
     else
         echo "✗ FAIL: $cmd missing from top-level --help"
-        echo "$HELP_OUT" | sed -n '1,10p'
+        echo "$HELP_OUT" | sed -n '1,15p'
         exit 1
     fi
 done
 
+# v2.2.0+ regression guard: ensure deleted commands stay deleted.
+# Check the subparsers list line (the comma-separated {a,b,c,...}
+# argparse generates) rather than free-text help, because some prose
+# blurbs legitimately mention words like "hooks" in passing.
+# Use the GNU-style absolute path — some dev machines have HEAD aliased
+# to an HTTP utility (XAMPP / curl /usr/local/bin/head shadowing), and
+# pipe-failure-mode `set -e` masks the diff.
+SUBPARSER_LINE="$(echo "$HELP_OUT" | grep -oE '\{[a-z_,-]+\}' | /usr/bin/head -n 1)"
+if [ -z "$SUBPARSER_LINE" ]; then
+    echo "✗ FAIL: could not locate the {a,b,c,...} subparser list in --help"
+    exit 1
+fi
+for deleted in heal budget agents hooks register configure report calibrate insights; do
+    if echo "$SUBPARSER_LINE" | grep -qE "[{,]${deleted}[,}]"; then
+        echo "✗ FAIL: '$deleted' CLI command is back — regression of 2026-05-22 surface cut"
+        echo "  subparsers: $SUBPARSER_LINE"
+        exit 1
+    fi
+done
+echo "✓ 9 audit-deleted CLI commands stay deleted"
+
 # ─── Step 5: per-command --help works (no exception) ───────────────
 echo
 echo "═══ Step 5: per-command --help ═══"
-for cmd in init index status report serve setup register configure budget doctor \
-           projects agents replay insights clean heal reset export calibrate; do
+for cmd in init index status serve setup doctor projects replay clean reset \
+           export sync observe-git uninstall; do
     if "$TMP/venv/bin/codevira" "$cmd" --help > /tmp/cold_install_cmdhelp.log 2>&1; then
         echo "✓ codevira $cmd --help"
     else
@@ -155,34 +211,27 @@ for phrase in "AUTO-EXPORTED" "no-backup" "destructive"; do
     fi
 done
 
-# ─── Step 8: heal --vectors --dry-run (deprecation warning) ────────
+# ─── Step 8: uninstall --help (v2.2.0+ Phase 5 — replaces heal) ────
 echo
-echo "═══ Step 8: heal deprecation forwards to reset ═══"
-HEAL_OUT="$("$TMP/venv/bin/codevira" --project-dir "$PROJECT" heal --vectors --dry-run 2>&1)"
-if echo "$HEAL_OUT" | grep -q "DEPRECATED in v2.1.2"; then
-    echo "✓ heal --vectors triggers deprecation warning"
-else
-    echo "✗ FAIL: heal --vectors didn't print v2.1.2 deprecation warning"
-    echo "$HEAL_OUT" | sed -n '1,10p'
-    exit 1
-fi
-if echo "$HEAL_OUT" | grep -q "Codevira — Reset"; then
-    echo "✓ heal --vectors forwards to reset cmd"
-else
-    echo "✗ FAIL: heal --vectors didn't forward to reset"
-    exit 1
-fi
+echo "═══ Step 8: uninstall --help (v2.2.0+ Phase 5 critical command) ═══"
+UNINSTALL_HELP="$("$TMP/venv/bin/codevira" uninstall --help 2>&1)"
+for phrase in "dry-run" "keep-data" "MCP entry" "hook"; do
+    if echo "$UNINSTALL_HELP" | grep -iq "$phrase"; then
+        echo "✓ uninstall --help mentions '$phrase'"
+    else
+        echo "✗ FAIL: uninstall --help missing '$phrase' (Phase 5 doc-drift)"
+        exit 1
+    fi
+done
 
-# ─── Step 9: calibrate --help cites correct clamp range ────────────
+# ─── Step 9 (v2.2.0+): nudge files — only AGENTS.md ────────────────
 echo
-echo "═══ Step 9: calibrate --help cites code-correct clamp range ═══"
-CAL_HELP="$("$TMP/venv/bin/codevira" calibrate --help 2>&1)"
-# v2.1.2 38447fe: clamp range MUST be [0.35, 0.80], not the old [0.20, 0.55]
-if echo "$CAL_HELP" | grep -q '\[0\.35, 0\.80\]'; then
-    echo "✓ calibrate --help cites clamp range [0.35, 0.80]"
+echo "═══ Step 9: doctor's nudge_files check expects AGENTS.md only ═══"
+if grep -q "AGENTS.md" /tmp/cold_install_doctor.log; then
+    echo "✓ doctor's nudge_files line references AGENTS.md (v2.2.0+ shape)"
 else
-    echo "✗ FAIL: calibrate --help clamp range wrong — doc-drift regression"
-    echo "$CAL_HELP" | grep -i clamp || echo "  (no 'clamp' line found)"
+    echo "✗ FAIL: doctor never mentioned AGENTS.md — surface-cut regression"
+    tail -20 /tmp/cold_install_doctor.log
     exit 1
 fi
 
@@ -227,7 +276,7 @@ echo
 echo "═══════════════════════════════════════════════════════════════"
 echo "✓ Cold-install smoke PASSED for codevira $EXPECTED_VERSION"
 echo "  Wheel:   $WHEEL ($WHEEL_SIZE bytes)"
-echo "  Tested:  fresh venv + 19 subcommand --help + reset/export/calibrate/heal"
+echo "  Tested:  fresh venv + 15 subcommand --help + reset/export/uninstall + audit-deleted regression guard"
 echo "  Cleanup: $TMP (will be removed by trap)"
 echo "═══════════════════════════════════════════════════════════════"
 exit 0

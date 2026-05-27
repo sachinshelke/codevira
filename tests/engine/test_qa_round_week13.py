@@ -57,14 +57,12 @@ def isolated_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 @pytest.fixture(autouse=True)
 def _isolate(monkeypatch: pytest.MonkeyPatch):
     from mcp_server.engine.runner import reset_policies
-    from mcp_server.engine.scope_contract import clear_all
 
     reset_policies()
-    clear_all()
+    # v2.2.0+: scope_contract module deleted; nothing to clear.
     monkeypatch.delenv("CODEVIRA_ENGINE", raising=False)
     yield
     reset_policies()
-    clear_all()
 
 
 def _set_project(monkeypatch: pytest.MonkeyPatch, project: Path) -> None:
@@ -100,22 +98,18 @@ class TestL1_TenHeroes:
 
         register_default_policies()
         names = {p.name for p in registered_policies()}
-        # Note: Hero 8 (Decision Replay) is NOT a policy — it's a
-        # browse surface (MCP resources + CLI). So default policy
-        # count stays at 9 (post-Week-12).
+        # v2.2.0+ surface cut (2026-05-22 audit): Hero 7
+        # (LiveStyleEnforcement), Hero 10 (AIPromotionScore), Hero 9
+        # (ProactiveIntentInference), and Hero 3 (ProactiveScopeContractLock)
+        # were all DELETED. Default set: 6 (5 heroes + 1 v2.1.2 item).
         expected = {
-            "blast_radius_veto",  # Hero 4 (Week 4)
-            "decision_lock",  # Hero 1 (Week 5)
-            "cross_session_consistency",  # Hero 5 (Week 6)
-            "token_budget_persist",  # Hero 6 (Week 7)
-            "anti_regression",  # Hero 2 (Week 8)
-            "live_style_enforcement",  # Hero 7 (Week 9)
-            "ai_promotion_score",  # Hero 10 (Week 10)
-            "intent_inference",  # Hero 9 (Week 11)
-            "scope_contract_lock",  # Hero 3 (Week 12)
+            "blast_radius_veto",  # Hero 4
+            "decision_lock",  # Hero 1 (unique enforcement wedge)
+            "relevance_inject",  # Hero 5 (v2.2.0 UserPromptSubmit inject)
+            "token_budget_persist",  # Hero 6
+            "anti_regression",  # Hero 2
             "post_edit_graph_refresh",  # v2.1.2 Item 4
-            # Hero 8 (Decision Replay) is NOT here — it's a browse
-            # surface, not an event-intercepting policy.
+            # Hero 8 (Decision Replay) is a browse surface, not a policy.
         }
         assert names == expected, (
             f"Default policy set drift: got {sorted(names)}, "
@@ -187,27 +181,16 @@ class TestL3_KillSwitchDoesNotBreakBrowse:
         monkeypatch.setenv("CODEVIRA_ENGINE", "0")
 
         _set_project(monkeypatch, isolated_project)
-        g = _open_graph(isolated_project)
-        try:
-            g.conn.execute(
-                "INSERT INTO sessions (session_id, summary) VALUES (?, ?)",
-                ("s1", "test"),
-            )
-            cur = g.conn.execute(
-                "INSERT INTO decisions (session_id, decision, file_path, "
-                "context, created_at) VALUES (?, ?, ?, ?, datetime('now'))",
-                ("s1", "use bcrypt over argon2", "auth.py", ""),
-            )
-            for _ in range(3):
-                g.record_outcome(
-                    session_id="s1",
-                    file_path="auth.py",
-                    outcome_type="kept",
-                    decision_id=cur.lastrowid,
-                )
-            g.conn.commit()
-        finally:
-            g.close()
+        # v2.2.0+: write via the JSONL decisions_store so the resource
+        # handler (which is JSONL-only) sees the data.
+        from mcp_server.storage import decisions_store, paths as store_paths
+
+        store_paths.ensure_dirs()
+        decisions_store.record(
+            "use bcrypt over argon2",
+            file_path="auth.py",
+            session_id="s1",
+        )
 
         from mcp_server.server import handle_read_resource
 
@@ -231,6 +214,45 @@ class TestL4_RecordThenBrowse:
         replay surface. Verify a decision recorded one way appears in
         the replay output."""
         _set_project(monkeypatch, isolated_project)
+        # v2.2.0+: write via the canonical JSONL store (decisions_store.record).
+        # Also mirror the row into graph.db so Hero 10's promotion scorer
+        # (which still uses the SQLite graph for code-structure aggregation)
+        # has data to aggregate.
+        from mcp_server.storage import (
+            decisions_store,
+            jsonl_store,
+            paths as store_paths,
+        )
+        from datetime import datetime, timezone
+
+        store_paths.ensure_dirs()
+        jsonl_store.append(
+            store_paths.sessions_path(),
+            {
+                "id": "S-s1",
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "session_id": "s1",
+                "summary": "shared-data test",
+            },
+        )
+        new_id = decisions_store.record(
+            "End-to-end shared data check",
+            file_path="shared.py",
+            session_id="s1",
+        )
+        now_iso = datetime.now(timezone.utc).isoformat()
+        for _ in range(2):
+            jsonl_store.append(
+                store_paths.outcomes_path(),
+                {
+                    "ts": now_iso,
+                    "decision_id": new_id,
+                    "outcome_type": "kept",
+                    "delta_summary": "test kept",
+                },
+            )
+
+        # Mirror to graph.db for Hero 10's aggregator.
         g = _open_graph(isolated_project)
         try:
             g.conn.execute(
@@ -253,12 +275,12 @@ class TestL4_RecordThenBrowse:
         finally:
             g.close()
 
-        # Read via build_timeline (Hero 8's data path)
+        # Read via build_timeline (Hero 8's data path — JSONL in v2.2.0)
         from mcp_server.decision_replay import build_timeline
 
         g = _open_graph(isolated_project)
         try:
-            timeline = build_timeline(g.conn)
+            timeline = build_timeline()
             assert len(timeline) == 1
             assert timeline[0]["decision"] == "End-to-end shared data check"
 
@@ -270,14 +292,9 @@ class TestL4_RecordThenBrowse:
             assert len(decisions) == 1
             assert decisions[0]["decision"] == "End-to-end shared data check"
 
-            # Read via Hero 10's promotion scorer — same data
-            from mcp_server.engine.promotion_score import (
-                aggregate_decision_outcomes,
-            )
-
-            agg = aggregate_decision_outcomes(g.conn, since_days=30, min_outcomes=1)
-            # Same row appears in the aggregate
-            assert any(a.get("decision") == "End-to-end shared data check" for a in agg)
+            # v2.2.0+: Hero 10 (promotion_score) removed; this assertion
+            # is no longer applicable. JSONL + signals.decisions paths
+            # above already verify the cross-surface data coherence.
         finally:
             g.close()
 
@@ -297,25 +314,32 @@ class TestL5_XSSThroughWiring:
         verifies the FULL handler-to-output path doesn't accidentally
         un-escape (e.g., by re-rendering server-side)."""
         _set_project(monkeypatch, isolated_project)
-        g = _open_graph(isolated_project)
-        try:
-            g.conn.execute(
-                "INSERT INTO sessions (session_id, summary) VALUES (?, ?)",
-                ("s1", "<script>alert(2)</script>"),
-            )
-            g.conn.execute(
-                "INSERT INTO decisions (session_id, decision, file_path, "
-                "context, created_at) VALUES (?, ?, ?, ?, datetime('now'))",
-                (
-                    "s1",
-                    "<script>alert(1)</script>",
-                    "<img src=x>",
-                    "<svg/onload=alert(3)>",
-                ),
-            )
-            g.conn.commit()
-        finally:
-            g.close()
+        from datetime import datetime, timezone
+
+        from mcp_server.storage import (
+            decisions_store,
+            jsonl_store,
+            paths as store_paths,
+        )
+
+        store_paths.ensure_dirs()
+        # Plant adversarial session summary.
+        jsonl_store.append(
+            store_paths.sessions_path(),
+            {
+                "id": "S-s1",
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "session_id": "s1",
+                "summary": "<script>alert(2)</script>",
+            },
+        )
+        # Record adversarial decision with HTML-tag-like fields.
+        decisions_store.record(
+            "<script>alert(1)</script>",
+            file_path="<img src=x>",
+            session_id="s1",
+            context="<svg/onload=alert(3)>",
+        )
 
         from mcp_server.server import handle_read_resource
 

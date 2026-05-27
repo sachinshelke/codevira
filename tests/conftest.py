@@ -1,12 +1,12 @@
 """
 Shared pytest fixtures for the Codevira MCP test suite.
 """
+
 import sys
 import types
 from unittest.mock import MagicMock
 
 import pytest
-from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Pre-import numpy at conftest load time.
@@ -27,6 +27,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 try:
     import numpy as _numpy  # noqa: F401 — eager import to avoid concurrent partial-load
+
     # Sanity-check: if isscalar isn't present, our pre-import didn't actually
     # complete the load. Force attribute access to surface that immediately.
     _ = _numpy.isscalar
@@ -41,23 +42,36 @@ except (ImportError, AttributeError):
 # file imports modules that depend on it. This mock provides all attributes
 # that code_reader.py, chunker.py, and graph_generator.py import.
 #
-# We only mock when the real packages are NOT installed. If tree-sitter and
-# tree-sitter-language-pack are available (e.g. in the dev venv),
-# test_treesitter_parser.py will use the real implementations.
+# We only mock when the real packages are NOT installed. v2.2.0+ ships
+# 4 individual grammar packages (tree-sitter-{typescript,javascript,go,rust}).
+# The legacy tree-sitter-language-pack [all-languages] extra was removed
+# along with the v2.1.x carryover user base; tests no longer need a
+# fallback to it.
 # ---------------------------------------------------------------------------
 _ts_available = True
 try:
-    import tree_sitter_language_pack  # noqa: F401
     import tree_sitter  # noqa: F401
+
+    # At least one of the v2.2.0 base grammar packages must be importable.
+    _grammar_found = False
+    for _pkg in (
+        "tree_sitter_typescript",
+        "tree_sitter_javascript",
+        "tree_sitter_go",
+        "tree_sitter_rust",
+    ):
+        try:
+            __import__(_pkg)
+            _grammar_found = True
+            break
+        except ImportError:
+            continue
+    if not _grammar_found:
+        _ts_available = False
 except ImportError:
     _ts_available = False
 
 if not _ts_available:
-    if "tree_sitter_language_pack" not in sys.modules:
-        _ts_lang_pack = types.ModuleType("tree_sitter_language_pack")
-        _ts_lang_pack.__dict__["__all__"] = []
-        sys.modules["tree_sitter_language_pack"] = _ts_lang_pack
-
     if "tree_sitter" not in sys.modules:
         _ts_mod = types.ModuleType("tree_sitter")
         _ts_mod.Node = MagicMock()
@@ -103,10 +117,11 @@ if not _ts_available:
         sys.modules["indexer.treesitter_parser"] = _fake_ts
         # Also set on parent package so `from indexer.treesitter_parser import X` works
         import indexer as _indexer_pkg
+
         _indexer_pkg.treesitter_parser = _fake_ts
 
-import mcp_server.paths as paths
-from indexer.sqlite_graph import SQLiteGraph
+import mcp_server.paths as paths  # noqa: E402 — must follow stub install
+from indexer.sqlite_graph import SQLiteGraph  # noqa: E402 — must follow stub install
 
 
 @pytest.fixture(autouse=True)
@@ -134,7 +149,6 @@ def project_env(tmp_path, monkeypatch):
         "project:\n  name: test\n  language: python\n  watched_dirs:\n    - src\n  file_extensions:\n    - .py\n"
     )
     (data_dir / "graph").mkdir(parents=True)
-    (data_dir / "graph" / "changesets").mkdir(parents=True)
 
     monkeypatch.setattr(paths, "_project_dir_override", None)
     monkeypatch.chdir(project.resolve())
@@ -151,38 +165,63 @@ def populated_db(project_env):
     project, data_dir, db = project_env
     # Nodes
     db.add_node("file:src/api.py", "file", "api.py", "src/api.py", layer="api")
-    db.add_node("file:src/service.py", "file", "service.py", "src/service.py", layer="service")
+    db.add_node(
+        "file:src/service.py", "file", "service.py", "src/service.py", layer="service"
+    )
     db.add_node("file:src/db.py", "file", "db.py", "src/db.py", layer="data")
-    db.add_node("file:tests/test_api.py", "file", "test_api.py", "tests/test_api.py", layer="test")
+    db.add_node(
+        "file:tests/test_api.py",
+        "file",
+        "test_api.py",
+        "tests/test_api.py",
+        layer="test",
+    )
     # Edges
     db.add_edge("file:src/api.py", "file:src/service.py", kind="imports")
     db.add_edge("file:src/service.py", "file:src/db.py", kind="imports")
     db.add_edge("file:tests/test_api.py", "file:src/api.py", kind="tests")
     # Sessions + decisions
-    db.log_session("s1", "Initial API setup", "1", [
-        {"file_path": "src/api.py", "decision": "Use REST endpoints", "context": "API design"},
-        {"file_path": "src/service.py", "decision": "Use repository pattern", "context": "Architecture"},
-    ])
-    db.log_session("s2", "Add database layer", "2", [
-        {"file_path": "src/db.py", "decision": "Use SQLite for local storage", "context": "Data layer"},
-    ])
+    db.log_session(
+        "s1",
+        "Initial API setup",
+        "1",
+        [
+            {
+                "file_path": "src/api.py",
+                "decision": "Use REST endpoints",
+                "context": "API design",
+            },
+            {
+                "file_path": "src/service.py",
+                "decision": "Use repository pattern",
+                "context": "Architecture",
+            },
+        ],
+    )
+    db.log_session(
+        "s2",
+        "Add database layer",
+        "2",
+        [
+            {
+                "file_path": "src/db.py",
+                "decision": "Use SQLite for local storage",
+                "context": "Data layer",
+            },
+        ],
+    )
     # Outcomes
     db.record_outcome("s1", "src/api.py", "kept")
-    db.record_outcome("s1", "src/service.py", "modified", delta_summary="Changed naming")
-    # Preferences
-    db.record_preference("naming", "Prefers snake_case")
-    db.record_preference("naming", "Prefers snake_case")
-    db.record_preference("naming", "Prefers snake_case")
-    db.record_preference("structure", "Uses early returns")
-    # Learned rules
-    db.add_learned_rule(
-        "API files should have tests", 0.8, ["s1"],
-        category="testing", file_pattern="src/api/*",
+    db.record_outcome(
+        "s1", "src/service.py", "modified", delta_summary="Changed naming"
     )
-    db.add_learned_rule(
-        "Use type hints", 0.9, ["s1", "s2"],
-        category="patterns",
-    )
+    # v3.0.0 audit cleanup: the preference + learned-rule seed calls
+    # were removed. The SQLiteGraph methods that backed them
+    # (record_preference / add_learned_rule) were deleted in the
+    # 2026-05-22 surface-cut audit because the MCP tools that consumed
+    # those tables (get_preferences / get_learned_rules / retire_rule)
+    # were also deleted. Outcomes are still seeded — they feed
+    # AntiRegression policy + decision-confidence scoring.
     return project, data_dir, db
 
 
@@ -251,18 +290,22 @@ def sample_source_files(tmp_path):
 @pytest.fixture
 def corrupt_yaml(tmp_path):
     """Factory for creating corrupt YAML files."""
+
     def _make(name="corrupt.yaml", content="{{invalid yaml: ["):
         p = tmp_path / name
         p.write_text(content)
         return p
+
     return _make
 
 
 @pytest.fixture
 def corrupt_sqlite(tmp_path):
     """Factory for creating corrupt SQLite database files."""
+
     def _make(name="corrupt.db"):
         p = tmp_path / name
         p.write_bytes(b"NOT A SQLITE DB" + b"\x00" * 100)
         return p
+
     return _make

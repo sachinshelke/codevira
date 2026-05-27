@@ -19,10 +19,10 @@ Chaos tests:
   - Subprocess timeout / no git
   - Idempotence proof for _sanitize_path_key
 """
+
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -30,10 +30,10 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
+
 import mcp_server.paths as paths
 from mcp_server.paths import (
     _sanitize_path_key,
-    _discover_project_root,
     _get_git_remote_url,
     _find_project_by_git_remote,
     get_data_dir,
@@ -49,6 +49,7 @@ from mcp_server.paths import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _set_project_root(monkeypatch, root: Path) -> None:
     """Point project root discovery at *root* by clearing override and chdir."""
     monkeypatch.setattr(paths, "_project_dir_override", None)
@@ -58,6 +59,7 @@ def _set_project_root(monkeypatch, root: Path) -> None:
 # ===================================================================
 # _sanitize_path_key
 # ===================================================================
+
 
 class TestSanitizePathKey:
     """Test path-key generation for centralized storage."""
@@ -167,6 +169,7 @@ class TestSanitizePathKey:
 # _discover_project_root
 # ===================================================================
 
+
 class TestDiscoverProjectRoot:
     """Test marker-based project root detection."""
 
@@ -255,6 +258,7 @@ class TestDiscoverProjectRoot:
 # set_project_dir / get_project_root with override
 # ===================================================================
 
+
 class TestSetProjectDir:
     """Test CLI --project-dir override."""
 
@@ -306,8 +310,81 @@ class TestSetProjectDir:
 
 
 # ===================================================================
+# CODEVIRA_PROJECT_DIR env var (v3.0.0 round-3)
+# ===================================================================
+
+
+class TestEnvVarOverride:
+    """v3.0.0 round-3: ``CODEVIRA_PROJECT_DIR`` env var must override
+    cwd-based discovery. Pre-fix, IDE MCP configs (Claude Desktop,
+    Codex, etc.) that pass this env var to ``codevira serve`` had it
+    silently ignored — every Claude Desktop conversation wrote
+    decisions to whatever ``Path.cwd()`` resolved to in the Claude
+    Desktop app bundle, NOT the project the user thought they were
+    pinning to."""
+
+    def test_env_var_overrides_cwd(self, tmp_path, monkeypatch):
+        project = tmp_path / "envvar-proj"
+        project.mkdir()
+        (project / ".git").mkdir()
+
+        other = tmp_path / "elsewhere"
+        other.mkdir()
+        monkeypatch.chdir(other)
+
+        # CLI override NOT set; env var IS set.
+        monkeypatch.setattr(paths, "_project_dir_override", None)
+        monkeypatch.setenv("CODEVIRA_PROJECT_DIR", str(project))
+
+        assert get_project_root() == project.resolve()
+
+    def test_cli_override_wins_over_env_var(self, tmp_path, monkeypatch):
+        """Resolution order: CLI flag > env var > cwd."""
+        cli_project = tmp_path / "cli-wins"
+        cli_project.mkdir()
+        (cli_project / ".git").mkdir()
+        env_project = tmp_path / "env-loses"
+        env_project.mkdir()
+        (env_project / ".git").mkdir()
+
+        monkeypatch.setenv("CODEVIRA_PROJECT_DIR", str(env_project))
+        set_project_dir(cli_project)
+        try:
+            assert get_project_root() == cli_project.resolve()
+        finally:
+            monkeypatch.setattr(paths, "_project_dir_override", None)
+
+    def test_env_var_unset_falls_back_to_cwd(self, tmp_path, monkeypatch):
+        project = tmp_path / "cwd-fallback"
+        project.mkdir()
+        (project / ".git").mkdir()
+        monkeypatch.chdir(project)
+
+        monkeypatch.setattr(paths, "_project_dir_override", None)
+        monkeypatch.delenv("CODEVIRA_PROJECT_DIR", raising=False)
+
+        assert get_project_root() == project.resolve()
+
+    def test_env_var_empty_string_treated_as_unset(self, tmp_path, monkeypatch):
+        """An empty env var (some shells set it to '' instead of
+        unsetting) MUST NOT be honored — that would resolve to ``Path('')``
+        which is the cwd, semantically identical to "not set" anyway,
+        but defensively we treat empty as missing."""
+        project = tmp_path / "empty-env"
+        project.mkdir()
+        (project / ".git").mkdir()
+        monkeypatch.chdir(project)
+
+        monkeypatch.setattr(paths, "_project_dir_override", None)
+        monkeypatch.setenv("CODEVIRA_PROJECT_DIR", "")
+
+        assert get_project_root() == project.resolve()
+
+
+# ===================================================================
 # get_data_dir resolution chain
 # ===================================================================
+
 
 class TestGetDataDir:
     """Test the 4-step resolution chain for data directory."""
@@ -395,14 +472,20 @@ class TestGetDataDir:
         old_centralized = fake_home / "projects" / old_key
         old_centralized.mkdir(parents=True)
         (old_centralized / "config.yaml").write_text("project:\n  name: test\n")
-        (old_centralized / "metadata.json").write_text(json.dumps({
-            "git_remote": "https://github.com/org/repo.git",
-        }))
+        (old_centralized / "metadata.json").write_text(
+            json.dumps(
+                {
+                    "git_remote": "https://github.com/org/repo.git",
+                }
+            )
+        )
 
         _set_project_root(monkeypatch, project)
 
         # Mock git remote to return the matching URL
-        with patch.object(paths, "_get_git_remote_url", return_value="https://github.com/org/repo.git"):
+        with patch.object(
+            paths, "_get_git_remote_url", return_value="https://github.com/org/repo.git"
+        ):
             data = get_data_dir()
         assert data == old_centralized
 
@@ -410,6 +493,7 @@ class TestGetDataDir:
 # ===================================================================
 # get_package_data_dir
 # ===================================================================
+
 
 class TestGetPackageDataDir:
     def test_returns_data_subdir_of_module(self):
@@ -426,6 +510,7 @@ class TestGetPackageDataDir:
 # ===================================================================
 # get_global_home / get_global_db_path
 # ===================================================================
+
 
 class TestGlobalHome:
     def test_get_global_home_returns_codevira_dir(self, tmp_path, monkeypatch):
@@ -447,7 +532,9 @@ class TestGlobalHome:
     def test_get_global_home_creates_dir(self, tmp_path, monkeypatch):
         """get_global_home creates the directory if it does not exist."""
         new_home = tmp_path / "new-codevira-home"
-        monkeypatch.setattr(paths, "get_global_home", lambda: _create_and_return(new_home))
+        monkeypatch.setattr(
+            paths, "get_global_home", lambda: _create_and_return(new_home)
+        )
         result = paths.get_global_home()
         assert result.exists()
 
@@ -461,6 +548,7 @@ def _create_and_return(p: Path) -> Path:
 # ===================================================================
 # _get_git_remote_url
 # ===================================================================
+
 
 class TestGetGitRemoteUrl:
     """Test subprocess-based git remote URL lookup."""
@@ -497,7 +585,10 @@ class TestGetGitRemoteUrl:
 
     def test_returns_none_on_timeout(self, tmp_path):
         """Subprocess timeout -> None (graceful degradation)."""
-        with patch("mcp_server.paths.subprocess.run", side_effect=subprocess.TimeoutExpired("git", 3)):
+        with patch(
+            "mcp_server.paths.subprocess.run",
+            side_effect=subprocess.TimeoutExpired("git", 3),
+        ):
             url = _get_git_remote_url(tmp_path)
         assert url is None
 
@@ -509,7 +600,9 @@ class TestGetGitRemoteUrl:
 
     def test_returns_none_on_os_error(self, tmp_path):
         """Generic OSError -> None."""
-        with patch("mcp_server.paths.subprocess.run", side_effect=OSError("disk error")):
+        with patch(
+            "mcp_server.paths.subprocess.run", side_effect=OSError("disk error")
+        ):
             url = _get_git_remote_url(tmp_path)
         assert url is None
 
@@ -519,7 +612,9 @@ class TestGetGitRemoteUrl:
         mock_result.returncode = 0
         mock_result.stdout = "git@github.com:org/repo.git\n"
 
-        with patch("mcp_server.paths.subprocess.run", return_value=mock_result) as mock_run:
+        with patch(
+            "mcp_server.paths.subprocess.run", return_value=mock_result
+        ) as mock_run:
             _get_git_remote_url(tmp_path)
 
         mock_run.assert_called_once_with(
@@ -534,6 +629,7 @@ class TestGetGitRemoteUrl:
 # _find_project_by_git_remote
 # ===================================================================
 
+
 class TestFindProjectByGitRemote:
     """Test scanning metadata.json files for git remote match."""
 
@@ -544,9 +640,13 @@ class TestFindProjectByGitRemote:
 
         proj_dir = fake_home / "projects" / "my_project_abc12345"
         proj_dir.mkdir(parents=True)
-        (proj_dir / "metadata.json").write_text(json.dumps({
-            "git_remote": "https://github.com/org/repo.git",
-        }))
+        (proj_dir / "metadata.json").write_text(
+            json.dumps(
+                {
+                    "git_remote": "https://github.com/org/repo.git",
+                }
+            )
+        )
 
         result = _find_project_by_git_remote("https://github.com/org/repo.git")
         assert result == proj_dir
@@ -558,9 +658,13 @@ class TestFindProjectByGitRemote:
 
         proj_dir = fake_home / "projects" / "other_proj_abc12345"
         proj_dir.mkdir(parents=True)
-        (proj_dir / "metadata.json").write_text(json.dumps({
-            "git_remote": "https://github.com/org/other.git",
-        }))
+        (proj_dir / "metadata.json").write_text(
+            json.dumps(
+                {
+                    "git_remote": "https://github.com/org/other.git",
+                }
+            )
+        )
 
         result = _find_project_by_git_remote("https://github.com/org/repo.git")
         assert result is None
@@ -587,9 +691,13 @@ class TestFindProjectByGitRemote:
         # Valid metadata
         valid_dir = fake_home / "projects" / "valid_proj_22222222"
         valid_dir.mkdir(parents=True)
-        (valid_dir / "metadata.json").write_text(json.dumps({
-            "git_remote": "https://github.com/org/target.git",
-        }))
+        (valid_dir / "metadata.json").write_text(
+            json.dumps(
+                {
+                    "git_remote": "https://github.com/org/target.git",
+                }
+            )
+        )
 
         result = _find_project_by_git_remote("https://github.com/org/target.git")
         assert result == valid_dir
@@ -601,10 +709,14 @@ class TestFindProjectByGitRemote:
 
         proj_dir = fake_home / "projects" / "no_remote_abc12345"
         proj_dir.mkdir(parents=True)
-        (proj_dir / "metadata.json").write_text(json.dumps({
-            "path_key": "no_remote_abc12345",
-            "version": "1.6.0",
-        }))
+        (proj_dir / "metadata.json").write_text(
+            json.dumps(
+                {
+                    "path_key": "no_remote_abc12345",
+                    "version": "1.6.0",
+                }
+            )
+        )
 
         result = _find_project_by_git_remote("https://github.com/org/repo.git")
         assert result is None
@@ -634,17 +746,22 @@ class TestFindProjectByGitRemote:
 # CHAOS Tests
 # ===================================================================
 
+
 class TestPathsChaos:
     """Edge cases, corruptions, and adversarial inputs."""
 
     def test_unicode_project_name_in_path_key(self):
         """Unicode project names produce valid keys."""
-        key = _sanitize_path_key("/home/user/\u30d7\u30ed\u30b8\u30a7\u30af\u30c8")  # Japanese
+        key = _sanitize_path_key(
+            "/home/user/\u30d7\u30ed\u30b8\u30a7\u30af\u30c8"
+        )  # Japanese
         assert key
         assert "/" not in key
         assert "\\" not in key
         # Repeatable
-        assert key == _sanitize_path_key("/home/user/\u30d7\u30ed\u30b8\u30a7\u30af\u30c8")
+        assert key == _sanitize_path_key(
+            "/home/user/\u30d7\u30ed\u30b8\u30a7\u30af\u30c8"
+        )
 
     def test_emoji_in_path(self):
         """Emoji in path produces valid key."""
@@ -687,14 +804,19 @@ class TestPathsChaos:
         _set_project_root(monkeypatch, project)
 
         # Git remote times out -> step 2 skipped, goes to step 4 (default centralized)
-        with patch("mcp_server.paths.subprocess.run", side_effect=subprocess.TimeoutExpired("git", 3)):
+        with patch(
+            "mcp_server.paths.subprocess.run",
+            side_effect=subprocess.TimeoutExpired("git", 3),
+        ):
             data = get_data_dir()
 
         key = _sanitize_path_key(project)
         expected = fake_home / "projects" / key
         assert data == expected
 
-    def test_find_project_by_git_remote_with_all_corrupt_metadata(self, tmp_path, monkeypatch):
+    def test_find_project_by_git_remote_with_all_corrupt_metadata(
+        self, tmp_path, monkeypatch
+    ):
         """All metadata.json files are corrupt -> returns None."""
         fake_home = tmp_path / "home"
         monkeypatch.setattr(paths, "get_global_home", lambda: fake_home)
@@ -713,6 +835,7 @@ class TestPathsChaos:
         assert key
         # Only allowed chars: a-zA-Z0-9._-  plus underscores from separators
         import re
+
         human_part = key.rsplit("_", 1)[0]
         assert re.match(r"^[a-zA-Z0-9._-]+$", human_part)
 
@@ -751,6 +874,7 @@ class TestPathsChaos:
 # is_invalid_project_root (v1.8.1)
 # ===================================================================
 
+
 class TestIsInvalidProjectRoot:
     """Refuses $HOME and known system top-levels as a project root.
 
@@ -764,6 +888,7 @@ class TestIsInvalidProjectRoot:
     def test_rejects_home(self, tmp_path, monkeypatch):
         """Path.home() exactly is rejected with $HOME message."""
         from mcp_server.paths import is_invalid_project_root
+
         fake_home = tmp_path / "fake-home"
         fake_home.mkdir()
         monkeypatch.setattr("pathlib.Path.home", lambda: fake_home)
@@ -773,6 +898,7 @@ class TestIsInvalidProjectRoot:
 
     def test_rejects_root_slash(self):
         from mcp_server.paths import is_invalid_project_root
+
         result = is_invalid_project_root(Path("/"))
         assert result is not None
         assert "system directory" in result
@@ -780,6 +906,7 @@ class TestIsInvalidProjectRoot:
     def test_rejects_users_parent(self):
         """macOS top-level /Users is rejected."""
         from mcp_server.paths import is_invalid_project_root
+
         result = is_invalid_project_root(Path("/Users"))
         assert result is not None
         assert "system directory" in result
@@ -787,6 +914,7 @@ class TestIsInvalidProjectRoot:
     def test_rejects_home_parent_linux(self):
         """Linux top-level /home is rejected."""
         from mcp_server.paths import is_invalid_project_root
+
         result = is_invalid_project_root(Path("/home"))
         assert result is not None
         assert "system directory" in result
@@ -794,6 +922,7 @@ class TestIsInvalidProjectRoot:
     def test_rejects_tmp(self):
         """Both /tmp and the macOS-resolved /private/tmp are rejected."""
         from mcp_server.paths import is_invalid_project_root
+
         # On macOS, /tmp is a symlink to /private/tmp; Path.resolve() follows
         # the symlink so the comparison must include the resolved form.
         # Use /private/tmp directly to verify regardless of platform.
@@ -805,13 +934,17 @@ class TestIsInvalidProjectRoot:
     def test_rejects_var_etc_opt(self):
         """/var, /etc, /opt all rejected."""
         from mcp_server.paths import is_invalid_project_root
+
         for p in ("/var", "/etc", "/opt"):
             if Path(p).exists():
-                assert is_invalid_project_root(Path(p)) is not None, f"{p} should be invalid"
+                assert (
+                    is_invalid_project_root(Path(p)) is not None
+                ), f"{p} should be invalid"
 
     def test_accepts_real_project_path(self, tmp_path):
         """A normal project directory passes (returns None)."""
         from mcp_server.paths import is_invalid_project_root
+
         project = tmp_path / "my-project"
         project.mkdir()
         assert is_invalid_project_root(project) is None
@@ -819,6 +952,7 @@ class TestIsInvalidProjectRoot:
     def test_accepts_home_subdirectory(self, tmp_path, monkeypatch):
         """A subdirectory of $HOME passes (returns None)."""
         from mcp_server.paths import is_invalid_project_root
+
         fake_home = tmp_path / "fake-home"
         fake_home.mkdir()
         monkeypatch.setattr("pathlib.Path.home", lambda: fake_home)
@@ -830,6 +964,7 @@ class TestIsInvalidProjectRoot:
         """A path that .resolve() can't fail on (no symlink loop) is fine; if
         .resolve() raises we return None and let caller surface the OSError."""
         from mcp_server.paths import is_invalid_project_root
+
         # A non-existent path doesn't make resolve() raise on most filesystems;
         # the helper should still return None for "looks like a project, not
         # a forbidden top-level".
@@ -839,6 +974,7 @@ class TestIsInvalidProjectRoot:
     def test_resolves_symlinked_home(self, tmp_path, monkeypatch):
         """A symlink that points to $HOME is rejected (resolve-aware)."""
         from mcp_server.paths import is_invalid_project_root
+
         fake_home = tmp_path / "fake-home"
         fake_home.mkdir()
         link = tmp_path / "home-link"
@@ -847,3 +983,76 @@ class TestIsInvalidProjectRoot:
         result = is_invalid_project_root(link)
         assert result is not None
         assert "$HOME" in result
+
+
+# ===================================================================
+# storage.paths.ensure_dirs — write-path forbidden-root guard (v3.0.0)
+# ===================================================================
+
+
+class TestEnsureDirsRefusesForbiddenRoot:
+    """The v3.0.0 JSONL store WRITE path must refuse forbidden roots.
+
+    Regression for the 2026-05-25 G5 dogfood finding: a *global* MCP
+    config in Claude Desktop (no ``cwd`` option, no
+    ``CODEVIRA_PROJECT_DIR``) resolves the project root to ``/`` and
+    ``ensure_dirs`` would silently ``mkdir("/.codevira")`` — or, with a
+    writable inherited cwd, ``$HOME/.codevira``, colliding with the
+    per-user centralized state dir. The guard
+    ``mcp_server.paths.get_data_dir`` applies to the legacy store had no
+    counterpart on the JSONL write path until this fix.
+    """
+
+    def test_refuses_system_root_passed_explicitly(self):
+        from mcp_server.storage import paths as store_paths
+
+        with pytest.raises(ValueError) as exc:
+            store_paths.ensure_dirs(Path("/"))
+        msg = str(exc.value)
+        assert "system directory" in msg
+        # P8: the error must hand the user the actual fix.
+        assert "CODEVIRA_PROJECT_DIR" in msg
+
+    def test_refuses_home_and_creates_nothing(self, tmp_path, monkeypatch):
+        from mcp_server.storage import paths as store_paths
+
+        fake_home = tmp_path / "fake-home"
+        fake_home.mkdir()
+        monkeypatch.setattr("pathlib.Path.home", lambda: fake_home)
+        with pytest.raises(ValueError) as exc:
+            store_paths.ensure_dirs(fake_home)
+        assert "$HOME" in str(exc.value)
+        # Nothing scaffolded under the forbidden root.
+        assert not (fake_home / ".codevira").exists()
+        assert not (fake_home / ".codevira-cache").exists()
+
+    def test_refuses_when_resolved_from_cwd_with_no_anchor(self, monkeypatch):
+        """No explicit root + root resolves to ``/`` → refuse (the Desktop trap)."""
+        from mcp_server.storage import paths as store_paths
+
+        monkeypatch.setattr(paths, "_project_dir_override", None)
+        monkeypatch.delenv("CODEVIRA_PROJECT_DIR", raising=False)
+        # Simulate get_project_root() falling back to a system cwd.
+        monkeypatch.setattr(store_paths, "get_project_root", lambda: Path("/"))
+        with pytest.raises(ValueError):
+            store_paths.ensure_dirs()
+
+    def test_accepts_real_project_and_creates_both_dirs(self, tmp_path):
+        """A normal project root still scaffolds .codevira/ + cache (no regression)."""
+        from mcp_server.storage import paths as store_paths
+
+        project = tmp_path / "real-project"
+        project.mkdir()
+        store_paths.ensure_dirs(project)
+        assert (project / ".codevira").is_dir()
+        assert (project / ".codevira-cache").is_dir()
+
+    def test_idempotent_on_valid_root(self, tmp_path):
+        """Second call on an already-scaffolded valid root is a no-op, not an error."""
+        from mcp_server.storage import paths as store_paths
+
+        project = tmp_path / "real-project"
+        project.mkdir()
+        store_paths.ensure_dirs(project)
+        store_paths.ensure_dirs(project)  # must not raise
+        assert (project / ".codevira").is_dir()

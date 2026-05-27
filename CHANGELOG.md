@@ -9,7 +9,591 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [Unreleased]
+## [3.0.0] — 2026-05-27 — Lean, audited, opinionated
+
+### Hardened (RC audit — rounds 2 + 3, pre-publish)
+
+> Three rounds of audit ran against the v3.0.0 release candidate
+> before publishing. Round 1 was the surface-cut + dead-code sweep
+> already recorded in the 3.0.0 entry below. Rounds 2 and 3 were
+> "what could silently break in production?" — and surfaced a
+> family of concurrent-write bugs in the storage layer that the
+> structured unit tests didn't catch.
+
+- **NEW `mcp_server/storage/atomic.py`** — single canonical source
+  for crash-safe file writes + Posix/Windows file locks. Every
+  storage / tool / cli module that touches the on-disk product
+  state now goes through this helper. Public API:
+  `atomic_write_text(path, content, *, mode=None)`,
+  `atomic_write_bytes(path, content, *, mode=None)`, and
+  `file_lock(path, *, exclusive=True)` (context manager — Posix
+  `fcntl.flock` + Windows sentinel-file fallback). Replaces 5
+  hand-rolled copies that had drifted (manifest, digest,
+  agents_md_generator, setup_wizard, jsonl_store). 11 unit tests
+  pin the contract (basic write, utf-8, overwrite, mkdir, mode
+  bits, no-leaked-tmp, 50-thread concurrency, binary, in-process
+  serialization, auto-anchor, exception release, Windows-sentinel
+  codepath via monkey-patched `sys.platform`).
+
+- **Concurrent-write race fixes (rounds 2 + 3).** Two distinct
+  race shapes were caught under 50-thread stress:
+  - *Atomic-rename race* (round 2). `manifest.yaml`, `digest.jsonl`,
+    and `AGENTS.md` writers used a fixed `<path>.tmp` suffix; two
+    threads' `os.replace()` calls raced on the rename target,
+    producing `FileNotFoundError: <path>.tmp` warnings. The
+    decisions themselves still landed safely (`jsonl_store.append`
+    uses fcntl-locked I/O); only the CACHE files lost data. Fixed
+    by per-write unique tmp via `tempfile.mkstemp` (and now
+    consolidated through `storage/atomic`).
+  - *Lost-update race* (round 2 caught manifest; round 3 caught
+    roadmap). Read-modify-write paths (`manifest.incremental_add`,
+    `roadmap._save_roadmap`) had no lock — 50 concurrent updates
+    landed as ~37 because the last save() won. Fixed by
+    `atomic.file_lock` around the whole read-modify-write. Three
+    new regression tests in `tests/storage/test_concurrent_writes.py`
+    pin the invariants: zero rename warnings under 50-thread
+    record_decision, manifest counts match JSONL, roadmap phases
+    all land. P9 invariant test (corrupt manifest → decision
+    still persists in JSONL) added too.
+
+- **Cross-process safety proved** (`tests/storage/test_cross_process_writes.py`).
+  Round-2 fixes were thread-safe but not yet proven process-safe —
+  two `codevira` MCP server processes (Claude Desktop + Cursor
+  running together) racing on the same project's roadmap could
+  still lose updates if the `fcntl.flock` contract didn't survive
+  process boundaries. Two new tests spawn 20 subprocesses via
+  `multiprocessing.spawn` and assert: 20 concurrent
+  `decisions_store.record` → 20 unique IDs; 20 concurrent
+  `roadmap.add_phase` → all 20 phases land in roadmap.yaml.
+
+- **Engine policy storage-correctness audit.** Each of the 6 active
+  engine policies (`anti_regression`, `blast_radius`,
+  `decision_lock`, `post_edit_refresh`, `relevance_inject`,
+  `token_budget`) was read line-by-line to confirm it reads from
+  the v3.0.0 storage layer, not the legacy SQLiteGraph paths.
+  One drift found: `signals.graph` round-2 fix added v3.0.0
+  `.codevira-cache/graph.sqlite` as the priority-1 resolution
+  tier — pre-fix it only checked v1.5 / v1.6 paths, structurally
+  silencing `BlastRadiusVeto` and the `DecisionLock` no-rationale
+  branch on every v3.0.0 project. Similarly `signals.decisions`
+  was rewired to read JSONL (was reading a SQL table that no
+  longer exists in v3.0.0).
+
+- **MCP tools/list inputSchema audit.** All 23 surfaced MCP tools
+  validated for schema consistency (every required field in
+  properties, every tool has a description, every schema is
+  `type: object`). Zero issues.
+
+- **NEW `scripts/chaos_smoke.py`** — adversarial probe of the
+  storage layer with 8 attack categories / 29 sub-tests (null
+  bytes, 1 MB decision text, path traversal in `file_path`,
+  control chars, SIGKILL during fcntl.flock, manually-corrupted
+  JSONL/YAML/AGENTS.md, 200-thread mixed-op storm, 20-thread
+  lock contention, symlink traversal via
+  `AGENTS.md → /etc/passwd`, 7 malformed JSON-RPC payloads to
+  `codevira serve`, read-only `.codevira/` dir). Result on
+  current commit: 29 PASS / 0 FAIL. Notable findings (not bugs,
+  design choices worth surfacing):
+  - All adversarial decision inputs are accepted (no validation
+    today; trust-the-agent design). v3.1 candidate for sanitization.
+  - Symlink safety is automatic: `atomic.os.replace` replaces the
+    symlink itself, not the target, so an attacker who plants
+    `AGENTS.md → /etc/passwd` can't escape the project root.
+  - fcntl.flock survives SIGKILL of the holder (kernel reaps
+    fd-bound locks).
+
+- **`check_conflict` asymmetric-overlap detector for contradictions
+  against `do_not_revert` decisions.** The original v2.2.0 implementation
+  used pure symmetric Jaccard similarity with a 0.60 threshold — which
+  misses the common contradiction shape where a terse new decision
+  shares 3 of its 4 content tokens with a longer protected decision
+  (Jaccard = 3/9 = 0.333, below threshold; overlap coefficient =
+  3/min(4,8) = 0.75, above threshold). Caught by the AgentStore
+  system test (`scripts/system_test_agentstore.py::A9`).
+
+  Fix adds an asymmetric overlap-coefficient path that fires ONLY
+  for candidates with `do_not_revert=True` AND with at least 3 shared
+  tokens AND with symmetric Jaccard below 0.60 (the
+  re-affirmation filter — re-recording a protected decision verbatim
+  still hits the duplicate path, not the new asymmetric path).
+  Duplicate detection itself (against any decision) stays symmetric +
+  conservative (Jaccard ≥ 0.60) — the change is conflict-specific.
+
+  Response shape adds `match_shape` (`"duplicate"` |
+  `"asymmetric-conflict"`), `jaccard`, `overlap_coefficient`,
+  `shared_tokens` per match entry + a top-level `thresholds` dict.
+  Existing `threshold_used` field preserved for v2.x callers.
+  17 new unit tests in `tests/test_check_conflict.py` pin both
+  regimes + the re-affirmation filter.
+
+- **Repointed 11 more unguarded writes at `storage.atomic`** —
+  the round-3 write-site sweep found `auto_init` (config.yaml +
+  metadata.json), `cli_init` (config.yaml + enforcement.yaml +
+  .gitignore), `http_server` (bearer token, +0o600 mode),
+  `cli_uninstall` (settings.json + AGENTS.md, 3 sites),
+  `cli_hooks_admin` (settings.json — was fixed-suffix tmp race),
+  `cli.py` (legacy `cmd_configure` + git hook write), `cli_export`
+  (JSON + SQL exports — both had fixed-suffix tmp races),
+  `cli_replay`, `log_retention`, `migrate`, and
+  `indexer/graph_generator` (roadmap stub). All now crash-safe via
+  the shared helper.
+
+- **Doctor dogfooded against a real project + a fresh init.**
+  Fresh `codevira init` followed by `codevira doctor` = 13 pass /
+  1 warn (pre-existing ghost dirs from earlier testing) / 0 fail.
+
+### Added (2026-05-26 dogfood batch)
+
+- **`codevira graph`** — render the project's decision memory as a
+  single self-contained, interactive HTML file (nodes = decisions,
+  edges = supersedes lineage) with a client-side query/filter box and
+  details panel. Zero runtime dependencies, no server, works offline;
+  reads the canonical `.codevira/decisions.jsonl`. Inlined JSON escapes
+  `<` so decision text can't break out of the data island. Output
+  defaults to `.codevira-cache/memory-graph.html`. (D000016)
+- **`summary_only` on `list_decisions`** — parity with
+  `search_decisions`: returns the tiny `{id, summary, do_not_revert}`
+  shape and takes precedence over `full`. (D000015)
+- **`CODEVIRA_TOOL_PROFILE=lean`** — opt-in environment variable that
+  trims the advertised MCP `tools/list` from 24 to 11 daily-driver
+  tools (~46%, ~1.9K fewer tokens per session). Default advertises all
+  tools; hidden tools still work when called explicitly. (D000018)
+
+### Fixed (2026-05-26 dogfood batch)
+
+- **`ensure_dirs()` refuses a forbidden project root** ($HOME / system
+  dirs) on the v3.0.0 JSONL write path — the WRITE-side counterpart of
+  the guard `get_data_dir()` already applied. Closes a trap where a
+  *global* MCP config (e.g. Claude Desktop, no cwd, no
+  `CODEVIRA_PROJECT_DIR`) resolved the root to `/` and silently created
+  `/.codevira` or `$HOME/.codevira`. Raises a WHAT+WHY+FIX error naming
+  `CODEVIRA_PROJECT_DIR`; read paths stay graceful. (D000012)
+
+### Changed (2026-05-26 dogfood batch)
+
+- Trimmed the longest MCP tool description (`record_decision`) to cut
+  per-session token cost while preserving its `do_not_revert` +
+  `supersede`/`set_decision_flag` guidance. (D000018)
+
+### Known limitations (shipping in 3.0.0; tracked for a later release)
+
+- **Graph spec vs implementation drift.** `paths.graph_cache_path()`
+  documents the v3.0.0 spec location as
+  `<project>/.codevira-cache/graph.sqlite`, but `indexer/` and
+  `tools/graph.py` still write to / read from
+  `<data_dir>/graph/graph.db` (the legacy v1.6 centralized
+  location). Runtime behavior is correct — everyone agrees on the
+  centralized location and `signals._load_graph()` finds it via
+  the fallback chain. The spec-truthfulness gap should be
+  reconciled in v3.1 with a migration step for existing installs.
+
+- **Decision input sanitization is deliberately absent.** Null
+  bytes, 1 MB text, path traversal in `file_path`, control
+  characters, and empty strings are accepted today. The chaos
+  harness surfaced this; a v3.1 hardening pass could add
+  per-field validation without breaking the trust-the-agent
+  default.
+
+- **Cross-process flock tested on macOS only.** The
+  `multiprocessing.spawn` context is the same on Linux CI, but
+  the cross-process test has not been exercised on Windows
+  (where the helper uses the sentinel-file fallback instead of
+  fcntl).
+
+- **`relevance_inject` can surface weakly-related decisions on
+  short prompts.** The current SessionStart / UserPromptSubmit
+  injection scores tag + file + FTS5-BM25; with the v3.0 default
+  `min_score=0.10`, the top FTS5 hit alone (~0.10) is enough to
+  clear the gate on prompts with no tag or file overlap. Tightening
+  the gate naively breaks the core cross-tool wedge
+  (`tests/e2e/test_cross_tool_universality.py`) — FTS-only recall
+  IS the keyword-search path for tagless / file-less queries from
+  Cursor / Windsurf / Antigravity. A proper fix needs a
+  precision/recall benchmark with a corpus of real prompts +
+  decisions and a multi-prompt e2e test added BEFORE the threshold
+  change. Deferred to v3.0.1.
+
+---
+
+### Initial 3.0.0 RC milestone (2026-05-22)
+
+> **Major version bump.** This is the biggest API contraction since
+> v2.0 shipped: 21 MCP tools deleted, 8 CLI subcommands deleted,
+> per-IDE nudge file matrix collapsed to AGENTS.md only, IDE
+> detection hardened from "directory exists" to "binary on PATH +
+> valid config file." The cuts are subtractive — any v2.x user who
+> upgrades will lose surface they MAY have been using. SemVer
+> requires the major bump.
+>
+> The driver: a 2026-05-22 surface-cut audit (see
+> `docs/audit-2026-05-22.md`) traced 5 categories of user
+> complaints to overgrown surface, false-positive IDE detections,
+> and "junk left behind" after uninstall. v3.0.0 fixes all five
+> categories. See `docs/surface-cuts-2026-05-22.md` for the
+> per-item kill list.
+>
+> v3.0.0 includes everything in the unreleased v2.2.0+ work plus
+> two additional pieces:
+>   - Full dead-code sweep across the whole repo (~3,800 lines
+>     removed) after the surface cuts surfaced obviously-dead
+>     internal helpers
+>   - IDE auto-detection hardened: strong signals only, ``--force``
+>     escape hatch, no more silent-filter on `--ide` for
+>     undetected IDEs
+
+### Added
+
+- **`codevira uninstall` command (Phase 5).** Reverses every system
+  write made by `codevira init` / `codevira setup`: drops the MCP
+  entry from `~/.claude.json`, deletes `~/.claude/hooks/codevira-*.sh`,
+  strips codevira-tagged registrations from `~/.claude/settings.json`,
+  removes per-project `.codevira/` + `.codevira-cache/` dirs, and
+  strips the codevira marker block from each project's `AGENTS.md`
+  (preserves user content outside the markers byte-for-byte). Optional
+  `--keep-data` skips per-user `~/.codevira/`. Closes the audit's
+  "uninstalling left junk" complaint — `pipx uninstall codevira` used
+  to leave ~15 system touch points behind.
+
+- **`codevira setup --force`.** Escape hatch for the rare case where
+  codevira's IDE detector misses an install (portable binary not on
+  PATH, non-standard config location). Without ``--force``, passing
+  `--ide cursor` on a machine where Cursor isn't auto-detected raises
+  a clear error pointing at the flag. The v2.x silent-filter behavior
+  (which made ``setup --ide cursor`` exit 0 with no output and no
+  config on Cursor-less machines) is gone.
+
+- **Legacy per-IDE nudge back-compat sweep** in `codevira uninstall`:
+  for upgraders from v2.1.x, also strips codevira marker blocks from
+  `CLAUDE.md`, `GEMINI.md`, `.cursor/rules/codevira.mdc`,
+  `.windsurfrules`, `.github/copilot-instructions.md`.
+
+- **`record_decision` MCP tool now forwards `tags` and `force`** —
+  these were silently dropped by the dispatch layer in v2.x; now
+  agents' tag intent actually persists when loop-calling the endpoint.
+
+### Changed
+
+- **IDE auto-detection hardened (mcp_server/ide_inject.py).** Each
+  detector now requires a STRONG signal: either the IDE's binary on
+  PATH, or a verified config file (not just a parent dir). v2.x had
+  three WEAK detectors (Claude Desktop, Antigravity, Continue.dev)
+  that fired on the presence of an empty directory — false positives
+  that caused codevira to write MCP config for IDEs the user never
+  installed. v3.0.0 cross-checks.
+
+  | IDE             | v2.x signal                    | v3.0.0 signal                                    |
+  |-----------------|--------------------------------|--------------------------------------------------|
+  | Claude Code     | `.claude/ OR claude on PATH`   | `claude on PATH`                                 |
+  | Claude Desktop  | parent dir of config exists    | config FILE exists AND parses as JSON            |
+  | Cursor          | `~/.cursor/ OR cursor on PATH` | `~/.cursor/ AND (mcp.json OR cursor on PATH)`    |
+  | Windsurf        | `~/.windsurf/ OR ~/.codeium/…` | actual mcp_config.json exists in either location |
+  | Antigravity     | `~/.gemini/ exists`            | `~/.gemini/antigravity/mcp_config.json exists`   |
+
+- **`setup_wizard.detect_targets`** raises a clear ``ValueError`` on
+  `--ide <name>` for known IDEs that weren't auto-detected (use
+  `--force` to override). v2.x silently filtered the request, which
+  produced the worst possible UX: command exit 0 with no output.
+
+- **Per-IDE nudge files collapsed to AGENTS.md only.** The setup
+  wizard now writes exactly one nudge file (`AGENTS.md` via the new
+  `mcp_server.storage.agents_md_generator`) regardless of which IDEs
+  are detected. Per-IDE duplicates (`CLAUDE.md` / `GEMINI.md` /
+  `.cursor/rules/codevira.mdc` / `.windsurfrules` /
+  `.github/copilot-instructions.md`) were pure surface bloat — every
+  modern AI tool reads AGENTS.md natively.
+
+- **`codevira doctor`'s `nudge_files` check** rewritten to verify
+  AGENTS.md only; fix command updated to `codevira sync`.
+
+- **`mcp_server.global_sync`** gutted from a 187-line bidirectional
+  preference + rule sync to a ~90-LOC project-registry helper. New
+  primary entry: ``register_current_project()``. v2.x
+  ``import_global_to_project`` kept as a back-compat alias.
+
+- **MCP prompt library** pruned from 5 templates to 1
+  (``onboard_session``). The 4 deleted templates referenced MCP tools
+  that the audit deleted (analyze_changes, find_hotspots,
+  get_learned_rules, get_preferences, get_project_maturity,
+  list_open_changesets, export_graph, list_nodes, search_codebase).
+
+### Removed
+
+**MCP tools (46 → 24, –48%):**
+
+- Batch 1 — Changesets:
+  `start_changeset`, `update_changeset_progress`, `complete_changeset`,
+  `list_open_changesets` (entire feature; ~zero real users).
+- Batch 2 — Preferences + learned rules:
+  `get_preferences`, `get_learned_rules`, `retire_rule` (auto-extracted
+  signals were noise more than signal).
+- Batch 4a — Vestigial graph helpers:
+  `update_node`, `list_nodes`, `add_node`, `export_graph`,
+  `get_graph_diff`, `get_decision_confidence`, `get_project_maturity`,
+  `analyze_changes`, `find_hotspots`.
+- Batch 6 — Redundant / FOLD candidates:
+  `record_decisions` (batch — loop single-record instead),
+  `write_session_logs` (batch — same),
+  `mark_decision_protected` (use
+  `supersede_decision(..., do_not_revert=True)` for the same flip +
+  audit trail),
+  `refresh_index` (chromadb-era; `refresh_graph` is the still-active
+  code-graph refresh tool),
+  `get_full_roadmap` (duplicate of `get_roadmap` with a flag).
+
+**CLI subcommands (23 → 15, –35%, batch 4b):**
+
+- `heal`, `budget`, `agents`, `hooks`, `register`, `configure`,
+  `report`, `calibrate`, `insights`. Folded into `init` / `setup` /
+  `doctor` where they had real successors; deleted outright where
+  they had ~zero real usage.
+
+**Engine policies (10 → 6, –40%, batch 3):**
+
+- `LiveStyleEnforcement`, `AIPromotionScore`, `ProactiveIntentInference`,
+  `ProactiveScopeContractLock`. Default policy set:
+  `BlastRadiusVeto`, `DecisionLock`, `RelevanceInject`,
+  `TokenBudgetPersist`, `AntiRegression`, `PostEditGraphRefresh`.
+
+**Per-project nudge files (6 → 1, –83%, batch 5):**
+
+- `mcp_server/agents_md.py` (the legacy per-IDE nudge writer) + 7
+  templates (`claude_md.tmpl`, `cursor_rules.mdc.tmpl`,
+  `windsurfrules.tmpl`, `gemini_md.tmpl`,
+  `copilot_instructions.tmpl`, `agents_md.tmpl`,
+  `canonical_block.md`). The v3.0.0 `storage/agents_md_generator.py`
+  generates AGENTS.md content directly from `decisions.jsonl`.
+
+**Dead-code sweep (after audit deletions):**
+
+- `indexer/rule_learner.py` (~250 LOC; consumed only by deleted MCP
+  tools).
+- 7 dead functions in `mcp_server/tools/graph.py` (~408 LOC).
+- 7 dead methods in `indexer/sqlite_graph.py` (preferences +
+  learned_rules + project_maturity tables stay in the schema for
+  back-compat but are never written or read).
+- `mcp_server/tools/learning.py::get_project_maturity` +
+  `_compute_maturity_score` / `_maturity_level` / `_maturity_hint`.
+- `mcp_server/engine/signals.py::SignalContext.preferences`
+  (was broken — imported a non-existent symbol; v2.x would have
+  crashed on first call from any consuming policy).
+- `mcp_server/engine/signals.py::SignalContext.outcomes` +
+  `.learned_rules` (no-op stubs after batch 3).
+- 15 dead test classes across the test suite (matched to deleted
+  features).
+
+**IDE detector entries:**
+
+- `continue.dev` and `aider` no longer in the detector output. Neither
+  had a codevira-configurable integration path; their entries existed
+  only as advisory listings (pure noise).
+
+### Counts (v2.1.x → v3.0.0)
+
+| Surface                         | v2.1.x       | v3.0.0     | Δ      |
+|---------------------------------|--------------|------------|--------|
+| MCP tools                       | 46           | 24         | -48%   |
+| CLI subcommands                 | 23           | 15         | -35%   |
+| Engine policies                 | 10           | 6          | -40%   |
+| Per-project nudge files         | 6            | 1          | -83%   |
+| Templates shipped in the wheel  | 7            | 0          | n/a    |
+| MCP prompt library              | 5            | 1          | -80%   |
+| Pipx install size               | ~450 MB      | ~83 MB     | -82%   |
+| MCP server startup              | 1–3 s        | <100 ms    | -97%   |
+| Tests (passing)                 | 2354         | 1870 + 72  | rebased |
+
+### Migration notes
+
+Most deletions have a clear successor in this file's `### Removed`
+sections. Two with non-obvious mappings:
+
+- **From `mark_decision_protected(id, True)`** →
+  `supersede_decision(old_id=id, new_decision=<text>, reason=<why>,
+  do_not_revert=True)`. The supersede path gives you the audit trail
+  (why you flipped the flag) that the standalone tool didn't.
+- **From `record_decisions(decisions=[...])`** → for d in decisions:
+  `record_decision(**d)`. The audit found agents called single-record
+  in practice anyway, so this is the actually-used pattern.
+
+The `codevira uninstall` command picks up any legacy artifacts on
+disk from earlier versions (per-IDE nudge files, etc.) so users
+upgrading don't need to hand-clean.
+
+For IDE detection changes: if you previously relied on codevira
+configuring Claude Desktop / Antigravity / Cursor based on the
+presence of a directory, you may now need to either:
+(a) actually install the IDE so the binary is on PATH (or so the
+    relevant config file exists), OR
+(b) re-run `codevira setup --ide <name> --force` to override the
+    detector and configure anyway.
+
+The strict mode is the right default. The audit found false-positive
+configurations (codevira injected into IDEs the user never installed)
+were a real churn driver — silently writing config for absent apps
+makes users distrust the tool.
+
+---
+
+## [2.2.0] — 2026-05-20 — Lean (in-repo, no chromadb, token-optimized)
+
+> The biggest architectural change since v2.0. Decisions move from
+> SQLite into git-tracked JSONL in your repo. ChromaDB / sentence-
+> transformers / torch removed entirely; tree-sitter-language-pack
+> (351 MB) replaced by 4 individual grammar packages (TS / JS / Go /
+> Rust) totaling ~5 MB. Pipx install drops from ~450 MB (v2.1.2 with
+> the full grammar stack) to ~85 MB; MCP server starts in <100ms;
+> per-project disk drops from 40-80 MB to ~1-2 MB. See
+> `docs/plans/v2.2.0.md` for the full plan.
+
+### Changed (architecture)
+
+- **Decision storage moved to `<repo>/.codevira/decisions.jsonl`** —
+  human-readable, git-committed, team-shareable. Visible in `git diff`
+  as one-decision-per-line. Replaces v2.1.x's `~/.codevira/projects/
+  <key>/graph/graph.db` SQLite blob for decisions (the code graph
+  stays in SQLite cache).
+- **Sessions / preferences / learned_rules / changesets / outcomes /
+  roadmap also move to `.codevira/*.jsonl`**. The `.codevira-cache/`
+  dir (gitignored) holds the FTS5 index + code-graph SQLite + hash
+  cache (rebuildable by `codevira sync` / `codevira index`).
+- **AGENTS.md auto-generated** with hard **5 KB cap**. Marker-bounded
+  (`<!-- codevira:begin -->` / `<!-- codevira:end -->`) so user-edited
+  content outside is preserved byte-for-byte. Every `record_decision`
+  regenerates it synchronously. Other AI tools (Copilot, Codex,
+  Cursor, Gemini, Factory, Amp, Windsurf, Zed, RooCode, Jules) read
+  AGENTS.md natively — codevira's decisions are now portable.
+
+### Removed (dropped from the runtime)
+
+- **ChromaDB + sentence-transformers + torch deleted entirely.**
+  ~150 MB of dependencies gone. Pipx install ≤100 MB (gated by the
+  cold-install smoke G2.5). MCP server startup <100ms (was 1-3s due
+  to torch warmup).
+- **tree-sitter-language-pack (351 MB, 17 grammars) replaced** with
+  individual grammar packages: `tree-sitter-typescript`,
+  `tree-sitter-javascript`, `tree-sitter-go`, `tree-sitter-rust`
+  (~5 MB total). Long-tail languages (Java, C, C++, Ruby, PHP,
+  Kotlin, Swift, Solidity, etc.) remain available via the opt-in
+  extra `pip install 'codevira[all-languages]'` which re-adds the
+  legacy pack. This is the single biggest contributor to the v2.2.0
+  size cut.
+- **`search_codebase` MCP tool removed.** AI agents grep + Read files
+  natively in 2026; semantic code search was the source of 90%+ of
+  v2.1.x disk usage and every major bug (issue #10 Antigravity dlopen,
+  64 GB HNSW corruption, write amplification). Calling the tool now
+  returns a friendly explanation pointing at grep/Read.
+- **`codevira calibrate` CLI command removed.** No more semantic
+  thresholds (FTS5 has no learnable thresholds; uses BM25 BM25 ranking).
+- **`prewarm_embedding_model()` removed.** No model to warm.
+- **`mcp_server/cli_calibrate.py`, `mcp_server/tools/_decision_embeddings.py`,
+  `mcp_server/engine/policies/cross_session.py`** — all deleted.
+  ~1,500 LOC of v2.1.x code gone.
+
+### Added
+
+- **`mcp_server/storage/`** new package:
+  - `jsonl_store.py` — atomic append, file lock, monotonic IDs,
+    UTF-8/emoji/CJK roundtrip
+  - `fts5_index.py` — SQLite FTS5 BM25 keyword search, <50ms on
+    1000-decision corpus
+  - `manifest.py` — tag/file → id index in YAML
+  - `digest.py` — slim per-decision records with outcome-weighted
+    scoring
+  - `token_estimator.py` — char-based proxy (4 chars/token); optional
+    tiktoken via `CODEVIRA_TOKEN_PRECISION=exact`
+  - `agents_md_generator.py` — 5 KB-capped AGENTS.md regen with
+    marker preservation
+  - `decisions_store.py`, `sessions_store.py` — high-level facades
+  - `paths.py` — single source of truth for `.codevira/` paths
+- **`mcp_server/engine/policies/relevance_inject.py`** — replaces
+  `cross_session.py`. Token-bounded injection:
+  - **Off-topic prompt → 0 tokens** (no `additionalContext` at all)
+  - **On-topic prompt → ≤600 tokens, ≤3 decisions**
+  - Scoring: tag (0.4) + file (0.4) + FTS5 (0.2) × outcome_weight
+  - Cache-stable output (sorted IDs, no timestamps,
+    `<codevira-context cache_key="...">` wrapper)
+  - Config via `.codevira/config.yaml` or `CODEVIRA_INJECT_*` env vars
+- **`codevira sync`** CLI command — regenerate manifest + digest +
+  FTS5 + AGENTS.md from `decisions.jsonl`. Manual / recovery path
+  (every record_decision triggers regen synchronously).
+
+### Backwards compatibility
+
+- **No migration from v2.1.x.** Per the v2.2.0 plan: clean break.
+  Users `codevira init` on each project to scaffold `.codevira/`.
+  v2.1.x continues to exist on PyPI for users who don't upgrade.
+  Optional `codevira archive-legacy` preserves v2.1.x decisions as a
+  read-only reference.
+- **Decision IDs change from int (`1`, `2`) to string (`D000001`,
+  `D000002`).** Tools that round-trip IDs as opaque values continue
+  to work. Code that hardcodes int IDs needs updating.
+- **`check_conflict` MCP tool semantics shifted from semantic to
+  Jaccard text similarity** (FTS5 candidate pool + Jaccard token-set).
+  Threshold tuned conservatively (0.60).
+
+### Tests
+
+- 141 new tests across `tests/storage/` and `tests/engine/test_relevance_inject.py`
+- Existing integration suite (`tests/integration/test_mcp_roundtrip.py`)
+  passes 13/14 against new backend (the 14th is a chromadb-availability
+  test, skipped permanently now)
+
+### Removed — legacy v2.1.x compatibility paths (no carryover users)
+
+Once the v2.1.x user base dropped to zero (per maintainer's
+2026-05-22 directive: "no users; go fresh"), the defensive
+SQLiteGraph fallback branches added during Phase B's incremental
+migration became dead weight. Removed:
+
+- **`build_timeline(conn=...)` SQL backend** — `build_timeline()` is
+  now JSONL-only; the `conn` parameter is gone. Resource handler,
+  CLI replay, and tests all read from `.codevira/{decisions,
+  outcomes, sessions}.jsonl` exclusively. Public API simplified.
+- **`SignalContext.search_decisions` graph.db fallback** — JSONL FTS5
+  is the only backend; the legacy `graph.search_decisions()` branch
+  is gone. Returns `[]` cleanly when `.codevira/` isn't initialised.
+- **`treesitter_parser._load_parser_for` legacy pack fallback** —
+  unsupported languages now raise ValueError immediately with an
+  actionable message. The `[all-languages]` opt-in extra is gone.
+  v2.3.0 may re-introduce specific long-tail grammars as individual
+  deps if real demand emerges.
+- **Ported tests** that exercised the SQL path (test_decision_replay,
+  test_qa_round_week10/13, test_v2_release_candidate, test_cli_replay)
+  to use the JSONL planter helper (`decisions_store.record` +
+  `jsonl_store.append(outcomes_path, ...)`). Test count unchanged at
+  2,514 passes.
+
+### Fixed — cross-tool wedge gaps (post-Phase-G completeness)
+
+The cross-tool universality e2e tests surfaced several read paths
+that Phase B's "tool surface repointed at JSONL" pass missed. All
+fixed in the same release:
+
+- **`SignalContext.search_decisions`** now reads via
+  `decisions_store.search()` (FTS5 over JSONL) when `.codevira/` is
+  initialized. The legacy `SQLiteGraph.search_decisions()` is kept
+  as a fallback for v2.1.x projects.
+- **`codevira replay` CLI + `codevira://decisions` MCP resource**
+  now read from `.codevira/decisions.jsonl` + `.codevira/outcomes.jsonl`
+  + `.codevira/sessions.jsonl`. Both surface decisions recorded via
+  `record_decision` immediately, with outcome counts aggregated from
+  `outcomes.jsonl` (kept/modified/reverted). SQLiteGraph fallback
+  preserved for v2.1.x.
+- **FTS5 index now indexes `file_path`** (BM25 weight 0.8) so search
+  queries like `"retries"` match decisions whose only reference to
+  the term is in the file path. Existing FTS5 caches without the new
+  column are detected and auto-dropped + rebuilt on the next search.
+- **FTS5 `_sanitize_fts_query` now OR-joins terms** with stopword +
+  short-token stripping. The previous implicit-AND turned every
+  multi-word prompt into an over-strict phrase query — e.g. asking
+  "What did we decide about bcrypt for password hashing?" missed the
+  decision "use bcrypt over argon2" because "password" and "hashing"
+  aren't in the stored text. The off-topic 0-token gate
+  (`relevance_min_score=0.10`) still suppresses irrelevant matches.
+- **`decisions_store.record` and `record_many` now append
+  `digest.jsonl` incrementally**. Previously digest was only
+  regenerated via `codevira sync` / `rebuild_indexes()`, so the
+  relevance-inject policy showed `(decision summary unavailable —
+  try codevira sync)` for decisions recorded since the last sync.
 
 ## [2.1.2] — 2026-05-19 — Trust recovery + QoL
 

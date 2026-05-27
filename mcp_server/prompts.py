@@ -1,113 +1,45 @@
 """
 prompts.py — MCP workflow prompt templates.
 
-Five pre-built prompts that give AI agents structured starting points
-for common workflows: review, debug, onboard, pre-commit, and architecture.
+v3.0.0 (2026-05-22 surface-cut audit): the prompt library was pruned
+from 5 templates → 1. The deleted templates (``review_changes``,
+``debug_issue``, ``pre_commit_check``, ``architecture_overview``)
+all referenced MCP tools that the audit deleted (``analyze_changes``,
+``find_hotspots``, ``get_learned_rules``, ``get_preferences``,
+``get_project_maturity``, ``list_open_changesets``, ``export_graph``,
+``list_nodes``, ``search_codebase``). Rather than rewriting them
+against the v3.0.0 surface, we kept only the one with proven user
+value: ``onboard_session``, the "catch me up on this project"
+starting point that maps cleanly to the single
+``get_session_context()`` MCP tool.
+
+If you find yourself wanting one of the deleted workflows back, ask:
+does it add value beyond "the AI calls the right MCP tools in the
+right order"? If not, the AI can synthesize the workflow itself from
+the slim 25-tool surface — that's what MCP is for.
 """
 
 from __future__ import annotations
 
 PROMPTS: dict[str, dict] = {
-    "review_changes": {
-        "name": "review_changes",
-        "description": "Review current changes with risk analysis, test coverage gaps, and learned rules.",
-        "arguments": [
-            {
-                "name": "base_ref",
-                "description": "Base git ref to diff against (default: main)",
-                "required": False,
-            },
-        ],
-        "template": (
-            "Review the current code changes for quality, risks, and missed tests.\n\n"
-            "Steps:\n"
-            "1. Call analyze_changes() to get function-level risk scores and test coverage gaps.\n"
-            "2. Call get_learned_rules() to check if any changes violate learned patterns.\n"
-            "3. Call get_preferences() to verify the changes match the developer's coding style.\n"
-            "4. For each HIGH risk change, call query_graph() to understand callers and downstream impact.\n\n"
-            "Present a structured review with:\n"
-            "- Risk summary (high/medium/low changes)\n"
-            "- Test coverage gaps\n"
-            "- Style violations\n"
-            "- Suggested improvements"
-        ),
-    },
-    "debug_issue": {
-        "name": "debug_issue",
-        "description": "Debug an issue by tracing code paths, searching past decisions, and checking confidence.",
-        "arguments": [
-            {
-                "name": "description",
-                "description": "Description of the issue to debug",
-                "required": True,
-            },
-        ],
-        "template": (
-            "Debug the following issue: {description}\n\n"
-            "Steps:\n"
-            "1. Call search_codebase() with the issue description to find relevant code.\n"
-            "2. Call query_graph() on the most relevant files to trace callers and callees.\n"
-            "3. Call search_decisions() to check if similar issues were addressed before.\n"
-            "4. Call get_decision_confidence() on affected files to check if this is an ambiguous area.\n"
-            "5. Call get_impact() on the likely source file to understand blast radius.\n\n"
-            "Present:\n"
-            "- Most likely root cause with evidence\n"
-            "- Affected code paths\n"
-            "- Past decisions that relate to this area\n"
-            "- Recommended fix approach"
-        ),
-    },
     "onboard_session": {
         "name": "onboard_session",
-        "description": "Start a new coding session with full context — roadmap, open work, rules, and recent history.",
+        "description": "Start a new coding session with full project context — roadmap, recent decisions, open work.",
         "arguments": [],
         "template": (
             "Orient to this project and prepare for a productive coding session.\n\n"
             "Steps:\n"
-            "1. Call get_session_context() for a complete catch-up: roadmap phase, open changesets, "
-            "recent decisions, confidence scores, preferences, and learned rules.\n"
-            "2. Call list_open_changesets() to check for interrupted multi-file work.\n"
-            "3. Call get_project_maturity() to understand overall project intelligence level.\n\n"
-            "Present a concise session briefing:\n"
-            "- Current project phase and next action\n"
-            "- Any open changesets that need resuming\n"
-            "- Key rules and preferences to follow\n"
-            "- Areas of low confidence that need extra care"
-        ),
-    },
-    "pre_commit_check": {
-        "name": "pre_commit_check",
-        "description": "Pre-commit review — check staged changes for risks and missing tests.",
-        "arguments": [],
-        "template": (
-            "Review the staged changes before committing.\n\n"
-            "Steps:\n"
-            "1. Call analyze_changes(base_ref='HEAD') to review staged changes at function level.\n"
-            "2. Call find_hotspots() to check if any modified functions are complexity hotspots.\n"
-            "3. Call get_learned_rules() to verify no patterns are violated.\n\n"
-            "Present:\n"
-            "- Changes summary with risk scores\n"
-            "- Missing test coverage\n"
-            "- Hotspot warnings (large functions, high fan-in)\n"
-            "- Go/no-go recommendation"
-        ),
-    },
-    "architecture_overview": {
-        "name": "architecture_overview",
-        "description": "Show project architecture — dependency graph, layers, hotspots, and maturity.",
-        "arguments": [],
-        "template": (
-            "Generate an architecture overview of this project.\n\n"
-            "Steps:\n"
-            "1. Call export_graph(format='mermaid') to generate a dependency diagram.\n"
-            "2. Call list_nodes() to see all files organized by layer.\n"
-            "3. Call find_hotspots() to identify complexity and risk areas.\n"
-            "4. Call get_project_maturity() for overall intelligence metrics.\n\n"
-            "Present:\n"
-            "- Dependency diagram (Mermaid)\n"
-            "- Layer breakdown (API, service, database, utility, test)\n"
-            "- Hotspots and risk areas\n"
-            "- Maturity score and what it means"
+            "1. Call get_session_context() — single round-trip that returns the "
+            "current phase, next action, recent decisions, top tags, and a brief "
+            "of what was last worked on.\n"
+            "2. If get_session_context surfaces decisions with do_not_revert=true, "
+            "treat those as architectural constraints for this session.\n"
+            "3. If you need detail on a specific phase, call get_phase(n).\n\n"
+            "Present a concise briefing:\n"
+            "- Current phase + next action\n"
+            "- Locked decisions (do_not_revert=true) you must respect\n"
+            "- Recent decisions / themes you should be aware of\n"
+            "- Open questions or risks you'd like to confirm with the user"
         ),
     },
 }

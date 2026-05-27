@@ -10,9 +10,9 @@ Covers:
     watched_dirs containment, deeply nested dirs, symlinks, binary files
   - infer_language_from_files(): dominant language detection
 """
+
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
@@ -31,6 +31,7 @@ from mcp_server.gitignore import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_files(root: Path, paths: list[str]) -> list[Path]:
     """Create files (and parent dirs) under root. Returns absolute Paths."""
     created = []
@@ -46,16 +47,40 @@ def _make_files(root: Path, paths: list[str]) -> list[Path]:
 # Constants coverage
 # ===========================================================================
 
+
 class TestSafetyNetDirs:
     """Verify key directories are present in _SAFETY_NET_DIRS."""
 
-    @pytest.mark.parametrize("dirname", [
-        ".git", "node_modules", "__pycache__", ".venv", "venv",
-        ".tox", ".mypy_cache", ".pytest_cache", ".ruff_cache",
-        ".next", ".nuxt", ".turbo", ".cache", "dist", "build",
-        "out", ".build", ".svelte-kit", ".parcel-cache", "coverage",
-        ".nyc_output", "target", "vendor", ".codevira", ".codevira.migrated",
-    ])
+    @pytest.mark.parametrize(
+        "dirname",
+        [
+            ".git",
+            "node_modules",
+            "__pycache__",
+            ".venv",
+            "venv",
+            ".tox",
+            ".mypy_cache",
+            ".pytest_cache",
+            ".ruff_cache",
+            ".next",
+            ".nuxt",
+            ".turbo",
+            ".cache",
+            "dist",
+            "build",
+            "out",
+            ".build",
+            ".svelte-kit",
+            ".parcel-cache",
+            "coverage",
+            ".nyc_output",
+            "target",
+            "vendor",
+            ".codevira",
+            ".codevira.migrated",
+        ],
+    )
     def test_dir_in_safety_net(self, dirname):
         assert dirname in _SAFETY_NET_DIRS
 
@@ -66,17 +91,52 @@ class TestSafetyNetDirs:
 class TestSkipExtensions:
     """Verify key extensions are present in _SKIP_EXTENSIONS."""
 
-    @pytest.mark.parametrize("ext", [
-        ".pyc", ".pyo", ".pyd",
-        ".so", ".dylib", ".dll", ".exe",
-        ".o", ".a", ".lib",
-        ".jpg", ".jpeg", ".png", ".gif", ".svg", ".ico", ".webp",
-        ".mp3", ".mp4", ".wav", ".avi", ".mov",
-        ".zip", ".tar", ".gz", ".bz2", ".xz", ".7z",
-        ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
-        ".bin", ".dat", ".db", ".sqlite", ".sqlite3",
-        ".lock",
-    ])
+    @pytest.mark.parametrize(
+        "ext",
+        [
+            ".pyc",
+            ".pyo",
+            ".pyd",
+            ".so",
+            ".dylib",
+            ".dll",
+            ".exe",
+            ".o",
+            ".a",
+            ".lib",
+            ".jpg",
+            ".jpeg",
+            ".png",
+            ".gif",
+            ".svg",
+            ".ico",
+            ".webp",
+            ".mp3",
+            ".mp4",
+            ".wav",
+            ".avi",
+            ".mov",
+            ".zip",
+            ".tar",
+            ".gz",
+            ".bz2",
+            ".xz",
+            ".7z",
+            ".pdf",
+            ".doc",
+            ".docx",
+            ".xls",
+            ".xlsx",
+            ".ppt",
+            ".pptx",
+            ".bin",
+            ".dat",
+            ".db",
+            ".sqlite",
+            ".sqlite3",
+            ".lock",
+        ],
+    )
     def test_ext_in_skip_set(self, ext):
         assert ext in _SKIP_EXTENSIONS
 
@@ -87,43 +147,52 @@ class TestSkipExtensions:
 class TestExtensionLanguage:
     """Verify key extension-to-language mappings."""
 
-    @pytest.mark.parametrize("ext,lang", [
-        (".py", "python"),
-        (".ts", "typescript"), (".tsx", "typescript"),
-        (".js", "javascript"), (".jsx", "javascript"),
-        (".go", "go"),
-        (".rs", "rust"),
-        (".java", "java"),
-        (".rb", "ruby"),
-        (".php", "php"),
-        (".c", "c"), (".h", "c"),
-        (".cpp", "cpp"), (".hpp", "cpp"),
-        (".swift", "swift"),
-        (".kt", "kotlin"),
-        (".cs", "csharp"),
-        (".sql", "sql"),
-        (".html", "html"),
-        (".css", "css"), (".scss", "css"),
-        (".json", "json"),
-        (".yaml", "yaml"), (".yml", "yaml"),
-        (".md", "markdown"),
-        (".sh", "shell"),
-        (".tf", "terraform"),
-        (".proto", "protobuf"),
-        (".graphql", "graphql"),
-        (".dart", "dart"),
-        (".lua", "lua"),
-        (".sol", "solidity"),
-        (".vue", "vue"),
-        (".svelte", "svelte"),
-        (".scala", "scala"),
-        (".ex", "elixir"),
-        (".hs", "haskell"),
-        (".clj", "clojure"),
-        (".r", "r"),
-        (".toml", "toml"),
-        (".prisma", "prisma"),
-    ])
+    @pytest.mark.parametrize(
+        "ext,lang",
+        [
+            (".py", "python"),
+            (".ts", "typescript"),
+            (".tsx", "typescript"),
+            (".js", "javascript"),
+            (".jsx", "javascript"),
+            (".go", "go"),
+            (".rs", "rust"),
+            (".java", "java"),
+            (".rb", "ruby"),
+            (".php", "php"),
+            (".c", "c"),
+            (".h", "c"),
+            (".cpp", "cpp"),
+            (".hpp", "cpp"),
+            (".swift", "swift"),
+            (".kt", "kotlin"),
+            (".cs", "csharp"),
+            (".sql", "sql"),
+            (".html", "html"),
+            (".css", "css"),
+            (".scss", "css"),
+            (".json", "json"),
+            (".yaml", "yaml"),
+            (".yml", "yaml"),
+            (".md", "markdown"),
+            (".sh", "shell"),
+            (".tf", "terraform"),
+            (".proto", "protobuf"),
+            (".graphql", "graphql"),
+            (".dart", "dart"),
+            (".lua", "lua"),
+            (".sol", "solidity"),
+            (".vue", "vue"),
+            (".svelte", "svelte"),
+            (".scala", "scala"),
+            (".ex", "elixir"),
+            (".hs", "haskell"),
+            (".clj", "clojure"),
+            (".r", "r"),
+            (".toml", "toml"),
+            (".prisma", "prisma"),
+        ],
+    )
     def test_mapping(self, ext, lang):
         assert _EXTENSION_LANGUAGE[ext] == lang
 
@@ -134,6 +203,7 @@ class TestExtensionLanguage:
 # ===========================================================================
 # load_gitignore_spec
 # ===========================================================================
+
 
 class TestLoadGitignoreSpec:
     def test_root_gitignore_excludes_pattern(self, tmp_path):
@@ -220,6 +290,7 @@ class TestLoadGitignoreSpec:
 # discover_source_files
 # ===========================================================================
 
+
 class TestDiscoverSourceFiles:
     def test_basic_discovery(self, tmp_path):
         _make_files(tmp_path, ["src/main.py", "src/util.py", "tests/test_main.py"])
@@ -230,13 +301,16 @@ class TestDiscoverSourceFiles:
         assert "tests/test_main.py" in rel
 
     def test_safety_net_dirs_always_skipped(self, tmp_path):
-        _make_files(tmp_path, [
-            "src/main.py",
-            "node_modules/express/index.js",
-            ".venv/lib/python/site.py",
-            "__pycache__/mod.cpython-311.pyc",
-            ".git/config",
-        ])
+        _make_files(
+            tmp_path,
+            [
+                "src/main.py",
+                "node_modules/express/index.js",
+                ".venv/lib/python/site.py",
+                "__pycache__/mod.cpython-311.pyc",
+                ".git/config",
+            ],
+        )
         files = discover_source_files(tmp_path)
         paths_str = [str(f) for f in files]
 
@@ -247,12 +321,15 @@ class TestDiscoverSourceFiles:
         assert any("main.py" in p for p in paths_str)
 
     def test_skip_extensions(self, tmp_path):
-        _make_files(tmp_path, [
-            "src/main.py",
-            "src/compiled.pyc",
-            "assets/logo.png",
-            "data/dump.db",
-        ])
+        _make_files(
+            tmp_path,
+            [
+                "src/main.py",
+                "src/compiled.pyc",
+                "assets/logo.png",
+                "data/dump.db",
+            ],
+        )
         files = discover_source_files(tmp_path)
         names = [f.name for f in files]
         assert "main.py" in names
@@ -372,6 +449,7 @@ class TestDiscoverSourceFiles:
 # infer_language_from_files
 # ===========================================================================
 
+
 class TestInferLanguageFromFiles:
     def test_dominant_python(self, tmp_path):
         _make_files(tmp_path, ["a.py", "b.py", "c.py", "d.ts"])
@@ -403,8 +481,11 @@ class TestInferLanguageFromFiles:
 
     def test_mixed_languages_picks_most_common(self):
         files = [
-            Path("a.py"), Path("b.py"), Path("c.py"),
-            Path("d.rs"), Path("e.rs"),
+            Path("a.py"),
+            Path("b.py"),
+            Path("c.py"),
+            Path("d.rs"),
+            Path("e.rs"),
             Path("f.go"),
         ]
         lang = infer_language_from_files(files)
@@ -425,8 +506,8 @@ class TestInferLanguageFromFiles:
 # Chaos tests
 # ===========================================================================
 
-class TestChaosGitignore:
 
+class TestChaosGitignore:
     def test_gitignore_with_encoding_errors(self, tmp_path):
         """Non-UTF8 .gitignore should not crash (errors='replace')."""
         _make_files(tmp_path, ["src/main.py", "dist/bundle.js"])
@@ -489,7 +570,9 @@ class TestChaosGitignore:
         """Binary files (by extension) mixed with source should be skipped."""
         _make_files(tmp_path, ["src/main.py", "src/data.bin", "src/lib.so"])
         # Also write actual binary content
-        (tmp_path / "src" / "image.jpg").write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 100)
+        (tmp_path / "src" / "image.jpg").write_bytes(
+            b"\xff\xd8\xff\xe0" + b"\x00" * 100
+        )
 
         files = discover_source_files(tmp_path)
         names = [f.name for f in files]
@@ -506,18 +589,26 @@ class TestChaosGitignore:
         gi.chmod(0o000)
 
         try:
-            spec = load_gitignore_spec(tmp_path)
-            # Either returns None (unreadable => no patterns) or spec without patterns
-            # The key is no crash
+            # No-crash assertion: load against an unreadable .gitignore
+            # must return None or an empty spec, never raise. Result is
+            # intentionally unused — the absence of an exception is the
+            # test.
+            _ = load_gitignore_spec(tmp_path)
         finally:
             gi.chmod(0o644)  # restore for cleanup
 
     def test_many_gitignore_files_nested(self, tmp_path):
         """Multiple nested .gitignore files at various levels."""
-        _make_files(tmp_path, [
-            "a/x.py", "a/b/y.py", "a/b/c/z.py",
-            "a/b/c/d/w.py", "a/b/c/d/e/v.py",
-        ])
+        _make_files(
+            tmp_path,
+            [
+                "a/x.py",
+                "a/b/y.py",
+                "a/b/c/z.py",
+                "a/b/c/d/w.py",
+                "a/b/c/d/e/v.py",
+            ],
+        )
         (tmp_path / ".gitignore").write_text("*.log\n")
         (tmp_path / "a" / ".gitignore").write_text("*.tmp\n")
         (tmp_path / "a" / "b" / ".gitignore").write_text("*.bak\n")
@@ -549,6 +640,7 @@ class TestChaosGitignore:
 # load_gitignore_spec returns None when pathspec unavailable (lines 123-124)
 # ===========================================================================
 
+
 class TestLoadGitignoreSpecPathspecUnavailable:
     def test_returns_none_when_pathspec_not_available(self, tmp_path):
         """load_gitignore_spec returns None when _PATHSPEC_AVAILABLE is False."""
@@ -568,6 +660,7 @@ class TestLoadGitignoreSpecPathspecUnavailable:
 # discover_source_files with watched_dirs / gitignore filtering
 # (lines 231-232, 243-248, 255-261)
 # ===========================================================================
+
 
 class TestDiscoverSourceFilesWatchedDirs:
     def test_watched_dirs_config_override_excludes_other_dirs(self, tmp_path):

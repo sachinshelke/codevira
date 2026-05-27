@@ -21,8 +21,10 @@ Public API:
 Week-1 deliverable: minimal record + lookup. Empty lookup is fine; Hero 2
 just won't fire until git scanning lands.
 """
+
 from __future__ import annotations
 
+import re as _re
 import sqlite3
 import threading
 from dataclasses import dataclass
@@ -158,9 +160,7 @@ def _connect_locked(project_root: Path) -> tuple[sqlite3.Connection, threading.R
             )
             """
         )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_fixes_file ON fixes(file_path)"
-        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_fixes_file ON fixes(file_path)")
         conn.commit()
         lock = threading.RLock()
         _conn_cache[pr] = conn
@@ -201,6 +201,7 @@ def record_fix(
         raise ValueError(f"line_end ({line_end}) < line_start ({line_start})")
 
     import time
+
     conn, db_lock = _connect_locked(project_root)
     # Hold lock across execute+commit. Without this, concurrent record_fix
     # calls collide on the implicit BEGIN+COMMIT (Week-2 R3 finding).
@@ -211,7 +212,15 @@ def record_fix(
               (file_path, line_start, line_end, description, source, commit_sha, recorded_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (file_path, line_start, line_end, description, source, commit_sha, time.time()),
+            (
+                file_path,
+                line_start,
+                line_end,
+                description,
+                source,
+                commit_sha,
+                time.time(),
+            ),
         )
         conn.commit()
         return int(cur.lastrowid or 0)
@@ -262,9 +271,9 @@ _MAX_CHANGE_BYTES = 100_000
 #: Regex for the Claude Code Edit-format envelope. Anchors at line start
 #: with re.MULTILINE so embedded ``--- before`` / ``--- after`` lines
 #: inside the user's ``old_string`` / ``new_string`` don't break parsing.
-#: (Round-2 QA finding P1 #2.)
-import re as _re
-
+#: (Round-2 QA finding P1 #2.) ``re`` is imported at the top of the
+#: module as ``_re`` in v3.0.0's ruff cleanup (was a late import that
+#: tripped E402).
 _EDIT_FORMAT_RE = _re.compile(
     r"^--- before\n(?P<before>.*?)\n^--- after\n(?P<after>.*)\Z",
     _re.DOTALL | _re.MULTILINE,
@@ -392,10 +401,37 @@ def _is_revert_edit_format(
     # Keyword-overlap heuristic. Strip the verb-y words that describe
     # "fixing"; keep nouns that describe what was buggy.
     skip_words = {
-        "fix", "fixed", "fixes", "fixing", "bug", "bugs", "error",
-        "errors", "issue", "issues", "the", "a", "an", "to", "of",
-        "in", "on", "for", "by", "with", "and", "or", "but", "is",
-        "was", "were", "be", "been", "being", "now", "have",
+        "fix",
+        "fixed",
+        "fixes",
+        "fixing",
+        "bug",
+        "bugs",
+        "error",
+        "errors",
+        "issue",
+        "issues",
+        "the",
+        "a",
+        "an",
+        "to",
+        "of",
+        "in",
+        "on",
+        "for",
+        "by",
+        "with",
+        "and",
+        "or",
+        "but",
+        "is",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "now",
+        "have",
     }
     desc_tokens = {
         t.lower().strip(".,;:!?")
@@ -449,12 +485,12 @@ def reset(project_root: Path) -> None:
 #: moderate precision is the right tradeoff.
 _FIX_SUBJECT_RE = _re.compile(
     r"^\s*(?:"
-    r"fix(?:\(.*?\))?:"           # `fix:` / `fix(scope):`
-    r"|bug(?:\(.*?\))?:"          # `bug:` / `bug(scope):`
-    r"|hotfix(?:\(.*?\))?:"       # `hotfix:`
-    r"|fixes?\s+#\d+"             # `fixes #123`, `fix #123`
-    r"|closes?\s+#\d+"            # `closes #123`
-    r"|resolves?\s+#\d+"          # `resolves #123`
+    r"fix(?:\(.*?\))?:"  # `fix:` / `fix(scope):`
+    r"|bug(?:\(.*?\))?:"  # `bug:` / `bug(scope):`
+    r"|hotfix(?:\(.*?\))?:"  # `hotfix:`
+    r"|fixes?\s+#\d+"  # `fixes #123`, `fix #123`
+    r"|closes?\s+#\d+"  # `closes #123`
+    r"|resolves?\s+#\d+"  # `resolves #123`
     r")",
     _re.IGNORECASE,
 )
@@ -499,7 +535,6 @@ def scan_git_log(
         and ``codevira fix-noted`` consume).
     """
     import subprocess
-    import time
 
     pr = project_root.resolve()
     summary = {
@@ -519,7 +554,10 @@ def scan_git_log(
     try:
         result = subprocess.run(
             [
-                "git", "-C", str(pr), "log",
+                "git",
+                "-C",
+                str(pr),
+                "log",
                 f"-{max_commits}",
                 "--pretty=format:%H%x00%s",
                 "--name-only",

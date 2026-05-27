@@ -21,9 +21,7 @@ These tests cover:
 """
 from __future__ import annotations
 
-import sqlite3
 
-import pytest
 
 from indexer.sqlite_graph import SQLiteGraph
 

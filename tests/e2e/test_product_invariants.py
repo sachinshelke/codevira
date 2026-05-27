@@ -218,16 +218,17 @@ class TestP7Reversible:
             f"  exit={result.returncode}\n  stderr={result.stderr}"
         )
 
-    def test_hooks_uninstall_exists(self, codevira_bin: str) -> None:
-        """`codevira hooks uninstall` must be a real command."""
+    def test_uninstall_exists(self, codevira_bin: str) -> None:
+        """`codevira uninstall` must be a real command (v2.2.0+: `hooks`
+        sub-surface dropped in favor of a single project-level uninstall)."""
         result = subprocess.run(
-            [codevira_bin, "hooks", "uninstall", "--help"],
+            [codevira_bin, "uninstall", "--help"],
             capture_output=True,
             text=True,
             timeout=10,
         )
         assert result.returncode == 0, (
-            f"P7 violation: `codevira hooks uninstall --help` failed.\n"
+            f"P7 violation: `codevira uninstall --help` failed.\n"
             f"  exit={result.returncode}\n  stderr={result.stderr}"
         )
 

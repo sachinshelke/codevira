@@ -7,12 +7,12 @@ Adds coverage for inputs that earlier tests didn't exercise:
   - fix_history git scanning (with a synthetic git repo)
   - is_revert with binary content / control characters
 """
+
 from __future__ import annotations
 
 import json
 import os
 import subprocess
-from pathlib import Path
 
 import pytest
 
@@ -37,6 +37,7 @@ from mcp_server.engine.token_meter import (
 # Unicode / non-Latin paths
 # =====================================================================
 
+
 class TestUnicodePaths:
     """Codevira must handle paths with Japanese, RTL, emoji."""
 
@@ -45,14 +46,13 @@ class TestUnicodePaths:
         proj.mkdir(parents=True)
         fake_home = tmp_path / "global"
         fake_home.mkdir()
-        monkeypatch.setattr(
-            "mcp_server.paths.get_global_home", lambda: fake_home
-        )
+        monkeypatch.setattr("mcp_server.paths.get_global_home", lambda: fake_home)
         try:
             rid = record_fix(
                 proj,
                 file_path="src/🚀-launcher.py",
-                line_start=1, line_end=10,
+                line_start=1,
+                line_end=10,
                 description="إصلاح خلل في حلقة لانهائية",  # RTL Arabic
                 source="manual",
             )
@@ -68,12 +68,13 @@ class TestUnicodePaths:
         proj.mkdir()
         fake_home = tmp_path / "global"
         fake_home.mkdir()
-        monkeypatch.setattr(
-            "mcp_server.paths.get_global_home", lambda: fake_home
-        )
+        monkeypatch.setattr("mcp_server.paths.get_global_home", lambda: fake_home)
         try:
             record_fix(
-                proj, "src/x.py", 1, 5,
+                proj,
+                "src/x.py",
+                1,
+                5,
                 description="🐛 fixed retry → 🚀",
                 source="manual",
             )
@@ -88,6 +89,7 @@ class TestUnicodePaths:
 # Very deep paths
 # =====================================================================
 
+
 class TestDeepPaths:
     """Codevira shouldn't break on deeply nested directories."""
 
@@ -98,9 +100,7 @@ class TestDeepPaths:
         deep.mkdir(parents=True)
         fake_home = tmp_path / "global"
         fake_home.mkdir()
-        monkeypatch.setattr(
-            "mcp_server.paths.get_global_home", lambda: fake_home
-        )
+        monkeypatch.setattr("mcp_server.paths.get_global_home", lambda: fake_home)
         try:
             # Should not crash on key generation or file operations
             rid = record_fix(deep, "x.py", 1, 1, "deep", source="manual")
@@ -113,18 +113,18 @@ class TestDeepPaths:
 # Token meter persistence
 # =====================================================================
 
+
 class TestTokenMeterPersistence:
     """end_session must flush summary to <data_dir>/logs/token_budget.jsonl."""
 
     def test_end_session_persists_jsonl(self, tmp_path, monkeypatch):
         from mcp_server.paths import _sanitize_path_key
+
         proj = tmp_path / "myproj"
         proj.mkdir()
         fake_home = tmp_path / "global"
         fake_home.mkdir()
-        monkeypatch.setattr(
-            "mcp_server.paths.get_global_home", lambda: fake_home
-        )
+        monkeypatch.setattr("mcp_server.paths.get_global_home", lambda: fake_home)
 
         reset_meters()
         meter = get_or_create_session_meter("session-1")
@@ -152,9 +152,7 @@ class TestTokenMeterPersistence:
         """Without project_root, end_session returns summary but doesn't write."""
         fake_home = tmp_path / "global"
         fake_home.mkdir()
-        monkeypatch.setattr(
-            "mcp_server.paths.get_global_home", lambda: fake_home
-        )
+        monkeypatch.setattr("mcp_server.paths.get_global_home", lambda: fake_home)
 
         reset_meters()
         get_or_create_session_meter("session-2")
@@ -164,14 +162,11 @@ class TestTokenMeterPersistence:
         assert list(fake_home.rglob("token_budget.jsonl")) == []
 
     def test_read_session_history(self, tmp_path, monkeypatch):
-        from mcp_server.paths import _sanitize_path_key
         proj = tmp_path / "myproj"
         proj.mkdir()
         fake_home = tmp_path / "global"
         fake_home.mkdir()
-        monkeypatch.setattr(
-            "mcp_server.paths.get_global_home", lambda: fake_home
-        )
+        monkeypatch.setattr("mcp_server.paths.get_global_home", lambda: fake_home)
 
         reset_meters()
         # Write 3 sessions
@@ -187,17 +182,14 @@ class TestTokenMeterPersistence:
         assert history[0]["injected_total"] == 300
         assert history[2]["session_id"] == "s1"
 
-    def test_read_session_history_handles_corrupt_lines(
-        self, tmp_path, monkeypatch
-    ):
+    def test_read_session_history_handles_corrupt_lines(self, tmp_path, monkeypatch):
         from mcp_server.paths import _sanitize_path_key
+
         proj = tmp_path / "myproj"
         proj.mkdir()
         fake_home = tmp_path / "global"
         fake_home.mkdir()
-        monkeypatch.setattr(
-            "mcp_server.paths.get_global_home", lambda: fake_home
-        )
+        monkeypatch.setattr("mcp_server.paths.get_global_home", lambda: fake_home)
 
         # Write a JSONL with one good + one corrupt line
         key = _sanitize_path_key(proj)
@@ -205,9 +197,11 @@ class TestTokenMeterPersistence:
         log_dir.mkdir(parents=True)
         log_path = log_dir / "token_budget.jsonl"
         log_path.write_text(
-            json.dumps({"session_id": "good", "injected_total": 50}) + "\n"
+            json.dumps({"session_id": "good", "injected_total": 50})
+            + "\n"
             + "{ this is not valid json\n"
-            + json.dumps({"session_id": "another", "injected_total": 100}) + "\n"
+            + json.dumps({"session_id": "another", "injected_total": 100})
+            + "\n"
         )
 
         history = read_session_history(proj)
@@ -224,14 +218,10 @@ class TestTokenMeterPersistence:
         proj.mkdir()
         fake_home = tmp_path / "global"
         fake_home.mkdir()
-        monkeypatch.setattr(
-            "mcp_server.paths.get_global_home", lambda: fake_home
-        )
+        monkeypatch.setattr("mcp_server.paths.get_global_home", lambda: fake_home)
         assert read_session_history(proj) == []
 
-    def test_read_session_history_caps_huge_log_no_oom(
-        self, tmp_path, monkeypatch
-    ):
+    def test_read_session_history_caps_huge_log_no_oom(self, tmp_path, monkeypatch):
         """Tier-1 QA finding: unbounded readlines() on huge log.
 
         Plant a token_budget.jsonl far larger than the tail cap and
@@ -255,9 +245,7 @@ class TestTokenMeterPersistence:
         proj.mkdir()
         fake_home = tmp_path / "global"
         fake_home.mkdir()
-        monkeypatch.setattr(
-            "mcp_server.paths.get_global_home", lambda: fake_home
-        )
+        monkeypatch.setattr("mcp_server.paths.get_global_home", lambda: fake_home)
 
         key = _sanitize_path_key(proj.resolve())
         log_dir = fake_home / "projects" / key / "logs"
@@ -270,24 +258,34 @@ class TestTokenMeterPersistence:
         junk_payload = "x" * 800
         with open(log_path, "w", encoding="utf-8") as f:
             for i in range(32_000):
-                f.write(json.dumps({
-                    "session_id": "junk",
-                    "ended_at": float(i),
-                    "injected_total": 0,
-                    "used_total": 0,
-                    "efficiency": 0.0,
-                    "top_wasted_sources": [],
-                    "_padding": junk_payload,
-                }) + "\n")
+                f.write(
+                    json.dumps(
+                        {
+                            "session_id": "junk",
+                            "ended_at": float(i),
+                            "injected_total": 0,
+                            "used_total": 0,
+                            "efficiency": 0.0,
+                            "top_wasted_sources": [],
+                            "_padding": junk_payload,
+                        }
+                    )
+                    + "\n"
+                )
             for tail_id in ["t1", "t2", "t3", "t4", "t5"]:
-                f.write(json.dumps({
-                    "session_id": tail_id,
-                    "ended_at": 9999.0,
-                    "injected_total": 1,
-                    "used_total": 1,
-                    "efficiency": 1.0,
-                    "top_wasted_sources": [],
-                }) + "\n")
+                f.write(
+                    json.dumps(
+                        {
+                            "session_id": tail_id,
+                            "ended_at": 9999.0,
+                            "injected_total": 1,
+                            "used_total": 1,
+                            "efficiency": 1.0,
+                            "top_wasted_sources": [],
+                        }
+                    )
+                    + "\n"
+                )
 
         # Sanity: file must actually be > tail cap, else the test
         # doesn't prove the cap works.
@@ -333,6 +331,7 @@ class TestTokenMeterPersistence:
 # fix_history git scanning (synthetic repo)
 # =====================================================================
 
+
 @pytest.fixture
 def git_project(tmp_path, monkeypatch):
     """Create a real git repo with synthetic commit history."""
@@ -340,17 +339,23 @@ def git_project(tmp_path, monkeypatch):
     proj.mkdir()
     fake_home = tmp_path / "global"
     fake_home.mkdir()
-    monkeypatch.setattr(
-        "mcp_server.paths.get_global_home", lambda: fake_home
-    )
+    monkeypatch.setattr("mcp_server.paths.get_global_home", lambda: fake_home)
 
     # Initialize git repo
     def run_git(*args):
         return subprocess.run(
             ["git", "-C", str(proj), *args],
-            capture_output=True, text=True, check=False, timeout=10,
-            env={**os.environ, "GIT_AUTHOR_NAME": "Test", "GIT_AUTHOR_EMAIL": "t@t",
-                 "GIT_COMMITTER_NAME": "Test", "GIT_COMMITTER_EMAIL": "t@t"},
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+            env={
+                **os.environ,
+                "GIT_AUTHOR_NAME": "Test",
+                "GIT_AUTHOR_EMAIL": "t@t",
+                "GIT_COMMITTER_NAME": "Test",
+                "GIT_COMMITTER_EMAIL": "t@t",
+            },
         )
 
     run_git("init", "-b", "main")
@@ -431,9 +436,7 @@ class TestGitFixDetection:
         proj.mkdir()
         fake_home = tmp_path / "global"
         fake_home.mkdir()
-        monkeypatch.setattr(
-            "mcp_server.paths.get_global_home", lambda: fake_home
-        )
+        monkeypatch.setattr("mcp_server.paths.get_global_home", lambda: fake_home)
         result = scan_git_log(proj)
         assert "error" in result
         assert "git" in result["error"].lower()
@@ -447,14 +450,19 @@ class TestGitFixDetection:
 # is_revert robustness
 # =====================================================================
 
+
 class TestIsRevertRobustness:
     """is_revert must handle weird inputs gracefully (no crashes)."""
 
     def test_binary_content_returns_false(self):
         """Binary bytes that round-trip through Edit somehow."""
         fix = FixRecord(
-            id=1, file_path="bin.dat", line_start=1, line_end=10,
-            description="fix something", source="manual",
+            id=1,
+            file_path="bin.dat",
+            line_start=1,
+            line_end=10,
+            description="fix something",
+            source="manual",
         )
         # Bytes that would be invalid UTF-8 if interpreted as such
         binary_like = "--- before\n\x00\x01\x02\xff\xfe\n--- after\nplain text\n"
@@ -464,8 +472,12 @@ class TestIsRevertRobustness:
 
     def test_control_characters_in_diff(self):
         fix = FixRecord(
-            id=1, file_path="x.py", line_start=1, line_end=5,
-            description="fix", source="manual",
+            id=1,
+            file_path="x.py",
+            line_start=1,
+            line_end=5,
+            description="fix",
+            source="manual",
         )
         # Tab, vertical tab, form feed, carriage return
         weird = "--- before\nfoo\tbar\vbaz\f\r\n--- after\nclean\n"
@@ -473,7 +485,10 @@ class TestIsRevertRobustness:
 
     def test_unicode_in_change_text(self):
         fix = FixRecord(
-            id=1, file_path="x.py", line_start=1, line_end=5,
+            id=1,
+            file_path="x.py",
+            line_start=1,
+            line_end=5,
             description="connection retry was infinite-looping",
             source="manual",
         )
@@ -493,6 +508,7 @@ class TestIsRevertRobustness:
 # Concurrency — fix_history per-DB lock (R3 finding)
 # =====================================================================
 
+
 class TestFixHistoryConcurrency:
     """Week-2 R3 concurrent-stress finding.
 
@@ -502,9 +518,7 @@ class TestFixHistoryConcurrency:
     DB operations hold across execute+commit. These tests lock that fix.
     """
 
-    def test_concurrent_record_fix_no_collisions(
-        self, tmp_path, monkeypatch
-    ):
+    def test_concurrent_record_fix_no_collisions(self, tmp_path, monkeypatch):
         import threading
         from indexer.fix_history import record_fix, lookup, reset
 
@@ -512,9 +526,7 @@ class TestFixHistoryConcurrency:
         proj.mkdir()
         fake_home = tmp_path / "global"
         fake_home.mkdir()
-        monkeypatch.setattr(
-            "mcp_server.paths.get_global_home", lambda: fake_home
-        )
+        monkeypatch.setattr("mcp_server.paths.get_global_home", lambda: fake_home)
         reset(proj)
 
         n_threads = 20
@@ -527,28 +539,26 @@ class TestFixHistoryConcurrency:
                     record_fix(
                         proj,
                         file_path=f"file_{tid}.py",
-                        line_start=i, line_end=i + 1,
+                        line_start=i,
+                        line_end=i + 1,
                         description=f"thread {tid} iter {i}",
                         source="manual",
                     )
             except Exception as e:  # noqa: BLE001
                 errors.append((tid, type(e).__name__, str(e)))
 
-        threads = [
-            threading.Thread(target=worker, args=(i,))
-            for i in range(n_threads)
-        ]
-        for t in threads: t.start()
-        for t in threads: t.join(timeout=20)
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(n_threads)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=20)
 
         assert not errors, f"thread errors: {errors[:3]}"
         # Every record_fix must have committed: 20 × 25 = 500 rows
         for tid in range(n_threads):
             assert len(lookup(proj, f"file_{tid}.py")) == n_per_thread
 
-    def test_wal_mode_enabled_on_fixes_db(
-        self, tmp_path, monkeypatch
-    ):
+    def test_wal_mode_enabled_on_fixes_db(self, tmp_path, monkeypatch):
         """R4 finding: fixes.db needs WAL + busy_timeout for multi-process safety.
 
         Verifies the connection is opened with WAL journal mode and a
@@ -561,15 +571,16 @@ class TestFixHistoryConcurrency:
         proj.mkdir()
         fake_home = tmp_path / "global"
         fake_home.mkdir()
-        monkeypatch.setattr(
-            "mcp_server.paths.get_global_home", lambda: fake_home
-        )
+        monkeypatch.setattr("mcp_server.paths.get_global_home", lambda: fake_home)
         reset(proj)
         # Trigger DB creation through the public API
         record_fix(
-            proj, file_path="seed.py",
-            line_start=1, line_end=2,
-            description="seed", source="manual",
+            proj,
+            file_path="seed.py",
+            line_start=1,
+            line_end=2,
+            description="seed",
+            source="manual",
         )
 
         conn, _ = _connect_locked(proj)
@@ -585,14 +596,13 @@ class TestFixHistoryConcurrency:
         Verify it's gone so future code can't accidentally call it.
         """
         from indexer import fix_history
+
         assert not hasattr(fix_history, "_connect"), (
             "_connect was reintroduced — that's the R3 bug shape. "
             "Use _connect_locked() and hold the lock for execute+commit."
         )
 
-    def test_concurrent_mixed_reads_and_writes(
-        self, tmp_path, monkeypatch
-    ):
+    def test_concurrent_mixed_reads_and_writes(self, tmp_path, monkeypatch):
         """Reads-while-writes must not raise InterfaceError."""
         import threading
         from indexer.fix_history import record_fix, lookup, reset
@@ -601,17 +611,18 @@ class TestFixHistoryConcurrency:
         proj.mkdir()
         fake_home = tmp_path / "global"
         fake_home.mkdir()
-        monkeypatch.setattr(
-            "mcp_server.paths.get_global_home", lambda: fake_home
-        )
+        monkeypatch.setattr("mcp_server.paths.get_global_home", lambda: fake_home)
         reset(proj)
 
         # Seed 10 fixes on seed.py
         for i in range(10):
             record_fix(
-                proj, file_path="seed.py",
-                line_start=i, line_end=i + 1,
-                description=f"seed {i}", source="manual",
+                proj,
+                file_path="seed.py",
+                line_start=i,
+                line_end=i + 1,
+                description=f"seed {i}",
+                source="manual",
             )
 
         errors: list[tuple] = []
@@ -620,11 +631,15 @@ class TestFixHistoryConcurrency:
         def writer(tid: int) -> None:
             try:
                 for i in range(30):
-                    if stop.is_set(): return
+                    if stop.is_set():
+                        return
                     record_fix(
-                        proj, file_path=f"w{tid}.py",
-                        line_start=i, line_end=i + 1,
-                        description=f"w{tid}-{i}", source="manual",
+                        proj,
+                        file_path=f"w{tid}.py",
+                        line_start=i,
+                        line_end=i + 1,
+                        description=f"w{tid}-{i}",
+                        source="manual",
                     )
             except Exception as e:  # noqa: BLE001
                 errors.append(("writer", tid, type(e).__name__, str(e)))
@@ -632,7 +647,8 @@ class TestFixHistoryConcurrency:
         def reader(tid: int) -> None:
             try:
                 for _ in range(60):
-                    if stop.is_set(): return
+                    if stop.is_set():
+                        return
                     recs = lookup(proj, "seed.py")
                     if len(recs) != 10:
                         errors.append(("reader", tid, "wrong count", len(recs)))
@@ -640,12 +656,13 @@ class TestFixHistoryConcurrency:
             except Exception as e:  # noqa: BLE001
                 errors.append(("reader", tid, type(e).__name__, str(e)))
 
-        threads = (
-            [threading.Thread(target=writer, args=(i,)) for i in range(5)]
-            + [threading.Thread(target=reader, args=(i,)) for i in range(5)]
-        )
-        for t in threads: t.start()
-        for t in threads: t.join(timeout=20)
+        threads = [threading.Thread(target=writer, args=(i,)) for i in range(5)] + [
+            threading.Thread(target=reader, args=(i,)) for i in range(5)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=20)
         stop.set()
         for t in threads:
             assert not t.is_alive(), f"thread hung: {t.name}"
@@ -657,6 +674,7 @@ class TestFixHistoryConcurrency:
 # Crash recovery — partial line at end of token_budget.jsonl (R3 finding)
 # =====================================================================
 
+
 class TestTokenLogCrashRecovery:
     """If a previous process died mid-write, the log file may not end
     with a newline. _persist_session_summary must detect this and emit
@@ -665,18 +683,14 @@ class TestTokenLogCrashRecovery:
     unreadable. (Week-2 R3 finding.)
     """
 
-    def test_partial_line_does_not_eat_next_record(
-        self, tmp_path, monkeypatch
-    ):
+    def test_partial_line_does_not_eat_next_record(self, tmp_path, monkeypatch):
         from mcp_server.paths import _sanitize_path_key
 
         proj = tmp_path / "p"
         proj.mkdir()
         fake_home = tmp_path / "global"
         fake_home.mkdir()
-        monkeypatch.setattr(
-            "mcp_server.paths.get_global_home", lambda: fake_home
-        )
+        monkeypatch.setattr("mcp_server.paths.get_global_home", lambda: fake_home)
 
         reset_meters()
         # 3 normal sessions
@@ -687,9 +701,7 @@ class TestTokenLogCrashRecovery:
 
         # Simulate crash: append a partial JSON line, no newline
         key = _sanitize_path_key(proj.resolve())
-        log_path = (
-            fake_home / "projects" / key / "logs" / "token_budget.jsonl"
-        )
+        log_path = fake_home / "projects" / key / "logs" / "token_budget.jsonl"
         with open(log_path, "ab") as f:
             f.write(b'{"session_id": "partial", "ended_at": 99')
 
@@ -708,9 +720,7 @@ class TestTokenLogCrashRecovery:
         # The partial line is unparseable; must NOT appear as a real record
         assert "partial" not in sids
 
-    def test_happy_path_emits_no_extra_newlines(
-        self, tmp_path, monkeypatch
-    ):
+    def test_happy_path_emits_no_extra_newlines(self, tmp_path, monkeypatch):
         """The recovery guard must not insert blank lines on healthy writes."""
         from mcp_server.paths import _sanitize_path_key
 
@@ -718,9 +728,7 @@ class TestTokenLogCrashRecovery:
         proj.mkdir()
         fake_home = tmp_path / "global"
         fake_home.mkdir()
-        monkeypatch.setattr(
-            "mcp_server.paths.get_global_home", lambda: fake_home
-        )
+        monkeypatch.setattr("mcp_server.paths.get_global_home", lambda: fake_home)
 
         reset_meters()
         for sid in ["a", "b", "c", "d", "e"]:
@@ -729,9 +737,7 @@ class TestTokenLogCrashRecovery:
             end_session(sid, project_root=proj)
 
         key = _sanitize_path_key(proj.resolve())
-        log_path = (
-            fake_home / "projects" / key / "logs" / "token_budget.jsonl"
-        )
+        log_path = fake_home / "projects" / key / "logs" / "token_budget.jsonl"
         raw = log_path.read_bytes()
         # 5 records → exactly 5 newlines, no double newlines anywhere
         assert b"\n\n" not in raw

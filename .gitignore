@@ -81,3 +81,10 @@ inc_project/
 push.py
 test_incremental.py
 .claude/scheduled_tasks.lock
+
+# Codevira cache (gitignored; rebuilt by `codevira sync`)
+.codevira-cache/
+
+# Understand-Anything plugin analysis output (ephemeral, rebuildable
+# via `/understand`); not meaningful to commit.
+.understand-anything/

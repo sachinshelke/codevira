@@ -28,6 +28,7 @@ Keeping the implementation in its own module avoids inflating the public
 signature surface of ``mcp_server/auto_init.py`` (which has high downstream
 blast radius).
 """
+
 from __future__ import annotations
 
 import logging
@@ -93,29 +94,52 @@ def repair_incomplete_init(data_dir: Path, project_root: Path) -> dict:
 
     # (3) global.db registration — without this, the project is invisible to
     # cross-project search and inventory commands.
-    try:
-        from indexer.global_db import GlobalDB
-        from mcp_server.paths import get_global_db_path, _get_git_remote_url
-        gdb = GlobalDB(get_global_db_path())
+    #
+    # v3.0 perf: once we've verified the row exists, drop a
+    # ``.registered`` sentinel so the next fresh MCP process can skip
+    # the global.db open entirely. Pre-fix, EVERY first-tool-call on
+    # EVERY codevira process opened ~/.codevira/global.db (timeout=30s,
+    # PRAGMA busy_timeout=30000) just to SELECT 1. With multiple
+    # concurrent codevira processes (one per Claude Code instance +
+    # Claude Desktop spawns), this was a 30-second lock-contention
+    # cliff on every cold MCP start.
+    registered_marker = data_dir / ".registered"
+    if registered_marker.is_file():
+        # Sentinel present → trust that registration happened. If a
+        # user wipes global.db, deleting the marker re-arms the check.
+        pass
+    else:
         try:
-            existing = gdb.conn.execute(
-                "SELECT 1 FROM projects WHERE path = ?",
-                (str(project_root),),
-            ).fetchone()
-            if not existing:
-                d = _detected()
-                gdb.register_project(
-                    path=str(project_root),
-                    name=d["name"],
-                    language=d["language"],
-                    git_remote=_get_git_remote_url(project_root),
-                )
-                repaired["registered"] = True
-        finally:
-            gdb.close()
-    except Exception as e:
-        # Don't fail the whole repair if global.db is unavailable.
-        logger.warning("Bug 21a: global.db registration repair skipped: %s", e)
+            from indexer.global_db import GlobalDB
+            from mcp_server.paths import get_global_db_path, _get_git_remote_url
+
+            gdb = GlobalDB(get_global_db_path())
+            try:
+                existing = gdb.conn.execute(
+                    "SELECT 1 FROM projects WHERE path = ?",
+                    (str(project_root),),
+                ).fetchone()
+                if not existing:
+                    d = _detected()
+                    gdb.register_project(
+                        path=str(project_root),
+                        name=d["name"],
+                        language=d["language"],
+                        git_remote=_get_git_remote_url(project_root),
+                    )
+                    repaired["registered"] = True
+            finally:
+                gdb.close()
+            # Drop sentinel only after a successful global.db pass —
+            # whether the row already existed or we just inserted it.
+            try:
+                registered_marker.touch()
+            except OSError:
+                pass
+        except Exception as e:
+            # Don't fail the whole repair if global.db is unavailable.
+            # Don't drop the sentinel either — we want to retry next start.
+            logger.warning("Bug 21a: global.db registration repair skipped: %s", e)
 
     if any(repaired.values()):
         logger.info(

@@ -28,6 +28,7 @@ from __future__ import annotations
 import indexer  # noqa: F401  — fork-safety side-effect import
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -211,17 +212,23 @@ def cmd_init() -> None:
     # Try to copy example config as base, then merge project settings
     pkg_config_example = get_package_data_dir() / "config.example.yaml"
     config_path = data_dir / "config.yaml"
+    from mcp_server.storage.atomic import atomic_write_text
+
     if pkg_config_example.exists():
         shutil.copy(pkg_config_example, config_path)
         # Merge project section on top
         with open(config_path) as f:
             base = yaml.safe_load(f) or {}
         base.update(config)
-        with open(config_path, "w") as f:
-            yaml.dump(base, f, default_flow_style=False, sort_keys=False)
+        atomic_write_text(
+            config_path,
+            yaml.dump(base, default_flow_style=False, sort_keys=False),
+        )
     else:
-        with open(config_path, "w") as f:
-            yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+        atomic_write_text(
+            config_path,
+            yaml.dump(config, default_flow_style=False, sort_keys=False),
+        )
 
     print()
 
@@ -314,8 +321,10 @@ def cmd_init() -> None:
                 if "codevira" not in existing.lower():
                     hook_path.rename(hook_path.with_suffix(".bak"))
 
-            hook_path.write_text(hook_content)
-            hook_path.chmod(0o755)
+            from mcp_server.storage.atomic import atomic_write_text
+
+            # 0o755 so git can exec the hook; mode applied post-rename.
+            atomic_write_text(hook_path, hook_content, mode=0o755)
             print("done")
         except Exception as e:
             print(f"skipped ({e})")
@@ -458,27 +467,6 @@ def cmd_status(check_stale: bool = False, show_global: bool = False) -> None:
     _cmd_status(check_stale=check_stale, show_global=show_global)
 
 
-def cmd_report(limit: int = 20, clear: bool = False) -> None:
-    """Show recent crash logs."""
-    from mcp_server.crash_logger import read_recent_crashes, get_crash_log_path
-
-    if clear:
-        log_path = get_crash_log_path()
-        if log_path.exists():
-            log_path.unlink()
-            print("  Crash log cleared.")
-        else:
-            print("  No crash log to clear.")
-        return
-
-    print()
-    print("  Codevira — Crash Report")
-    print("  " + "-" * 40)
-    print()
-    print(read_recent_crashes(limit=limit))
-    print()
-
-
 def cmd_server(project_dir: Path | None = None) -> None:
     """Start the MCP server (stdio transport)."""
     from mcp_server.server import main as server_main
@@ -570,123 +558,8 @@ def cmd_serve(
     run_http_server(host=host, port=port, use_https=use_https, project_dir=project_dir)
 
 
-def cmd_register(
-    global_mode: bool = True,
-    claude_desktop: bool = False,
-    http_url: str | None = None,
-) -> None:
-    """One-time global IDE registration (v1.6).
-
-    Injects codevira into all detected AI tools' global configs so that
-    every project the developer opens automatically has Codevira memory.
-
-    Uses stdio transport — every project gets its own subprocess with its
-    own memory. No ports, no background server. This is the recommended
-    setup for solo developers working on multiple projects.
-    """
-    from mcp_server.paths import get_project_root, is_invalid_project_root
-    from mcp_server.ide_inject import (
-        _resolve_command,
-        detect_installed_ides,
-        inject_global_claude_code,
-        inject_global_cursor,
-        inject_global_windsurf,
-        _inject_claude_desktop,
-        inject_claude_http_url,
-    )
-
-    project_root = get_project_root()
-
-    # v1.8.1: refuse $HOME / system dirs. cmd_register doesn't create the
-    # data_dir itself, but it pins project_root into IDE configs (e.g.
-    # Claude Desktop). A $HOME-pinned IDE config would later trigger the
-    # auto_init guard on every MCP tool call — better to fail fast here
-    # so the user gets a clear message instead of silently broken IDE
-    # integration.
-    rejection = is_invalid_project_root(project_root)
-    if rejection:
-        print(f"Error: {rejection}", file=sys.stderr)
-        print(
-            "  → cd into a project directory and re-run `codevira register` "
-            "(or `codevira setup` for the v2.0 one-prompt installer).",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    cmd_path, python_exe = _resolve_command()
-
-    from mcp_server import __version__
-
-    print()
-    print(f"  Codevira — Global IDE Registration (v{__version__})")
-    print("  " + "─" * 44)
-    print()
-
-    if http_url:
-        path = inject_claude_http_url(http_url)
-        print(f"  ✓ Claude Code (HTTP URL): {path}")
-        print()
-        print(
-            "  Tip: run `codevira configure` in a project to customize which folders are indexed."
-        )
-        print()
-        return
-
-    if claude_desktop:
-        path = _inject_claude_desktop(project_root, cmd_path, python_exe)
-        print(f"  ✓ Claude Desktop: {path}")
-        print("  Note: Claude Desktop uses stdio — restart it to pick up changes.")
-        print()
-        print(
-            "  Tip: run `codevira configure` in a project to customize which folders are indexed."
-        )
-        print()
-        return
-
-    # Global mode: inject into all detected IDEs
-    ides = detect_installed_ides(project_root)
-    results: dict[str, str] = {}
-
-    for ide in ides:
-        try:
-            if ide == "claude":
-                path = inject_global_claude_code(cmd_path, python_exe)
-                if path:
-                    results["Claude Code (global)"] = path
-            elif ide == "cursor":
-                path = inject_global_cursor(cmd_path, python_exe)
-                if path:
-                    results["Cursor (global)"] = path
-            elif ide == "windsurf":
-                path = inject_global_windsurf(cmd_path, python_exe)
-                if path:
-                    results["Windsurf (global)"] = path
-            elif ide == "claude_desktop":
-                path = _inject_claude_desktop(project_root, cmd_path, python_exe)
-                if path:
-                    results["Claude Desktop"] = path
-            elif ide == "antigravity":
-                from mcp_server.ide_inject import inject_global_antigravity
-
-                path = inject_global_antigravity(cmd_path, python_exe)
-                if path:
-                    results["Antigravity (global)"] = path
-        except Exception as e:
-            print(f"  Warning: could not configure {ide}: {e}")
-
-    if results:
-        for ide_name, config_path in results.items():
-            print(f"  ✓ {ide_name}: {config_path}")
-        print()
-        print("  Restart your AI tools to pick up the new configuration.")
-        print("  Every project you open will now have Codevira memory automatically.")
-        print()
-        print(
-            "  Tip: run `codevira configure` in a project to customize which folders are indexed."
-        )
-    else:
-        print("  No AI tools detected. Install Claude Code, Cursor, or Windsurf first.")
-    print()
+# v2.2.0+: cmd_register deleted per 2026-05-22 surface-cut audit.
+# Use `codevira setup` for IDE registration.
 
 
 def main() -> None:
@@ -742,17 +615,20 @@ def main() -> None:
     subparsers = parser.add_subparsers(dest="command", parser_class=_ScopedSubparser)
 
     # init
-    # init (P2-1 rc.5: added description)
+    # init (P2-1 rc.5: added description; v2.2.0: updated for in-repo .codevira/)
     init_parser = subparsers.add_parser(
         "init",
         help="Initialize Codevira in the current project",
         description=(
-            "Bootstrap codevira state for the current project: write config.yaml "
-            "(auto-detects language, source dirs, file extensions), create the "
-            "per-project data directory under ~/.codevira/projects/, register in "
-            "global.db, and (unless --no-inject) inject MCP config + nudge files "
-            "into detected IDEs. Equivalent to first-MCP-call auto-init but "
-            "explicit. Use --dirs / --ext to override the auto-detected values."
+            "Bootstrap codevira state for the current project. v2.2.0+ writes "
+            "decisions, sessions, outcomes, and config to <repo>/.codevira/ "
+            "(in-repo, git-committed). The cross-project tracking database "
+            "(global.db) and crash log stay under ~/.codevira/. The rebuildable "
+            "code-graph cache lives under <repo>/.codevira-cache/ (gitignored). "
+            "Also updates .gitignore, regenerates AGENTS.md with the codevira "
+            "marker block, and (unless --no-inject) injects MCP config + nudge "
+            "files into detected IDEs. Equivalent to first-MCP-call auto-init "
+            "but explicit. Use --dirs / --ext to override auto-detected values."
         ),
     )
     init_parser.add_argument("--name", help="Override project name")
@@ -773,6 +649,21 @@ def main() -> None:
             "config / docs extension so polyglot projects don't lose .yaml / "
             ".md / .html / etc. silently."
         ),
+    )
+    # v3.0.0: expose the `yes` kwarg that cli_init.cmd_init already
+    # supports — was wired in the function but not in argparse. Found
+    # during the v3.0.0 G5 verification when `codevira init -y` errored
+    # against AgentStore.
+    init_parser.add_argument(
+        "-y",
+        "--yes",
+        action="store_true",
+        help="Skip the interactive 'Proceed? [Y/n]' prompt (for scripts).",
+    )
+    init_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the init plan but don't write any files.",
     )
 
     # index (P2-1 rc.5: added description)
@@ -828,26 +719,9 @@ def main() -> None:
         help="Also show cross-project memory stats and launchd service status",
     )
 
-    # report (P2-1 rc.5: added description)
-    report_parser = subparsers.add_parser(
-        "report",
-        help="Show recent crash logs",
-        description=(
-            "Print recent codevira crash log entries (~/.codevira/crash.log) with "
-            "secret sanitization applied. Use this when the MCP server or watcher "
-            "behaved unexpectedly; the file accumulates structured tracebacks + "
-            "context. Use --clear to truncate the log after reading."
-        ),
-    )
-    report_parser.add_argument(
-        "--limit",
-        type=int,
-        default=20,
-        help="Number of recent crashes to show (default: 20)",
-    )
-    report_parser.add_argument(
-        "--clear", action="store_true", help="Clear the crash log"
-    )
+    # v2.2.0+: `report` deleted per 2026-05-22 surface-cut audit.
+    # Crash log inspection folds into `codevira doctor` (which already
+    # checks crash log size). Direct log inspection via cat / less.
 
     # serve (P2-1 rc.5: added description)
     serve_parser = subparsers.add_parser(
@@ -923,8 +797,24 @@ def main() -> None:
         "--ide",
         action="append",
         metavar="IDE",
-        help="Only configure this IDE (repeatable). One of: claude, cursor, "
-        "windsurf, antigravity, codex, copilot, continue, aider",
+        help=(
+            "Only configure this IDE (repeatable). One of: claude, "
+            "claude_desktop, cursor, windsurf, antigravity, agents_md. "
+            "By default the wizard configures ALL auto-detected IDEs; "
+            "use this to scope down. Pairs with --force when the IDE "
+            "you want isn't auto-detected."
+        ),
+    )
+    setup_parser.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "Configure --ide values even if the IDE wasn't auto-"
+            "detected on this machine. Use when codevira's detector "
+            "misses an install (portable binary not on PATH, etc.). "
+            "Without --force, ``setup --ide cursor`` on a machine "
+            "where Cursor isn't detected raises a clear error."
+        ),
     )
     setup_parser.add_argument(
         "--no-hooks",
@@ -934,7 +824,7 @@ def main() -> None:
     setup_parser.add_argument(
         "--no-nudge-files",
         action="store_true",
-        help="Skip CLAUDE.md / AGENTS.md / etc. generation",
+        help="Skip AGENTS.md generation",
     )
     setup_parser.add_argument(
         "--no-mcp",
@@ -942,102 +832,14 @@ def main() -> None:
         help="Skip MCP server config injection (just hooks + nudge files)",
     )
 
-    register_parser = subparsers.add_parser(
-        "register",
-        help="[DEPRECATED — use `codevira setup`] One-time global IDE registration",
-        description=(
-            "DEPRECATED in v2.0 — will be REMOVED in v2.1. Use `codevira setup` "
-            "instead: it does what `register` does plus installs Claude Code "
-            "lifecycle hooks and writes per-IDE nudge files (CLAUDE.md, "
-            "AGENTS.md, .cursor/rules/codevira.mdc, etc.) in one prompt. "
-            "`register` still works for now (v2.0.x) but every invocation "
-            "prints a deprecation banner. P2-7 (rc.5): named the removal "
-            "version explicitly so users know when to migrate by."
-        ),
-    )
-    register_parser.add_argument(
-        "--claude-desktop",
-        action="store_true",
-        help="Only configure Claude Desktop (stdio mode)",
-    )
-    register_parser.add_argument(
-        "--http-url",
-        metavar="URL",
-        help="Preview (v1.7, single-project): inject an HTTPS URL into Claude Code "
-        "global config. HTTPS transport is single-project in v1.7 — "
-        "multi-project HTTPS is planned for v1.8. For multi-project use, "
-        "stick with the default stdio register.",
-    )
+    # v2.2.0+: `register` and `configure` deleted per 2026-05-22
+    # surface-cut audit. `register` was already deprecated in v2.0;
+    # `configure` folds into `codevira init`. Use `setup` for IDE
+    # registration.
 
-    # configure (v1.8: interactive multi-select to pick watched_dirs + file_extensions)
-    cfg_parser = subparsers.add_parser(
-        "configure",
-        help="Pick which folders/extensions Codevira indexes (interactive)",
-        description=(
-            "Pick which folders/extensions Codevira indexes. "
-            "Run with no flags for interactive mode (numbered-list prompts). "
-            "Use --dirs/--extensions for non-interactive (CI/scripts). "
-            "Auto-bootstraps config.yaml + metadata.json + global.db "
-            "registration on first run if they don't exist."
-        ),
-    )
-    cfg_parser.add_argument(
-        "--dirs",
-        help="Comma-separated directories to watch (non-interactive)",
-    )
-    cfg_parser.add_argument(
-        "--extensions",
-        help="Comma-separated file extensions, e.g. '.py,.ts' (non-interactive)",
-    )
-    cfg_parser.add_argument(
-        "--no-reindex",
-        action="store_true",
-        help="Skip the 'rebuild index now?' prompt after writing config",
-    )
-    cfg_parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Scan and print the proposed config; do not write",
-    )
-
-    # budget (v2.0 hero 6 — Token Budget Live View)
-    budget_parser = subparsers.add_parser(
-        "budget",
-        help="Show token-spend per session (Hero 6)",
-        description=(
-            "Show this project's AI session token totals + per-source "
-            "breakdown. Reads token_budget.jsonl populated by Hero 6's "
-            "Stop hook. Run with no args for the most-recent session; "
-            "use 'history' for a multi-session list."
-        ),
-    )
-    budget_parser.add_argument(
-        # P1-5 (rc.5): include None as a default-only sentinel via nargs="?"+default=None
-        # but DO NOT list None in `choices=` — argparse renders it as the literal
-        # string "None" in error messages, which users tried as a real value.
-        "subaction",
-        nargs="?",
-        default=None,
-        choices=["history"],
-        help="Optional: 'history' to list multiple sessions",
-    )
-    budget_parser.add_argument(
-        "--last",
-        type=int,
-        default=10,
-        help="Number of sessions for 'history' (clamped 1-100)",
-    )
-    budget_parser.add_argument(
-        "--full",
-        action="store_true",
-        help="Show full per-source breakdown (default: top-3 wasted only)",
-    )
-    budget_parser.add_argument(
-        "--project",
-        metavar="PATH",
-        default=None,
-        help="Read another project's log instead of cwd",
-    )
+    # v2.2.0+: `budget` deleted per 2026-05-22 surface-cut audit.
+    # The token-budget tracking still exists (TokenBudgetPersist policy);
+    # this CLI surface was a dashboard read that nobody used.
 
     # doctor (v2.0 Pillar 1.3 — health-check)
     doctor_parser = subparsers.add_parser(
@@ -1093,121 +895,17 @@ def main() -> None:
         help="Show each project's source path + data dir path (pairs project basename with the ~/.codevira/projects/<key>/ dir)",
     )
 
-    # agents (v2.0 Pillar 2.2 — universal nudge generator)
-    agents_parser = subparsers.add_parser(
-        "agents",
-        help="Regenerate per-IDE nudge files (CLAUDE.md, AGENTS.md, etc.)",
-        description=(
-            "Regenerate the codevira nudge block in every detected IDE's "
-            "config file (CLAUDE.md, AGENTS.md, .cursor/rules/codevira.mdc, "
-            ".windsurfrules, GEMINI.md, .github/copilot-instructions.md). "
-            "Idempotent: existing user content is preserved; only the "
-            "<!-- codevira:start -->...<!-- codevira:end --> block is "
-            "replaced. Subset of `codevira setup` — useful when you want "
-            "to refresh nudge files without re-running full setup."
-        ),
-    )
-    agents_parser.add_argument(
-        # P1-5 (rc.5): drop None from `choices=`; default=None still works because
-        # argparse uses `default` independently of `choices`. Previously listed
-        # None and users tried `--ide None` as a literal string.
-        # P1-1 (rc.5): default now renders nudge files for DETECTED IDEs only
-        # (aligned with `setup`). Pass --ide=all to render for every supported
-        # IDE regardless of whether it's installed.
-        "--ide",
-        default=None,
-        choices=sorted(
-            {
-                "claude",
-                "cursor",
-                "windsurf",
-                "antigravity",
-                "codex",
-                "copilot",
-                "agents_md",
-                "all",
-            }
-        ),
-        help=(
-            "Render nudge files only for this IDE (default: every IDE detected "
-            "on this machine). Use 'all' to render for every supported IDE "
-            "regardless of detection."
-        ),
-    )
-    agents_parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Show what would be written without modifying any files",
-    )
-    agents_parser.add_argument(
-        "--project",
-        metavar="PATH",
-        default=None,
-        help="Generate nudge files for another project (validated)",
-    )
+    # v2.2.0+: `agents` deleted per 2026-05-22 surface-cut audit.
+    # The 6 per-IDE nudge files (CLAUDE.md, GEMINI.md, .cursor/rules/...,
+    # .windsurfrules, .github/copilot-instructions.md) all collapsed to
+    # AGENTS.md alone (Linux Foundation standard; every modern IDE reads
+    # it natively). `codevira init` regenerates AGENTS.md; no per-IDE
+    # nudge surface remains.
 
-    # hooks (v2.0 Pillar 2.3 — Claude Code lifecycle hook installer)
-    hooks_parser = subparsers.add_parser(
-        "hooks",
-        help="Install Claude Code lifecycle hooks (Pillar 2.3)",
-        description=(
-            "Install / refresh codevira's Claude Code lifecycle hooks "
-            "(SessionStart, PreToolUse, PostToolUse, UserPromptSubmit, "
-            "Stop). Subset of `codevira setup` — useful when Claude Code "
-            "got re-installed and its global hook config was reset."
-        ),
-    )
-    hooks_subparsers = hooks_parser.add_subparsers(
-        dest="hooks_subcommand",
-        required=True,
-    )
-    hooks_install = hooks_subparsers.add_parser(
-        "install",
-        help="Install / refresh Claude Code lifecycle hooks",
-    )
-    hooks_install.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Show what would be installed without modifying any files",
-    )
-    hooks_install.add_argument(
-        "--project",
-        metavar="PATH",
-        default=None,
-        help="Operate on another project (validated)",
-    )
-    # P2-6 (rc.5): list + uninstall subcommands. The previous surface only
-    # supported `install`; to remove hooks the user had to delete files +
-    # edit ~/.claude/settings.json by hand.
-    hooks_subparsers.add_parser(
-        "list",
-        help="List installed Claude Code hook scripts + their state",
-        description=(
-            "Show every codevira-* hook script under ~/.claude/hooks/, its "
-            "size, last-modified mtime, and whether it's registered in "
-            "~/.claude/settings.json. Read-only."
-        ),
-    )
-    hooks_uninstall = hooks_subparsers.add_parser(
-        "uninstall",
-        help="Remove all codevira-* hook scripts and unregister from settings.json",
-        description=(
-            "Remove every codevira-* hook script from ~/.claude/hooks/ AND "
-            "drop the codevira entries from ~/.claude/settings.json's hooks "
-            "block. Other entries in those files are preserved."
-        ),
-    )
-    hooks_uninstall.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Show what would be removed without deleting anything",
-    )
-    hooks_uninstall.add_argument(
-        "-y",
-        "--yes",
-        action="store_true",
-        help="Skip confirmation prompt",
-    )
+    # v2.2.0+: `hooks` deleted per 2026-05-22 surface-cut audit.
+    # Claude Code hook install/uninstall folds into `codevira setup` /
+    # the upcoming `codevira uninstall` command. Discoverability bonus:
+    # users no longer need to remember two install paths.
 
     # replay (v2.0 hero 8 — Decision Replay)
     replay_parser = subparsers.add_parser(
@@ -1259,45 +957,9 @@ def main() -> None:
         help="Write to FILE instead of stdout (e.g. --format html --out timeline.html)",
     )
 
-    # insights (v2.0 hero 10 — AI Promotion Score)
-    insights_parser = subparsers.add_parser(
-        "insights",
-        help="Show stable + reverted decisions + emerging patterns (Hero 10)",
-        description=(
-            "Show this project's promotion-score digest: top stable past "
-            "decisions, top reverted decisions (signals where the AI "
-            "keeps proposing changes you keep undoing), and high-confidence "
-            "learned rules. Reads outcomes recorded by indexer/outcome_tracker."
-        ),
-    )
-    insights_parser.add_argument(
-        "--since",
-        default="7d",
-        help="Lookback window: e.g. 7d, 30d, 90d (default 7d, max 365d)",
-    )
-    insights_parser.add_argument(
-        "--top",
-        type=int,
-        default=5,
-        help="Max items per section (clamped 1-20, default 5)",
-    )
-    insights_parser.add_argument(
-        "--project",
-        metavar="PATH",
-        default=None,
-        help="Read another project's insights instead of cwd",
-    )
-    insights_parser.add_argument(
-        "--min-outcomes",
-        type=int,
-        default=1,
-        help="Decisions with fewer outcomes are filtered (default 1)",
-    )
-    insights_parser.add_argument(
-        "--ascii",
-        action="store_true",
-        help="Use ASCII fallbacks instead of unicode badges",
-    )
+    # v2.2.0+: `insights` CLI command removed (it surfaced Hero 10's
+    # promotion score, which was deleted along with preferences /
+    # learned_rules per the 2026-05-22 surface-cut audit).
 
     # clean (P2-1 + P2-10 rc.5: added description + self-contained flag help)
     clean_parser = subparsers.add_parser(
@@ -1355,58 +1017,11 @@ def main() -> None:
         "projects and their indexes.",
     )
 
-    # engine — internal subcommand invoked by Claude Code lifecycle hook
-    # scripts. Not user-facing; surfaces here so `codevira engine handle
-    # PreToolUse` works from data/hooks/*.sh. (P2-1 rc.5: added description)
-    # 2026-05-17: codevira heal — self-service recovery (P7 reversible
-    # operations). Pairs with the HNSW self-heal detection in
-    # _check_chroma_health. Users hitting corrupted Chroma stores no
-    # longer need to `rm -rf` by hand and remember the data dir path.
-    heal_parser = subparsers.add_parser(
-        "heal",
-        help="Self-service recovery: wipe + rebuild corrupted state",
-        description=(
-            "Diagnose and fix common corruption issues without manual "
-            "intervention. Pairs with the startup self-diagnose layer — "
-            "when codevira detects a corrupted Chroma store, stale graph, "
-            "or split config, this command provides the recovery path. "
-            "Each --target is scoped: --vectors wipes the Chroma collection "
-            "for the current project; --graph wipes graph.db; --all wipes "
-            "everything for this project (preserves global.db + other "
-            "projects' data)."
-        ),
-    )
-    heal_parser.add_argument(
-        "--vectors",
-        action="store_true",
-        help="Wipe + rebuild this project's Chroma vector store (fixes HNSW corruption)",
-    )
-    heal_parser.add_argument(
-        "--graph",
-        action="store_true",
-        help="Wipe + rebuild this project's graph.db (fixes graph corruption)",
-    )
-    heal_parser.add_argument(
-        "--decisions",
-        action="store_true",
-        help="Embed ALL existing decisions into the semantic index (v2.0→v2.1 upgrade backfill, non-destructive)",
-    )
-    heal_parser.add_argument(
-        "--all",
-        action="store_true",
-        help="Wipe ALL of this project's data (codeindex + graph + sessions)",
-    )
-    heal_parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Show what would be done without making changes",
-    )
-    heal_parser.add_argument(
-        "--yes",
-        "-y",
-        action="store_true",
-        help="Skip confirmation prompt",
-    )
+    # v2.2.0+: `heal` deleted per 2026-05-22 surface-cut audit. The
+    # destructive paths (heal --vectors/--graph/--all) graduated to
+    # `codevira reset` in v2.1.2; the only remaining `heal --decisions`
+    # backfill targeted the ChromaDB embedding index which was itself
+    # removed in v2.2.0 Phase E. The command is now dead weight.
 
     # 2026-05-18 v2.1.2 Item 3b: `codevira reset` — destructive operations
     # move OUT of `heal` (whose name implies fix-in-place). `heal`
@@ -1499,39 +1114,129 @@ def main() -> None:
         help="Show what would be done without writing",
     )
 
-    # 2026-05-18 v2.1.2 Item 1: `codevira calibrate` — manual re-fit of
-    # similarity thresholds. Auto-recalibration also runs every 10
-    # decisions added, but power users may want explicit control.
-    calibrate_parser = subparsers.add_parser(
-        "calibrate",
-        help="Re-fit semantic similarity thresholds from this project's positive samples",
+    # v3.0.0 (D000016): `codevira graph` — self-contained interactive HTML
+    # viewer of decision memory (zero deps, offline, queryable).
+    graph_parser = subparsers.add_parser(
+        "graph",
+        help="Render an interactive HTML viewer of this project's decision memory",
         description=(
-            "Re-fit search_decisions similarity thresholds from this "
-            "project's positive samples (decisions marked do_not_revert=True "
-            "and decisions confirmed kept via outcome tracking). The "
-            "calibrator finds the 10 nearest neighbours for each positive "
-            "and sets the threshold at the 75th percentile of those "
-            "distances. Clamped to [0.35, 0.80] for safety. Stored at "
-            "<data_dir>/calibration.json. Auto-recalibration also runs "
-            "every 10 decisions added in the background."
+            "Generate a single self-contained HTML file visualizing the "
+            "project's decision memory as an interactive, queryable graph "
+            "(nodes = decisions, edges = supersedes lineage). Zero runtime "
+            "dependencies, no server, works offline. Filter client-side by "
+            "id / text / tag / file_path / protected. Reads the canonical "
+            "`.codevira/decisions.jsonl` store."
         ),
     )
-    calibrate_parser.add_argument(
-        "target",
-        nargs="?",
-        default="decisions",
-        choices=["decisions"],
-        help="What to calibrate (default: decisions; only target supported in v2.1.2)",
+    graph_parser.add_argument(
+        "--out",
+        default=None,
+        help="Output HTML path (default: <project>/.codevira-cache/memory-graph.html)",
     )
-    calibrate_parser.add_argument(
-        "--decisions",
-        action="store_true",
-        help="Equivalent to passing 'decisions' as target",
+    graph_parser.add_argument(
+        "--no-files",
+        dest="with_files",
+        action="store_false",
+        help="Decisions-only view (omit the code-file overlay)",
     )
-    calibrate_parser.add_argument(
+    graph_parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Show what would be set without writing calibration.json",
+        help="Show what would be rendered without writing",
+    )
+
+    # 2026-05-19 v2.2.0 Phase D: `codevira sync` — regenerate AGENTS.md
+    # + manifest + digest + FTS5 from decisions.jsonl. Manual / recovery
+    # path; every record_decision triggers this synchronously by default.
+    sync_parser = subparsers.add_parser(
+        "sync",
+        help="Regenerate AGENTS.md + indexes from .codevira/decisions.jsonl",
+        description=(
+            "Regenerate derived state from the canonical "
+            "`.codevira/decisions.jsonl`: rebuilds `.codevira/manifest.yaml`, "
+            "`.codevira/digest.jsonl`, `.codevira-cache/fts5.sqlite`, and "
+            "regenerates the codevira-managed block in `AGENTS.md` (5 KB "
+            "cap, marker-bounded — content outside `<!-- codevira:begin -->` "
+            "and `<!-- codevira:end -->` is preserved). Idempotent; safe "
+            "to run any time. Normally not needed because every "
+            "record_decision triggers regen synchronously."
+        ),
+    )
+    sync_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be regenerated without writing",
+    )
+    sync_parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Print per-step counts",
+    )
+
+    # v2.2.0 Phase F: `codevira observe-git` — git-observed outcome tracker.
+    observe_parser = subparsers.add_parser(
+        "observe-git",
+        help="Classify decisions as kept/modified/reverted from git history",
+        description=(
+            "Scan git log since the last observation and classify each "
+            "decision against HEAD: 'kept' (file unchanged since decision), "
+            "'modified' (file changed but partial preservation), 'reverted' "
+            "(file deleted OR materially changed). Appends events to "
+            "`.codevira/outcomes.jsonl` and updates `digest.weight` so the "
+            "relevance hook deprioritizes reverted decisions. Recommended: "
+            "run after every commit batch or as a post-commit hook."
+        ),
+    )
+    observe_parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Print per-decision classifications",
+    )
+
+    # v2.2.0+: `calibrate` deleted per 2026-05-22 surface-cut audit.
+    # v2.2.0 has no semantic similarity threshold to calibrate (FTS5
+    # uses BM25 with no learnable parameters).
+
+    # v2.2.0+ Phase 5: `uninstall` reverses every system write made by
+    # `init` and `setup`. Closes the audit's "uninstalling left junk"
+    # complaint — `pipx uninstall codevira` removes the venv but leaves
+    # ~15 system touch points behind. This sweeps all of them.
+    uninstall_parser = subparsers.add_parser(
+        "uninstall",
+        help="Reverse every system write made by codevira (IDE configs, hooks, data dirs)",
+        description=(
+            "Reverses every system write codevira has made: drops the "
+            "MCP entry from ~/.claude.json, deletes ~/.claude/hooks/"
+            "codevira-*.sh, strips codevira-tagged registrations from "
+            "~/.claude/settings.json, removes per-project .codevira/ "
+            "and .codevira-cache/ dirs (with prompt), and strips the "
+            "codevira block from each project's AGENTS.md (preserving "
+            "user content outside the marker boundaries). Optionally "
+            "deletes ~/.codevira/ entirely. After running, "
+            "`pipx uninstall codevira` is the only step left to fully "
+            "remove the binary."
+        ),
+    )
+    uninstall_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the plan; don't write anything",
+    )
+    uninstall_parser.add_argument(
+        "-y",
+        "--yes",
+        action="store_true",
+        help="Skip every confirmation prompt",
+    )
+    uninstall_parser.add_argument(
+        "--keep-data",
+        action="store_true",
+        help=(
+            "Don't touch ~/.codevira/ or per-project .codevira/ "
+            "directories (uninstalls IDE wiring only)"
+        ),
     )
 
     engine_parser = subparsers.add_parser(
@@ -1557,6 +1262,27 @@ def main() -> None:
         help="Claude Code event name (PreToolUse, PostToolUse, SessionStart, "
         "UserPromptSubmit, Stop)",
     )
+    engine_sub.add_parser(
+        "disable",
+        help="Persistently disable hook engine policies (creates "
+        "~/.codevira/engine.disabled). Same effect as CODEVIRA_ENGINE=0 "
+        "but survives across shells.",
+    )
+    engine_sub.add_parser(
+        "enable",
+        help="Re-enable hook engine policies (removes " "~/.codevira/engine.disabled).",
+    )
+    engine_sub.add_parser(
+        "status",
+        help="Show whether the hook engine is currently active.",
+    )
+    engine_sub.add_parser(
+        "install-hooks",
+        help="Refresh installed Claude Code hook scripts from bundled "
+        "v3.0 templates (idempotent — skips byte-identical files). "
+        "Use after upgrading codevira to pick up template changes "
+        "without re-running the full `codevira init` wizard.",
+    )
 
     args = parser.parse_args(raw_args)
 
@@ -1567,7 +1293,15 @@ def main() -> None:
     # everything). Now every codevira invocation (except commands that have
     # their own bootstrap logic like `init`, `setup`, `clean`, `engine`) runs
     # the cheap synchronous repair first.
-    _NO_HEAL_COMMANDS = {"init", "setup", "clean", "engine", "register", "configure"}
+    _NO_HEAL_COMMANDS = {
+        "init",
+        "setup",
+        "clean",
+        "engine",
+        "register",
+        "configure",
+        "uninstall",  # don't bootstrap state on our way to wiping it
+    }
     if args.command and args.command not in _NO_HEAL_COMMANDS:
         try:
             from mcp_server.paths import (
@@ -1593,8 +1327,10 @@ def main() -> None:
             pass
 
     if args.command == "init":
-        # Pass overrides via function attribute (avoids changing signature).
-        # mypy doesn't model attribute-on-function so we silence per-line.
+        # v2.2.0: init also scaffolds .codevira/ in the repo + updates
+        # AGENTS.md / .gitignore. The legacy cmd_init (project bootstrap +
+        # IDE registration) still runs first; cli_init.cmd_init adds the
+        # new in-repo storage layout on top.
         cmd_init._overrides = {  # type: ignore[attr-defined]
             "name": getattr(args, "name", None),
             "language": getattr(args, "language", None),
@@ -1604,6 +1340,22 @@ def main() -> None:
         cmd_init._no_inject = getattr(args, "no_inject", False)  # type: ignore[attr-defined]
         cmd_init._single_language = getattr(args, "single_language", False)  # type: ignore[attr-defined]
         cmd_init()
+        # v2.2.0: scaffold .codevira/ (in-repo storage layer).
+        # v3.0.0: -y/--yes always passes through (init has always run
+        # non-interactively for the .codevira/ scaffold; the only
+        # interactive prompts are in the LEGACY cmd_init above for
+        # edge cases like "you're in a subdirectory"). Threading
+        # --dry-run lets users preview the .codevira/ plan without
+        # touching anything.
+        try:
+            from mcp_server.cli_init import cmd_init as cmd_init_v22
+
+            cmd_init_v22(
+                yes=True,
+                dry_run=getattr(args, "dry_run", False),
+            )
+        except Exception as e:
+            print(f"  ⚠ v2.2.0 .codevira/ scaffold failed: {e}", file=sys.stderr)
     elif args.command == "index":
         cmd_index(full=args.full, quiet=args.quiet, verbose=args.verbose)
     elif args.command == "status":
@@ -1611,8 +1363,7 @@ def main() -> None:
             check_stale=getattr(args, "check_stale", False),
             show_global=getattr(args, "show_global", False),
         )
-    elif args.command == "report":
-        cmd_report(limit=args.limit, clear=args.clear)
+    # v2.2.0+: `report` dispatch deleted (command removed).
     elif args.command == "serve":
         # --project-dir may appear after "serve" — merge with pre-parsed value
         sub_project_dir = getattr(args, "project_dir", None)
@@ -1638,61 +1389,13 @@ def main() -> None:
             yes=getattr(args, "yes", False),
             dry_run=getattr(args, "dry_run", False),
             only_ides=only_ides_tuple,
+            force=getattr(args, "force", False),
             install_mcp=not getattr(args, "no_mcp", False),
             install_hooks=not getattr(args, "no_hooks", False),
             write_nudge_files=not getattr(args, "no_nudge_files", False),
         )
         sys.exit(rc)
-    elif args.command == "register":
-        # v2.0 deprecation: redirect users to `codevira setup` while
-        # preserving the old behaviour for any scripts that pin it.
-        print(
-            "[deprecated] `codevira register` is deprecated in v2.0. "
-            "Use `codevira setup` instead — it does this plus hooks + "
-            "nudge files in one prompt.",
-            file=sys.stderr,
-        )
-        print(file=sys.stderr)
-        cmd_register(
-            claude_desktop=getattr(args, "claude_desktop", False),
-            http_url=getattr(args, "http_url", None),
-        )
-    elif args.command == "configure":
-        from mcp_server.cli_configure import cmd_configure
-
-        try:
-            rc = cmd_configure(
-                interactive=(
-                    args.dirs is None and args.extensions is None and not args.dry_run
-                ),
-                dirs_arg=args.dirs,
-                exts_arg=args.extensions,
-                reindex=not args.no_reindex,
-                dry_run=args.dry_run,
-            )
-        except KeyboardInterrupt:
-            # Outer-level guard: Ctrl+C anywhere cmd_configure didn't handle
-            # internally (e.g. during scan_project, during bootstrap, during
-            # auto_detect_project). Prompt-level and reindex-level handlers
-            # catch Ctrl+C with context-specific messages; this catches
-            # everything else and exits cleanly with the POSIX SIGINT code.
-            print()
-            print("Aborted.")
-            sys.exit(130)
-        sys.exit(rc)
-    elif args.command == "budget":
-        # Hero 6 — Token Budget Live View. Reads token_budget.jsonl
-        # populated by the Stop hook + TokenBudgetPersist policy.
-        from mcp_server.cli_budget import cmd_budget
-
-        project_arg = getattr(args, "project", None)
-        rc = cmd_budget(
-            show_history=(getattr(args, "subaction", None) == "history"),
-            last=getattr(args, "last", 10),
-            full=getattr(args, "full", False),
-            project=Path(project_arg) if project_arg else None,
-        )
-        sys.exit(rc)
+    # v2.2.0+: `register` / `configure` / `budget` dispatch deleted.
     elif args.command == "doctor":
         # Pillar 1.3 — health check
         from mcp_server.doctor import cmd_doctor
@@ -1709,51 +1412,7 @@ def main() -> None:
             show_paths=getattr(args, "paths", False),  # 2026-05-17 Bug G
         )
         sys.exit(rc)
-    elif args.command == "agents":
-        # Pillar 2.2 — regenerate per-IDE nudge files
-        from mcp_server.cli_agents import cmd_agents
-
-        project_arg = getattr(args, "project", None)
-        rc = cmd_agents(
-            ide=getattr(args, "ide", None),
-            dry_run=getattr(args, "dry_run", False),
-            project=Path(project_arg) if project_arg else None,
-        )
-        sys.exit(rc)
-    elif args.command == "hooks":
-        # Pillar 2.3 — install/list/uninstall Claude Code lifecycle hooks
-        # (P2-6 rc.5: added list + uninstall)
-        sub = getattr(args, "hooks_subcommand", None)
-        if sub == "install":
-            from mcp_server.cli_agents import cmd_hooks_install
-
-            project_arg = getattr(args, "project", None)
-            rc = cmd_hooks_install(
-                project=Path(project_arg) if project_arg else None,
-                dry_run=getattr(args, "dry_run", False),
-            )
-            sys.exit(rc)
-        elif sub == "list":
-            from mcp_server.cli_hooks_admin import cmd_hooks_list
-
-            sys.exit(cmd_hooks_list())
-        elif sub == "uninstall":
-            from mcp_server.cli_hooks_admin import cmd_hooks_uninstall
-
-            sys.exit(
-                cmd_hooks_uninstall(
-                    dry_run=getattr(args, "dry_run", False),
-                    yes=getattr(args, "yes", False),
-                )
-            )
-        else:
-            print("Error: unknown hooks subcommand", file=sys.stderr)
-            print(
-                "  → run `codevira hooks --help` for the available "
-                "subcommands (install | list | uninstall).",
-                file=sys.stderr,
-            )
-            sys.exit(2)
+    # v2.2.0+: `agents` / `hooks` dispatch deleted (commands removed).
     elif args.command == "replay":
         # Hero 8 — Decision Replay. Browses decisions timeline.
         from mcp_server.cli_replay import cmd_replay
@@ -1770,20 +1429,6 @@ def main() -> None:
             out_file=Path(out_arg) if out_arg else None,
         )
         sys.exit(rc)
-    elif args.command == "insights":
-        # Hero 10 — AI Promotion Score. Reads outcomes + learned_rules
-        # from the project's graph DB and renders the digest.
-        from mcp_server.cli_insights import cmd_insights
-
-        project_arg = getattr(args, "project", None)
-        rc = cmd_insights(
-            since=getattr(args, "since", "7d"),
-            top=getattr(args, "top", 5),
-            project=Path(project_arg) if project_arg else None,
-            min_outcomes=getattr(args, "min_outcomes", 1),
-            ascii_mode=getattr(args, "ascii", False),
-        )
-        sys.exit(rc)
     elif args.command == "clean":
         cmd_clean(
             clean_all=getattr(args, "all", False),
@@ -1793,16 +1438,7 @@ def main() -> None:
             orphans_only=getattr(args, "orphans", False),
             ghosts_only=getattr(args, "ghosts", False),
         )
-    elif args.command == "heal":
-        rc = cmd_heal(
-            vectors=getattr(args, "vectors", False),
-            graph=getattr(args, "graph", False),
-            decisions=getattr(args, "decisions", False),
-            heal_all=getattr(args, "all", False),
-            dry_run=getattr(args, "dry_run", False),
-            yes=getattr(args, "yes", False),
-        )
-        sys.exit(rc)
+    # v2.2.0+: `heal` dispatch deleted (command removed).
     elif args.command == "reset":
         # 2026-05-18 v2.1.2 Item 3b: destructive operations split from heal.
         rc = cmd_reset(
@@ -1825,18 +1461,46 @@ def main() -> None:
             dry_run=getattr(args, "dry_run", False),
         )
         sys.exit(rc)
-    elif args.command == "calibrate":
-        # 2026-05-18 v2.1.2 Item 1: manual threshold re-fit.
-        from mcp_server.cli_calibrate import cmd_calibrate
+    elif args.command == "graph":
+        # v3.0.0 (D000016): self-contained interactive memory viewer.
+        from mcp_server.cli_graph import cmd_graph
 
-        rc = cmd_calibrate(
-            target=getattr(args, "target", "decisions"),
+        rc = cmd_graph(
+            out=getattr(args, "out", None),
             dry_run=getattr(args, "dry_run", False),
+            with_files=getattr(args, "with_files", True),
+        )
+        sys.exit(rc)
+    elif args.command == "sync":
+        # 2026-05-19 v2.2.0 Phase D: regenerate AGENTS.md + indexes.
+        from mcp_server.cli_sync import cmd_sync
+
+        rc = cmd_sync(
+            dry_run=getattr(args, "dry_run", False),
+            verbose=getattr(args, "verbose", False),
+        )
+        sys.exit(rc)
+    elif args.command == "observe-git":
+        # 2026-05-19 v2.2.0 Phase F: classify decision outcomes from git.
+        from mcp_server.storage.outcomes_writer import cmd_observe_git
+
+        rc = cmd_observe_git(verbose=getattr(args, "verbose", False))
+        sys.exit(rc)
+    # v2.2.0+: `calibrate` dispatch deleted (parser + command removed).
+    elif args.command == "uninstall":
+        # v2.2.0+ Phase 5: surface-cut audit fix — clean uninstall path.
+        from mcp_server.cli_uninstall import cmd_uninstall
+
+        rc = cmd_uninstall(
+            dry_run=getattr(args, "dry_run", False),
+            yes=getattr(args, "yes", False),
+            keep_data=getattr(args, "keep_data", False),
         )
         sys.exit(rc)
     elif args.command == "engine":
         # Internal — Claude Code hook scripts call us with `engine handle <event>`.
-        if getattr(args, "engine_action", None) == "handle":
+        engine_action = getattr(args, "engine_action", None)
+        if engine_action == "handle":
             # Register every Hero policy that ships enabled-by-default.
             # Without this, the hook runs the engine but ZERO policies
             # are registered → every edit gets ALLOW silently. (Week-4
@@ -1861,6 +1525,63 @@ def main() -> None:
             )
 
             sys.exit(engine_handle(args.event_type))
+        # v3.0 persistent on/off switch backed by ~/.codevira/engine.disabled.
+        # The hook scripts check this sentinel and fast-exit ~5ms when
+        # present — useful for users who want the MCP server without
+        # paying ~100ms Python cold-start tax per hook.
+        if engine_action in {"disable", "enable", "status"}:
+            sentinel = Path.home() / ".codevira" / "engine.disabled"
+            env_disabled = os.environ.get("CODEVIRA_ENGINE", "1") == "0"
+            if engine_action == "disable":
+                sentinel.parent.mkdir(parents=True, exist_ok=True)
+                sentinel.touch()
+                print(f"Engine disabled (sentinel: {sentinel}).")
+                print(
+                    'Hook scripts will fast-exit with `{"continue": true}` '
+                    "until you run `codevira engine enable`."
+                )
+                sys.exit(0)
+            if engine_action == "enable":
+                try:
+                    sentinel.unlink()
+                    print(f"Engine enabled (removed sentinel: {sentinel}).")
+                except FileNotFoundError:
+                    print(f"Engine already enabled (no sentinel at {sentinel}).")
+                if env_disabled:
+                    print(
+                        "Note: CODEVIRA_ENGINE=0 is still set in your "
+                        "environment — unset it for the change to take effect."
+                    )
+                sys.exit(0)
+            # status
+            file_disabled = sentinel.is_file()
+            if env_disabled or file_disabled:
+                print("Engine: DISABLED")
+                if env_disabled:
+                    print("  reason: CODEVIRA_ENGINE=0 in environment")
+                if file_disabled:
+                    print(f"  reason: sentinel exists at {sentinel}")
+                print(
+                    '  effect: hook scripts return `{"continue": true}` '
+                    "without invoking codevira (~5ms vs ~100ms)."
+                )
+            else:
+                print("Engine: ENABLED")
+                print(
+                    "  effect: hook scripts run codevira engine policies "
+                    "(BlastRadiusVeto, DecisionLock, AntiRegression, ...)"
+                )
+            sys.exit(0)
+        # v3.0 (2026-05-25): refresh installed hook scripts from bundled
+        # templates. Lives under `engine` (kept top-level by the
+        # 2026-05-22 surface cut) rather than re-introducing a deleted
+        # top-level `hooks` namespace. The full reinstall path is still
+        # `codevira init` / `codevira setup` — this is the lighter, upgrade-
+        # focused subset that only refreshes the hook script bodies.
+        if engine_action == "install-hooks":
+            from mcp_server.cli_hooks_admin import cmd_hooks_install
+
+            sys.exit(cmd_hooks_install())
         # Unknown engine action — print usage.
         engine_parser.print_help()
         sys.exit(2)
@@ -2101,228 +1822,9 @@ def cmd_reset(
     return 0
 
 
-def cmd_heal(
-    vectors: bool = False,
-    graph: bool = False,
-    decisions: bool = False,
-    heal_all: bool = False,
-    dry_run: bool = False,
-    yes: bool = False,
-) -> int:
-    """Self-service recovery (v2.1.2: non-destructive only — `decisions`).
-
-    History: prior to v2.1.2 this command also handled --vectors / --graph
-    / --all (destructive). Those moved to `codevira reset` because
-    "heal" implied fix-in-place but the implementation always wiped +
-    rebuilt. Field-test reports flagged the naming as the #1 data-loss
-    footgun.
-
-    Args:
-        vectors / graph / heal_all: DEPRECATED — forwarded to cmd_reset
-            with a one-time deprecation warning. Will be removed in v2.2.
-        decisions: NON-DESTRUCTIVE backfill — embed every existing decision
-            into the semantic search index. Used for v2.0/v2.1.0 →
-            v2.1.x upgrades.
-        dry_run: print what would be done, don't touch anything
-        yes: skip the confirmation prompt
-    """
-    # 2026-05-18 v2.1.2 Item 3c: deprecation cycle for destructive flags.
-    # Forward to cmd_reset with a one-time warning. Remove in v2.2.
-    if vectors or graph or heal_all:
-        which = []
-        if vectors:
-            which.append("--vectors")
-        if graph:
-            which.append("--graph")
-        if heal_all:
-            which.append("--all")
-        print(
-            f"\n⚠  DEPRECATED in v2.1.2: `codevira heal {' '.join(which)}` is\n"
-            f"   destructive and the name is misleading. Forwarding to:\n"
-            f"     codevira reset {' '.join(which)}\n"
-            f"   `heal` will accept only non-destructive flags (currently\n"
-            f"   only --decisions) starting in v2.2. Update your scripts.\n",
-            file=sys.stderr,
-        )
-        return cmd_reset(
-            vectors=vectors,
-            graph=graph,
-            reset_all=heal_all,
-            no_backup=False,  # safety: deprecated path keeps backup ON
-            dry_run=dry_run,
-            yes=yes,
-        )
-
-    import shutil
-    from mcp_server.paths import get_data_dir, get_project_root, is_invalid_project_root
-
-    # P1 (helpful errors): require at least one target.
-    if not (vectors or graph or decisions or heal_all):
-        print(
-            "Error: nothing to heal. Pass one of:\n"
-            "  --vectors    wipe + rebuild the Chroma vector store (HNSW corruption)\n"
-            "  --graph      wipe + rebuild graph.db\n"
-            "  --decisions  embed existing decisions into semantic index (v2.0→v2.1 upgrade backfill, non-destructive)\n"
-            "  --all        wipe ALL local state for this project\n"
-            "Run `codevira doctor` to see what needs healing.",
-            file=sys.stderr,
-        )
-        return 1
-
-    # ─── --decisions is the ONLY non-destructive target: handled separately ──
-    # Doesn't wipe anything — just embeds existing SQLite decisions into the
-    # semantic index. Safe to run any time; idempotent (upsert under the hood).
-    if decisions and not (vectors or graph or heal_all):
-        try:
-            from indexer.sqlite_graph import SQLiteGraph
-            from mcp_server.tools._decision_embeddings import backfill_all_decisions
-
-            graph_db_path = get_data_dir() / "graph" / "graph.db"
-            if not graph_db_path.is_file():
-                print(
-                    f"Error: no graph.db at {graph_db_path}. "
-                    f"Has this project been initialized? Run `codevira init` first.",
-                    file=sys.stderr,
-                )
-                return 1
-            print(
-                f"  Backfilling decision embeddings for {graph_db_path.parent.parent} …"
-            )
-            if dry_run:
-                # Cheap count via SQLite — don't actually embed
-                db = SQLiteGraph(graph_db_path)
-                try:
-                    cur = db.conn.execute("SELECT COUNT(*) FROM decisions")
-                    total = cur.fetchone()[0]
-                finally:
-                    db.close()
-                print(f"    [dry-run] would attempt to embed {total} decision(s)")
-                return 0
-            db = SQLiteGraph(graph_db_path)
-            try:
-                result = backfill_all_decisions(db)
-            finally:
-                db.close()
-            print(
-                f"    total={result.get('total', 0)} embedded={result.get('embedded', 0)} "
-                f"failed={result.get('failed', 0)} skipped={result.get('skipped', 0)}"
-            )
-            if "note" in result:
-                print(f"    note: {result['note']}")
-            return 0 if result.get("failed", 0) == 0 else 1
-        except Exception as e:
-            print(f"Error: --decisions backfill failed: {e}", file=sys.stderr)
-            return 1
-
-    # Guard against running from $HOME / system dirs (same protection as cmd_index).
-    rejection = is_invalid_project_root(get_project_root())
-    if rejection:
-        print(f"Error: {rejection}", file=sys.stderr)
-        return 1
-
-    try:
-        data_dir = get_data_dir()
-    except Exception as e:
-        print(
-            f"Error: cannot resolve data dir for current project: {e}", file=sys.stderr
-        )
-        return 1
-
-    project_root = get_project_root()
-    print()
-    print("  Codevira — Heal")
-    print(f"  Project:    {project_root}")
-    print(f"  Data dir:   {data_dir}")
-    print("  " + "─" * 50)
-    print()
-
-    targets: list[tuple[str, Path]] = []
-    if vectors or heal_all:
-        codeindex = data_dir / "codeindex"
-        if codeindex.exists():
-            try:
-                size_mb = (
-                    sum(f.stat().st_size for f in codeindex.rglob("*") if f.is_file())
-                    / 1024
-                    / 1024
-                )
-                targets.append((f"vector store (Chroma) — {size_mb:.1f} MB", codeindex))
-            except Exception:
-                targets.append(("vector store (Chroma) — size unknown", codeindex))
-        else:
-            print("    · vector store: nothing to do (codeindex/ doesn't exist)")
-    if graph or heal_all:
-        graph_db = data_dir / "graph"
-        if graph_db.exists():
-            targets.append(("graph database (graph.db)", graph_db))
-        else:
-            print("    · graph: nothing to do (graph/ doesn't exist)")
-    if heal_all:
-        sessions = data_dir / "sessions"
-        if sessions.exists():
-            targets.append(("session logs", sessions))
-
-    if not targets:
-        print("\n  Nothing to heal — no corrupted state found.")
-        print("  If the issue persists, run `codevira doctor` to diagnose.")
-        return 2
-
-    print("  Will remove:")
-    for label, _ in targets:
-        print(f"    • {label}")
-    print()
-
-    if dry_run:
-        print("  [dry-run] no changes made.")
-        return 0
-
-    if not yes:
-        # Bug 22 (rc.4): use shared confirm() helper.
-        try:
-            from mcp_server._prompts import confirm
-
-            if not confirm("Proceed with heal?", default=False):
-                print("  Aborted.")
-                return 0
-        except Exception:
-            # P9 (graceful): if the prompt helper isn't available, fall
-            # back to a basic confirmation rather than failing the heal.
-            response = input("  Proceed? [y/N]: ").strip().lower()
-            if response not in ("y", "yes"):
-                print("  Aborted.")
-                return 0
-
-    # P3 (atomic-ish): rename-then-delete pattern so a Ctrl-C mid-heal
-    # doesn't leave a half-deleted directory that confuses subsequent
-    # operations. Rename → then shutil.rmtree the renamed copy.
-    print()
-    failures = 0
-    for label, path in targets:
-        try:
-            backup = path.with_name(path.name + ".healing")
-            if backup.exists():
-                shutil.rmtree(backup, ignore_errors=True)
-            path.rename(backup)
-            shutil.rmtree(backup, ignore_errors=True)
-            print(f"    ✓ Removed {label}")
-        except Exception as e:
-            print(f"    ✗ Failed to remove {label}: {e}")
-            failures += 1
-
-    print()
-    if failures:
-        print(f"  ⚠ {failures} target(s) failed. Check permissions and retry.")
-        return 1
-
-    print("  ✓ Heal complete.")
-    print()
-    print("  Next steps:")
-    if vectors or heal_all:
-        print("    • Run `codevira index --full` to rebuild the vector store")
-    elif graph or heal_all:
-        print("    • Run `codevira index --full` to rebuild the graph")
-    print()
-    return 0
+# v2.2.0+: cmd_heal deleted per 2026-05-22 surface-cut audit.
+# Use `codevira reset` for destructive recovery; non-destructive
+# --decisions backfill targeted the (removed) ChromaDB embedding index.
 
 
 def cmd_clean(

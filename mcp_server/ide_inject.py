@@ -34,70 +34,115 @@ def detect_installed_ides(project_root: Path) -> list[str]:
     """Detect which AI coding tools are installed.
 
     Returns a list of stable string keys identifying each detected
-    tool. Keys are consumed by ``mcp_server.agents_md.SUPPORTED_IDES``
-    and by the setup wizard. Keep additions backward-compatible —
-    existing keys must keep their meaning.
+    tool. Keys are consumed by the setup wizard and the doctor.
+    Keep additions backward-compatible — existing keys must keep
+    their meaning.
 
     Tier 1 (have specific MCP-config path support): claude,
     claude_desktop, cursor, windsurf, antigravity.
 
-    Tier 2 (added in Week 3 — AGENTS.md-style nudge file only,
-    no MCP-config injection support yet): codex, copilot,
-    continue, aider.
+    Tier 2 (AGENTS.md-style integration, no MCP-config injection):
+    codex, copilot.
+
+    v3.0.0 detection hardening (2026-05-22+ audit):
+    The detection rules below require STRONG signals (binary on PATH
+    AND a config file/dir present) wherever possible. The v2.x version
+    treated "directory exists at the expected path" as a sufficient
+    signal — that produced false positives (stale dirs from previous
+    installs, hand-created folders) and we configured IDEs the user
+    didn't actually have. Now we cross-check.
+
+    The ``continue`` and ``aider`` v2.x detections were also removed
+    in this hardening pass — neither IDE has a configured-for-codevira
+    integration path; their entries existed only as advisory listings.
     """
     found: list[str] = []
 
-    # ---- Tier 1 (existing + MCP config support) ----
+    # ---- Tier 1 (MCP config support) ----
 
-    # Claude Code: per-project .claude/ or claude binary in PATH
-    if (project_root / ".claude").is_dir() or shutil.which("claude"):
+    # Claude Code: must be installed (binary on PATH). The per-project
+    # `.claude/` dir is NOT a reliable signal — many users create one
+    # manually for IDE state without having installed Claude Code.
+    if shutil.which("claude") is not None:
         found.append("claude")
 
-    # Claude Desktop: check for its config directory
-    desktop_cfg_dir = _claude_desktop_config_path().parent
-    if desktop_cfg_dir.exists():
+    # Claude Desktop: require the config FILE to exist (not just the
+    # parent dir), and parse as valid JSON. A stale install can leave
+    # the directory but the file alone proves the app was set up.
+    desktop_cfg = _claude_desktop_config_path()
+    if desktop_cfg.is_file() and _is_valid_json(desktop_cfg):
         found.append("claude_desktop")
 
-    # Cursor: global ~/.cursor/ or cursor binary
-    if (Path.home() / ".cursor").is_dir() or shutil.which("cursor"):
+    # Cursor: directory + (binary OR mcp.json config file). The
+    # binary check is the strong signal; the mcp.json fallback
+    # covers cases where the user installed Cursor via the .app
+    # bundle and didn't add it to PATH.
+    cursor_dir = Path.home() / ".cursor"
+    if cursor_dir.is_dir() and (
+        shutil.which("cursor") is not None or (cursor_dir / "mcp.json").is_file()
+    ):
         found.append("cursor")
 
-    # Windsurf: global ~/.windsurf/ or ~/.codeium/windsurf/
-    if (Path.home() / ".windsurf").is_dir() or (
-        Path.home() / ".codeium" / "windsurf"
-    ).is_dir():
+    # Windsurf: require the actual mcp_config.json to exist (not just
+    # the parent directory). Windsurf writes this file the first time
+    # the app runs.
+    windsurf_paths = (
+        Path.home() / ".windsurf" / "mcp_config.json",
+        Path.home() / ".codeium" / "windsurf" / "mcp_config.json",
+    )
+    if any(p.is_file() for p in windsurf_paths):
         found.append("windsurf")
 
-    # Google Antigravity: global ~/.gemini/
-    if (Path.home() / ".gemini").is_dir():
+    # Google Antigravity 2.0: the MCP config lives in the shared
+    # ~/.gemini/config/ dir and/or the per-app ~/.gemini/antigravity/ dir
+    # (not the bare ~/.gemini/, which any Gemini-CLI install creates).
+    # Detect either specific config file.
+    if any(p.is_file() and _is_valid_json(p) for p in _antigravity_config_candidates()):
         found.append("antigravity")
 
-    # ---- Tier 2 (Week 3 — nudge-file support only) ----
+    # ---- Tier 2 (nudge-file integration only) ----
 
-    # OpenAI Codex CLI: ~/.codex/ or `codex` on PATH. Codex was the
-    # original AGENTS.md project; AGENTS.md is its native format.
-    if (Path.home() / ".codex").is_dir() or shutil.which("codex"):
+    # OpenAI Codex CLI: binary on PATH (strong) or AGENTS.md present
+    # in the project root (the canonical Codex format).
+    if shutil.which("codex") is not None:
+        found.append("codex")
+    elif (project_root / "AGENTS.md").is_file():
+        # Weaker signal — AGENTS.md alone doesn't prove Codex is
+        # installed, but it's the standard integration point. Mark
+        # so the user can drop --ide codex if they don't have it.
         found.append("codex")
 
-    # GitHub Copilot: detected via existing project file (some teams
-    # commit copilot-instructions.md to .github/), or via the `gh`
-    # extension list, or via the `copilot` binary on PATH.
-    if (project_root / ".github" / "copilot-instructions.md").exists():
+    # GitHub Copilot: any of three strong signals.
+    if (project_root / ".github" / "copilot-instructions.md").is_file():
         found.append("copilot")
     elif _gh_copilot_extension_present():
         found.append("copilot")
-    elif shutil.which("copilot"):
+    elif shutil.which("copilot") is not None:
         found.append("copilot")
 
-    # Continue.dev: ~/.continue/ directory present
-    if (Path.home() / ".continue").is_dir():
-        found.append("continue")
-
-    # Aider: aider binary on PATH (no global config dir to check)
-    if shutil.which("aider"):
-        found.append("aider")
+    # v3.0.0 removed continue + aider detection: neither had a
+    # codevira-configurable integration path; the keys only existed
+    # so the setup wizard could print "detected" — pure noise.
 
     return found
+
+
+def _is_valid_json(path: Path) -> bool:
+    """True if ``path`` is a readable file whose contents parse as
+    JSON. Used by the IDE detector to distinguish "the IDE was
+    actually set up" from "an empty dir exists at the expected path."
+
+    Best-effort: any read error or parse error returns False (we
+    treat "we can't tell" as "not installed" rather than risk
+    writing config for an absent IDE).
+    """
+    try:
+        import json
+
+        json.loads(path.read_text(encoding="utf-8"))
+        return True
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def _gh_copilot_extension_present() -> bool:
@@ -207,8 +252,38 @@ def _windsurf_global_config_path() -> Path:
     return Path.home() / ".windsurf" / "mcp_config.json"
 
 
+def _antigravity_config_candidates() -> list[Path]:
+    """Antigravity 2.0 MCP-config locations, in priority order.
+
+    Antigravity 2.0 unified configuration under the shared
+    ``~/.gemini/config/`` directory (used across the Gemini CLI, the IDE
+    and the SDK) while keeping a per-app ``~/.gemini/antigravity/`` file.
+    Which one a given install reads can vary, so codevira reads from /
+    writes to BOTH wherever they're present rather than guessing.
+    """
+    gemini = Path.home() / ".gemini"
+    return [
+        gemini / "config" / "mcp_config.json",  # 2.0 shared (CLI+IDE+SDK)
+        gemini / "antigravity" / "mcp_config.json",  # per-app
+    ]
+
+
+def _antigravity_write_targets() -> list[Path]:
+    """Config files to write codevira into.
+
+    Every candidate whose parent directory already exists (so we only
+    write where the user actually has that Antigravity surface); or, if
+    none exist yet, the per-app path as the create target (preserves the
+    pre-2.0 behavior of bootstrapping ``~/.gemini/antigravity/``).
+    """
+    candidates = _antigravity_config_candidates()
+    targets = [p for p in candidates if p.parent.is_dir()]
+    return targets or [candidates[-1]]
+
+
 def _antigravity_config_path() -> Path:
-    return Path.home() / ".gemini" / "antigravity" / "mcp_config.json"
+    """Primary Antigravity write target (kept for callers needing one path)."""
+    return _antigravity_write_targets()[0]
 
 
 # ---------------------------------------------------------------------------
@@ -513,9 +588,6 @@ def _inject_antigravity(
 
     Antigravity does not support 'cwd', so always use --project-dir args.
     """
-    config_path = _antigravity_config_path()
-    existing = _read_json_safe(config_path)
-
     # Sanitize project name: lowercase, replace anything non-alphanumeric with hyphens
     safe_name = re.sub(r"[^a-z0-9-]", "-", project_name.lower())
     safe_name = re.sub(r"-{2,}", "-", safe_name).strip("-")
@@ -529,9 +601,15 @@ def _inject_antigravity(
         **base_config,
     }
 
-    merged = _merge_mcp_config(existing, server_name, server_config)
-    _write_json_safe(config_path, merged)
-    return str(config_path)
+    # Antigravity 2.0: write into every config surface the user has
+    # (shared ~/.gemini/config/ and/or per-app ~/.gemini/antigravity/).
+    written: list[str] = []
+    for config_path in _antigravity_write_targets():
+        existing = _read_json_safe(config_path)
+        merged = _merge_mcp_config(existing, server_name, server_config)
+        _write_json_safe(config_path, merged)
+        written.append(str(config_path))
+    return "; ".join(written) if written else None
 
 
 # ---------------------------------------------------------------------------
@@ -710,16 +788,20 @@ def inject_global_antigravity(cmd_path: str, python_exe: str) -> str | None:
     Uses a single 'codevira' entry with no project path. Antigravity
     sets the working directory when it starts the MCP server process.
     """
-    config_path = _antigravity_config_path()
-    existing = _read_json_safe(config_path)
     base_config = _build_global_server_config(cmd_path, python_exe)
     server_config = {
         "$typeName": "exa.cascade_plugins_pb.CascadePluginCommandTemplate",
         **base_config,
     }
-    merged = _merge_mcp_config(existing, "codevira", server_config)
-    _write_json_safe(config_path, merged)
-    return str(config_path)
+    # Antigravity 2.0: write into every config surface the user has
+    # (shared ~/.gemini/config/ and/or per-app ~/.gemini/antigravity/).
+    written: list[str] = []
+    for config_path in _antigravity_write_targets():
+        existing = _read_json_safe(config_path)
+        merged = _merge_mcp_config(existing, "codevira", server_config)
+        _write_json_safe(config_path, merged)
+        written.append(str(config_path))
+    return "; ".join(written) if written else None
 
 
 def inject_claude_http_url(url: str) -> str | None:

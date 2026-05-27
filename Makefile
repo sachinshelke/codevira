@@ -105,7 +105,13 @@ type-check:
 # Without this, `python` is missing on stock macOS and VERSION silently becomes
 # empty, silently breaking every release target. Bug found during the gauntlet
 # verification on 2026-05-17.
-PYTHON ?= $(shell command -v python3 2>/dev/null || command -v python 2>/dev/null)
+# Prefer the project venv if present — running `make test-unit` /
+# `make release-gauntlet` without activating .venv otherwise falls back to
+# system python3, which lacks the project deps and produces dozens of
+# spurious "failures" (missing tree-sitter grammars, etc.). Found 2026-05-27
+# when the gauntlet went red purely from the interpreter, not the tests.
+# Override with `make PYTHON=... <target>` as before (?= keeps env precedence).
+PYTHON ?= $(shell [ -x .venv/bin/python ] && echo .venv/bin/python || command -v python3 2>/dev/null || command -v python 2>/dev/null)
 VERSION := $(shell $(PYTHON) -c "import re; print(re.search(r'version\s*=\s*\"([^\"]+)\"', open('pyproject.toml').read()).group(1))")
 EVIDENCE_FILE := .release-evidence/$(VERSION).json
 
@@ -299,7 +305,7 @@ release-dry-run:
 		exit 1; \
 	fi
 	@$(PYTHON) -m pip install --quiet --upgrade twine
-	@twine check dist/*
+	@$(PYTHON) -m twine check dist/*
 	@echo "  ✓ Metadata valid (twine check passed)"
 	@# Verify the wheel name matches the declared version.
 	@WHEEL=$$(ls dist/*.whl 2>/dev/null | head -1); \
@@ -324,7 +330,7 @@ release-publish:
 	fi
 	@$(PYTHON) -c "import json; d=json.load(open('$(EVIDENCE_FILE)')); \
 		assert d.get('G5_human_confirmed') is True, 'G5 not confirmed in evidence file. Set G5_human_confirmed=true after manual verification.'"
-	twine upload dist/*
+	$(PYTHON) -m twine upload dist/*
 
 # ─── Post-release smoke: install from PyPI in fresh venv ──────────────────
 

@@ -4,6 +4,7 @@ test_decision_lock.py — Hero 1 acceptance tests.
 The 8 scenarios in docs/heroes/01-decision-lock.md "Acceptance test list"
 plus configuration robustness + registration tests.
 """
+
 from __future__ import annotations
 
 import os
@@ -111,10 +112,7 @@ class _FakeSignals:
             def execute(self, sql, params):
                 # Single-row do_not_revert lookup
                 file_path = params[0]
-                row = (
-                    {"do_not_revert": 1}
-                    if file_path in self._files else None
-                )
+                row = {"do_not_revert": 1} if file_path in self._files else None
                 return _FakeCursor(row)
 
 
@@ -137,7 +135,6 @@ def _clear_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class TestAcceptanceScenarios:
-
     def test_1_non_edit_event_allowed(self):
         policy = DecisionLock()
         for tool in ("Read", "Bash", "Glob", "Grep"):
@@ -157,18 +154,38 @@ class TestAcceptanceScenarios:
         # Plant locked decisions for OTHER files. If Hero 1 forgets
         # to filter by file (mutation: file=None), it would match
         # these and incorrectly block.
-        signals = _FakeSignals(world=[
-            ("other.py", True, {"id": 1, "decision": "locked elsewhere",
-                                  "file_path": "other.py", "context": "",
-                                  "locked": 1, "timestamp": 1.0}),
-            ("third.py", True, {"id": 2, "decision": "another lock",
-                                  "file_path": "third.py", "context": "",
-                                  "locked": 1, "timestamp": 1.0}),
-        ])
-        verdict = policy.evaluate(event, signals)
-        assert verdict.is_allowing(), (
-            "decisions on OTHER files must not fire Hero 1; file= filter missing"
+        signals = _FakeSignals(
+            world=[
+                (
+                    "other.py",
+                    True,
+                    {
+                        "id": 1,
+                        "decision": "locked elsewhere",
+                        "file_path": "other.py",
+                        "context": "",
+                        "locked": 1,
+                        "timestamp": 1.0,
+                    },
+                ),
+                (
+                    "third.py",
+                    True,
+                    {
+                        "id": 2,
+                        "decision": "another lock",
+                        "file_path": "third.py",
+                        "context": "",
+                        "locked": 1,
+                        "timestamp": 1.0,
+                    },
+                ),
+            ]
         )
+        verdict = policy.evaluate(event, signals)
+        assert (
+            verdict.is_allowing()
+        ), "decisions on OTHER files must not fire Hero 1; file= filter missing"
 
     def test_3_edit_on_unlocked_file_allowed(self):
         """File has decisions but they're NOT locked → allow.
@@ -185,30 +202,53 @@ class TestAcceptanceScenarios:
         event = _make_event(target=Path("/p/foo.py"))
         # World has UNLOCKED decisions for foo.py — the policy must
         # filter them out via locked_only=True.
-        signals = _FakeSignals(world=[
-            ("foo.py", False, {"id": 1, "decision": "unlocked decision",
-                                "file_path": "foo.py", "context": "",
-                                "locked": 0, "timestamp": 1.0}),
-        ])
-        verdict = policy.evaluate(event, signals)
-        assert verdict.is_allowing(), (
-            "unlocked decision should NOT trigger Hero 1; filter check missing"
+        signals = _FakeSignals(
+            world=[
+                (
+                    "foo.py",
+                    False,
+                    {
+                        "id": 1,
+                        "decision": "unlocked decision",
+                        "file_path": "foo.py",
+                        "context": "",
+                        "locked": 0,
+                        "timestamp": 1.0,
+                    },
+                ),
+            ]
         )
+        verdict = policy.evaluate(event, signals)
+        assert (
+            verdict.is_allowing()
+        ), "unlocked decision should NOT trigger Hero 1; filter check missing"
 
     def test_4_edit_on_locked_file_blocked(self):
         """Locked file with decisions → block, listing the decisions."""
         policy = DecisionLock()
         target = Path("/p/auth.py")
-        signals = _FakeSignals(decisions_for={
-            "auth.py": [
-                {"id": 142, "decision": "bcrypt over argon2 — see issue #142",
-                 "file_path": "auth.py", "context": "performance discussion",
-                 "locked": 1, "timestamp": 1730764800.0},
-                {"id": 143, "decision": "use cookie-based session, not JWT",
-                 "file_path": "auth.py", "context": "security review",
-                 "locked": 1, "timestamp": 1730851200.0},
-            ],
-        })
+        signals = _FakeSignals(
+            decisions_for={
+                "auth.py": [
+                    {
+                        "id": 142,
+                        "decision": "bcrypt over argon2 — see issue #142",
+                        "file_path": "auth.py",
+                        "context": "performance discussion",
+                        "locked": 1,
+                        "timestamp": 1730764800.0,
+                    },
+                    {
+                        "id": 143,
+                        "decision": "use cookie-based session, not JWT",
+                        "file_path": "auth.py",
+                        "context": "security review",
+                        "locked": 1,
+                        "timestamp": 1730851200.0,
+                    },
+                ],
+            }
+        )
         event = _make_event(target=target)
         verdict = policy.evaluate(event, signals)
         assert verdict.is_blocking()
@@ -233,52 +273,77 @@ class TestAcceptanceScenarios:
         event = _make_event(target=target)
         verdict = policy.evaluate(event, signals)
         # Even with default mode=block, this case downgrades to warn
-        assert verdict.action == "warn", (
-            f"locked-without-rationale should warn, not block; got {verdict.action}"
-        )
+        assert (
+            verdict.action == "warn"
+        ), f"locked-without-rationale should warn, not block; got {verdict.action}"
         assert "no recorded decisions" in (verdict.message or "")
         assert verdict.metadata["locked_without_rationale"] is True
 
-    def test_6_warn_mode_produces_warn_not_block(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
+    def test_6_warn_mode_produces_warn_not_block(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv("CODEVIRA_DECISION_LOCK_MODE", "warn")
         policy = DecisionLock()
         target = Path("/p/auth.py")
-        signals = _FakeSignals(decisions_for={
-            "auth.py": [
-                {"id": 1, "decision": "locked decision", "file_path": "auth.py",
-                 "context": "", "locked": 1, "timestamp": 1730764800.0},
-            ],
-        })
+        signals = _FakeSignals(
+            decisions_for={
+                "auth.py": [
+                    {
+                        "id": 1,
+                        "decision": "locked decision",
+                        "file_path": "auth.py",
+                        "context": "",
+                        "locked": 1,
+                        "timestamp": 1730764800.0,
+                    },
+                ],
+            }
+        )
         event = _make_event(target=target)
         verdict = policy.evaluate(event, signals)
         assert verdict.action == "warn"
         assert verdict.metadata["mode"] == "warn"
 
-    def test_7_off_mode_disables_policy(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
+    def test_7_off_mode_disables_policy(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv("CODEVIRA_DECISION_LOCK_MODE", "off")
         policy = DecisionLock()
         target = Path("/p/auth.py")
-        signals = _FakeSignals(decisions_for={
-            "auth.py": [{"id": 1, "decision": "x", "file_path": "auth.py",
-                         "context": "", "locked": 1, "timestamp": 1.0}],
-        })
+        signals = _FakeSignals(
+            decisions_for={
+                "auth.py": [
+                    {
+                        "id": 1,
+                        "decision": "x",
+                        "file_path": "auth.py",
+                        "context": "",
+                        "locked": 1,
+                        "timestamp": 1.0,
+                    }
+                ],
+            }
+        )
         event = _make_event(target=target)
         verdict = policy.evaluate(event, signals)
         assert verdict.is_allowing()
 
     def test_8_evaluation_under_1ms_p95_warm_cache(self):
         """Warm-graph + cached signals: sub-millisecond evaluation."""
-        import statistics, time
+        import time
+
         policy = DecisionLock()
         target = Path("/p/auth.py")
-        signals = _FakeSignals(decisions_for={
-            "auth.py": [{"id": 1, "decision": "x", "file_path": "auth.py",
-                         "context": "", "locked": 1, "timestamp": 1.0}],
-        })
+        signals = _FakeSignals(
+            decisions_for={
+                "auth.py": [
+                    {
+                        "id": 1,
+                        "decision": "x",
+                        "file_path": "auth.py",
+                        "context": "",
+                        "locked": 1,
+                        "timestamp": 1.0,
+                    }
+                ],
+            }
+        )
         event = _make_event(target=target)
 
         durations = []
@@ -296,24 +361,17 @@ class TestAcceptanceScenarios:
 
 
 class TestConfiguration:
-
-    def test_invalid_mode_falls_back_to_default(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
+    def test_invalid_mode_falls_back_to_default(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv("CODEVIRA_DECISION_LOCK_MODE", "totally-fake")
         policy = DecisionLock()
         assert policy._config()["mode"] == "block"
 
-    def test_empty_mode_falls_back(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
+    def test_empty_mode_falls_back(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv("CODEVIRA_DECISION_LOCK_MODE", "")
         policy = DecisionLock()
         assert policy._config()["mode"] == "block"
 
-    def test_uppercase_mode_normalized(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
+    def test_uppercase_mode_normalized(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv("CODEVIRA_DECISION_LOCK_MODE", "WARN")
         policy = DecisionLock()
         assert policy._config()["mode"] == "warn"
@@ -328,7 +386,9 @@ class TestRealGraphIntegration:
     """Week-5 R8-redo findings: end-to-end Hero 1 against a real graph
     DB. Exposes bugs that fake-signals testing hides.
 
-    Two production bugs caught here that survived 5 weeks of QA:
+    Three production bugs caught here over the project's life — each
+    one survived weeks of "tests pass" because every per-test fake
+    bypassed the real signals layer:
 
     1. ``signals.decisions`` SQL referenced ``d.timestamp`` but the
        real column is ``d.created_at``. Exception silently swallowed
@@ -340,39 +400,58 @@ class TestRealGraphIntegration:
        default ``None``, so they short-circuited to allow on every
        engine dispatch. Per-week tests passed signals manually so the
        bug never showed up.
+
+    3. v3.0.0 (2026-05-22 round-2 G5): ``signals.decisions`` still
+       read from graph.db's SQL ``decisions`` table — but v3.0.0
+       writes to ``.codevira/decisions.jsonl``. The storage-layer
+       split meant DecisionLock would NEVER fire on a v3.0.0
+       decision; the entire enforcement wedge was silently fail-
+       open. Caught only via end-to-end practical verification (a
+       real ``codevira`` subprocess + real JSON-RPC + real PreToolUse
+       hook payload). The ``_setup_real_graph`` fixture below was
+       updated to seed via the JSONL storage so this regression
+       can't return undetected.
     """
 
     def _setup_real_graph(self, td: Path):
-        """Build a project + graph with a locked file + decision."""
-        import mcp_server.paths as paths_mod
-        from indexer.sqlite_graph import SQLiteGraph
+        """Build a project + locked decision via the v3.0.0 storage layer.
 
-        fake_home = td / "home"; fake_home.mkdir()
-        project = td / "proj"; project.mkdir()
+        v3.0.0 (2026-05-22 round-2 G5 fix): seeds via
+        ``mcp_server.storage.decisions_store`` (the JSONL backend)
+        instead of writing directly into graph.db's SQL ``decisions``
+        table. Pre-fix this test wrote SQL — but ``signals.decisions()``
+        in v3.0.0 reads ``.codevira/decisions.jsonl``, so the seed
+        landed in storage the code-under-test didn't read. That
+        mismatch was exactly the shape of the silent fail-open in
+        DecisionLock that round-2 G5 verification caught.
+        """
+        import mcp_server.paths as paths_mod
+
+        fake_home = td / "home"
+        fake_home.mkdir()
+        project = td / "proj"
+        project.mkdir()
         (project / "pyproject.toml").write_text("")
 
         paths_mod.get_global_home = lambda: fake_home
         paths_mod.set_project_dir(project)
         paths_mod.invalidate_data_dir_cache()
 
-        from mcp_server.paths import get_data_dir
-        db_path = get_data_dir() / "graph" / "graph.db"
-        db_path.parent.mkdir(parents=True, exist_ok=True)
+        from mcp_server.storage import (
+            decisions_store,
+            paths as store_paths,
+        )
 
-        g = SQLiteGraph(db_path)
-        g.add_node("auth", "file", "auth.py", "auth.py",
-                   do_not_revert=True)
-        g.conn.execute(
-            "INSERT INTO sessions (session_id, summary) VALUES (?, ?)",
-            ("s1", "x"),
+        # Ensure .codevira/ exists (decisions_store expects it).
+        store_paths.ensure_dirs()
+
+        decisions_store.record(
+            decision="bcrypt over argon2",
+            file_path="auth.py",
+            context="perf",
+            do_not_revert=True,
+            tags=["auth"],
         )
-        g.conn.execute(
-            "INSERT INTO decisions (session_id, decision, file_path, "
-            "context, created_at) VALUES (?, ?, ?, ?, ?)",
-            ("s1", "bcrypt over argon2", "auth.py", "perf", "2025-04-13"),
-        )
-        g.conn.commit()
-        g.close()
         return project
 
     def test_signals_decisions_works_against_real_schema(self, tmp_path: Path):
@@ -383,6 +462,7 @@ class TestRealGraphIntegration:
         mismatch before alpha.1 ship.
         """
         from mcp_server.engine.signals import SignalContext
+
         project = self._setup_real_graph(tmp_path)
         ctx = SignalContext(project_root=project)
         decisions = ctx.decisions(file="auth.py", locked_only=True)
@@ -403,7 +483,6 @@ class TestRealGraphIntegration:
         from mcp_server.engine.events import EventType, HookEvent
         from mcp_server.engine.policies.decision_lock import DecisionLock
         from mcp_server.engine import register_policy, reset_policies, dispatch
-        import os
 
         project = self._setup_real_graph(tmp_path)
 
@@ -414,7 +493,8 @@ class TestRealGraphIntegration:
         try:
             event = HookEvent(
                 event_type=EventType.PRE_TOOL_USE,
-                project_root=project, tool_name="Edit",
+                project_root=project,
+                tool_name="Edit",
                 target_file=project / "auth.py",
             )
             verdict = dispatch(event)
@@ -428,9 +508,74 @@ class TestRealGraphIntegration:
         finally:
             reset_policies()
 
+    def test_signals_decisions_reads_jsonl_not_sql(self, tmp_path: Path):
+        """v3.0.0 regression guard (2026-05-22 round-2 G5):
+        prove signals.decisions() reads from .codevira/decisions.jsonl,
+        NOT from graph.db's SQL ``decisions`` table.
+
+        Pre-v3.0.0, the read path was SQL — so v3.0.0's record_decision
+        (which writes to JSONL) silently produced 0 hits and the
+        DecisionLock policy fail-opened. This test seeds via JSONL,
+        also seeds a CONTRADICTORY SQL row, and asserts signals.decisions
+        returns the JSONL data — proving the read path is JSONL-rooted.
+        """
+        from indexer.sqlite_graph import SQLiteGraph
+        from mcp_server.engine.signals import SignalContext
+        from mcp_server.paths import get_data_dir
+        from mcp_server.storage import (
+            decisions_store,
+        )
+
+        project = self._setup_real_graph(tmp_path)
+        # _setup_real_graph already seeded the JSONL via decisions_store.
+        # Now plant a CONFLICTING row in graph.db's SQL `decisions` table
+        # — if signals.decisions reverts to reading SQL, this row would
+        # show up.
+        db_path = get_data_dir() / "graph" / "graph.db"
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        g = SQLiteGraph(db_path)
+        try:
+            g.add_node("trap", "file", "trap.py", "trap.py", do_not_revert=True)
+            g.conn.execute(
+                "INSERT INTO sessions (session_id, summary) VALUES (?, ?)",
+                ("trap-session", "x"),
+            )
+            g.conn.execute(
+                "INSERT INTO decisions (session_id, decision, file_path, "
+                "context, created_at) VALUES (?, ?, ?, ?, ?)",
+                (
+                    "trap-session",
+                    "TRAP: SQL-only decision (should not appear)",
+                    "trap.py",
+                    "regression-trap",
+                    "2025-04-13",
+                ),
+            )
+            g.conn.commit()
+        finally:
+            g.close()
+
+        ctx = SignalContext(project_root=project)
+        results = ctx.decisions(limit=20)
+        files = {r["file_path"] for r in results}
+        assert "auth.py" in files, (
+            f"JSONL-seeded decision missing — signals.decisions may "
+            f"have regressed to reading SQL. Got files: {files}"
+        )
+        assert "trap.py" not in files, (
+            f"SQL-only trap decision LEAKED through — "
+            f"signals.decisions is reading the wrong storage layer. "
+            f"Got files: {files}"
+        )
+
+        # Confirm via the same JSONL store the policy is now meant to read
+        jsonl_records = decisions_store.list_all(limit=20, full=True)
+        jsonl_files = {d.get("file_path") for d in jsonl_records.get("decisions", [])}
+        assert "auth.py" in jsonl_files
+        assert "trap.py" not in jsonl_files
+
 
 class TestCoexistenceWithHero4:
-
     def test_higher_priority_block_wins_in_combined_verdict(
         self, monkeypatch: pytest.MonkeyPatch
     ):
@@ -446,7 +591,8 @@ class TestCoexistenceWithHero4:
         the old test trivially. This rewrite exercises the real path.
         """
         from mcp_server.engine import (
-            register_policy, registered_policies, reset_policies, dispatch,
+            register_policy,
+            reset_policies,
         )
         from mcp_server.engine.policies.blast_radius import BlastRadiusVeto
 
@@ -461,39 +607,26 @@ class TestCoexistenceWithHero4:
         monkeypatch.setenv("CODEVIRA_BLAST_RADIUS_MODE", "block")
         monkeypatch.setenv("CODEVIRA_BLAST_RADIUS_THRESHOLD", "1")
 
-        # Build a synthetic event that BOTH policies should block:
-        # - target_file has locked decisions (Hero 1 blocks)
-        # - target_file has high blast radius + signature change (Hero 4 blocks)
-        proj = Path("/tmp/p")
-        diff = (
-            "--- before\ndef auth_token(user_id):\n    return user_id\n"
-            "--- after\ndef auth_token(user):\n    return user\n"
-        )
-        event = HookEvent(
-            event_type=EventType.PRE_TOOL_USE,
-            project_root=proj,
-            tool_name="Edit",
-            target_file=proj / "auth.py",
-            proposed_diff=diff,
-        )
-
-        # We need real signals — but signals are built inside dispatch.
-        # We can't inject the fake. Instead, route through the real
-        # graph layer: skip this scenario via dispatch (which builds
-        # SignalContext using paths) and verify priority directly via
-        # the runner's sort behavior.
+        # v3.0.0 cleanup: the originally-planned synthetic-event +
+        # dispatch round-trip was abandoned (comment below explained
+        # why: signals are built inside dispatch, can't inject the
+        # fake). The dead event/diff/proj locals from that abandoned
+        # path were removed during the v3.0.0 ruff sweep. The
+        # surviving test just confirms the runner sorts policies by
+        # priority so DecisionLock (100) wins primary verdict over
+        # BlastRadiusVeto (50) — a direct test of the contract that
+        # the broader scenario was meant to exercise.
 
         # Direct test: verify the runner sorts by priority for dispatch.
         # The eligible policies for PRE_TOOL_USE will be sorted such
         # that DecisionLock (100) comes before BlastRadiusVeto (50).
         from mcp_server.engine.runner import _POLICIES
-        eligible = [
-            p for p in _POLICIES if EventType.PRE_TOOL_USE in set(p.handles)
-        ]
+
+        eligible = [p for p in _POLICIES if EventType.PRE_TOOL_USE in set(p.handles)]
         eligible.sort(key=lambda p: p.priority, reverse=True)
-        assert eligible[0].name == "decision_lock", (
-            f"Decision Lock (priority=100) must sort first; got {[p.name for p in eligible]}"
-        )
+        assert (
+            eligible[0].name == "decision_lock"
+        ), f"Decision Lock (priority=100) must sort first; got {[p.name for p in eligible]}"
         assert eligible[1].name == "blast_radius_veto"
         # The priority field MATTERS — assert it directly.
         assert DecisionLock.priority > BlastRadiusVeto.priority, (
@@ -510,11 +643,13 @@ class TestCoexistenceWithHero4:
 
 
 class TestRegistration:
-
     def test_register_default_policies_includes_hero_1(self):
         from mcp_server.engine import (
-            register_default_policies, registered_policies, reset_policies,
+            register_default_policies,
+            registered_policies,
+            reset_policies,
         )
+
         reset_policies()
         register_default_policies()
         names = sorted(p.name for p in registered_policies())
@@ -523,17 +658,20 @@ class TestRegistration:
 
     def test_register_default_policies_idempotent_with_hero_1(self):
         from mcp_server.engine import (
-            register_default_policies, registered_policies, reset_policies,
+            register_default_policies,
+            registered_policies,
+            reset_policies,
         )
+
         reset_policies()
         register_default_policies()
         register_default_policies()  # idempotent — no duplicates
         names = [p.name for p in registered_policies()]
         # Each name appears exactly once
         for n in ("decision_lock", "blast_radius_veto"):
-            assert names.count(n) == 1, (
-                f"{n} registered {names.count(n)} times — idempotency broken"
-            )
+            assert (
+                names.count(n) == 1
+            ), f"{n} registered {names.count(n)} times — idempotency broken"
 
 
 # =====================================================================
@@ -542,7 +680,6 @@ class TestRegistration:
 
 
 class TestSignalFailures:
-
     def test_none_signals_allows_gracefully(self):
         """If wiring couldn't build signals (graph failure / etc.), the
         policy must allow rather than crash."""
@@ -561,8 +698,10 @@ class TestSignalFailures:
         SQLite errors and returns []; this test simulates a hostile signal
         layer to verify the policy's "let it propagate" stance is intact.
         """
+
         class _Broken:
             graph = None
+
             def decisions(self, **kw):
                 raise RuntimeError("simulated signal failure")
 
@@ -589,19 +728,16 @@ class TestSignalFailures:
 
         assert signals.calls, "Hero 1 didn't call signals.decisions on Edit"
         # Look for the call with file= and locked_only=True
-        relevant = [
-            c for c in signals.calls
-            if c[0] is not None and c[1] is True
-        ]
+        relevant = [c for c in signals.calls if c[0] is not None and c[1] is True]
         assert relevant, (
             f"Hero 1 must call signals.decisions(file=<X>, locked_only=True). "
             f"Actual calls: {signals.calls}"
         )
         file_arg, locked_arg, limit_arg = relevant[0]
         # file is the project-relative path
-        assert file_arg == "foo.py", (
-            f"file filter should be 'foo.py' (project-relative); got {file_arg!r}"
-        )
+        assert (
+            file_arg == "foo.py"
+        ), f"file filter should be 'foo.py' (project-relative); got {file_arg!r}"
         assert locked_arg is True
         assert isinstance(limit_arg, int) and limit_arg > 0
 

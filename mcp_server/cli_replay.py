@@ -2,20 +2,64 @@
 cli_replay.py — Hero 8's `codevira replay` command.
 
 Surfaces the decisions timeline in 3 formats: terminal (default),
-markdown, html. Reuses ``cli_insights._parse_since`` for since-arg
-parsing (already battle-tested).
+markdown, html.
 
 Bug-8 lesson applied: ``--project`` runs through
-``is_invalid_project_root()`` for parity with the wiring layer + cli_insights.
+``is_invalid_project_root()`` for parity with the wiring layer.
+
+v2.2.0+: the `_parse_since` and `_clamp_top` helpers (formerly imported
+from cli_insights which was deleted in the surface-cut audit) are
+inlined below to keep `codevira replay` self-contained.
 """
+
 from __future__ import annotations
 
 import logging
+import re
 import sys
 from pathlib import Path
 from typing import IO
 
 logger = logging.getLogger(__name__)
+
+
+_SINCE_RE = re.compile(r"^\s*(\d+)\s*([dwhy]?)\s*$", re.IGNORECASE)
+
+
+def _parse_since(value: str | None, default_days: int = 7) -> int:
+    """Parse a since-arg like '7d', '2w', '30d' into integer days.
+
+    On malformed input, logs a warning and returns ``default_days``.
+    Bounded to 1..365 days.
+    """
+    if not value:
+        return default_days
+    m = _SINCE_RE.match(value)
+    if not m:
+        logger.warning(
+            "codevira replay --since: invalid %r, using %dd", value, default_days
+        )
+        return default_days
+    n = int(m.group(1))
+    unit = (m.group(2) or "d").lower()
+    multiplier = {"d": 1, "w": 7, "y": 365, "h": 0}.get(unit, 1)
+    days = n * multiplier
+    if days < 1:
+        return 1
+    if days > 365:
+        return 365
+    return days
+
+
+def _clamp_top(value: int | None, default: int = 5) -> int:
+    """Clamp the --top argument to [1, 200]."""
+    if value is None:
+        return default
+    try:
+        v = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(1, min(v, 200))
 
 
 def cmd_replay(
@@ -37,8 +81,6 @@ def cmd_replay(
     """
     out = out or sys.stdout
 
-    # Reuse cli_insights's --since parser (handles malformed → warn + default)
-    from mcp_server.cli_insights import _parse_since, _clamp_top
     since_days = _parse_since(since)
     top_n = _clamp_top(top)
 
@@ -53,9 +95,12 @@ def cmd_replay(
     # Resolve project root + apply Bug-8 defense
     try:
         from mcp_server.paths import (
-            get_data_dir, get_project_root, set_project_dir,
-            invalidate_data_dir_cache, is_invalid_project_root,
+            get_project_root,
+            set_project_dir,
+            invalidate_data_dir_cache,
+            is_invalid_project_root,
         )
+
         if project is not None:
             resolved = Path(project).resolve()
             rejection = is_invalid_project_root(resolved)
@@ -70,39 +115,41 @@ def cmd_replay(
             set_project_dir(resolved)
             invalidate_data_dir_cache()
         project_root = get_project_root()
-        graph_db = get_data_dir() / "graph" / "graph.db"
     except Exception as e:  # noqa: BLE001
         out.write(f"Error: could not resolve project — {e}\n")
         return 1
 
-    if not graph_db.exists():
+    # v2.2.0+: JSONL is the only storage layer. If `.codevira/` isn't
+    # initialized, surface a friendly hint pointing at `codevira init`.
+    try:
+        from mcp_server.storage import paths as store_paths
+        from mcp_server.decision_replay import (
+            build_timeline,
+            render_terminal,
+            render_markdown,
+            render_html,
+        )
+    except Exception as e:  # noqa: BLE001
+        out.write(f"Error: could not import replay module — {e}\n")
+        return 1
+
+    if not store_paths.is_initialized():
         out.write(
-            f"No codevira data found at {graph_db}.\n"
-            "Run `codevira setup` and use codevira for a few sessions, then try again.\n"
+            f"No codevira data found in {project_root}.\n"
+            "Run `codevira init` to bootstrap .codevira/ in this project, "
+            "use codevira for a few sessions, then try again.\n"
         )
         return 0
 
-    # Build + render
-    try:
-        from indexer.sqlite_graph import SQLiteGraph
-        from mcp_server.decision_replay import (
-            build_timeline,
-            render_terminal, render_markdown, render_html,
-        )
-        g = SQLiteGraph(graph_db)
-    except Exception as e:  # noqa: BLE001
-        out.write(f"Error: could not open project DB — {e}\n")
-        return 1
-
     try:
         timeline = build_timeline(
-            g.conn,
             query=query,
             since_days=since_days,
             limit=top_n,
         )
-    finally:
-        g.close()
+    except Exception as e:  # noqa: BLE001
+        out.write(f"Error: could not build timeline — {e}\n")
+        return 1
 
     title = f"Codevira Replay — {project_root.name}"
     if query:
@@ -119,7 +166,9 @@ def cmd_replay(
 
     if out_file is not None:
         try:
-            Path(out_file).write_text(rendered, encoding="utf-8")
+            from mcp_server.storage.atomic import atomic_write_text
+
+            atomic_write_text(Path(out_file), rendered)
             # P1-7 (rc.5): report BYTES, not character count. The previous
             # code used len(rendered) which is the number of Unicode code
             # points — but multibyte UTF-8 characters (📌 emoji etc. in the

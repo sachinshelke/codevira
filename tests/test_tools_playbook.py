@@ -7,7 +7,6 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-import pytest
 
 from mcp_server.tools.playbook import get_playbook, PLAYBOOKS
 

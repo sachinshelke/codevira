@@ -23,13 +23,12 @@ Chaos tests:
   - Non-git project (git_remote = None)
   - cleanup_legacy_dir when dir does not exist
 """
+
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
 import sys
-from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 import pytest
@@ -42,9 +41,15 @@ from mcp_server.paths import _sanitize_path_key
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _create_legacy_project(tmp_path, name="test-project", with_roadmap=False,
-                            with_graph_db=False, with_codeindex=False,
-                            with_changesets=False):
+
+def _create_legacy_project(
+    tmp_path,
+    name="test-project",
+    with_roadmap=False,
+    with_graph_db=False,
+    with_codeindex=False,
+    with_changesets=False,
+):
     """Create a legacy project with .codevira/ directory structure."""
     project = tmp_path / name
     legacy = project / ".codevira"
@@ -90,6 +95,7 @@ def _setup_fake_home(tmp_path, monkeypatch, name="home"):
 # ===================================================================
 # detect_migration_needed
 # ===================================================================
+
 
 class TestDetectMigrationNeeded:
     """Test conditions for triggering migration."""
@@ -152,6 +158,7 @@ class TestDetectMigrationNeeded:
 # migrate_to_centralized — core pipeline
 # ===================================================================
 
+
 class TestMigrateToCentralized:
     """Test the full migration pipeline."""
 
@@ -206,22 +213,8 @@ class TestMigrateToCentralized:
         assert (dst_idx / "index.bin").exists()
         assert (dst_idx / "metadata.json").exists()
 
-    def test_copies_changesets_directory(self, tmp_path, monkeypatch):
-        """Migration preserves graph/changesets/ YAML files."""
-        from mcp_server.migrate import migrate_to_centralized
-
-        project = _create_legacy_project(
-            tmp_path, "cs-mig", with_graph_db=True, with_changesets=True
-        )
-        fake_home = _setup_fake_home(tmp_path, monkeypatch)
-
-        result = migrate_to_centralized(project)
-        assert result["migrated"] is True
-
-        key = _sanitize_path_key(project)
-        # The migration creates the changesets dir structure
-        cs_dir = fake_home / "projects" / key / "graph" / "changesets"
-        assert cs_dir.exists()
+    # v2.2.0+: test_copies_changesets_directory removed (changesets
+    # feature deleted; migration no longer touches that path).
 
     def test_writes_metadata_json(self, tmp_path, monkeypatch):
         from mcp_server.migrate import migrate_to_centralized
@@ -238,6 +231,7 @@ class TestMigrateToCentralized:
         assert meta["path_key"] == key
         assert meta["original_path"] == str(project)
         from mcp_server import __version__
+
         assert meta["version"] == __version__
         assert "migrated_at" in meta
 
@@ -248,8 +242,10 @@ class TestMigrateToCentralized:
         project = _create_legacy_project(tmp_path, "git-meta")
         fake_home = _setup_fake_home(tmp_path, monkeypatch)
 
-        with patch("mcp_server.paths._get_git_remote_url",
-                    return_value="https://github.com/org/repo.git"):
+        with patch(
+            "mcp_server.paths._get_git_remote_url",
+            return_value="https://github.com/org/repo.git",
+        ):
             migrate_to_centralized(project)
 
         key = _sanitize_path_key(project)
@@ -260,7 +256,7 @@ class TestMigrateToCentralized:
         from mcp_server.migrate import migrate_to_centralized
 
         project = _create_legacy_project(tmp_path, "rename-test")
-        fake_home = _setup_fake_home(tmp_path, monkeypatch)
+        _ = _setup_fake_home(tmp_path, monkeypatch)
 
         migrate_to_centralized(project)
 
@@ -300,7 +296,7 @@ class TestMigrateToCentralized:
         from mcp_server.migrate import migrate_to_centralized
 
         project = _create_legacy_project(tmp_path, "no-roadmap", with_roadmap=False)
-        fake_home = _setup_fake_home(tmp_path, monkeypatch)
+        _ = _setup_fake_home(tmp_path, monkeypatch)
 
         result = migrate_to_centralized(project)
         assert result["migrated"] is True
@@ -311,6 +307,7 @@ class TestMigrateToCentralized:
 # ===================================================================
 # Idempotency and concurrent migrations
 # ===================================================================
+
 
 class TestMigrationIdempotency:
     """Verify migration is safe to call multiple times."""
@@ -351,7 +348,7 @@ class TestMigrationIdempotency:
         from mcp_server.migrate import migrate_to_centralized
 
         project = _create_legacy_project(tmp_path, "concurrent")
-        fake_home = _setup_fake_home(tmp_path, monkeypatch)
+        _ = _setup_fake_home(tmp_path, monkeypatch)
 
         # First migration
         result1 = migrate_to_centralized(project)
@@ -370,6 +367,7 @@ class TestMigrationIdempotency:
 # ===================================================================
 # cleanup_legacy_dir
 # ===================================================================
+
 
 class TestCleanupLegacyDir:
     """Test removal of .codevira.migrated/ backup."""
@@ -416,6 +414,7 @@ class TestCleanupLegacyDir:
 # _ensure_git_remote_column
 # ===================================================================
 
+
 class TestEnsureGitRemoteColumn:
     """Test schema upgrade helper."""
 
@@ -431,12 +430,15 @@ class TestEnsureGitRemoteColumn:
         # Create a mock gdb with the connection
         class FakeGDB:
             pass
+
         gdb = FakeGDB()
         gdb.conn = conn
 
         _ensure_git_remote_column(gdb)
 
-        cols = [row[1] for row in conn.execute("PRAGMA table_info(projects)").fetchall()]
+        cols = [
+            row[1] for row in conn.execute("PRAGMA table_info(projects)").fetchall()
+        ]
         assert "git_remote" in cols
         conn.close()
 
@@ -446,18 +448,23 @@ class TestEnsureGitRemoteColumn:
 
         db_path = tmp_path / "test.db"
         conn = sqlite3.connect(str(db_path))
-        conn.execute("CREATE TABLE projects (path TEXT PRIMARY KEY, name TEXT, git_remote TEXT)")
+        conn.execute(
+            "CREATE TABLE projects (path TEXT PRIMARY KEY, name TEXT, git_remote TEXT)"
+        )
         conn.commit()
 
         class FakeGDB:
             pass
+
         gdb = FakeGDB()
         gdb.conn = conn
 
         # Should not raise
         _ensure_git_remote_column(gdb)
 
-        cols = [row[1] for row in conn.execute("PRAGMA table_info(projects)").fetchall()]
+        cols = [
+            row[1] for row in conn.execute("PRAGMA table_info(projects)").fetchall()
+        ]
         assert cols.count("git_remote") == 1
         conn.close()
 
@@ -467,6 +474,7 @@ class TestEnsureGitRemoteColumn:
 
         class FakeGDB:
             pass
+
         gdb = FakeGDB()
         gdb.conn = MagicMock()
         gdb.conn.execute.side_effect = sqlite3.OperationalError("database is locked")
@@ -478,6 +486,7 @@ class TestEnsureGitRemoteColumn:
 # ===================================================================
 # Partial recovery
 # ===================================================================
+
 
 class TestPartialRecovery:
     """Test recovery from interrupted migrations."""
@@ -504,7 +513,7 @@ class TestPartialRecovery:
         from mcp_server.migrate import migrate_to_centralized
 
         project = _create_legacy_project(tmp_path, "backup-replace")
-        fake_home = _setup_fake_home(tmp_path, monkeypatch)
+        _ = _setup_fake_home(tmp_path, monkeypatch)
 
         # Create a stale backup from a prior interrupted migration
         stale_backup = project / ".codevira.migrated"
@@ -522,6 +531,7 @@ class TestPartialRecovery:
 # ===================================================================
 # CHAOS Tests
 # ===================================================================
+
 
 class TestMigrateChaos:
     """Edge cases, corruptions, and adversarial inputs."""
@@ -559,10 +569,13 @@ class TestMigrateChaos:
         from mcp_server.migrate import migrate_to_centralized
 
         project = _create_legacy_project(tmp_path, "gdb-fail")
-        fake_home = _setup_fake_home(tmp_path, monkeypatch)
+        _ = _setup_fake_home(tmp_path, monkeypatch)
 
         # Mock GlobalDB to raise an exception (imported locally in migrate_to_centralized)
-        with patch("indexer.global_db.GlobalDB.__init__", side_effect=Exception("DB init failed")):
+        with patch(
+            "indexer.global_db.GlobalDB.__init__",
+            side_effect=Exception("DB init failed"),
+        ):
             result = migrate_to_centralized(project)
 
         assert result["migrated"] is True
@@ -607,7 +620,7 @@ class TestMigrateChaos:
 
         key = _sanitize_path_key(project)
         centralized = fake_home / "projects" / key
-        assert (centralized / "graph" / "changesets").exists()
+        assert (centralized / "graph").exists()
         assert (centralized / "codeindex").exists()
         assert (centralized / "logs").exists()
 
@@ -653,7 +666,7 @@ class TestMigrateChaos:
         project = _create_legacy_project(tmp_path, "empty-idx")
         # Create empty codeindex dir
         (project / ".codevira" / "codeindex").mkdir(parents=True)
-        fake_home = _setup_fake_home(tmp_path, monkeypatch)
+        _ = _setup_fake_home(tmp_path, monkeypatch)
 
         result = migrate_to_centralized(project)
         assert result["migrated"] is True
@@ -667,10 +680,14 @@ class TestMigrateChaos:
         fake_home = _setup_fake_home(tmp_path, monkeypatch)
 
         # Provide a real global.db path
-        monkeypatch.setattr(paths, "get_global_db_path", lambda: fake_home / "global.db")
+        monkeypatch.setattr(
+            paths, "get_global_db_path", lambda: fake_home / "global.db"
+        )
 
-        with patch("mcp_server.paths._get_git_remote_url",
-                    return_value="https://github.com/org/gdb-test.git"):
+        with patch(
+            "mcp_server.paths._get_git_remote_url",
+            return_value="https://github.com/org/gdb-test.git",
+        ):
             result = migrate_to_centralized(project)
 
         assert result["migrated"] is True

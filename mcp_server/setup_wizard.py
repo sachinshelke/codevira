@@ -40,12 +40,30 @@ Idempotency
 Every step kind has its own idempotency contract:
   - mcp_config → existing _merge_mcp_config logic (server entry only)
   - hook       → file-existence + hash compare; settings.json merge
-  - nudge_file → marker-based replace via agents_md.write_nudge_file
+  - nudge_file → marker-based block replace via
+                 ``mcp_server.storage.agents_md_generator.regenerate``
+                 (preserves user content outside the marker boundaries)
 
 A second `setup` invocation should produce all "no_change" actions on
 a healthy install. The summary surfaces this so the user sees that
 nothing was touched.
+
+v2.2.0+ (2026-05-22 surface-cut audit): the per-IDE nudge file matrix
+(``CLAUDE.md``, ``GEMINI.md``, ``.cursor/rules/codevira.mdc``,
+``.windsurfrules``, ``.github/copilot-instructions.md``) was DELETED.
+Every modern AI tool reads the AGENTS.md (Linux Foundation) standard
+natively; the per-IDE duplicates were pure surface bloat the audit
+named as a churn driver. Today the wizard writes exactly ONE nudge
+file: ``<project>/AGENTS.md`` (managed via codevira:begin/end markers,
+user content outside preserved byte-for-byte).
+
+The per-IDE **MCP config** writes are intentionally retained — they're
+the cross-IDE memory wedge (without ``~/.cursor/mcp.json`` entries,
+Cursor agents can't see decisions even if AGENTS.md tells them about
+codevira). Per-IDE *nudges* were duplicates; per-IDE *MCP configs* are
+the load-bearing surface.
 """
+
 from __future__ import annotations
 
 import json
@@ -55,13 +73,6 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
-
-from mcp_server.agents_md import (
-    NudgeWriteResult,
-    SUPPORTED_IDES as NUDGE_IDES,
-    target_path_for as nudge_target_path_for,
-    write_nudge_file,
-)
 
 
 # =====================================================================
@@ -85,11 +96,11 @@ StepKind = Literal["mcp_config", "hook", "nudge_file"]
 #: - **SessionStart / UserPromptSubmit / Stop**: no matcher — these
 #:   events have no tool name, they fire once per session phase.
 _HOOK_EVENTS: tuple[tuple[str, str, str | None], ...] = (
-    ("SessionStart",       "session_start.sh",       None),
-    ("UserPromptSubmit",   "user_prompt_submit.sh",  None),
-    ("PreToolUse",         "pre_tool_use.sh",        "Edit|Write|MultiEdit"),
-    ("PostToolUse",        "post_tool_use.sh",       "Edit|Write|MultiEdit"),
-    ("Stop",               "stop.sh",                None),
+    ("SessionStart", "session_start.sh", None),
+    ("UserPromptSubmit", "user_prompt_submit.sh", None),
+    ("PreToolUse", "pre_tool_use.sh", "Edit|Write|MultiEdit"),
+    ("PostToolUse", "post_tool_use.sh", "Edit|Write|MultiEdit"),
+    ("Stop", "stop.sh", None),
 )
 
 
@@ -100,6 +111,7 @@ class SetupStep:
     ``preview`` is what we show the user before they confirm. It must
     be short (≤200 chars) and human-readable.
     """
+
     kind: StepKind
     ide: str
     target_path: Path
@@ -111,6 +123,7 @@ class SetupStep:
 @dataclass(frozen=True)
 class SetupPlan:
     """Whole-wizard plan for one invocation."""
+
     project_root: Path
     project_name: str
     detected_ides: tuple[str, ...]
@@ -128,6 +141,7 @@ class SetupPlan:
 @dataclass(frozen=True)
 class StepResult:
     """Outcome of executing one step."""
+
     step: SetupStep
     succeeded: bool
     action: str  # "created" / "no_change" / "block_replaced" / "merged" / "skipped" / "failed"
@@ -138,6 +152,7 @@ class StepResult:
 @dataclass(frozen=True)
 class ExecuteResult:
     """Whole-plan execution outcome."""
+
     plan: SetupPlan
     steps: tuple[StepResult, ...] = field(default_factory=tuple)
 
@@ -153,7 +168,8 @@ class ExecuteResult:
     def changes_made(self) -> int:
         """Steps where we actually wrote something to disk."""
         return sum(
-            1 for r in self.steps
+            1
+            for r in self.steps
             if r.succeeded and r.action not in ("no_change", "skipped")
         )
 
@@ -194,16 +210,48 @@ def resolve_setup_target() -> Path:
 # =====================================================================
 
 
+#: IDEs codevira knows how to configure. Used to validate ``--ide``
+#: arguments — unknown names trip an error before we plan anything.
+_KNOWN_IDES: frozenset[str] = frozenset(
+    {
+        "claude",
+        "claude_desktop",
+        "cursor",
+        "windsurf",
+        "antigravity",
+        # The agents_md sentinel covers the universal AGENTS.md write
+        # (the only nudge file v3.0.0 still emits).
+        "agents_md",
+    }
+)
+
+
 def detect_targets(
     project_root: Path,
     *,
     only_ides: tuple[str, ...] | None = None,
+    force: bool = False,
 ) -> tuple[str, ...]:
     """Detect which AI tools are present on this machine.
 
-    ``only_ides`` (if given) filters the detection result. Unknown IDEs
-    in the filter raise ``ValueError`` — we want the user to see a
-    typo immediately rather than silently producing an empty plan.
+    ``only_ides`` (if given) narrows the configured-IDE set. The
+    v3.0.0 contract has two cases:
+
+    1. Unknown name (typo / a totally fictional IDE) → raise
+       ``ValueError`` immediately. We've never silently dropped these.
+
+    2. Known name but NOT in the auto-detected set (e.g. user passes
+       ``--ide cursor`` on a machine where Cursor isn't installed) →
+       raise ``ValueError`` UNLESS ``force=True``. The v2.x code
+       silently filtered these out, which produced the worst possible
+       UX: ``codevira setup --ide cursor`` exited 0 with no output and
+       no config written.  Now the user gets a clear "we couldn't see
+       it; pass --force if you know better."
+
+    Passing ``force=True`` is the escape hatch for cases where the
+    detector misses an install (e.g. a portable binary not on PATH,
+    a non-standard config location). It's intentionally noisy so
+    users only reach for it when needed.
     """
     from mcp_server.ide_inject import detect_installed_ides
 
@@ -212,14 +260,28 @@ def detect_targets(
     if only_ides is None:
         return detected
 
-    valid = set(detected) | set(NUDGE_IDES) | {"claude_desktop"}
-    unknown = [i for i in only_ides if i not in valid]
+    # Stage 1 — reject unknown names (typos / never-supported IDEs).
+    unknown = [i for i in only_ides if i not in _KNOWN_IDES]
     if unknown:
         raise ValueError(
-            f"unknown IDE(s) in --ide: {unknown}. "
-            f"Supported: {sorted(valid)}"
+            f"unknown IDE(s) in --ide: {unknown}. " f"Supported: {sorted(_KNOWN_IDES)}"
         )
-    return tuple(i for i in only_ides if i in detected)
+
+    # Stage 2 — reject known-but-not-detected unless --force.
+    # The `agents_md` sentinel is always "available" (we write
+    # AGENTS.md regardless of detected IDE), so it never trips this
+    # branch.
+    undetected = [i for i in only_ides if i != "agents_md" and i not in detected]
+    if undetected and not force:
+        detected_str = ", ".join(sorted(detected)) or "(none)"
+        raise ValueError(
+            f"--ide named IDE(s) we couldn't auto-detect on this "
+            f"machine: {undetected}. Detected: {detected_str}. "
+            f"If you're sure they're installed (e.g. portable binary "
+            f"not on PATH), re-run with --force to configure anyway."
+        )
+
+    return tuple(i for i in only_ides if i in detected or force)
 
 
 # =====================================================================
@@ -281,17 +343,19 @@ def _plan_mcp_steps(detected: tuple[str, ...]) -> list[SetupStep]:
         if config_path is None:
             continue
         existed = config_path.exists()
-        steps.append(SetupStep(
-            kind="mcp_config",
-            ide=ide,
-            target_path=config_path,
-            target_path_existed=existed,
-            will_merge=existed,
-            preview=(
-                f"Add codevira to {_ide_display_name(ide)} MCP config "
-                f"({'merge' if existed else 'create'}: {config_path})"
-            ),
-        ))
+        steps.append(
+            SetupStep(
+                kind="mcp_config",
+                ide=ide,
+                target_path=config_path,
+                target_path_existed=existed,
+                will_merge=existed,
+                preview=(
+                    f"Add codevira to {_ide_display_name(ide)} MCP config "
+                    f"({'merge' if existed else 'create'}: {config_path})"
+                ),
+            )
+        )
 
     return steps
 
@@ -308,29 +372,29 @@ def _plan_hook_steps() -> list[SetupStep]:
     for event_name, source_filename, _matcher in _HOOK_EVENTS:
         target = hooks_dir / f"codevira-{source_filename}"
         existed = target.exists()
-        steps.append(SetupStep(
-            kind="hook",
-            ide="claude",
-            target_path=target,
-            target_path_existed=existed,
-            will_merge=False,
-            preview=(
-                f"Install Claude Code {event_name} hook → {target.name}"
-            ),
-        ))
+        steps.append(
+            SetupStep(
+                kind="hook",
+                ide="claude",
+                target_path=target,
+                target_path_existed=existed,
+                will_merge=False,
+                preview=(f"Install Claude Code {event_name} hook → {target.name}"),
+            )
+        )
 
     # The settings.json registration step
     settings_path = Path.home() / ".claude" / "settings.json"
-    steps.append(SetupStep(
-        kind="hook",
-        ide="claude",
-        target_path=settings_path,
-        target_path_existed=settings_path.exists(),
-        will_merge=settings_path.exists(),
-        preview=(
-            f"Register codevira hooks in {settings_path.name} (merge)"
-        ),
-    ))
+    steps.append(
+        SetupStep(
+            kind="hook",
+            ide="claude",
+            target_path=settings_path,
+            target_path_existed=settings_path.exists(),
+            will_merge=settings_path.exists(),
+            preview=(f"Register codevira hooks in {settings_path.name} (merge)"),
+        )
+    )
 
     return steps
 
@@ -339,51 +403,30 @@ def _plan_nudge_steps(
     project_root: Path,
     detected: tuple[str, ...],
 ) -> list[SetupStep]:
-    """One nudge-file step per detected IDE that has a template.
+    """One nudge-file step: AGENTS.md (regardless of IDE mix).
 
-    Always emit AGENTS.md as a tier-2 fallback so any MCP-compatible
-    tool the user adds later inherits codevira behavior automatically
-    (Linux Foundation standard).
+    v2.2.0+ (2026-05-22 surface-cut audit): the per-IDE matrix
+    (``CLAUDE.md``, ``GEMINI.md``, ``.cursor/rules/codevira.mdc``,
+    ``.windsurfrules``, ``.github/copilot-instructions.md``) was
+    deleted — every modern AI tool reads ``AGENTS.md`` natively. The
+    ``detected`` arg is preserved for signature stability but no
+    longer drives the result.
     """
-    steps: list[SetupStep] = []
-    targeted: set[str] = set()
-    resolved_root = project_root.resolve()
-
-    for ide in detected:
-        if ide in NUDGE_IDES:
-            target = nudge_target_path_for(ide, project_root)
-            existed = target.exists()
-            try:
-                rel_display = str(target.relative_to(resolved_root))
-            except ValueError:
-                rel_display = str(target)
-            steps.append(SetupStep(
-                kind="nudge_file",
-                ide=ide,
-                target_path=target,
-                target_path_existed=existed,
-                will_merge=existed,
-                preview=(
-                    f"Write codevira nudge for {_ide_display_name(ide)} "
-                    f"→ {rel_display}"
-                ),
-            ))
-            targeted.add(ide)
-
-    # AGENTS.md as universal fallback (skip if already targeted via codex)
-    if "agents_md" not in targeted and "codex" not in detected:
-        target = nudge_target_path_for("agents_md", project_root)
-        existed = target.exists()
-        steps.append(SetupStep(
+    target = project_root / "AGENTS.md"
+    existed = target.is_file()
+    return [
+        SetupStep(
             kind="nudge_file",
             ide="agents_md",
             target_path=target,
             target_path_existed=existed,
             will_merge=existed,
-            preview=f"Write AGENTS.md (universal fallback) → AGENTS.md",
-        ))
-
-    return steps
+            preview=(
+                "Regenerate codevira block in AGENTS.md "
+                f"({'update' if existed else 'create'} → AGENTS.md)"
+            ),
+        ),
+    ]
 
 
 # =====================================================================
@@ -402,8 +445,9 @@ def execute_plan(plan: SetupPlan, *, dry_run: bool = False) -> ExecuteResult:
     if plan.install_mcp:
         try:
             from mcp_server.ide_inject import _resolve_command
+
             cmd_path, python_exe = _resolve_command()
-        except Exception as e:  # noqa: BLE001 — fall through; mcp_config steps will fail individually
+        except Exception:  # noqa: BLE001 — fall through; mcp_config steps will fail individually
             cmd_path, python_exe = None, None
 
     for step in plan.steps:
@@ -427,7 +471,9 @@ def _execute_step(
             return _execute_hook(step, dry_run=dry_run)
         if step.kind == "nudge_file":
             return _execute_nudge(step, plan.project_root, dry_run=dry_run)
-        return StepResult(step, False, "failed", error=f"unknown step kind: {step.kind}")
+        return StepResult(
+            step, False, "failed", error=f"unknown step kind: {step.kind}"
+        )
     except Exception as e:  # noqa: BLE001
         return StepResult(step, False, "failed", error=f"{type(e).__name__}: {e}")
 
@@ -440,16 +486,21 @@ def _execute_mcp_config(
     dry_run: bool,
 ) -> StepResult:
     if cmd_path is None or python_exe is None:
-        return StepResult(step, False, "failed",
-                          error="codevira binary not found on PATH")
+        return StepResult(
+            step, False, "failed", error="codevira binary not found on PATH"
+        )
 
     if dry_run:
-        return StepResult(step, True, "would_merge" if step.will_merge else "would_create")
+        return StepResult(
+            step, True, "would_merge" if step.will_merge else "would_create"
+        )
 
     from mcp_server.ide_inject import (
-        inject_global_claude_code, inject_global_claude_desktop,
+        inject_global_claude_code,
+        inject_global_claude_desktop,
         inject_global_cursor,
-        inject_global_windsurf, inject_global_antigravity,
+        inject_global_windsurf,
+        inject_global_antigravity,
     )
 
     handler = {
@@ -460,8 +511,9 @@ def _execute_mcp_config(
         "antigravity": lambda: inject_global_antigravity(cmd_path, python_exe),
     }.get(step.ide)
     if handler is None:
-        return StepResult(step, True, "skipped",
-                          error=f"no MCP-config handler for {step.ide}")
+        return StepResult(
+            step, True, "skipped", error=f"no MCP-config handler for {step.ide}"
+        )
 
     # Detect ACTUAL content change so idempotent re-runs report
     # ``no_change`` rather than ``merged`` (which the summary counts
@@ -507,16 +559,20 @@ def _install_hook_script(step: SetupStep, *, dry_run: bool) -> StepResult:
     """Copy one bundled hook script to the user's ~/.claude/hooks dir."""
     # Recover source filename: target is "codevira-<source>.sh"
     target_name = step.target_path.name
-    source_filename = target_name[len("codevira-"):]
+    source_filename = target_name[len("codevira-") :]
 
     source = Path(__file__).resolve().parent / "data" / "hooks" / source_filename
     if not source.exists():
-        return StepResult(step, False, "failed",
-                          error=f"bundled hook script missing: {source}")
+        return StepResult(
+            step, False, "failed", error=f"bundled hook script missing: {source}"
+        )
 
     if dry_run:
-        return StepResult(step, True,
-                          "would_create" if not step.target_path_existed else "would_overwrite")
+        return StepResult(
+            step,
+            True,
+            "would_create" if not step.target_path_existed else "would_overwrite",
+        )
 
     step.target_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -536,7 +592,8 @@ def _install_hook_script(step: SetupStep, *, dry_run: bool) -> StepResult:
     shutil.copy2(source, step.target_path)
     _ensure_executable(step.target_path)
     return StepResult(
-        step, True,
+        step,
+        True,
         "created" if not step.target_path_existed else "overwritten",
         bytes_written=step.target_path.stat().st_size,
     )
@@ -562,8 +619,9 @@ def _install_hook_registrations(step: SetupStep, *, dry_run: bool) -> StepResult
     has hooks for that event, we PREPEND ours (never replace).
     """
     if dry_run:
-        return StepResult(step, True,
-                          "would_merge" if step.target_path_existed else "would_create")
+        return StepResult(
+            step, True, "would_merge" if step.target_path_existed else "would_create"
+        )
 
     settings_path = step.target_path
     settings_path.parent.mkdir(parents=True, exist_ok=True)
@@ -576,8 +634,9 @@ def _install_hook_registrations(step: SetupStep, *, dry_run: bool) -> StepResult
                 existing = {}
         except (OSError, json.JSONDecodeError):
             # Don't clobber unreadable settings — bail out as a soft fail
-            return StepResult(step, False, "failed",
-                              error=f"settings.json is not valid JSON")
+            return StepResult(
+                step, False, "failed", error="settings.json is not valid JSON"
+            )
 
     hooks = existing.setdefault("hooks", {})
     if not isinstance(hooks, dict):
@@ -585,7 +644,9 @@ def _install_hook_registrations(step: SetupStep, *, dry_run: bool) -> StepResult
 
     changed = False
     for event_name, source_filename, matcher in _HOOK_EVENTS:
-        target_script = Path.home() / ".claude" / "hooks" / f"codevira-{source_filename}"
+        target_script = (
+            Path.home() / ".claude" / "hooks" / f"codevira-{source_filename}"
+        )
         our_command = f"bash {target_script}"
 
         event_list = hooks.setdefault(event_name, [])
@@ -618,10 +679,10 @@ def _install_hook_registrations(step: SetupStep, *, dry_run: bool) -> StepResult
     # Atomic write — Ctrl-C mid-write would otherwise corrupt
     # ~/.claude/settings.json and break Claude Code's startup until
     # the user manually fixes it. (I7 integration finding C.2.)
-    from mcp_server.agents_md import _atomic_write_text
     n = _atomic_write_text(settings_path, serialized)
     return StepResult(
-        step, True,
+        step,
+        True,
         "merged" if step.target_path_existed else "created",
         bytes_written=n,
     )
@@ -647,13 +708,56 @@ def _hook_command_already_registered(event_list: list, command: str) -> bool:
 
 
 def _execute_nudge(step: SetupStep, project_root: Path, *, dry_run: bool) -> StepResult:
-    result: NudgeWriteResult = write_nudge_file(
-        step.ide, project_root, dry_run=dry_run,
-    )
-    succeeded = True
-    return StepResult(
-        step, succeeded, result.action, bytes_written=result.bytes_written,
-    )
+    """Regenerate the codevira block in AGENTS.md.
+
+    Delegates to ``mcp_server.storage.agents_md_generator.regenerate``
+    which (a) reads the project's current decisions, (b) renders the
+    slim ≤5 KB contract block, and (c) merges into AGENTS.md via
+    ``<!-- codevira:begin -->`` / ``<!-- codevira:end -->`` markers
+    (user content outside is preserved byte-for-byte).
+
+    Idempotency contract: if the file already has the EXACT bytes
+    we'd write, return ``no_change`` so back-to-back ``setup`` runs
+    surface zero noise. This was the I1 finding for MCP config steps;
+    nudge files get the same treatment.
+
+    Dry-run path: report ``would_create`` / ``would_replace`` (the
+    project-wide convention from ``_execute_mcp_config``); no I/O.
+    """
+    if dry_run:
+        action = "would_replace" if step.target_path_existed else "would_create"
+        return StepResult(step, True, action, bytes_written=0)
+
+    # Snapshot before so we can detect a true no-op.
+    before_bytes: bytes | None = None
+    if step.target_path.is_file():
+        try:
+            before_bytes = step.target_path.read_bytes()
+        except OSError:
+            before_bytes = None
+
+    try:
+        from mcp_server.storage.agents_md_generator import regenerate
+
+        summary = regenerate(target_path=step.target_path)
+    except Exception as exc:  # noqa: BLE001
+        return StepResult(
+            step,
+            False,
+            "failed",
+            error=f"AGENTS.md regen failed: {exc}",
+        )
+
+    bytes_written = int(summary.get("block_bytes", 0))
+    if before_bytes is not None:
+        try:
+            after_bytes = step.target_path.read_bytes()
+        except OSError:
+            after_bytes = b""
+        if after_bytes == before_bytes:
+            return StepResult(step, True, "no_change", bytes_written=0)
+    action = "block_replaced" if step.target_path_existed else "created"
+    return StepResult(step, True, action, bytes_written=bytes_written)
 
 
 # =====================================================================
@@ -677,10 +781,13 @@ def _mcp_config_path_for(ide: str) -> Path | None:
     # ~/.gemini/settings.json but the inject function wrote to
     # ~/.gemini/antigravity/mcp_config.json.)
     from mcp_server.ide_inject import (
-        _claude_global_config_path, _claude_desktop_config_path,
+        _claude_global_config_path,
+        _claude_desktop_config_path,
         _cursor_global_config_path,
-        _windsurf_global_config_path, _antigravity_config_path,
+        _windsurf_global_config_path,
+        _antigravity_config_path,
     )
+
     if ide == "claude":
         return _claude_global_config_path()
     if ide == "claude_desktop":
@@ -713,6 +820,21 @@ def _ide_display_name(ide: str) -> str:
     return _DISPLAY_NAMES.get(ide, ide)
 
 
+def _atomic_write_text(target: Path, content: str) -> int:
+    """Write ``content`` to ``target`` atomically.
+
+    v3.0.0 round-3: thin wrapper around
+    ``mcp_server.storage.atomic.atomic_write_text``. Was a
+    standalone helper in v2.2.0; now consolidated in the storage
+    layer alongside the other write sites.
+
+    Returns bytes written.
+    """
+    from mcp_server.storage.atomic import atomic_write_text
+
+    return atomic_write_text(target, content)
+
+
 # =====================================================================
 # CLI orchestrator (cmd_setup)
 # =====================================================================
@@ -723,14 +845,22 @@ def cmd_setup(
     yes: bool = False,
     dry_run: bool = False,
     only_ides: tuple[str, ...] | None = None,
+    force: bool = False,
     install_mcp: bool = True,
     install_hooks: bool = True,
     write_nudge_files: bool = True,
 ) -> int:
     """`codevira setup` orchestrator. Returns POSIX exit code:
-        0 on success / dry-run / user-declined
-        1 on bad project root or unrecoverable startup failure
-        2 on partial failure (some steps succeeded, some failed)
+    0 on success / dry-run / user-declined
+    1 on bad project root or unrecoverable startup failure
+    2 on partial failure (some steps succeeded, some failed)
+
+    v3.0.0 contract: by default the wizard ONLY configures IDEs whose
+    install is auto-detected on this machine. ``--ide X`` for a
+    non-detected IDE raises a clear error pointing at ``--force`` as
+    the override. The v2.x silent-filter behavior (which made
+    ``setup --ide cursor`` on a Cursor-less machine succeed with no
+    output and no config) was deleted in the surface-cut audit.
     """
     started = time.perf_counter()
 
@@ -739,12 +869,12 @@ def cmd_setup(
 
     # Stage 2
     try:
-        detected = detect_targets(project_root, only_ides=only_ides)
+        detected = detect_targets(project_root, only_ides=only_ides, force=force)
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
         print(
             "  → check your --ide value against `codevira setup --help`. "
-            "Valid IDEs: claude, cursor, windsurf, antigravity, codex, copilot.",
+            "Valid IDEs: claude, cursor, windsurf, antigravity, agents_md.",
             file=sys.stderr,
         )
         return 1
@@ -752,7 +882,8 @@ def cmd_setup(
     if not detected:
         print("No supported AI tools detected on this machine.")
         print("Install Claude Code, Cursor, Windsurf, Antigravity, or Codex,")
-        print("then re-run `codevira setup`.")
+        print("then re-run `codevira setup`. To configure an IDE we missed,")
+        print("pass `--ide <name> --force`.")
         return 0
 
     # Stage 3
@@ -806,9 +937,7 @@ def _print_plan(plan: SetupPlan) -> None:
             "  ⚠  Plan is empty — all of --no-mcp / --no-hooks / --no-nudge-files "
             "appear to be set."
         )
-        print(
-            "     Re-run without those flags to actually configure your IDE(s)."
-        )
+        print("     Re-run without those flags to actually configure your IDE(s).")
     print()
 
 
@@ -820,6 +949,7 @@ def _ghost_advisory_for_current_project() -> str:
     """
     try:
         from mcp_server.paths import get_data_dir
+
         d = get_data_dir()
         if not d.is_dir():
             return ""
@@ -856,13 +986,19 @@ def _print_summary(result: ExecuteResult, *, elapsed_seconds: float) -> None:
             print(f"  ✓ IDE setup up to date ({len(result.steps)} steps, no changes).")
             print(f"  ⚠  However: {ghost_note}")
         else:
-            print(f"  ✓ Already up to date ({len(result.steps)} steps, no changes needed).")
+            print(
+                f"  ✓ Already up to date ({len(result.steps)} steps, no changes needed)."
+            )
     elif failed_count == 0:
-        print(f"  ✓ Done in {elapsed_seconds:.1f}s. {result.changes_made} changes; "
-              f"{no_change_count} already current.")
+        print(
+            f"  ✓ Done in {elapsed_seconds:.1f}s. {result.changes_made} changes; "
+            f"{no_change_count} already current."
+        )
     else:
-        print(f"  ⚠  Partial: {succeeded_count} of {len(result.steps)} steps "
-              f"succeeded ({elapsed_seconds:.1f}s).")
+        print(
+            f"  ⚠  Partial: {succeeded_count} of {len(result.steps)} steps "
+            f"succeeded ({elapsed_seconds:.1f}s)."
+        )
         for r in result.steps:
             if not r.succeeded:
                 print(f"    ✗ {r.step.preview}")
@@ -890,4 +1026,5 @@ def _confirm(question: str) -> bool:
     non-matching answer (which surfaced as "I typed Y and nothing happened").
     """
     from mcp_server._prompts import confirm
+
     return confirm(question, default=True)

@@ -200,7 +200,139 @@ Stay local. Stay focused on the one developer working on their machine.
 
 ---
 
-## 🔜 v2.1.2 — Trust Recovery + QoL (in progress)
+## ✅ v3.0.0 — Audit, lean, opinionated (May 22 2026)
+
+Major version. Biggest API contraction since v2.0 shipped — driven
+by a 2026-05-22 surface-cut audit that traced 5 categories of user
+complaints to overgrown surface, false-positive IDE detections, and
+"junk left behind" after uninstall. All five categories fixed.
+
+Headline cuts (v2.1.x → v3.0.0):
+
+| Surface                       | v2.1.x  | v3.0.0    | Δ      |
+|-------------------------------|---------|-----------|--------|
+| MCP tools                     | 46      | 24        | -48%   |
+| CLI subcommands               | 23      | 15        | -35%   |
+| Engine policies               | 10      | 6         | -40%   |
+| Per-project nudge files       | 6       | 1         | -83%   |
+| MCP prompt library            | 5       | 1         | -80%   |
+| Pipx install size             | ~450 MB | ~83 MB    | -82%   |
+| MCP server startup            | 1–3 s   | <100 ms   | -97%   |
+
+Key changes:
+
+- **IDE auto-detection hardened.** STRONG signals only (binary on
+  PATH + valid config file). v2.x weak signals (empty `~/.cursor/`
+  dir, parent of Claude Desktop's config) deleted. New ``--force``
+  flag is the escape hatch for the rare case detection misses an
+  install. ``--ide cursor`` on a Cursor-less machine no longer
+  silently fails — it raises a clear error.
+- **Per-IDE nudge files collapsed to AGENTS.md only.** Setup writes
+  exactly one nudge file regardless of detected IDEs. Per-IDE
+  duplicates (`CLAUDE.md` / `GEMINI.md` / `.windsurfrules` etc.)
+  were pure surface bloat.
+- **`codevira uninstall` shipped.** Reverses every system write
+  made by `init`/`setup`. Optional `--keep-data`. Closes the
+  "uninstalling left junk" complaint.
+- **21 MCP tools deleted** across changesets, preferences,
+  learned_rules, project_maturity, list_nodes / add_node /
+  update_node / export_graph, batch endpoints, mark_decision_protected
+  (use `supersede_decision(..., do_not_revert=True)` for the same
+  flip + audit trail).
+- **8 CLI subcommands deleted**: heal (use `reset`), budget, agents,
+  hooks, register, configure, report (folded into doctor), calibrate.
+- **4 engine policies deleted**: LiveStyleEnforcement,
+  AIPromotionScore, ProactiveIntentInference,
+  ProactiveScopeContractLock.
+- **Dead-code sweep**: ~3,800 LOC removed after the audit surfaced
+  internal helpers + tests for deleted features. `indexer/rule_learner.py`
+  deleted. 7 SQLiteGraph methods deleted (tables stay for back-compat).
+  `mcp_server/engine/signals.py::preferences` (broken — imported a
+  non-existent symbol) deleted.
+
+### Pre-publish hardening (RC audit rounds 2 + 3)
+
+The release candidate went through two additional audit passes
+before shipping to PyPI. Both surfaced classes of silent failures
+the structured test suite hadn't covered:
+
+- **Round 2** (concurrent-write race). A 50-thread stress run of
+  `record_decision` exposed `[Errno 2]` warnings on the cache files
+  (`manifest.yaml`, `digest.jsonl`, `AGENTS.md`) — fixed-suffix
+  `.tmp` rename race + unlocked read-modify-write on the manifest.
+  Decisions stayed safe in JSONL (canonical append-only path was
+  always fcntl-locked); only the cache files lost data.
+- **Round 3** (sweep + harden). Found the same race shape in
+  `roadmap.yaml` and 11 more unguarded write sites. Consolidated
+  all 16 writers through a single `mcp_server/storage/atomic.py`
+  helper (atomic write + Posix/Windows file lock). Proved
+  cross-process safety with 20 subprocesses. Added
+  `scripts/chaos_smoke.py` adversarial harness — 29 attacks pass.
+
+Two regression test files pin the invariants:
+`tests/storage/test_concurrent_writes.py` (in-process) and
+`tests/storage/test_cross_process_writes.py` (subprocesses).
+
+Full v3.0.0 plan + RC-audit story: [`docs/plans/v3.0.0.md`](docs/plans/v3.0.0.md).
+Full surface-cut audit: [`docs/audit-2026-05-22.md`](docs/audit-2026-05-22.md)
++ [`docs/surface-cuts-2026-05-22.md`](docs/surface-cuts-2026-05-22.md).
+Full v3.0.0 entry in [CHANGELOG.md](CHANGELOG.md).
+
+### Known limitations carried into v3.0.0
+
+- **Graph spec vs implementation drift.** The v3.0.0 spec
+  documents the code graph at `<project>/.codevira-cache/graph.sqlite`,
+  but `indexer/` still writes to `<data_dir>/graph/graph.db`
+  (centralized v1.6 location). Runtime is correct — everyone
+  agrees on the centralized location — but the spec-truthfulness
+  gap should be reconciled in v3.1 with a migration step.
+- **No decision-input sanitization.** Null bytes, 1 MB text, path
+  traversal in `file_path`, control chars are accepted today.
+  Trust-the-agent design choice; v3.1 candidate for hardening.
+- **Cross-process flock tested on macOS + Linux CI only.** Windows
+  uses the sentinel-file fallback (proved by a monkey-patched
+  `sys.platform` unit test) but hasn't been exercised on real
+  Windows under load.
+
+---
+
+## ✅ v2.2.0 — Lean (May 2026)
+
+Architectural pivot. ~3,800 LOC deleted, ~150 MB runtime deps removed.
+
+After v2.1.2's 64 GB HNSW corruption exposed ChromaDB's structural
+fragility, v2.2.0 walks back the 2022-era vector-DB bet and ships
+codevira as a **lean cross-IDE decision-enforcement layer** (~1 MB per
+project, in your repo, no cloud, no vectors).
+
+Key changes:
+
+- Decisions now in `<repo>/.codevira/decisions.jsonl` (git-tracked,
+  team-shareable, replaces graph.db SQLite).
+- AGENTS.md auto-generated with hard 5 KB cap (other AI tools read it
+  natively — decisions are portable across Copilot, Codex, Cursor,
+  Gemini, Factory, Amp, Windsurf, Zed, RooCode, Jules).
+- Relevance-gated UserPromptSubmit: off-topic → 0 tokens; on-topic →
+  ≤600 tokens / ≤3 decisions; deterministic byte output (Anthropic
+  prompt-cache friendly).
+- ChromaDB / sentence-transformers / torch / search_codebase / calibrate
+  REMOVED.
+
+| Metric | v2.1.2 | v2.2.0 |
+|---|---|---|
+| Pipx install | ~200 MB | **~50 MB** |
+| Cold start | 1-3s | **<100ms** |
+| Per-project disk | 40-80 MB | **~1-2 MB** |
+| ChromaDB bug surface | exists | **gone** |
+
+New CLI: `codevira sync`, `codevira observe-git`. `codevira init` also
+scaffolds `.codevira/`.
+
+Full plan: [`docs/plans/v2.2.0.md`](docs/plans/v2.2.0.md).
+
+---
+
+## ✅ v2.1.2 — Trust Recovery + QoL (May 2026)
 
 **Full plan:** [`docs/plans/v2.1.2.md`](docs/plans/v2.1.2.md) — 823 lines,
 16 items + per-item verification + deferred list.

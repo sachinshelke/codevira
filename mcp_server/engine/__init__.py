@@ -45,27 +45,24 @@ def register_default_policies() -> None:
          ``maybe_register()`` with manual env-var gating. Now the
          registration helper itself respects the flag.
     """
-    from mcp_server.engine.policies.ai_promotion import AIPromotionScore
     from mcp_server.engine.policies.anti_regression import AntiRegression
     from mcp_server.engine.policies.blast_radius import BlastRadiusVeto
-    from mcp_server.engine.policies.cross_session import CrossSessionConsistency
     from mcp_server.engine.policies.decision_lock import DecisionLock
-    from mcp_server.engine.policies.intent_inference import ProactiveIntentInference
-    from mcp_server.engine.policies.live_style import LiveStyleEnforcement
     from mcp_server.engine.policies.post_edit_refresh import PostEditGraphRefresh
-    from mcp_server.engine.policies.scope_contract import ProactiveScopeContractLock
+    from mcp_server.engine.policies.relevance_inject import RelevanceInject
     from mcp_server.engine.policies.token_budget import TokenBudgetPersist
 
+    # v2.2.0+ surface cut (2026-05-22 audit): LiveStyleEnforcement,
+    # AIPromotionScore, ProactiveIntentInference, ProactiveScopeContractLock
+    # all REMOVED. Each scored low on the noise-vs-signal axis and never
+    # demonstrated value in real founder usage.
+
     for policy_cls in (
-        BlastRadiusVeto,  # Hero 4 (Week 4)
-        DecisionLock,  # Hero 1 (Week 5)
-        CrossSessionConsistency,  # Hero 5 (Week 6)
-        TokenBudgetPersist,  # Hero 6 (Week 7)
-        AntiRegression,  # Hero 2 (Week 8)
-        LiveStyleEnforcement,  # Hero 7 (Week 9)
-        AIPromotionScore,  # Hero 10 (Week 10)
-        ProactiveIntentInference,  # Hero 9 (Week 11)
-        ProactiveScopeContractLock,  # Hero 3 (Week 12) — off-by-default
+        BlastRadiusVeto,  # Hero 4
+        DecisionLock,  # Hero 1 (unique enforcement wedge)
+        RelevanceInject,  # v2.2.0 UserPromptSubmit injection
+        TokenBudgetPersist,  # Hero 6
+        AntiRegression,  # Hero 2
         PostEditGraphRefresh,  # v2.1.2 Item 4
     ):
         if not policy_cls.enabled_by_default:

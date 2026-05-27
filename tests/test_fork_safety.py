@@ -14,12 +14,9 @@ sentence-transformers / torch are imported. These tests verify:
 """
 from __future__ import annotations
 
-import importlib
 import os
 import sys
-from unittest.mock import patch
 
-import pytest
 
 from indexer import _fork_safety
 

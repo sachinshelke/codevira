@@ -12,6 +12,7 @@ Note: tree-sitter-language-pack is an optional dependency. We mock the
 treesitter_parser module so these tests can run without it installed.
 Only the Python (ast-based) code paths are exercised here.
 """
+
 from __future__ import annotations
 
 import sys
@@ -36,13 +37,20 @@ if "tree_sitter" not in sys.modules:
     sys.modules["tree_sitter"] = _ts_node_mock
 
 # Now we can safely import treesitter_parser (it will use the mocks)
-# and then import code_reader which depends on it.
-from mcp_server.tools.code_reader import get_signature, get_code, _is_private, _resolve
+# and then import code_reader which depends on it. The late import is
+# intentional — the mocks above MUST land in sys.modules first.
+from mcp_server.tools.code_reader import (  # noqa: E402
+    _is_private,
+    _resolve,
+    get_code,
+    get_signature,
+)
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def mock_project_root(tmp_path, monkeypatch):
@@ -174,6 +182,7 @@ def constants_only_py(mock_project_root):
 # _is_private()
 # ===========================================================================
 
+
 class TestIsPrivate:
     def test_private_single_underscore(self):
         assert _is_private("_helper") is True
@@ -192,6 +201,7 @@ class TestIsPrivate:
 # _resolve()
 # ===========================================================================
 
+
 class TestResolve:
     def test_relative_path(self, mock_project_root):
         result = _resolve("src/main.py")
@@ -206,6 +216,7 @@ class TestResolve:
 # ===========================================================================
 # get_signature() — Python files
 # ===========================================================================
+
 
 class TestGetSignaturePython:
     def test_finds_public_class(self, py_file):
@@ -344,6 +355,7 @@ class TestGetSignatureUtilFile:
 # ===========================================================================
 # get_code() — Python files
 # ===========================================================================
+
 
 class TestGetCodeFunction:
     def test_get_function_by_name(self, py_file):
@@ -499,12 +511,17 @@ class TestGetCodePrivateSymbolAccess:
 # mcp_server.tools.code_reader.TS_EXTENSION_MAP to include the target
 # extension for each test, simulating the real treesitter_parser.
 
+
 class TestGetSignatureTreesitter:
     def test_non_python_dispatches_to_treesitter(self, tmp_path, monkeypatch):
         """get_signature for .ts file dispatches to _get_signature_treesitter."""
         ts_file = tmp_path / "app.ts"
-        ts_file.write_text("export function greet(name: string): string { return name; }")
-        monkeypatch.setattr("mcp_server.tools.code_reader.get_project_root", lambda: tmp_path)
+        ts_file.write_text(
+            "export function greet(name: string): string { return name; }"
+        )
+        monkeypatch.setattr(
+            "mcp_server.tools.code_reader.get_project_root", lambda: tmp_path
+        )
 
         mock_parsed = MagicMock()
         mock_sym = MagicMock()
@@ -520,8 +537,14 @@ class TestGetSignatureTreesitter:
         mock_parsed.language = "typescript"
         mock_parsed.module_docstring = None
 
-        with patch("mcp_server.tools.code_reader.TS_EXTENSION_MAP", {".ts": "typescript"}), \
-             patch("mcp_server.tools.code_reader.ts_parse_file", return_value=mock_parsed):
+        with (
+            patch(
+                "mcp_server.tools.code_reader.TS_EXTENSION_MAP", {".ts": "typescript"}
+            ),
+            patch(
+                "mcp_server.tools.code_reader.ts_parse_file", return_value=mock_parsed
+            ),
+        ):
             result = get_signature("app.ts")
         assert result["found"] is True
         assert result["language"] == "typescript"
@@ -532,10 +555,19 @@ class TestGetSignatureTreesitter:
         """When ts_parse_file raises ValueError, returns found=False."""
         ts_file = tmp_path / "broken.ts"
         ts_file.write_text("invalid")
-        monkeypatch.setattr("mcp_server.tools.code_reader.get_project_root", lambda: tmp_path)
+        monkeypatch.setattr(
+            "mcp_server.tools.code_reader.get_project_root", lambda: tmp_path
+        )
 
-        with patch("mcp_server.tools.code_reader.TS_EXTENSION_MAP", {".ts": "typescript"}), \
-             patch("mcp_server.tools.code_reader.ts_parse_file", side_effect=ValueError("parse fail")):
+        with (
+            patch(
+                "mcp_server.tools.code_reader.TS_EXTENSION_MAP", {".ts": "typescript"}
+            ),
+            patch(
+                "mcp_server.tools.code_reader.ts_parse_file",
+                side_effect=ValueError("parse fail"),
+            ),
+        ):
             result = get_signature("broken.ts")
         assert result["found"] is False
         assert "parse fail" in result["error"]
@@ -544,7 +576,9 @@ class TestGetSignatureTreesitter:
         """Symbols with docstrings and methods include them in result."""
         go_file = tmp_path / "service.go"
         go_file.write_text("type Service struct {}")
-        monkeypatch.setattr("mcp_server.tools.code_reader.get_project_root", lambda: tmp_path)
+        monkeypatch.setattr(
+            "mcp_server.tools.code_reader.get_project_root", lambda: tmp_path
+        )
 
         mock_parsed = MagicMock()
         mock_sym = MagicMock()
@@ -560,8 +594,12 @@ class TestGetSignatureTreesitter:
         mock_parsed.language = "go"
         mock_parsed.module_docstring = "Package main"
 
-        with patch("mcp_server.tools.code_reader.TS_EXTENSION_MAP", {".go": "go"}), \
-             patch("mcp_server.tools.code_reader.ts_parse_file", return_value=mock_parsed):
+        with (
+            patch("mcp_server.tools.code_reader.TS_EXTENSION_MAP", {".go": "go"}),
+            patch(
+                "mcp_server.tools.code_reader.ts_parse_file", return_value=mock_parsed
+            ),
+        ):
             result = get_signature("service.go")
         sym = result["symbols"][0]
         assert sym["docstring"] == "Service is the main service."  # only first line
@@ -571,7 +609,9 @@ class TestGetSignatureTreesitter:
         """Private symbols (is_public=False) are excluded from results."""
         go_file = tmp_path / "pkg.go"
         go_file.write_text("package main")
-        monkeypatch.setattr("mcp_server.tools.code_reader.get_project_root", lambda: tmp_path)
+        monkeypatch.setattr(
+            "mcp_server.tools.code_reader.get_project_root", lambda: tmp_path
+        )
 
         mock_parsed = MagicMock()
         private_sym = MagicMock()
@@ -589,8 +629,12 @@ class TestGetSignatureTreesitter:
         mock_parsed.language = "go"
         mock_parsed.module_docstring = None
 
-        with patch("mcp_server.tools.code_reader.TS_EXTENSION_MAP", {".go": "go"}), \
-             patch("mcp_server.tools.code_reader.ts_parse_file", return_value=mock_parsed):
+        with (
+            patch("mcp_server.tools.code_reader.TS_EXTENSION_MAP", {".go": "go"}),
+            patch(
+                "mcp_server.tools.code_reader.ts_parse_file", return_value=mock_parsed
+            ),
+        ):
             result = get_signature("pkg.go")
         assert len(result["symbols"]) == 1
         assert result["symbols"][0]["name"] == "PublicFunc"
@@ -600,12 +644,15 @@ class TestGetSignatureTreesitter:
 # get_code() — tree-sitter (non-Python) dispatch (line 221, 238-261)
 # ===========================================================================
 
+
 class TestGetCodeTreesitter:
     def test_non_python_symbol_none_returns_module_info(self, tmp_path, monkeypatch):
         """get_code for .ts with symbol=None returns module-level info via treesitter."""
         ts_file = tmp_path / "module.ts"
         ts_file.write_text("import express from 'express'")
-        monkeypatch.setattr("mcp_server.tools.code_reader.get_project_root", lambda: tmp_path)
+        monkeypatch.setattr(
+            "mcp_server.tools.code_reader.get_project_root", lambda: tmp_path
+        )
 
         mock_parsed = MagicMock()
         mock_parsed.language = "typescript"
@@ -614,8 +661,14 @@ class TestGetCodeTreesitter:
         mock_import.module = "express"
         mock_parsed.imports = [mock_import]
 
-        with patch("mcp_server.tools.code_reader.TS_EXTENSION_MAP", {".ts": "typescript"}), \
-             patch("mcp_server.tools.code_reader.ts_parse_file", return_value=mock_parsed):
+        with (
+            patch(
+                "mcp_server.tools.code_reader.TS_EXTENSION_MAP", {".ts": "typescript"}
+            ),
+            patch(
+                "mcp_server.tools.code_reader.ts_parse_file", return_value=mock_parsed
+            ),
+        ):
             result = get_code("module.ts", symbol=None)
         assert result["found"] is True
         assert result["kind"] == "module_info"
@@ -625,10 +678,17 @@ class TestGetCodeTreesitter:
         """When ts_parse_file raises in get_code symbol=None path, returns found=False."""
         ts_file = tmp_path / "broken.go"
         ts_file.write_text("invalid")
-        monkeypatch.setattr("mcp_server.tools.code_reader.get_project_root", lambda: tmp_path)
+        monkeypatch.setattr(
+            "mcp_server.tools.code_reader.get_project_root", lambda: tmp_path
+        )
 
-        with patch("mcp_server.tools.code_reader.TS_EXTENSION_MAP", {".go": "go"}), \
-             patch("mcp_server.tools.code_reader.ts_parse_file", side_effect=FileNotFoundError("missing")):
+        with (
+            patch("mcp_server.tools.code_reader.TS_EXTENSION_MAP", {".go": "go"}),
+            patch(
+                "mcp_server.tools.code_reader.ts_parse_file",
+                side_effect=FileNotFoundError("missing"),
+            ),
+        ):
             result = get_code("broken.go", symbol=None)
         assert result["found"] is False
         assert "missing" in result["error"]
@@ -637,7 +697,9 @@ class TestGetCodeTreesitter:
         """get_code for .go with named symbol uses ts_get_symbol_source."""
         go_file = tmp_path / "handler.go"
         go_file.write_text("func HandleRequest() {}")
-        monkeypatch.setattr("mcp_server.tools.code_reader.get_project_root", lambda: tmp_path)
+        monkeypatch.setattr(
+            "mcp_server.tools.code_reader.get_project_root", lambda: tmp_path
+        )
 
         mock_result = {
             "found": True,
@@ -645,8 +707,13 @@ class TestGetCodeTreesitter:
             "start_line": 1,
             "end_line": 1,
         }
-        with patch("mcp_server.tools.code_reader.TS_EXTENSION_MAP", {".go": "go"}), \
-             patch("mcp_server.tools.code_reader.ts_get_symbol_source", return_value=mock_result.copy()):
+        with (
+            patch("mcp_server.tools.code_reader.TS_EXTENSION_MAP", {".go": "go"}),
+            patch(
+                "mcp_server.tools.code_reader.ts_get_symbol_source",
+                return_value=mock_result.copy(),
+            ),
+        ):
             result = get_code("handler.go", symbol="HandleRequest")
         assert result["found"] is True
         assert result["file_path"] == "handler.go"

@@ -31,10 +31,9 @@ filter combinations, no git repo.
 
 from __future__ import annotations
 
-import subprocess
 import time
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock
 
 import mcp_server.paths as paths
 from indexer.sqlite_graph import SQLiteGraph
@@ -57,6 +56,47 @@ def _setup_project(tmp_path, monkeypatch) -> tuple[Path, Path, SQLiteGraph]:
 
     db = SQLiteGraph(data_dir / "graph" / "graph.db")
     return project_root, data_dir, db
+
+
+def _seed_node(file_path: str, *, role: str, layer: str, **kwargs) -> None:
+    """v3.0.0 test helper: seed a graph node directly via SQLiteGraph.
+
+    The v2.x tests for ``mcp_server.tools.graph.add_node`` (deleted in
+    the 2026-05-22 surface-cut audit) used the high-level wrapper as
+    their seeding API. With the wrapper gone, surviving tests for
+    other graph functions (get_node / get_impact / query_graph)
+    needed a thin re-seeding helper that writes via the still-alive
+    SQLiteGraph.add_node — that's this function.
+
+    Accepts the v2.x add_node kwargs (role, layer, stability,
+    key_functions, rules, connects_to, do_not_revert, tests) for
+    minimal test churn. JSON-list fields are serialized to match what
+    the v2.x wrapper used to write.
+    """
+    import json
+
+    node_id = f"file:{file_path}"
+    name = Path(file_path).name
+    add_kwargs: dict = {"role": role, "layer": layer}
+    for k in ("stability", "do_not_revert"):
+        if k in kwargs:
+            add_kwargs[k] = kwargs[k]
+    if "rules" in kwargs:
+        add_kwargs["rules"] = json.dumps(kwargs["rules"])
+    if "key_functions" in kwargs:
+        add_kwargs["key_functions"] = json.dumps(kwargs["key_functions"])
+    if "connects_to" in kwargs:
+        add_kwargs["dependencies"] = json.dumps(kwargs["connects_to"])
+
+    # Reopen the DB on demand — tests call _setup_project + db.close()
+    # then come back here to seed. Mirrors the v2.x wrapper's behavior.
+    from mcp_server.paths import get_data_dir
+
+    db = SQLiteGraph(get_data_dir() / "graph" / "graph.db")
+    try:
+        db.add_node(node_id, "file", name, file_path, **add_kwargs)
+    finally:
+        db.close()
 
 
 def _populate_graph(db: SQLiteGraph) -> None:
@@ -202,127 +242,19 @@ def _add_symbols(db: SQLiteGraph) -> None:
 # =====================================================================
 
 
-class TestAddNode:
-    def test_add_node_basic(self, tmp_path, monkeypatch):
-        """Adding a basic node with required params should succeed."""
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        db.close()
-        result = graph.add_node("src/new.py", role="New module", layer="service")
-        assert "status" in result
-        assert "src/new.py" in result["status"]
-
-        # Verify node was persisted
-        node_result = graph.get_node("src/new.py")
-        assert node_result["found"] is True
-        assert node_result["role"] == "New module"
-        assert node_result["layer"] == "service"
-
-    def test_add_node_with_all_optional_params(self, tmp_path, monkeypatch):
-        """Adding a node with stability, do_not_revert, key_functions, tests, rules."""
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        db.close()
-        result = graph.add_node(
-            file_path="src/critical.py",
-            role="Critical payment handler",
-            layer="core",
-            stability="high",
-            do_not_revert=True,
-            key_functions=["process_payment", "validate_card"],
-            rules=["Never remove error handling", "Keep retry logic"],
-            tests=["tests/test_payment.py"],
-            connects_to=[
-                {"target": "src/db.py", "edge": "imports", "via": "sqlalchemy"}
-            ],
-        )
-        assert "status" in result
-        assert "src/critical.py" in result["status"]
-
-        # Verify all fields persisted — use full=True to get rules/key_functions arrays
-        node_result = graph.get_node("src/critical.py", full=True)
-        assert node_result["found"] is True
-        assert node_result["stability"] == "high"
-        assert bool(node_result["do_not_revert"]) is True
-        assert "process_payment" in node_result["key_functions"]
-        assert "validate_card" in node_result["key_functions"]
-        assert "Never remove error handling" in node_result["rules"]
-        assert "Keep retry logic" in node_result["rules"]
-
-    def test_add_node_default_stability_is_medium(self, tmp_path, monkeypatch):
-        """Default stability should be 'medium' when not specified."""
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        db.close()
-        graph.add_node("src/default.py", role="Default module", layer="misc")
-        node_result = graph.get_node("src/default.py")
-        assert node_result["stability"] == "medium"
-
-    def test_add_node_empty_strings_chaos(self, tmp_path, monkeypatch):
-        """Chaos: add_node with empty string params should not crash."""
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        db.close()
-        result = graph.add_node(file_path="", role="", layer="")
-        # Should succeed without crashing -- the node is created with empty strings
-        assert "status" in result
+# v3.0.0 audit cleanup (2026-05-22 surface-cut): test classes for
+# the deleted graph mutation / graph export tools were removed
+# wholesale: TestAddNode, TestUpdateNode, TestListNodes,
+# TestFindHotspots, TestExportGraph, TestGetGraphDiff,
+# TestAnalyzeChanges. Their MCP tools were deleted in batch 4a
+# and the underlying functions were ripped in v3.0.0's dead-code
+# sweep. Surviving tests cover: get_node, get_impact, query_graph,
+# refresh_graph (still-active MCP tools).
 
 
 # =====================================================================
 # update_node
 # =====================================================================
-
-
-class TestUpdateNode:
-    def test_update_rules_list(self, tmp_path, monkeypatch):
-        """Updating rules should merge with existing rules."""
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        db.close()
-        graph.add_node("src/svc.py", role="Service", layer="service", rules=["Rule A"])
-        result = graph.update_node("src/svc.py", {"rules": ["Rule B", "Rule C"]})
-        assert "status" in result
-        assert "Updated" in result["status"]
-
-        node = graph.get_node("src/svc.py", full=True)
-        assert "Rule A" in node["rules"]
-        assert "Rule B" in node["rules"]
-        assert "Rule C" in node["rules"]
-
-    def test_update_stability(self, tmp_path, monkeypatch):
-        """Updating stability should replace the value."""
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        db.close()
-        graph.add_node(
-            "src/evolve.py", role="Evolving module", layer="core", stability="low"
-        )
-        graph.update_node("src/evolve.py", {"stability": "high"})
-        node = graph.get_node("src/evolve.py")
-        assert node["stability"] == "high"
-
-    def test_update_key_functions(self, tmp_path, monkeypatch):
-        """Updating key_functions should merge with existing ones."""
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        db.close()
-        graph.add_node(
-            "src/funcs.py", role="Functions", layer="utils", key_functions=["func_a"]
-        )
-        graph.update_node("src/funcs.py", {"key_functions": ["func_b"]})
-        node = graph.get_node("src/funcs.py", full=True)
-        assert "func_a" in node["key_functions"]
-        assert "func_b" in node["key_functions"]
-
-    def test_update_do_not_revert(self, tmp_path, monkeypatch):
-        """Updating do_not_revert should change the flag."""
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        db.close()
-        graph.add_node("src/protect.py", role="Protected", layer="core")
-        graph.update_node("src/protect.py", {"do_not_revert": True})
-        node = graph.get_node("src/protect.py")
-        assert bool(node["do_not_revert"]) is True
-
-    def test_update_nonexistent_node_returns_error(self, tmp_path, monkeypatch):
-        """Chaos: update_node for a node that doesn't exist should return error."""
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        db.close()
-        result = graph.update_node("nonexistent/file.py", {"stability": "high"})
-        assert "error" in result
-        assert "not found" in result["error"].lower()
 
 
 # =====================================================================
@@ -335,7 +267,7 @@ class TestGetNode:
         """get_node with full=True should return parsed JSON for rules/deps/key_functions."""
         _, _, db = _setup_project(tmp_path, monkeypatch)
         db.close()
-        graph.add_node(
+        _seed_node(
             "src/full.py",
             role="Full node",
             layer="api",
@@ -362,7 +294,7 @@ class TestGetNode:
         """Default get_node returns counts, not full rules/deps arrays."""
         _, _, db = _setup_project(tmp_path, monkeypatch)
         db.close()
-        graph.add_node(
+        _seed_node(
             "src/summ.py",
             role="Summary node",
             layer="api",
@@ -423,7 +355,7 @@ class TestGetNode:
         _, _, db = _setup_project(tmp_path, monkeypatch)
         db.close()
         # Add a node for a file that doesn't exist on disk
-        graph.add_node("src/ghost.py", role="Ghost", layer="core")
+        _seed_node("src/ghost.py", role="Ghost", layer="core")
         result = graph.get_node("src/ghost.py")
         assert result["found"] is True
         # Summary: stale flag at top; full mode includes stale_reason
@@ -442,7 +374,7 @@ class TestGetNode:
         src_dir = project_root / "src"
         src_dir.mkdir(parents=True)
         (src_dir / "real.py").write_text("x = 1")
-        graph.add_node("src/real.py", role="Real file", layer="core")
+        _seed_node("src/real.py", role="Real file", layer="core")
 
         result = graph.get_node("src/real.py")
         # Summary: stale at top level
@@ -467,7 +399,7 @@ class TestGetNode:
         past_ts = time.time() - 3600  # 1 hour ago
         (index_dir / ".last_indexed").write_text(str(past_ts))
 
-        graph.add_node("src/fresh.py", role="Fresh file", layer="core")
+        _seed_node("src/fresh.py", role="Fresh file", layer="core")
         result = graph.get_node("src/fresh.py")
         assert result["stale"] is True
         full = graph.get_node("src/fresh.py", full=True)
@@ -477,66 +409,6 @@ class TestGetNode:
 # =====================================================================
 # list_nodes
 # =====================================================================
-
-
-class TestListNodes:
-    def test_list_all_nodes(self, tmp_path, monkeypatch):
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        _populate_graph(db)
-        db.close()
-        result = graph.list_nodes()
-        assert result["count"] == 5
-        assert len(result["nodes"]) == 5
-
-    def test_filter_by_layer(self, tmp_path, monkeypatch):
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        _populate_graph(db)
-        db.close()
-        result = graph.list_nodes(layer="api")
-        assert result["count"] == 2
-        paths_found = {n["file_path"] for n in result["nodes"]}
-        assert "src/api.py" in paths_found
-        assert "src/routes.py" in paths_found
-
-    def test_filter_by_stability(self, tmp_path, monkeypatch):
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        _populate_graph(db)
-        db.close()
-        result = graph.list_nodes(stability="high")
-        assert result["count"] == 2
-        paths_found = {n["file_path"] for n in result["nodes"]}
-        assert "src/core.py" in paths_found
-        assert "src/utils.py" in paths_found
-
-    def test_filter_by_do_not_revert(self, tmp_path, monkeypatch):
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        _populate_graph(db)
-        db.update_node_metadata("file:src/core.py", do_not_revert=True)
-        db.close()
-        result = graph.list_nodes(do_not_revert=True)
-        assert result["count"] == 1
-        assert result["nodes"][0]["file_path"] == "src/core.py"
-
-    def test_filter_combination(self, tmp_path, monkeypatch):
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        _populate_graph(db)
-        db.close()
-        result = graph.list_nodes(layer="api", stability="medium")
-        assert result["count"] == 1
-        assert result["nodes"][0]["file_path"] == "src/api.py"
-
-    def test_empty_graph(self, tmp_path, monkeypatch):
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        db.close()
-        result = graph.list_nodes()
-        assert result["count"] == 0
-        assert result["nodes"] == []
-
-    def test_hint_present(self, tmp_path, monkeypatch):
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        db.close()
-        result = graph.list_nodes()
-        assert "hint" in result
 
 
 # =====================================================================
@@ -653,78 +525,6 @@ class TestQueryGraph:
 # =====================================================================
 
 
-class TestFindHotspots:
-    def test_large_functions_detected(self, tmp_path, monkeypatch):
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        _populate_graph(db)
-        _add_symbols(db)
-        db.close()
-        # process_data spans lines 5-80 = 75 lines, above default threshold of 50
-        result = graph.find_hotspots(threshold=50)
-        large = result["large_functions"]
-        assert len(large) >= 1
-        names = {f["name"] for f in large}
-        assert "process_data" in names
-
-    def test_large_functions_high_threshold(self, tmp_path, monkeypatch):
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        _populate_graph(db)
-        _add_symbols(db)
-        db.close()
-        result = graph.find_hotspots(threshold=100)
-        assert len(result["large_functions"]) == 0
-
-    def test_high_fan_in_detected(self, tmp_path, monkeypatch):
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        _populate_graph(db)
-        _add_symbols(db)
-        db.close()
-        result = graph.find_hotspots(threshold=50)
-        fan_in = result["high_fan_in"]
-        # sanitize has 3 callers, default min_callers=3
-        names = {h["name"] for h in fan_in}
-        assert "sanitize" in names
-
-    def test_high_fan_out_detected(self, tmp_path, monkeypatch):
-        """Nodes with 5+ outgoing edges should appear in high_fan_out."""
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        # Create a hub node with many dependencies
-        db.add_node("file:src/hub.py", "file", "hub.py", "src/hub.py", layer="core")
-        for i in range(6):
-            target = f"file:src/dep_{i}.py"
-            db.add_node(target, "file", f"dep_{i}.py", f"src/dep_{i}.py", layer="utils")
-            db.add_edge("file:src/hub.py", target, kind="imports")
-        db.close()
-        result = graph.find_hotspots()
-        fan_out = result["high_fan_out"]
-        assert len(fan_out) >= 1
-        files = {f["file"] for f in fan_out}
-        assert "src/hub.py" in files
-
-    def test_empty_graph_hotspots(self, tmp_path, monkeypatch):
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        db.close()
-        result = graph.find_hotspots()
-        assert result["large_functions"] == []
-        assert result["high_fan_in"] == []
-        assert result["high_fan_out"] == []
-
-    def test_threshold_zero_everything_is_hotspot(self, tmp_path, monkeypatch):
-        """Chaos: threshold=0 should make every function a 'large function'."""
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        _populate_graph(db)
-        _add_symbols(db)
-        db.close()
-        result = graph.find_hotspots(threshold=0)
-        large = result["large_functions"]
-        # All 6 symbols should appear (every function has lines > 0)
-        assert len(large) >= 5
-        names = {f["name"] for f in large}
-        assert "handle_request" in names
-        assert "sanitize" in names
-        assert "process_data" in names
-
-
 # =====================================================================
 # get_impact (BFS blast radius)
 # =====================================================================
@@ -822,255 +622,14 @@ class TestGetImpact:
 # =====================================================================
 
 
-class TestExportGraph:
-    def test_mermaid_with_scope(self, tmp_path, monkeypatch):
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        _populate_graph(db)
-        db.close()
-        result = graph.export_graph(format="mermaid", scope="src/")
-        assert result["format"] == "mermaid"
-        # Should not include tests/test_api.py node itself but may include edge
-        assert result["node_count"] == 4
-
-    def test_dot_format(self, tmp_path, monkeypatch):
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        _populate_graph(db)
-        db.close()
-        result = graph.export_graph(format="dot")
-        assert "digraph codevira" in result["output"]
-        assert result["edge_count"] == 4
-
-    def test_unknown_format_error(self, tmp_path, monkeypatch):
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        _populate_graph(db)
-        db.close()
-        result = graph.export_graph(format="json")
-        assert "error" in result
-
-    def test_mermaid_stability_styles(self, tmp_path, monkeypatch):
-        """High and low stability nodes should have style annotations in mermaid output."""
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        db.add_node(
-            "file:high.py", "file", "high.py", "high.py", stability="high", layer="x"
-        )
-        db.add_node(
-            "file:low.py", "file", "low.py", "low.py", stability="low", layer="x"
-        )
-        db.close()
-        result = graph.export_graph(format="mermaid")
-        assert ":::high" in result["output"]
-        assert ":::low" in result["output"]
-
-    def test_export_empty_graph(self, tmp_path, monkeypatch):
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        db.close()
-        result = graph.export_graph(format="mermaid")
-        assert result["node_count"] == 0
-        assert result["edge_count"] == 0
-        assert "graph LR" in result["output"]
-
-    def test_export_fifty_plus_nodes_performance_chaos(self, tmp_path, monkeypatch):
-        """Chaos: export_graph with 55 nodes should complete without error."""
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        for i in range(55):
-            db.add_node(
-                f"file:src/mod_{i}.py",
-                "file",
-                f"mod_{i}.py",
-                f"src/mod_{i}.py",
-                layer="gen",
-            )
-        # Add some edges too
-        for i in range(54):
-            db.add_edge(
-                f"file:src/mod_{i}.py", f"file:src/mod_{i+1}.py", kind="imports"
-            )
-        db.close()
-
-        result = graph.export_graph(format="mermaid")
-        assert result["node_count"] == 55
-        assert result["edge_count"] == 54
-        assert "graph LR" in result["output"]
-
-        result_dot = graph.export_graph(format="dot")
-        assert result_dot["node_count"] == 55
-        assert "digraph codevira" in result_dot["output"]
-
-
 # =====================================================================
 # get_graph_diff (mocked git)
 # =====================================================================
 
 
-class TestGetGraphDiff:
-    def test_diff_with_changed_files(self, tmp_path, monkeypatch):
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        _populate_graph(db)
-        db.close()
-
-        fake_diff = "src/api.py\nsrc/core.py\n"
-        with patch("subprocess.check_output", return_value=fake_diff.encode("utf-8")):
-            result = graph.get_graph_diff("main", "HEAD")
-        assert result["total_changed"] == 2
-        files = {f["file_path"] for f in result["changed_files"]}
-        assert "src/api.py" in files
-        assert "src/core.py" in files
-
-    def test_diff_file_in_graph(self, tmp_path, monkeypatch):
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        _populate_graph(db)
-        db.close()
-
-        fake_diff = "src/api.py\n"
-        with patch("subprocess.check_output", return_value=fake_diff.encode("utf-8")):
-            result = graph.get_graph_diff()
-        api_entry = result["changed_files"][0]
-        assert api_entry["in_graph"] is True
-        assert api_entry["stability"] == "medium"
-
-    def test_diff_file_not_in_graph(self, tmp_path, monkeypatch):
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        _populate_graph(db)
-        db.close()
-
-        fake_diff = "README.md\n"
-        with patch("subprocess.check_output", return_value=fake_diff.encode("utf-8")):
-            result = graph.get_graph_diff()
-        readme_entry = result["changed_files"][0]
-        assert readme_entry["in_graph"] is False
-        assert readme_entry["stability"] == "unknown"
-        assert readme_entry["blast_radius"] == 0
-
-    def test_diff_no_changes(self, tmp_path, monkeypatch):
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        db.close()
-
-        with patch("subprocess.check_output", return_value=b""):
-            result = graph.get_graph_diff()
-        assert result["changed_files"] == []
-        assert result["total_blast_radius"] == 0
-
-    def test_diff_git_failure(self, tmp_path, monkeypatch):
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        db.close()
-
-        def raise_error(*args, **kwargs):
-            raise subprocess.CalledProcessError(128, "git")
-
-        with patch("subprocess.check_output", side_effect=raise_error):
-            result = graph.get_graph_diff()
-        assert "error" in result
-
-    def test_diff_blast_radius_populated(self, tmp_path, monkeypatch):
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        _populate_graph(db)
-        db.close()
-
-        fake_diff = "src/core.py\n"
-        with patch("subprocess.check_output", return_value=fake_diff.encode("utf-8")):
-            result = graph.get_graph_diff()
-        core_entry = result["changed_files"][0]
-        assert core_entry["blast_radius"] >= 1
-
-
 # =====================================================================
 # analyze_changes (mocked git)
 # =====================================================================
-
-
-class TestAnalyzeChanges:
-    def test_analyze_with_symbols(self, tmp_path, monkeypatch):
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        _populate_graph(db)
-        _add_symbols(db)
-        db.close()
-
-        fake_diff = "src/api.py\n"
-        with patch("subprocess.check_output", return_value=fake_diff.encode("utf-8")):
-            result = graph.analyze_changes()
-        assert result["changed_files"] == 1
-        assert result["functions_analyzed"] >= 3
-        assert "risk_summary" in result
-
-    def test_analyze_risk_scoring(self, tmp_path, monkeypatch):
-        """Public functions with many callers and no tests should be high risk."""
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        # Create file nodes first (FK requirement: symbols reference file_node_ids)
-        db.add_node(
-            "file:src/risky.py", "file", "risky.py", "src/risky.py", layer="core"
-        )
-        for i in range(3):
-            db.add_node(
-                f"file:src/caller_{i}.py",
-                "file",
-                f"caller_{i}.py",
-                f"src/caller_{i}.py",
-                layer="core",
-            )
-        db.add_symbol(
-            "file:src/risky.py::risky_func",
-            "file:src/risky.py",
-            "risky_func",
-            "function",
-            start_line=1,
-            end_line=20,
-            is_public=True,
-        )
-        # 3 callers
-        for i in range(3):
-            caller_id = f"file:src/caller_{i}.py::call_func"
-            db.add_symbol(
-                caller_id,
-                f"file:src/caller_{i}.py",
-                "call_func",
-                "function",
-                start_line=1,
-                end_line=5,
-                is_public=True,
-            )
-            db.add_call_edge(caller_id, "file:src/risky.py::risky_func")
-        db.close()
-
-        fake_diff = "src/risky.py\n"
-        with patch("subprocess.check_output", return_value=fake_diff.encode("utf-8")):
-            result = graph.analyze_changes()
-        assert result["risk_summary"]["high"] >= 1
-        assert len(result["test_gaps"]) >= 1
-
-    def test_analyze_no_changes(self, tmp_path, monkeypatch):
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        db.close()
-
-        with patch("subprocess.check_output", return_value=b""):
-            result = graph.analyze_changes()
-        assert result["changes"] == []
-        assert "No changes" in result["summary"]
-
-    def test_analyze_git_failure(self, tmp_path, monkeypatch):
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        db.close()
-
-        def raise_error(*args, **kwargs):
-            raise subprocess.CalledProcessError(128, "git")
-
-        with patch("subprocess.check_output", side_effect=raise_error):
-            result = graph.analyze_changes()
-        assert "error" in result
-
-    def test_analyze_test_gaps_detected(self, tmp_path, monkeypatch):
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        _populate_graph(db)
-        _add_symbols(db)
-        db.close()
-
-        # src/core.py has no test imports, but has public functions
-        fake_diff = "src/core.py\n"
-        with patch("subprocess.check_output", return_value=fake_diff.encode("utf-8")):
-            result = graph.analyze_changes()
-        # core.py has public symbols with no test files importing it
-        gaps = result["test_gaps"]
-        gap_files = {g["file"] for g in gaps}
-        assert "src/core.py" in gap_files
 
 
 # =====================================================================

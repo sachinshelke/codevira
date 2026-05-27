@@ -24,6 +24,7 @@ the whole stack.
 
 This file fills that gap.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -55,6 +56,7 @@ def shared_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr("mcp_server.paths.get_global_home", lambda: cv_data)
 
     import mcp_server.paths as paths_mod
+
     paths_mod.set_project_dir(project)
     paths_mod.invalidate_data_dir_cache()
     return project
@@ -63,32 +65,22 @@ def shared_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 @pytest.fixture(autouse=True)
 def _clean_engine_state(monkeypatch: pytest.MonkeyPatch):
     from mcp_server.engine.runner import reset_policies
-    from mcp_server.engine.scope_contract import clear_all
+
     reset_policies()
-    clear_all()
+    # v2.2.0+: scope_contract module deleted; nothing to clear.
     for env in (
         "CODEVIRA_ENGINE",
         "CODEVIRA_DECISION_LOCK_MODE",
         "CODEVIRA_CROSS_SESSION_MODE",
-        "CODEVIRA_AI_PROMOTION_MODE",
     ):
         monkeypatch.delenv(env, raising=False)
     yield
     reset_policies()
-    clear_all()
 
 
 # =====================================================================
 # Simulation primitives
 # =====================================================================
-
-
-def _open_graph(project: Path):
-    from mcp_server.paths import get_data_dir
-    from indexer.sqlite_graph import SQLiteGraph
-    graph_db = get_data_dir() / "graph" / "graph.db"
-    graph_db.parent.mkdir(parents=True, exist_ok=True)
-    return SQLiteGraph(graph_db)
 
 
 def _record_decision_via_claude_code_hook(
@@ -99,37 +91,24 @@ def _record_decision_via_claude_code_hook(
     file_path: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Simulate Tool A (Claude Code) recording a decision via the
-    PostToolUse hook. The hook normalizes the AI's edit into a
-    decision row in the shared graph.db.
-
-    For v2.0-alpha, decisions are written via direct DB inserts in
-    response to specific MCP tool calls (record_decision). Hero 7's
-    PostToolUse policy doesn't auto-create decisions — it only warns
-    on style. So for this test, we simulate by writing the decision
-    directly the way `record_decision` would.
+    """Simulate Tool A (Claude Code) recording a decision via the MCP
+    record_decision tool call. In v2.2.0 decisions are stored in
+    .codevira/decisions.jsonl (not graph.db), so we call the
+    decisions_store.record() function directly.
     """
-    g = _open_graph(project)
-    try:
-        g.conn.execute(
-            "INSERT OR IGNORE INTO sessions (session_id, summary) "
-            "VALUES (?, ?)",
-            (session_id, "tool-A session"),
-        )
-        g.conn.execute(
-            "INSERT INTO decisions (session_id, decision, file_path, "
-            "context, created_at) VALUES (?, ?, ?, ?, datetime('now'))",
-            (session_id, decision, file_path, ""),
-        )
-        g.conn.commit()
-    finally:
-        g.close()
+    from mcp_server.storage import decisions_store
+
+    decisions_store.record(
+        decision,
+        file_path=file_path,
+        session_id=session_id,
+    )
 
 
 def _read_decision_via_user_prompt_hook(
     project: Path,
     *,
-    tool_name: str,           # "claude-code" / "cursor" / "windsurf" / etc.
+    tool_name: str,  # "claude-code" / "cursor" / "windsurf" / etc.
     session_id: str,
     prompt_text: str,
     monkeypatch: pytest.MonkeyPatch,
@@ -139,7 +118,8 @@ def _read_decision_via_user_prompt_hook(
     the AI would receive — empty if no inject.
     """
     from mcp_server.engine import (
-        register_default_policies, reset_policies,
+        register_default_policies,
+        reset_policies,
     )
     from mcp_server.engine.wiring import claude_code_hooks
 
@@ -172,6 +152,7 @@ def _read_decision_via_mcp_tool(
     MCP `search_decisions` tool path.
     """
     from mcp_server.engine.signals import SignalContext
+
     ctx = SignalContext(project_root=project)
     return ctx.search_decisions(query, limit=10)
 
@@ -181,6 +162,7 @@ def _read_decision_via_replay_mcp_resource(project: Path) -> str:
     the codevira://decisions resource."""
     from mcp_server.server import handle_read_resource
     import mcp_server.paths as paths_mod
+
     paths_mod.set_project_dir(project)
     paths_mod.invalidate_data_dir_cache()
     return asyncio.run(handle_read_resource("codevira://decisions"))
@@ -189,10 +171,15 @@ def _read_decision_via_replay_mcp_resource(project: Path) -> str:
 def _read_decision_via_replay_cli(project: Path) -> str:
     """Simulate a developer running `codevira replay` in their terminal."""
     from mcp_server.cli_replay import cmd_replay
+
     out = io.StringIO()
     cmd_replay(
-        project=project, since="30d", top=10,
-        format="terminal", ascii_mode=True, out=out,
+        project=project,
+        since="30d",
+        top=10,
+        format="terminal",
+        ascii_mode=True,
+        out=out,
     )
     return out.getvalue()
 
@@ -206,7 +193,9 @@ class TestCrossToolUniversality:
     """The wedge promise: same memory in every AI tool."""
 
     def test_decision_recorded_in_tool_a_visible_in_tool_b_via_inject(
-        self, shared_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        shared_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """Tool A (Claude Code) records "use bcrypt over argon2".
         Tool B (Cursor) submits a prompt mentioning bcrypt → must
@@ -237,7 +226,9 @@ class TestCrossToolUniversality:
         )
 
     def test_same_data_visible_via_three_different_surfaces(
-        self, shared_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        shared_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """Record once. Read via:
           1. UserPromptSubmit hook (any IDE running Claude Code-style hooks)
@@ -293,7 +284,9 @@ class TestCrossToolUniversality:
         )
 
     def test_four_tools_in_sequence_see_identical_decision(
-        self, shared_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        shared_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """Simulate the EXACT scenario from the master plan's North
         Star: Tool A writes; Tools B, C, D — different sessions,
@@ -315,8 +308,8 @@ class TestCrossToolUniversality:
         # decision.
         results: dict[str, str] = {}
         for tool, session in [
-            ("cursor",      "cursor-001"),
-            ("windsurf",    "windsurf-001"),
+            ("cursor", "cursor-001"),
+            ("windsurf", "windsurf-001"),
             ("antigravity", "antigravity-001"),
         ]:
             inject = _read_decision_via_user_prompt_hook(
@@ -332,8 +325,8 @@ class TestCrossToolUniversality:
         missing = [t for t, ctx in results.items() if DECISION not in ctx]
         assert not missing, (
             f"WEDGE BROKEN: tools {missing} didn't receive the decision. "
-            f"Inject contexts:\n" +
-            "\n".join(f"  {t}: {ctx[:200]!r}" for t, ctx in results.items())
+            f"Inject contexts:\n"
+            + "\n".join(f"  {t}: {ctx[:200]!r}" for t, ctx in results.items())
         )
 
         # And they should all carry equivalent core content (we don't
@@ -341,12 +334,12 @@ class TestCrossToolUniversality:
         # injects, but the decision substring must appear in all).
         for tool, ctx in results.items():
             assert "bcrypt" in ctx
-            assert "auth.py" in ctx, (
-                f"{tool}: file_path missing from inject"
-            )
+            assert "auth.py" in ctx, f"{tool}: file_path missing from inject"
 
     def test_universality_breaks_loudly_when_engine_disabled(
-        self, shared_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        shared_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """Defensive: when CODEVIRA_ENGINE=0 is set, the universality
         promise is OPT-OUT — no inject anywhere. Lock that contract."""
@@ -369,6 +362,5 @@ class TestCrossToolUniversality:
         )
         # With engine off, NO decision should reach the inject
         assert "we use bcrypt" not in inject, (
-            "Kill switch broken: decisions surfacing despite "
-            "CODEVIRA_ENGINE=0"
+            "Kill switch broken: decisions surfacing despite " "CODEVIRA_ENGINE=0"
         )

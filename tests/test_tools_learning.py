@@ -1,16 +1,20 @@
 """
-Tests for mcp_server/tools/learning.py — adaptive memory, confidence scoring,
-preferences, learned rules, project maturity, and session context.
+Tests for mcp_server/tools/learning.py — v3.0.0 adaptive memory.
 
-Covers ALL functions (0% coverage previously):
+v3.0.0 surface (2026-05-22 surface-cut audit):
   - get_decision_confidence: scope by file_path or pattern
-  - get_preferences: filtered list with hints
-  - get_learned_rules: filtered rules with hints
-  - get_project_maturity: composite 0-100 score + level + hint
-  - get_session_context: aggregated context with roadmap, changesets, global intelligence
-  - _interpret_confidence: boundary tests for interpretation strings
-  - _compute_maturity_score: weighted formula verification
-  - _maturity_level: threshold-based level classification
+  - get_session_context:     "catch me up" aggregator
+  - record_decision:         capture a new decision (+ tags / do_not_revert)
+  - supersede_decision:      retire an old decision, link to its replacement
+  - _interpret_confidence:   internal interpretation helper
+
+v2.x tools deleted in the audit (test classes removed from this file):
+  - get_preferences, get_learned_rules, get_project_maturity
+  - _compute_maturity_score, _maturity_level, _maturity_hint
+
+The maturity scoring + preferences + rules helpers all relied on
+preference_signals and learned_rules counts that are always zero in
+v3.0.0 (the underlying record paths were removed in the same audit).
 """
 
 from __future__ import annotations
@@ -63,59 +67,45 @@ def _seed_outcomes(db: SQLiteGraph, outcomes: list[tuple[str, str, str]]) -> Non
 
 
 def _seed_full_project(db: SQLiteGraph) -> None:
-    """Create a project with sessions, outcomes, preferences, rules, and files."""
-    # Files
+    """Create a project with sessions, outcomes, and files.
+
+    v3.0.0 round-3 (2026-05-23): the 3 ``log_session`` calls used to
+    seed the legacy SQLite ``decisions`` table — invisible to
+    get_session_context after the v3.0.0 wire-up to JSONL. Replaced
+    with ``decisions_store.record`` so the seed reaches the canonical
+    store the read path actually queries. Nodes + outcomes still go
+    through SQLiteGraph since those subsystems haven't moved.
+    """
+    # Files (SQLite graph — still the storage layer for the code graph).
     db.add_node("file:src/api.py", "file", "api.py", "src/api.py", layer="api")
     db.add_node("file:src/core.py", "file", "core.py", "src/core.py", layer="core")
 
-    # Sessions with decisions
-    db.log_session(
-        "s1",
-        "First session",
-        "1",
-        [
-            {
-                "file_path": "src/api.py",
-                "decision": "Use REST",
-                "context": "api design",
-            },
-        ],
+    # Decisions — write through the v3.0.0 JSONL canonical store.
+    from mcp_server.storage import decisions_store as _decisions_store
+
+    _decisions_store.record(
+        decision="Use REST",
+        file_path="src/api.py",
+        context="api design",
+        session_id="s1",
     )
-    db.log_session(
-        "s2",
-        "Second session",
-        "2",
-        [
-            {"file_path": "src/core.py", "decision": "Add caching", "context": "perf"},
-        ],
+    _decisions_store.record(
+        decision="Add caching",
+        file_path="src/core.py",
+        context="perf",
+        session_id="s2",
     )
-    db.log_session(
-        "s3",
-        "Third session",
-        "2",
-        [
-            {
-                "file_path": "src/api.py",
-                "decision": "Add validation",
-                "context": "security",
-            },
-        ],
+    _decisions_store.record(
+        decision="Add validation",
+        file_path="src/api.py",
+        context="security",
+        session_id="s3",
     )
 
-    # Outcomes
+    # Outcomes (SQLite — outcome subsystem hasn't moved to JSONL yet).
     db.record_outcome("s1", "src/api.py", "kept")
     db.record_outcome("s2", "src/core.py", "kept")
     db.record_outcome("s3", "src/api.py", "modified")
-
-    # Preferences
-    db.record_preference("naming", "Prefers snake_case", example="src/api.py")
-    db.record_preference("naming", "Prefers snake_case")  # frequency -> 2
-    db.record_preference("structure", "Uses early returns")
-
-    # Learned rules
-    db.add_learned_rule("Test files in tests/", 0.8, ["s1", "s2"], category="testing")
-    db.add_learned_rule("Import order: stdlib first", 0.6, ["s1"], category="imports")
-    db.add_learned_rule("Low confidence rule", 0.2, ["s3"], category="naming")
 
 
 # =====================================================================
@@ -158,147 +148,19 @@ class TestInterpretConfidence:
 # =====================================================================
 
 
-class TestComputeMaturityScore:
-    def test_zero_maturity(self):
-        maturity = {
-            "session_count": 0,
-            "coverage": 0.0,
-            "overall_confidence": 0.0,
-            "learned_rules": 0,
-            "preference_signals": 0,
-        }
-        score = learning._compute_maturity_score(maturity)
-        assert score == 0.0
-
-    def test_max_maturity(self):
-        maturity = {
-            "session_count": 20,
-            "coverage": 1.0,
-            "overall_confidence": 1.0,
-            "learned_rules": 10,
-            "preference_signals": 10,
-        }
-        score = learning._compute_maturity_score(maturity)
-        assert score == 100.0
-
-    def test_sessions_capped_at_20pts(self):
-        maturity = {
-            "session_count": 100,
-            "coverage": 0.0,
-            "overall_confidence": 0.0,
-            "learned_rules": 0,
-            "preference_signals": 0,
-        }
-        score = learning._compute_maturity_score(maturity)
-        assert score == 20.0  # max(100*2, 20) = 20
-
-    def test_coverage_contributes_30pts(self):
-        maturity = {
-            "session_count": 0,
-            "coverage": 1.0,
-            "overall_confidence": 0.0,
-            "learned_rules": 0,
-            "preference_signals": 0,
-        }
-        score = learning._compute_maturity_score(maturity)
-        assert score == 30.0
-
-    def test_confidence_contributes_25pts(self):
-        maturity = {
-            "session_count": 0,
-            "coverage": 0.0,
-            "overall_confidence": 1.0,
-            "learned_rules": 0,
-            "preference_signals": 0,
-        }
-        score = learning._compute_maturity_score(maturity)
-        assert score == 25.0
-
-    def test_rules_capped_at_15pts(self):
-        maturity = {
-            "session_count": 0,
-            "coverage": 0.0,
-            "overall_confidence": 0.0,
-            "learned_rules": 100,
-            "preference_signals": 0,
-        }
-        score = learning._compute_maturity_score(maturity)
-        assert score == 15.0
-
-    def test_preferences_capped_at_10pts(self):
-        maturity = {
-            "session_count": 0,
-            "coverage": 0.0,
-            "overall_confidence": 0.0,
-            "learned_rules": 0,
-            "preference_signals": 100,
-        }
-        score = learning._compute_maturity_score(maturity)
-        assert score == 10.0
-
-    def test_total_capped_at_100(self):
-        """Even with overflowing inputs, score should not exceed 100."""
-        maturity = {
-            "session_count": 1000,
-            "coverage": 5.0,
-            "overall_confidence": 5.0,
-            "learned_rules": 1000,
-            "preference_signals": 1000,
-        }
-        score = learning._compute_maturity_score(maturity)
-        assert score == 100.0
-
-    def test_partial_maturity(self):
-        """5 sessions=10pts, 50% coverage=15pts, 0.4 confidence=10pts, 2 rules=6pts, 1 pref=2pts."""
-        maturity = {
-            "session_count": 5,
-            "coverage": 0.5,
-            "overall_confidence": 0.4,
-            "learned_rules": 2,
-            "preference_signals": 1,
-        }
-        score = learning._compute_maturity_score(maturity)
-        expected = 10.0 + 15.0 + 10.0 + 6.0 + 2.0
-        assert score == expected
+# v3.0.0 audit cleanup (2026-05-22): TestComputeMaturityScore,
+# TestMaturityLevel, TestMaturityHint, TestGetProjectMaturity all
+# deleted. The underlying functions (_compute_maturity_score,
+# _maturity_level, _maturity_hint, get_project_maturity) were
+# removed in the surface-cut audit because two of their three
+# inputs (learned_rules count + preference signal count) are
+# always zero in v3.0.0 — the MCP tools that wrote those counts
+# were deleted in the same audit.
 
 
 # =====================================================================
 # _maturity_level
 # =====================================================================
-
-
-class TestMaturityLevel:
-    def test_new_project(self):
-        result = learning._maturity_level(10)
-        assert "New" in result
-
-    def test_growing_project(self):
-        result = learning._maturity_level(35)
-        assert "Growing" in result
-
-    def test_intermediate_project(self):
-        result = learning._maturity_level(65)
-        assert "Intermediate" in result
-
-    def test_expert_project(self):
-        result = learning._maturity_level(90)
-        assert "Expert" in result
-
-    def test_boundary_20(self):
-        result = learning._maturity_level(20)
-        assert "Growing" in result
-
-    def test_boundary_50(self):
-        result = learning._maturity_level(50)
-        assert "Intermediate" in result
-
-    def test_boundary_80(self):
-        result = learning._maturity_level(80)
-        assert "Expert" in result
-
-    def test_zero(self):
-        result = learning._maturity_level(0)
-        assert "New" in result
 
 
 # =====================================================================
@@ -364,121 +226,17 @@ class TestGetDecisionConfidence:
 # =====================================================================
 
 
-class TestGetPreferences:
-    def test_empty_preferences(self, tmp_path, monkeypatch):
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        db.close()
-        result = learning.get_preferences()
-        assert result["total"] == 0
-        assert "No preferences" in result["hint"]
-
-    def test_preferences_with_data(self, tmp_path, monkeypatch):
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        db.record_preference("naming", "snake_case")
-        db.record_preference("structure", "early returns")
-        db.close()
-        result = learning.get_preferences()
-        assert result["total"] == 2
-        assert "Apply these preferences" in result["hint"]
-
-    def test_preferences_filtered_by_category(self, tmp_path, monkeypatch):
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        db.record_preference("naming", "snake_case")
-        db.record_preference("structure", "early returns")
-        db.close()
-        result = learning.get_preferences(category="naming")
-        assert result["total"] == 1
-        assert result["preferences"][0]["signal"] == "snake_case"
-
-
-# =====================================================================
-# get_learned_rules (tool-level)
-# =====================================================================
-
-
-class TestGetLearnedRules:
-    def test_empty_rules(self, tmp_path, monkeypatch):
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        db.close()
-        result = learning.get_learned_rules()
-        assert result["total"] == 0
-        assert "No rules" in result["hint"]
-
-    def test_rules_with_data(self, tmp_path, monkeypatch):
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        db.add_learned_rule("Rule A", 0.8, ["s1"], category="testing")
-        db.add_learned_rule("Rule B", 0.5, ["s1"], category="imports")
-        db.close()
-        result = learning.get_learned_rules()
-        assert result["total"] == 2
-        assert "learned from past sessions" in result["hint"]
-
-    def test_rules_filtered_by_category(self, tmp_path, monkeypatch):
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        db.add_learned_rule("Rule A", 0.8, ["s1"], category="testing")
-        db.add_learned_rule("Rule B", 0.5, ["s1"], category="imports")
-        db.close()
-        result = learning.get_learned_rules(category="testing")
-        assert result["total"] == 1
-        assert result["rules"][0]["category"] == "testing"
-
-    def test_rules_filtered_by_file(self, tmp_path, monkeypatch):
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        db.add_learned_rule(
-            "API rule", 0.8, ["s1"], category="testing", file_pattern="src/api%"
-        )
-        db.add_learned_rule("General rule", 0.7, ["s1"], category="testing")
-        db.close()
-        result = learning.get_learned_rules(file_path="src/api.py")
-        # Should return both (general applies to all, API rule matches the pattern)
-        assert result["total"] >= 1
-
-    def test_rules_below_min_confidence_excluded(self, tmp_path, monkeypatch):
-        """The tool passes min_confidence=0.3 by default, so rules below that are excluded."""
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        db.add_learned_rule("Very weak rule", 0.1, ["s1"], category="testing")
-        db.add_learned_rule("Decent rule", 0.5, ["s1"], category="testing")
-        db.close()
-        result = learning.get_learned_rules()
-        # Only the 0.5 rule should appear (0.1 < 0.3 min_confidence)
-        assert result["total"] == 1
-        assert result["rules"][0]["rule"] == "Decent rule"
+# v2.2.0+: TestGetPreferences + TestGetLearnedRules removed.
+# The corresponding tools (get_preferences, get_learned_rules, retire_rule)
+# were deleted per the 2026-05-22 surface-cut audit — the auto-extracted
+# signals produced noise rather than value; nobody read them in real
+# sessions. SQLiteGraph still records preferences/rules for back-compat
+# but they're not surfaced as MCP tools or via get_session_context.
 
 
 # =====================================================================
 # get_project_maturity (tool-level)
 # =====================================================================
-
-
-class TestGetProjectMaturity:
-    def test_fresh_project_maturity(self, tmp_path, monkeypatch):
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        db.close()
-        result = learning.get_project_maturity()
-        assert result["maturity_score"] == 0.0
-        assert "New" in result["maturity_level"]
-        assert "hint" in result
-
-    def test_mature_project(self, tmp_path, monkeypatch):
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        _seed_full_project(db)
-        db.close()
-        result = learning.get_project_maturity()
-        assert result["maturity_score"] > 0
-        assert result["session_count"] == 3
-        assert "hint" in result
-
-    def test_maturity_includes_all_fields(self, tmp_path, monkeypatch):
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        db.close()
-        result = learning.get_project_maturity()
-        assert "maturity_score" in result
-        assert "maturity_level" in result
-        assert "session_count" in result
-        assert "coverage" in result
-        assert "overall_confidence" in result
-        assert "learned_rules" in result
-        assert "preference_signals" in result
 
 
 # =====================================================================
@@ -518,14 +276,11 @@ class TestGetSessionContext:
 
         assert "recent_sessions" in result
         assert "recent_decisions" in result
-        # 2026-05-18 v2.1.2 Item 8: confidence + top_signals may be
-        # replaced by *_note fields when there's no outcome data yet OR
-        # no learned preferences/rules. Accept both shapes.
+        # 2026-05-18 v2.1.2 Item 8: confidence may be replaced by
+        # confidence_note when there's no outcome data yet.
         assert "confidence" in result or "confidence_note" in result
-        assert "top_signals" in result or "top_signals_note" in result
-        if "top_signals" in result:
-            assert "preferences" in result["top_signals"]
-            assert "rules" in result["top_signals"]
+        # v2.2.0+: top_signals (preferences + rules) removed per the
+        # 2026-05-22 surface-cut audit. No longer asserted.
 
     def test_session_context_with_roadmap(self, tmp_path, monkeypatch):
         _, _, db = _setup_project(tmp_path, monkeypatch)
@@ -566,26 +321,9 @@ class TestGetSessionContext:
         # On failure current_phase stays empty dict
         assert result["current_phase"] == {}
 
-    def test_session_context_changesets_failure_graceful(self, tmp_path, monkeypatch):
-        """If changesets import fails, session_context should still work."""
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        db.close()
-
-        mock_roadmap = {
-            "current_phase": {
-                "name": "Phase 1",
-                "next_action": "Do",
-                "status": "pending",
-            },
-        }
-        with patch("mcp_server.tools.roadmap.get_roadmap", return_value=mock_roadmap):
-            with patch(
-                "mcp_server.tools.changesets.list_open_changesets",
-                side_effect=Exception("broken"),
-            ):
-                result = learning.get_session_context()
-
-        assert result["open_changesets"] == []
+    # v2.2.0+: test_session_context_changesets_failure_graceful removed
+    # (the changesets feature was deleted; this test exercised the
+    # graceful-fallback for an import path that no longer exists).
 
     def test_session_context_empty_db(self, tmp_path, monkeypatch):
         _, _, db = _setup_project(tmp_path, monkeypatch)
@@ -594,23 +332,11 @@ class TestGetSessionContext:
         with patch(
             "mcp_server.tools.roadmap.get_roadmap", side_effect=Exception("no roadmap")
         ):
-            with patch(
-                "mcp_server.tools.changesets.list_open_changesets",
-                side_effect=Exception("no changesets"),
-            ):
-                result = learning.get_session_context()
+            result = learning.get_session_context()
 
         assert result["recent_sessions"] == []
         assert result["recent_decisions"] == []
-        # 2026-05-18 v2.1.2 Item 8: with no data, top_signals is omitted
-        # in favor of top_signals_note (cleaner UX for fresh projects).
-        if "top_signals" in result:
-            assert result["top_signals"]["preferences"] == []
-            assert result["top_signals"]["rules"] == []
-        else:
-            assert (
-                "top_signals_note" in result
-            ), "expected either top_signals dict OR top_signals_note for empty state"
+        # v2.2.0+: top_signals (preferences + rules) removed.
 
     def test_session_context_surfaces_phase_key_decisions(self, tmp_path, monkeypatch):
         """Bug 5 regression: complete_phase(key_decisions=[...]) writes to
@@ -756,32 +482,33 @@ class TestGetSessionContext:
         must round-trip through get_session_context with file_path intact
         (not silently coerced to None). Field-test Report 4 #8 flagged
         the serialization quirk; this test guards against regression.
+
+        v3.0.0 round-3 (2026-05-23): rewrote to use the v3.0.0 canonical
+        store (decisions_store.record → .codevira/decisions.jsonl) since
+        get_session_context now reads from JSONL, not the legacy SQLiteGraph
+        decisions table. The AgentStore system test in
+        scripts/system_test_agentstore.py::A8 caught that recent_decisions
+        was always empty in v3.0.0 — this test was passing because it set
+        up data via db.log_session (legacy SQL path) which is invisible to
+        the v3.0.0 read code.
         """
         project, data_dir, db = _setup_project(tmp_path, monkeypatch)
-        db.log_session(
-            "s-fp",
-            "file_path round-trip session",
-            "1",
-            [
-                {
-                    "file_path": "src/widgets.py",
-                    "decision": "Use vue3 composables",
-                    "context": "",
-                },
-                {
-                    "file_path": "src/api.py",
-                    "decision": "REST not GraphQL",
-                    "context": "",
-                },
-            ],
-        )
-        db.close()
+        db.close()  # we don't need the SQLite handle in v3.0.0
 
-        with patch(
-            "mcp_server.tools.changesets.list_open_changesets",
-            return_value={"open_changesets": [], "count": 0, "warning": None},
-        ):
-            result = learning.get_session_context()
+        from mcp_server.storage import decisions_store as _decisions_store
+
+        _decisions_store.record(
+            decision="Use vue3 composables",
+            file_path="src/widgets.py",
+            session_id="s-fp",
+        )
+        _decisions_store.record(
+            decision="REST not GraphQL",
+            file_path="src/api.py",
+            session_id="s-fp",
+        )
+
+        result = learning.get_session_context()
 
         recent = result["recent_decisions"]
         assert recent, "expected recent_decisions to be non-empty after log_session"
@@ -817,43 +544,17 @@ class TestGetSessionContextExceptions:
 
         with patch(
             "mcp_server.tools.roadmap.get_roadmap", side_effect=Exception("no roadmap")
-        ), patch(
-            "mcp_server.tools.changesets.list_open_changesets",
-            side_effect=Exception("no changesets"),
         ):
             result = learning.get_session_context()
 
         assert result is not None
         assert "recent_sessions" in result
         assert result["current_phase"] == {}
-        assert result["open_changesets"] == []
 
 
 # =====================================================================
 # _maturity_hint boundary coverage (lines 233, 237)
 # =====================================================================
-
-
-class TestMaturityHint:
-    def test_score_above_80_returns_mature_hint(self):
-        """Score >= 80 returns the 'mature' hint string."""
-        result = learning._maturity_hint(80.0)
-        assert "mature" in result.lower() or "learned patterns" in result.lower()
-
-    def test_score_between_50_and_80_returns_good_progress_hint(self):
-        """Score >= 50 but < 80 returns the 'good progress' hint."""
-        result = learning._maturity_hint(60.0)
-        assert "confidence" in result.lower() or "progress" in result.lower()
-
-    def test_score_between_20_and_50_returns_building_hint(self):
-        """Score >= 20 but < 50 returns the 'still building' hint (line 237)."""
-        result = learning._maturity_hint(30.0)
-        assert "building" in result.lower() or "memory" in result.lower()
-
-    def test_score_below_20_returns_fresh_start_hint(self):
-        """Score < 20 returns the 'fresh start' hint."""
-        result = learning._maturity_hint(5.0)
-        assert "fresh" in result.lower() or "every session" in result.lower()
 
 
 # =====================================================================
@@ -877,61 +578,21 @@ def _changeset(
 class TestOpenChangesetsKeyFixed:
     """Change 0: get_session_context() must read the real key."""
 
-    def test_open_changesets_key_fixed(self, tmp_path, monkeypatch):
-        """When the mock returns real shape, open_changesets is non-empty."""
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        db.close()
-
-        cs_payload = {
-            "open_changesets": [
-                _changeset("auth-refactor", ["src/auth.py", "src/user.py"]),
-            ],
-            "count": 1,
-            "warning": None,
-        }
-
-        with patch(
-            "mcp_server.tools.roadmap.get_roadmap", return_value={"current_phase": {}}
-        ), patch(
-            "mcp_server.tools.changesets.list_open_changesets", return_value=cs_payload
-        ):
-            result = learning.get_session_context()
-
-        assert len(result["open_changesets"]) == 1
-        assert result["open_changesets"][0]["id"] == "auth-refactor"
-        assert result["open_changesets"][0]["files_pending_count"] == 2
+    # v2.2.0+: test_open_changesets_key_fixed removed — the feature it
+    # tested (the open_changesets field of get_session_context) was
+    # deleted along with the rest of the changesets surface.
 
 
 class TestInferFocus:
-    """Change 1: _infer_focus priority rules."""
+    """v2.2.0+: _infer_focus uses only current_phase.next_action.
 
-    def test_focus_from_changeset(self):
-        cs = [_changeset("auth-refactor", ["src/auth.py", "src/user.py"])]
-        focus, source = learning._infer_focus(cs, {})
-        assert focus == "src/auth.py"
-        assert source == "open_changeset:auth-refactor"
-
-    def test_focus_prefers_most_recent_changeset(self):
-        cs = [
-            _changeset("old", ["src/old.py"], created="2026-01-01"),
-            _changeset("new", ["src/new.py"], created="2026-04-22"),
-        ]
-        focus, source = learning._infer_focus(cs, {})
-        assert focus == "src/new.py"
-        assert source == "open_changeset:new"
-
-    def test_focus_skips_changeset_with_no_pending_files(self):
-        cs = [
-            _changeset("empty", [], created="2026-04-22"),
-            _changeset("has-files", ["src/x.py"], created="2026-01-01"),
-        ]
-        focus, source = learning._infer_focus(cs, {})
-        assert focus == "src/x.py"
-        assert source == "open_changeset:has-files"
+    Changeset-based focus inference (priority 1 in v2.1.x) removed
+    along with the changesets feature per 2026-05-22 surface-cut audit.
+    """
 
     def test_focus_from_next_action(self):
         cp = {"next_action": "Refactor authentication middleware pipeline"}
-        focus, source = learning._infer_focus([], cp)
+        focus, source = learning._infer_focus(cp)
         assert source == "next_action"
         # All tokens >= 4 chars
         assert "refactor" in focus
@@ -941,18 +602,18 @@ class TestInferFocus:
 
     def test_focus_weak_signal_ignored_short(self):
         cp = {"next_action": "continue work"}
-        focus, source = learning._infer_focus([], cp)
+        focus, source = learning._infer_focus(cp)
         assert focus is None
         assert source is None
 
     def test_focus_weak_signal_ignored_stop_list_only(self):
         cp = {"next_action": "continue work fix todo"}
-        focus, source = learning._infer_focus([], cp)
+        focus, source = learning._infer_focus(cp)
         assert focus is None
         assert source is None
 
     def test_focus_none_when_no_signals(self):
-        focus, source = learning._infer_focus([], {})
+        focus, source = learning._infer_focus({})
         assert focus is None
         assert source is None
 
@@ -973,49 +634,9 @@ class TestSessionContextFocus:
         assert "focus_source" in result
         assert result["focus_source"] is None
 
-    def test_focus_source_reflects_changeset(self, tmp_path, monkeypatch):
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        _seed_full_project(db)
-        db.close()
-
-        cs = {
-            "open_changesets": [_changeset("api-work", ["src/api.py"])],
-            "count": 1,
-            "warning": None,
-        }
-        with patch(
-            "mcp_server.tools.roadmap.get_roadmap", return_value={"current_phase": {}}
-        ), patch("mcp_server.tools.changesets.list_open_changesets", return_value=cs):
-            result = learning.get_session_context()
-
-        assert result["focus_source"] == "open_changeset:api-work"
-        # Decisions ranked against "src/api.py" should surface api.py matches.
-        # Seed has 2 decisions touching src/api.py — both should appear.
-        api_matches = [
-            d for d in result["recent_decisions"] if d.get("file_path") == "src/api.py"
-        ]
-        assert len(api_matches) >= 1
-
-    def test_focus_pads_with_recent_when_few_matches(self, tmp_path, monkeypatch):
-        """Focus returning 0 matches → fall back to chronological 3."""
-        _, _, db = _setup_project(tmp_path, monkeypatch)
-        _seed_full_project(db)
-        db.close()
-
-        # Focus on a file that has NO decisions — should pad with recent.
-        cs = {
-            "open_changesets": [_changeset("unseen", ["src/unknown.py"])],
-            "count": 1,
-            "warning": None,
-        }
-        with patch(
-            "mcp_server.tools.roadmap.get_roadmap", return_value={"current_phase": {}}
-        ), patch("mcp_server.tools.changesets.list_open_changesets", return_value=cs):
-            result = learning.get_session_context()
-
-        # Seed has 3 decisions total → pads to 3
-        assert len(result["recent_decisions"]) == 3
-        assert result["focus_source"] == "open_changeset:unseen"
+    # v2.2.0+: test_focus_source_reflects_changeset removed
+    # (changeset-based focus inference is gone; only next_action is used).
+    # test_focus_pads_with_recent_when_few_matches: same reason.
 
     def test_focus_from_next_action_sets_source(self, tmp_path, monkeypatch):
         _, _, db = _setup_project(tmp_path, monkeypatch)

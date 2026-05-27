@@ -143,40 +143,14 @@ def _load_config() -> dict:
 
 
 def _check_search_deps() -> bool:
-    """Return True if chromadb + sentence-transformers are available.
+    """v2.2.0: ALWAYS False.
 
-    2026-05-17 Bug J/K fix (P9 graceful degradation):
-    Previously this function loaded the heavy ML package by name to test
-    availability — that triggered the FULL PyTorch tensor init (~5s) on
-    every call. Critically, this fired on EVERY `tools/list` MCP request,
-    exceeding Claude Desktop's ~1s renderer timeout and causing disconnects.
-
-    Strategy (in order, all fast):
-      1. ``sys.modules.get(name)`` not None → available. Covers both real
-         loads earlier in the process AND test fixtures that put a stub
-         object in sys.modules. (Tests use ``sys.modules[name] = None``
-         to simulate the "missing" state — that's correctly treated as
-         not available because ``None is not None`` is False.)
-      2. importlib.util.find_spec → metadata-only check, microseconds.
-      3. Catch ValueError (module in sys.modules without __spec__, e.g.
-         a MagicMock) and ImportError (package metadata absent).
+    chromadb / sentence-transformers / torch were deleted in v2.2.0
+    along with semantic code search (search_codebase). All callers of
+    this function already have a graceful-degradation path for the
+    False return (graph-only generation); we just lock in that path.
     """
-    import importlib.util
-    import sys
-
-    for module_name in ("chromadb", "sentence_transformers"):
-        # Value-based check: handles both real loads (value is the module)
-        # AND the test pattern ``sys.modules[name] = None`` to simulate
-        # missing — neither registers as "available" without an object.
-        existing = sys.modules.get(module_name)
-        if existing is not None:
-            continue
-        try:
-            if importlib.util.find_spec(module_name) is None:
-                return False
-        except (ValueError, ImportError):
-            return False
-    return True
+    return False
 
 
 # 2026-05-17 P2 self-heal: ChromaCorrupted is raised by _get_chroma_client
@@ -1184,7 +1158,14 @@ def cmd_status(check_stale: bool = False, show_global: bool = False):
         show_global: Add a panel showing cross-project intelligence stats
                      and the macOS launchd service status (if running).
     """
-    data_dir = get_data_dir()
+    # v3.0 hardening: get_data_dir now refuses invalid roots ($HOME, system
+    # tops). `codevira status` is documented as "works anywhere", so degrade
+    # gracefully instead of crashing.
+    try:
+        data_dir = get_data_dir()
+    except ValueError as e:
+        print(f"  Not initialized — {e}")
+        return
     graph_db_path = data_dir / "graph" / "graph.db"
 
     # Fast path: project has no local index yet. Skip rich/sqlite/chromadb imports
@@ -1251,41 +1232,19 @@ def cmd_status(check_stale: bool = False, show_global: bool = False):
     except Exception:
         nodes = 0
 
-    # Count chromadb chunks — but avoid importing chromadb if no index exists.
-    # chromadb's import alone takes ~700ms cold; we don't want that cost for
-    # `codevira status` on a project that hasn't been indexed yet.
+    # v2.2.0: ChromaDB / sentence-transformers / torch were deleted in
+    # Phase E. There is no semantic chunk count to display. `chunk_count`
+    # is retained at 0 because the explanation branches below still
+    # reference it for backwards-compatible message logic.
     chunk_count = 0
-    search_available = True
-    index_dir = _index_dir()
-    chroma_db_file = index_dir / "chroma.sqlite3"
-    if chroma_db_file.exists():
-        # Index exists — read chunk count (triggers chromadb import)
-        try:
-            client = _get_chroma_client()
-            try:
-                collection = client.get_collection(COLLECTION_NAME)
-                chunk_count = collection.count()
-            except Exception:
-                chunk_count = 0
-        except ImportError:
-            search_available = False
-    else:
-        # No index yet — check if chromadb is installed (cheap — just checks
-        # for package metadata, no real import). If not, show "not installed".
-        try:
-            import importlib.util
-
-            if importlib.util.find_spec("chromadb") is None:
-                search_available = False
-        except Exception:
-            pass
 
     table = Table(show_header=False, box=None)
     table.add_row("[cyan]Graph Nodes:[/cyan]", str(nodes))
-    if search_available:
-        table.add_row("[cyan]ChromaDB Chunks:[/cyan]", str(chunk_count))
-    else:
-        table.add_row("[cyan]Semantic Search:[/cyan]", "[dim]not installed[/dim]")
+    # v2.2.0: ChromaDB / semantic code search was removed entirely
+    # (Phase E). The "ChromaDB Chunks" / "Semantic Search" row is no
+    # longer meaningful; the code graph IS the search surface now.
+    # `chunk_count` is retained at 0 because the explanation logic
+    # below still references it.
 
     # Stale file scan is slow (SHA256 every source file) — only run on demand
     if check_stale:
@@ -1336,13 +1295,18 @@ def cmd_status(check_stale: bool = False, show_global: bool = False):
             console.print()
             if chunk_count == 0:
                 console.print(
-                    "[yellow]⚠[/yellow]  Graph and semantic index are empty, "
-                    "but your project has files matching the config."
+                    "[yellow]⚠[/yellow]  Graph is empty. Either this project "
+                    "hasn't been indexed yet, OR it has no parseable source "
+                    "code in the configured extensions."
                 )
                 console.print(
-                    "  This project hasn't been indexed yet (or the index was wiped)."
+                    "  codevira indexes code, not documentation — "
+                    "markdown / YAML / text files don't produce graph nodes."
                 )
-                console.print("  Fix: run [bold]codevira index --full[/bold]")
+                console.print(
+                    "  Fix (if you expected nodes): run [bold]codevira index "
+                    "--full[/bold] and check the per-file decisions."
+                )
             else:
                 # chunks exist (markdown/text) but no graph nodes — common
                 # for docs-only repos. Explain so the user knows it's
@@ -1384,10 +1348,10 @@ def cmd_status(check_stale: bool = False, show_global: bool = False):
                 "Run [bold]codevira index --full[/bold] or [bold]codevira configure[/bold] to diagnose."
             )
 
-    if not search_available:
-        console.print(
-            "\n[dim]  Tip: reinstall with [bold]pip install --upgrade codevira[/bold] to enable semantic search[/dim]"
-        )
+    # v2.2.0: removed "reinstall to enable semantic search" tip — there
+    # is no version of codevira 2.2+ that has semantic code search. The
+    # tip pointed users at a non-existent capability and confused
+    # first-contact users.
 
     if check_stale and stale_files:
         console.print("\n[yellow]Files requiring re-indexing:[/yellow]")
@@ -1403,33 +1367,31 @@ def cmd_status(check_stale: bool = False, show_global: bool = False):
 
 
 def _print_global_status(console, Table, Panel):
-    """Print cross-project intelligence + launchd service status.
+    """Print cross-project inventory + launchd service status.
 
-    P0-3 + P2-9 (rc.5): "Projects Tracked" now reads from the canonical
-    inventory helper so the number agrees with `codevira projects` and
-    `codevira clean --dry-run`. We also break the panel into TWO rows
-    (cross-project memory vs project inventory) so the user can tell
-    which scope is which.
+    P0-3 + P2-9 (rc.5): "Projects Tracked" reads from the canonical
+    inventory helper so the number agrees with `codevira projects`
+    and `codevira clean --dry-run`. Ghost / orphan numbers shown
+    alongside so the user has the full picture.
+
+    v3.0.0 (2026-05-22 surface-cut audit): the "Global Preferences"
+    and "Global Rules" rows were removed. The audit deleted the
+    preferences + learned_rules surface; those counts were always
+    zero, taking up a row each for no signal.
     """
     try:
-        from mcp_server.global_sync import get_global_stats
         from mcp_server._project_inventory import enumerate_projects, summarize
 
-        stats = get_global_stats() or {}
         inventory = summarize(enumerate_projects())
+        error: str | None = None
     except Exception as e:
-        stats = {"error": str(e)}
         inventory = {"tracked": 0, "ghost": 0, "orphan": 0, "stale": 0, "total": 0}
+        error = str(e)
 
     g_table = Table(show_header=False, box=None)
-    if "error" in stats:
-        g_table.add_row(
-            "[cyan]Cross-Project Memory:[/cyan]", f"[dim]error: {stats['error']}[/dim]"
-        )
+    if error is not None:
+        g_table.add_row("[cyan]Project Inventory:[/cyan]", f"[dim]error: {error}[/dim]")
     else:
-        # Project counts come from the canonical inventory (disk + global.db
-        # joined). "tracked" = registered AND project_root still valid.
-        # Ghost / orphan numbers shown alongside so the user has full picture.
         proj_summary = (
             f"{inventory['tracked']} tracked"
             + (
@@ -1444,11 +1406,6 @@ def _print_global_status(console, Table, Panel):
             )
         )
         g_table.add_row("[cyan]Projects Tracked:[/cyan]", proj_summary)
-        # Cross-project shared memory (preferences + rules learned across all projects).
-        g_table.add_row(
-            "[cyan]Global Preferences:[/cyan]", str(stats.get("total_preferences", 0))
-        )
-        g_table.add_row("[cyan]Global Rules:[/cyan]", str(stats.get("total_rules", 0)))
 
     # Launchd service status (macOS only)
     try:

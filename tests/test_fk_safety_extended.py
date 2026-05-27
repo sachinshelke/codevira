@@ -13,7 +13,6 @@ that silently drop rows referencing missing parents instead of raising
 """
 from __future__ import annotations
 
-import pytest
 
 from indexer.sqlite_graph import SQLiteGraph
 

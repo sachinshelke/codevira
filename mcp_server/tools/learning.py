@@ -1,12 +1,21 @@
 """
 Learning tools — MCP tools for Codevira's adaptive memory system.
 
-These tools expose the feedback loop to AI agents:
-  - get_decision_confidence: How confident is the system about decisions in an area?
-  - get_preferences: What coding style does the developer prefer?
-  - get_learned_rules: Auto-generated rules from observed patterns
-  - get_project_maturity: Overall project intelligence score
-  - get_session_context: Single "catch me up" call for cross-tool continuity
+v3.0.0 surface (2026-05-22 surface-cut audit):
+  - record_decision    : capture an architectural decision (+ tags / do_not_revert)
+  - supersede_decision : retire an old decision and link to its replacement
+  - get_session_context: single "catch me up" call for cross-tool continuity
+
+v2.x tools deleted in the audit and NOT exposed here:
+  - get_decision_confidence: surfaced a number nobody acted on
+  - get_preferences        : returned noise more often than signal
+  - get_learned_rules      : same — see ``retire_rule`` decision
+  - get_project_maturity   : vanity metric; no policy consumed it
+  - retire_rule            : was the cleanup for get_learned_rules
+
+The internal helper ``get_decision_confidence`` is kept (used by
+``get_session_context``'s confidence summary block); the standalone
+MCP tool that exposed it is gone.
 """
 
 from __future__ import annotations
@@ -40,13 +49,17 @@ def get_decision_confidence(
         confidence = db.get_decision_confidence(file_path=file_path, pattern=pattern)
         label = file_path or pattern or "project-wide"
         # Diagnostic counts so the user can tell which case they're in.
+        # v3.0 silent-storage fix (2026-05-23 RC audit): pre-fix this read
+        # `SELECT COUNT(*) FROM decisions` against legacy SQLiteGraph which
+        # is empty in v3.0 (all decision writes go to JSONL via
+        # decisions_store). Users saw "No data — new territory" even with
+        # dozens of decisions. Now reads the JSONL store directly.
         try:
-            decisions_total = db.conn.execute(
-                "SELECT COUNT(*) FROM decisions"
-            ).fetchone()[0]
-            decisions_with_file = db.conn.execute(
-                "SELECT COUNT(*) FROM decisions WHERE file_path IS NOT NULL"
-            ).fetchone()[0]
+            from mcp_server.storage import jsonl_store, paths as _storage_paths
+
+            decision_records = jsonl_store.read_all(_storage_paths.decisions_path())
+            decisions_total = len(decision_records)
+            decisions_with_file = sum(1 for d in decision_records if d.get("file_path"))
             decisions_eligible_for_outcomes = decisions_with_file
         except Exception:
             decisions_total = decisions_with_file = decisions_eligible_for_outcomes = 0
@@ -108,66 +121,13 @@ def _interpret_confidence_with_eligibility(
     return _interpret_confidence(confidence_score)  # falls through to "No data"
 
 
-def get_preferences(category: str | None = None) -> dict:
-    """Get learned developer preferences."""
-    db = _get_db()
-    try:
-        prefs = db.get_preferences(category=category, min_frequency=1)
-        return {
-            "preferences": prefs,
-            "total": len(prefs),
-            "hint": "Apply these preferences when writing code to match the developer's style."
-            if prefs
-            else "No preferences learned yet. They build up over sessions.",
-        }
-    finally:
-        db.close()
-
-
-def get_learned_rules(
-    file_path: str | None = None,
-    category: str | None = None,
-    include_retired: bool = False,
-) -> dict:
-    """Get auto-generated rules from observed patterns.
-
-    v2.0-rc.3 (Bug 3): emits ``id`` per rule + ``retired`` flag so AIs
-    can call ``retire_rule(rule_id=...)`` when they detect a stale rule
-    (e.g. one pinned to a directory that has since been deleted).
-    """
-    db = _get_db()
-    try:
-        rules = db.get_learned_rules(
-            category=category,
-            file_pattern=file_path,
-            min_confidence=0.3,
-            include_retired=include_retired,
-        )
-        return {
-            "rules": [
-                {
-                    "id": r["id"],
-                    "rule": r["rule_text"],
-                    "confidence": r["confidence"],
-                    "category": r["category"],
-                    "applies_to": r.get("file_pattern"),
-                    "retired": bool(r.get("retired_at")),
-                    "retired_reason": r.get("retired_reason"),
-                }
-                for r in rules
-            ],
-            "total": len(rules),
-            "hint": (
-                "These rules were learned from past sessions. Higher confidence = "
-                "more reliable. If a rule references a file/directory that no "
-                "longer exists, call retire_rule(rule_id=N, reason='...') so it "
-                "stops firing as a high-confidence signal."
-                if rules
-                else "No rules learned yet. They emerge after multiple sessions."
-            ),
-        }
-    finally:
-        db.close()
+# v2.2.0+ surface cut: get_preferences and get_learned_rules removed.
+# Per the 2026-05-22 audit, preference/rule extraction surfaced noise
+# rather than signal, and the founder never read the results in real
+# sessions. The underlying tables stay (SQLiteGraph still records via
+# log_session for back-compat) but they're no longer surfaced as MCP
+# tools or via get_session_context. Slated for full storage cleanup
+# in v2.3.0.
 
 
 def record_decision(
@@ -181,26 +141,19 @@ def record_decision(
 ) -> dict:
     """Record a single decision with optional do_not_revert flag.
 
-    Bug 2 (v2.0-rc.3): the canonical "log a decision and protect it"
-    primitive — the missing piece of Hero 1's positioning. Lighter
-    than ``write_session_log`` for ad-hoc captures during a session.
+    v2.2.0 — writes to ``<repo>/.codevira/decisions.jsonl`` (in-repo,
+    git-committed). The v2.1.x SQLite-backed implementation is gone;
+    no ChromaDB embedding, no calibration, no auto-recalibrate.
 
-    2026-05-18 v2.1.2 Item 1: triggers a background auto-recalibration
-    of the similarity threshold every ~10 decisions added (cheap; runs
-    in a daemon thread — never blocks the response).
-    2026-05-18 v2.1.2 Item 20: runs :func:`check_conflict` BEFORE write
-    and surfaces ``_conflict_warning`` in the response if the new
-    decision contradicts a protected (do_not_revert=True) decision.
-    Pass ``force=True`` to suppress the warning (e.g. when intentionally
-    superseding a prior decision).
-    2026-05-18 v2.1.2 Item 27: optional ``tags`` list — lowercased,
-    deduped, persisted to ``decision_tags`` table.
-    2026-05-18 v2.1.2 Item 30: surfaces ``_input_coerced_warning`` when
-    ``do_not_revert`` is passed as something other than a Python bool
-    (e.g. the int ``1`` or string ``"true"``).
+    Conflict / duplicate check (Item 20): runs FTS5 pre-write search
+    against existing protected decisions; surfaces ``_conflict_warning``
+    if the new decision matches one. Pass ``force=True`` to suppress.
 
-    Returns ``{decision_id, session_id, do_not_revert, [_conflict_warning],
-    [_input_coerced_warning]}``.
+    Input coercion (Item 30): non-bool ``do_not_revert`` is accepted and
+    coerced (with ``_input_coerced_warning`` so the caller knows).
+
+    Returns ``{recorded, decision_id, session_id, do_not_revert, tags,
+    hint, [_conflict_warning], [_input_coerced_warning]}``.
     """
     if not decision or not isinstance(decision, str):
         return {
@@ -208,7 +161,7 @@ def record_decision(
             "error": "decision must be a non-empty string",
         }
 
-    # 2026-05-18 v2.1.2 Item 30: detect non-bool do_not_revert input.
+    # Item 30: detect non-bool do_not_revert input.
     input_coerced_warning = None
     if not isinstance(do_not_revert, bool):
         input_coerced_warning = (
@@ -216,7 +169,7 @@ def record_decision(
             f"({do_not_revert!r}); coerced to {bool(do_not_revert)}"
         )
 
-    # 2026-05-18 v2.1.2 Item 20: pre-write conflict check.
+    # Item 20: pre-write conflict check (FTS5-based in v2.2.0).
     conflict_warning = None
     if not force:
         try:
@@ -252,109 +205,50 @@ def record_decision(
                     ],
                 }
         except Exception:
-            # P9: never block a write on the conflict check failing.
+            # P9: never block the write on the conflict check failing.
             pass
 
-    db = _get_db()
-    try:
-        result = db.record_decision(
-            decision=decision.strip(),
-            file_path=file_path,
-            context=context,
-            do_not_revert=bool(do_not_revert),
-            session_id=session_id,
+    from mcp_server.storage import decisions_store
+
+    decision_id = decisions_store.record(
+        decision=decision,
+        file_path=file_path,
+        context=context,
+        do_not_revert=bool(do_not_revert),
+        session_id=session_id,
+        tags=tags,
+    )
+
+    response: dict = {
+        "recorded": True,
+        "decision_id": decision_id,
+        "session_id": session_id or "ad-hoc",
+        "do_not_revert": bool(do_not_revert),
+        "hint": (
+            "Decision recorded as protected. Future search_decisions() "
+            "calls in this OR other AI tools will surface "
+            "do_not_revert=true. To later change this decision (text "
+            "or flag), use `supersede_decision(old_id=<this id>, "
+            "new_decision=<text>, reason=<why>)` — that preserves "
+            "the audit trail."
+            if do_not_revert
+            else "Decision recorded. Pass do_not_revert=true if it should "
+            "be locked against future revert."
+        ),
+    }
+    if input_coerced_warning:
+        response["_input_coerced_warning"] = input_coerced_warning
+    if conflict_warning:
+        response["_conflict_warning"] = conflict_warning
+    if tags:
+        response["tags"] = sorted(
+            {str(t).strip().lower() for t in tags if str(t).strip()}
         )
-        # 2026-05-17 v2.1: also embed for semantic search. Best-effort —
-        # if the embed fails (chromadb missing, corrupted, transient),
-        # we still return success. The SQL row is the canonical store;
-        # missing embedding only degrades search ranking, not data.
-        try:
-            from mcp_server.tools._decision_embeddings import (
-                embed_decision,
-                maybe_auto_recalibrate,
-            )
-
-            embed_decision(
-                decision_id=result["decision_id"],
-                text=decision.strip(),
-                session_id=result["session_id"],
-                file_path=file_path,
-                context=context,
-            )
-            # 2026-05-18 v2.1.2 Item 1: background re-fit every ~10 decisions.
-            try:
-                cur = db.conn.execute("SELECT COUNT(*) AS c FROM decisions")
-                total = int(cur.fetchone()["c"])
-                maybe_auto_recalibrate(total)
-            except Exception:
-                pass
-        except Exception:
-            pass
-
-        # 2026-05-18 v2.1.2 Item 27: persist tags if provided.
-        if tags:
-            try:
-                norm_tags = sorted(
-                    {str(t).strip().lower() for t in tags if str(t).strip()}
-                )
-                for t in norm_tags:
-                    db.conn.execute(
-                        "INSERT OR IGNORE INTO decision_tags(decision_id, tag) VALUES (?, ?)",
-                        (result["decision_id"], t),
-                    )
-                db.conn.commit()
-            except Exception:
-                # Tags table may not exist (pre-v2.1.2 schema); auto-migrate.
-                try:
-                    db.conn.execute(
-                        "CREATE TABLE IF NOT EXISTS decision_tags("
-                        "decision_id INTEGER NOT NULL, "
-                        "tag TEXT NOT NULL, "
-                        "PRIMARY KEY(decision_id, tag), "
-                        "FOREIGN KEY(decision_id) REFERENCES decisions(id) ON DELETE CASCADE)"
-                    )
-                    db.conn.execute(
-                        "CREATE INDEX IF NOT EXISTS idx_decision_tags_tag ON decision_tags(tag)"
-                    )
-                    for t in norm_tags:
-                        db.conn.execute(
-                            "INSERT OR IGNORE INTO decision_tags(decision_id, tag) VALUES (?, ?)",
-                            (result["decision_id"], t),
-                        )
-                    db.conn.commit()
-                except Exception:
-                    pass
-
-        response = {
-            "recorded": True,
-            "decision_id": result["decision_id"],
-            "session_id": result["session_id"],
-            "do_not_revert": bool(do_not_revert),
-            "hint": (
-                "Decision recorded as protected. Future search_decisions() "
-                "calls in this OR other AI tools will surface "
-                "do_not_revert=true. Use mark_decision_protected(decision_id, "
-                "do_not_revert=false) to unprotect later."
-                if do_not_revert
-                else "Decision recorded. Pass do_not_revert=true if it should "
-                "be locked against future revert."
-            ),
-        }
-        if input_coerced_warning:
-            response["_input_coerced_warning"] = input_coerced_warning
-        if conflict_warning:
-            response["_conflict_warning"] = conflict_warning
-        if tags:
-            response["tags"] = sorted(
-                {str(t).strip().lower() for t in tags if str(t).strip()}
-            )
-        return response
-    finally:
-        db.close()
+    return response
 
 
 def supersede_decision(
-    old_id: int,
+    old_id: int | str,
     new_decision: str,
     reason: str,
     *,
@@ -363,18 +257,11 @@ def supersede_decision(
     do_not_revert: bool = False,
     tags: list[str] | None = None,
 ) -> dict:
-    """2026-05-18 v2.1.2 Item 26: retire ``old_id`` and link the
-    replacement.
+    """v2.2.0 Item 26: retire ``old_id`` and link the replacement.
 
     Writes the new decision (text prefixed with
-    ``[supersedes #<old_id>: <reason>] <new_text>``), then marks the
-    old row as superseded so it stops surfacing in search /
-    list_decisions by default. ``include_superseded=True`` on those
-    tools opts back in for audit.
-
-    Schema migration is best-effort on first call (adds
-    ``is_superseded INTEGER DEFAULT 0`` + ``superseded_by INTEGER`` to
-    ``decisions``).
+    ``[supersedes <old_id>: <reason>] <new_text>``), then appends an
+    amendment line flagging the old as superseded.
 
     Returns ``{success, old_id, new_id, reason}``.
     """
@@ -383,196 +270,83 @@ def supersede_decision(
     if not reason or not isinstance(reason, str):
         return {"success": False, "error": "reason must be a non-empty string"}
 
-    db = _get_db()
-    try:
-        # Schema migration (idempotent, best-effort).
-        try:
-            db.conn.execute("SELECT is_superseded FROM decisions LIMIT 1")
-        except Exception:
-            try:
-                db.conn.execute(
-                    "ALTER TABLE decisions ADD COLUMN is_superseded INTEGER DEFAULT 0"
-                )
-                db.conn.execute(
-                    "ALTER TABLE decisions ADD COLUMN superseded_by INTEGER"
-                )
-                db.conn.commit()
-            except Exception:
-                pass
+    from mcp_server.storage import decisions_store
 
-        # Verify old_id exists.
-        cur = db.conn.execute("SELECT id FROM decisions WHERE id = ?", (int(old_id),))
-        if cur.fetchone() is None:
-            return {"success": False, "error": f"No decision with id={old_id}"}
-
-        # Record the new decision with prefix.
-        prefixed = f"[supersedes #{old_id}: {reason.strip()}] {new_decision.strip()}"
-        new_resp = record_decision(
-            decision=prefixed,
-            file_path=file_path,
-            context=context,
-            do_not_revert=bool(do_not_revert),
-            tags=tags,
-            force=True,  # supersede is intentional — bypass the conflict check
-        )
-        if not new_resp.get("recorded"):
-            return {
-                "success": False,
-                "error": new_resp.get("error") or "record_decision failed",
-            }
-        new_id = new_resp["decision_id"]
-
-        # Flag old row.
-        try:
-            db.conn.execute(
-                "UPDATE decisions SET is_superseded = 1, superseded_by = ? WHERE id = ?",
-                (int(new_id), int(old_id)),
-            )
-            db.conn.commit()
-        except Exception as exc:  # noqa: BLE001
-            return {
-                "success": False,
-                "error": f"new decision {new_id} recorded but old {old_id} flag failed: {exc}",
-                "new_id": new_id,
-            }
-        return {
-            "success": True,
-            "old_id": int(old_id),
-            "new_id": int(new_id),
-            "reason": reason.strip(),
-        }
-    finally:
-        db.close()
+    # The new prefixed text matches the v2.1.x convention for back-compat
+    # with anything that parses decision text for a "supersedes #" hint.
+    prefixed = f"[supersedes {old_id}: {reason.strip()}] {new_decision.strip()}"
+    return decisions_store.supersede(
+        old_id=str(old_id),
+        new_decision=prefixed,
+        reason=reason.strip(),
+        file_path=file_path,
+        do_not_revert=bool(do_not_revert),
+        tags=tags,
+    )
 
 
-def record_decisions(decisions: list[dict]) -> dict:
-    """2026-05-18 v2.1.2 Item 23: batch variant of record_decision.
-
-    Memory-dump sessions (~26 separate calls in Report 4) collapse to one
-    round trip. Each item in ``decisions`` accepts the same keys as
-    record_decision: ``decision`` (required), ``file_path``, ``context``,
-    ``do_not_revert``, ``session_id``, ``tags``, ``force``.
-
-    Returns ``{count: N, recorded: [...ids...], errors: [{idx, error}]}``.
-    Best-effort: each item runs independently; one failure doesn't roll
-    back the rest.
-    """
-    if not isinstance(decisions, list):
-        return {
-            "recorded": [],
-            "count": 0,
-            "errors": [{"idx": 0, "error": "decisions must be a list"}],
-        }
-    out_ids: list[int] = []
-    errors: list[dict] = []
-    for idx, item in enumerate(decisions):
-        if not isinstance(item, dict):
-            errors.append({"idx": idx, "error": "item must be a dict"})
-            continue
-        try:
-            r = record_decision(
-                decision=item.get("decision", ""),
-                file_path=item.get("file_path"),
-                context=item.get("context"),
-                do_not_revert=bool(item.get("do_not_revert", False)),
-                session_id=item.get("session_id"),
-                tags=item.get("tags"),
-                force=bool(item.get("force", False)),
-            )
-            if r.get("recorded"):
-                out_ids.append(r["decision_id"])
-            else:
-                errors.append({"idx": idx, "error": r.get("error") or "unknown"})
-        except Exception as exc:  # noqa: BLE001
-            errors.append({"idx": idx, "error": str(exc)})
-    return {
-        "count": len(out_ids),
-        "recorded": out_ids,
-        "errors": errors,
-        "hint": (
-            f"Recorded {len(out_ids)} of {len(decisions)} decisions. "
-            f"Each shows up in subsequent search_decisions / list_decisions."
-        ),
-    }
-
-
-def mark_decision_protected(
-    decision_id: int,
-    do_not_revert: bool,
+def set_decision_flag(
+    decision_id: str,
+    *,
+    do_not_revert: bool | None = None,
+    tags: list[str] | None = None,
 ) -> dict:
-    """Flip the do_not_revert flag on an existing decision."""
-    db = _get_db()
-    try:
-        ok = db.set_decision_protection(int(decision_id), bool(do_not_revert))
-        if not ok:
-            return {
-                "updated": False,
-                "decision_id": int(decision_id),
-                "error": (
-                    f"No decision with id={decision_id}. Use "
-                    f"search_decisions() to find the correct id."
-                ),
-            }
-        return {
-            "updated": True,
-            "decision_id": int(decision_id),
-            "do_not_revert": bool(do_not_revert),
-        }
-    finally:
-        db.close()
+    """v3.0.0 (2026-05-23 RC-audit follow-up): lightweight in-place
+    update for do_not_revert and/or tags on an existing decision.
 
+    Earlier the only way to flip ``do_not_revert`` was
+    ``supersede_decision(old_id, new_decision, reason, do_not_revert=...)``
+    which requires rewriting the full decision text and a reason — heavy
+    for a one-flag toggle. ``set_decision_flag`` appends a single
+    amendment record to ``.codevira/decisions.jsonl`` and rebuilds the
+    indexes.
 
-def retire_rule(rule_id: int, reason: str | None = None) -> dict:
-    """Mark a learned rule as retired.
+    For semantic rewrites (different intent or scope), keep using
+    ``supersede_decision`` — that preserves the lineage history.
 
-    Bug 3 (v2.0-rc.3): real dogfood found that high-confidence rules can
-    point at directories the user later deletes (e.g. tests/control/cli/
-    pinned via test-pairing detection, then the whole directory got
-    ported to Go). Without this tool the rule kept firing as a
-    confidence: 1.00 signal in get_session_context, polluting every
-    session. ``retire_rule`` flips a column so the rule is preserved
-    for audit but excluded from default surfaces.
+    Args:
+        decision_id: ID of the decision to amend (e.g. ``"D000007"``).
+        do_not_revert: New flag value (True / False / None to leave
+            unchanged).
+        tags: New tag list (replaces the existing set; None to leave
+            unchanged).
+
+    Returns ``{success, decision_id, updates}`` where ``updates`` lists
+    only the fields actually changed. No-op if no fields are supplied.
     """
-    db = _get_db()
-    try:
-        ok = db.retire_learned_rule(rule_id=int(rule_id), reason=reason)
-        if not ok:
-            return {
-                "retired": False,
-                "rule_id": int(rule_id),
-                "error": (
-                    f"No active rule with id={rule_id}. It may have been "
-                    f"retired already or the id is wrong. Use "
-                    f"get_learned_rules() to list current ids."
-                ),
-            }
+    if not decision_id or not isinstance(decision_id, str):
+        return {"success": False, "error": "decision_id must be a non-empty string"}
+    if do_not_revert is None and tags is None:
         return {
-            "retired": True,
-            "rule_id": int(rule_id),
-            "reason": reason,
-            "hint": (
-                "Rule retired. It will stop appearing in get_learned_rules() "
-                "and get_session_context() unless you pass include_retired=true."
-            ),
+            "success": False,
+            "error": "supply at least one of do_not_revert / tags",
         }
-    finally:
-        db.close()
+
+    from mcp_server.storage import decisions_store
+
+    return decisions_store.set_flag(
+        decision_id=decision_id,
+        do_not_revert=do_not_revert,
+        tags=tags,
+    )
 
 
-def get_project_maturity() -> dict:
-    """Get overall project intelligence and maturity metrics."""
-    db = _get_db()
-    try:
-        maturity = db.get_project_maturity()
-        score = _compute_maturity_score(maturity)
-        return {
-            **maturity,
-            "maturity_score": score,
-            "maturity_level": _maturity_level(score),
-            "hint": _maturity_hint(score),
-        }
-    finally:
-        db.close()
+# v2.2.0+ (2026-05-22 surface-cut audit batch 6):
+#   - record_decisions (batch) deleted: agents called single endpoints
+#     in practice; batch saved theoretical round-trips that never
+#     happened in real data. Use record_decision directly.
+#   - mark_decision_protected deleted: redundant with
+#     supersede_decision(old_id, new_decision, reason,
+#     do_not_revert=True) which gives an audit trail for free.
+#
+# v2.2.0+: retire_rule removed along with get_learned_rules. The
+# learned-rules surface is gone from the MCP tool list.
+
+
+# v3.0.0 audit cleanup: get_project_maturity + _compute_maturity_score
+# + _maturity_level + _maturity_hint deleted. The MCP tool wrapper was
+# already removed in the 2026-05-22 audit (server.py dispatcher gone);
+# the underlying functions had no other callers.
 
 
 def _truncate(text: str | None, max_chars: int = 120) -> str | None:
@@ -649,43 +423,21 @@ _WEAK_FOCUS_TOKENS = frozenset(
 )
 
 
-def _infer_focus(
-    open_changesets: list[dict], current_phase: dict
-) -> tuple[str | None, str | None]:
+def _infer_focus(current_phase: dict) -> tuple[str | None, str | None]:
     """Infer what the agent is currently focused on.
+
+    v2.2.0+: changesets removed. Focus inference now uses only the
+    current phase's ``next_action`` field.
 
     Returns ``(focus, focus_source)``:
       - ``focus`` is a query string suitable for ``db.search_decisions()``
-        (file path or extracted keywords), or None if no confident signal.
-      - ``focus_source`` is ``"open_changeset:<id>"``, ``"next_action"``, or
-        None — exposed to the agent so it can see *why* it got these
-        decisions and override if inference went wrong.
-
-    Priority order (first hit wins):
-      1. Open changesets with ``files_pending`` — use the first file of the
-         most recently created changeset. The list is already filtered to
-         in_progress; we sort by ``created`` desc to tie-break.
-      2. Current phase ``next_action`` with a strong signal — see
-         ``_WEAK_FOCUS_TOKENS``.
-      3. Otherwise ``(None, None)``.
+        (extracted keywords), or None if no confident signal.
+      - ``focus_source`` is ``"next_action"`` or None — exposed to the
+        agent so it can see *why* it got these decisions.
     """
-    if open_changesets:
-        # Sort by `created` (ISO string) desc. No `last_updated` field exists
-        # on the changeset payload, so `created` is the best proxy.
-        ranked = sorted(
-            open_changesets,
-            key=lambda c: c.get("created") or "",
-            reverse=True,
-        )
-        for cs in ranked:
-            pending = cs.get("files_pending") or []
-            if pending:
-                return pending[0], f"open_changeset:{cs.get('id')}"
-
     next_action = (current_phase or {}).get("next_action") or ""
     tokens = next_action.lower().split()
     if len(tokens) >= 4 and not all(t in _WEAK_FOCUS_TOKENS for t in tokens):
-        # Strong signal: extract tokens >= 4 chars as the query
         keywords = " ".join(t for t in tokens if len(t) >= 4)
         if keywords:
             return keywords, "next_action"
@@ -707,26 +459,37 @@ def get_session_context(since: str | None = None) -> dict:
 
     Fields returned:
       current_phase     - {name, next_action, status}
-      open_changesets   - up to 3 most recent, minimal fields
       recent_sessions   - up to 2 most recent, summary truncated to 100 chars
       recent_decisions  - up to 3 focus-weighted decisions (v1.8), truncated to 120 chars
       focus_source      - v1.8: why recent_decisions were chosen
-                          ("open_changeset:<id>" | "next_action" | null)
+                          ("next_action" | null)
       confidence        - {positive, negative, neutral, overall_rate}
       top_signals       - combined preferences + rules, top 3 each
       hint              - instructions for follow-up calls
     """
     db = _get_db()
     try:
-        recent_sessions = db.get_recent_sessions(limit=2)
+        # v3.0 silent-storage fix (2026-05-23 RC audit): pre-fix this read
+        # sessions from SQLiteGraph which is empty in v3.0 (all session
+        # writes go to .codevira/sessions.jsonl). Users saw recent_sessions=[]
+        # in get_session_context even after recording sessions. Now reads
+        # the JSONL store.
+        try:
+            from mcp_server.storage import sessions_store as _sessions_store
+
+            recent_sessions = _sessions_store.read_recent(limit=2)
+        except Exception:
+            recent_sessions = []
         # v2.1.2 Item 25: post-filter recent_sessions by since-cutoff if provided.
         if since:
             recent_sessions = [
-                s for s in recent_sessions if (s.get("created_at") or "") > since
+                s
+                for s in recent_sessions
+                if (s.get("created_at") or s.get("ts") or "") > since
             ]
         confidence = db.get_decision_confidence()
-        prefs = db.get_preferences(min_frequency=2)[:3]
-        rules = db.get_learned_rules(min_confidence=0.6)[:3]
+        # v2.2.0+: preferences + learned_rules dropped from session context
+        # (auto-extracted signals were noise per 2026-05-22 audit).
 
         # Roadmap: only current phase name + next action (skip upcoming/completed)
         current_phase = {}
@@ -743,54 +506,46 @@ def get_session_context(since: str | None = None) -> dict:
         except Exception:
             pass
 
-        # Raw changesets (full payload) — kept for focus inference.
-        # Trimmed shape (below) is what goes on the response.
-        raw_changesets: list[dict] = []
-        try:
-            from mcp_server.tools.changesets import list_open_changesets
+        # v2.2.0+: changesets removed (never reached real usage). Focus
+        # inference uses only the current phase's next_action.
+        focus, focus_source = _infer_focus(current_phase)
+        # v3.0.0 round-3 (2026-05-23 system-test finding): rewired to
+        # read recent decisions from the JSONL canonical store via
+        # decisions_store, NOT the legacy SQLiteGraph decisions table.
+        # Pre-fix, every v3.0.0 project saw recent_decisions=[] in the
+        # session-context payload because the SQLite decisions table is
+        # never populated in v3.0.0 (all writes go to .codevira/decisions.jsonl).
+        # Caught during the AgentStore system test in
+        # scripts/system_test_agentstore.py::A8.
+        from mcp_server.storage import decisions_store
 
-            raw_changesets = list_open_changesets().get("open_changesets", []) or []
-        except Exception:
-            pass
-
-        open_changesets = [
-            {
-                "id": c.get("id"),
-                "description": _truncate(c.get("description"), 100),
-                "files_pending_count": len(c.get("files_pending", []) or []),
-            }
-            for c in raw_changesets[:3]
-        ]
-
-        # v1.8: Focus-weighted `recent_decisions` ranking
-        # v2.1.2 Item 25: thread `since` through to db.search_decisions (server-
-        # side filter) and post-filter the chronological pad path.
-        focus, focus_source = _infer_focus(raw_changesets, current_phase)
         recent_decisions: list[dict] = []
         if focus:
             try:
-                recent_decisions = db.search_decisions(
-                    focus,
-                    limit=3,
-                    since=since,
-                )
+                hits = decisions_store.search(focus, limit=3, since=since)
+                recent_decisions = list(hits)
             except Exception:
                 recent_decisions = []
-        # Fallback / pad to 3 with chronological recent decisions
+        # Fallback / pad to 3 with chronological-recent decisions from JSONL.
         if len(recent_decisions) < 3:
-            seen_ids: set[tuple] = {
-                (r.get("file_path"), r.get("decision"), r.get("created_at"))
-                for r in recent_decisions
+            seen_ids: set[str] = {
+                str(r.get("id") or "") for r in recent_decisions if r.get("id")
             }
-            for d in db.get_recent_decisions(limit=10 if since else 3):
-                # v2.1.2 Item 25: skip rows older than since cutoff.
-                if since and (d.get("created_at") or "") <= since:
-                    continue
-                key = (d.get("file_path"), d.get("decision"), d.get("created_at"))
-                if key in seen_ids:
+            try:
+                page = decisions_store.list_all(
+                    limit=10 if since else 3,
+                    since=since,
+                    full=False,
+                )
+                all_recent = page.get("decisions", []) if page else []
+            except Exception:
+                all_recent = []
+            for d in all_recent:
+                did = str(d.get("id") or "")
+                if not did or did in seen_ids:
                     continue
                 recent_decisions.append(d)
-                seen_ids.add(key)
+                seen_ids.add(did)
                 if len(recent_decisions) >= 3:
                     break
 
@@ -847,7 +602,6 @@ def get_session_context(since: str | None = None) -> dict:
         return {
             "current_phase": current_phase,
             "drift_warning": drift_warning,
-            "open_changesets": open_changesets,
             "recent_sessions": [
                 {
                     "session_id": s["session_id"],
@@ -892,34 +646,9 @@ def get_session_context(since: str | None = None) -> dict:
                     )
                 }
             ),
-            **(
-                {
-                    "top_signals": {
-                        "preferences": [
-                            {
-                                "category": p["category"],
-                                "signal": _truncate(p["signal"], 80),
-                            }
-                            for p in prefs
-                        ],
-                        "rules": [
-                            {
-                                "rule": _smart_truncate(r["rule_text"], 160),
-                                "confidence": round(r["confidence"], 2),
-                            }
-                            for r in rules
-                        ],
-                    }
-                }
-                if (prefs or rules)
-                else {
-                    "top_signals_note": (
-                        "No learned preferences or rules yet — these emerge "
-                        "after several sessions of decisions + outcome tracking. "
-                        "Skip checking these for fresh projects."
-                    )
-                }
-            ),
+            # v2.2.0+: top_signals (preferences + rules) removed.
+            # The auto-extracted signals produced noise rather than value
+            # per the 2026-05-22 audit; nobody read them in real sessions.
             "hint": (
                 "Before touching a file: get_node(path) + get_impact(path). "
                 "For past decisions: search_decisions(query). "
@@ -942,43 +671,8 @@ def _interpret_confidence(score: float) -> str:
     return "No data — this is new territory. Decisions here will build the baseline."
 
 
-def _compute_maturity_score(maturity: dict) -> float:
-    """Compute a 0-100 maturity score from multiple signals."""
-    score = 0.0
-
-    # Sessions (max 20 points)
-    score += min(maturity["session_count"] * 2, 20)
-
-    # Coverage (max 30 points)
-    score += maturity["coverage"] * 30
-
-    # Confidence (max 25 points)
-    score += maturity["overall_confidence"] * 25
-
-    # Learned rules (max 15 points)
-    score += min(maturity["learned_rules"] * 3, 15)
-
-    # Preferences (max 10 points)
-    score += min(maturity["preference_signals"] * 2, 10)
-
-    return round(min(score, 100), 1)
-
-
-def _maturity_level(score: float) -> str:
-    if score >= 80:
-        return "Expert — agents have rich context and high confidence."
-    elif score >= 50:
-        return "Intermediate — good coverage, patterns emerging."
-    elif score >= 20:
-        return "Growing — some sessions logged, building baseline."
-    return "New — fresh project, minimal agent memory."
-
-
-def _maturity_hint(score: float) -> str:
-    if score >= 80:
-        return "Project memory is mature. Agents should rely on learned patterns and confidence scores."
-    elif score >= 50:
-        return "Good progress. Continue using Codevira — confidence and rules will keep improving."
-    elif score >= 20:
-        return "Still building memory. Run more agent sessions and outcomes will start influencing confidence."
-    return "This is a fresh start. Every session logs decisions that future agents will learn from."
+# v3.0.0 audit cleanup: _compute_maturity_score / _maturity_level /
+# _maturity_hint deleted along with get_project_maturity. They scored
+# the project on session count, coverage, learned_rules count, and
+# preference signal count — three of those inputs are zero in v3.0.0
+# because their MCP tools were deleted in the 2026-05-22 audit.

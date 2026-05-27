@@ -305,7 +305,7 @@ release-dry-run:
 		exit 1; \
 	fi
 	@$(PYTHON) -m pip install --quiet --upgrade twine
-	@twine check dist/*
+	@$(PYTHON) -m twine check dist/*
 	@echo "  ✓ Metadata valid (twine check passed)"
 	@# Verify the wheel name matches the declared version.
 	@WHEEL=$$(ls dist/*.whl 2>/dev/null | head -1); \
@@ -330,7 +330,7 @@ release-publish:
 	fi
 	@$(PYTHON) -c "import json; d=json.load(open('$(EVIDENCE_FILE)')); \
 		assert d.get('G5_human_confirmed') is True, 'G5 not confirmed in evidence file. Set G5_human_confirmed=true after manual verification.'"
-	twine upload dist/*
+	$(PYTHON) -m twine upload dist/*
 
 # ─── Post-release smoke: install from PyPI in fresh venv ──────────────────
 

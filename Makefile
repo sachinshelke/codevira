@@ -308,7 +308,7 @@ release-dry-run:
 	@$(PYTHON) -m twine check dist/*
 	@echo "  ✓ Metadata valid (twine check passed)"
 	@# Verify the wheel name matches the declared version.
-	@WHEEL=$$(ls dist/*.whl 2>/dev/null | head -1); \
+	@WHEEL=$$(ls dist/*.whl 2>/dev/null | sed -n '1p'); \
 	if [ -n "$$WHEEL" ]; then \
 		case "$$WHEEL" in \
 			*-$(VERSION)-*) echo "  ✓ Wheel filename includes v$(VERSION)" ;; \
@@ -341,7 +341,7 @@ release-smoke:
 	$(PYTHON) -m venv $$TMPDIR/venv; \
 	$$TMPDIR/venv/bin/pip install --quiet "codevira==$(VERSION)" || \
 		(echo "  ✗ pip install codevira==$(VERSION) failed"; exit 1); \
-	INSTALLED_VER=$$($$TMPDIR/venv/bin/codevira --version 2>&1 | head -1); \
+	INSTALLED_VER=$$($$TMPDIR/venv/bin/codevira --version 2>&1 | sed -n '1p'); \
 	echo "  Installed version reports: $$INSTALLED_VER"; \
 	case "$$INSTALLED_VER" in \
 		*$(VERSION)*) echo "  ✓ PyPI install of v$(VERSION) works" ;; \

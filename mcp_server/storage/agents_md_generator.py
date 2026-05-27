@@ -185,7 +185,10 @@ def _project_name() -> str | None:
     try:
         py = root / "pyproject.toml"
         if py.is_file():
-            import tomllib
+            try:
+                import tomllib  # Python 3.11+
+            except ModuleNotFoundError:  # Python 3.10 — stdlib tomllib absent
+                import tomli as tomllib  # type: ignore[no-redef]
 
             data = tomllib.loads(py.read_text())
             name = data.get("project", {}).get("name")

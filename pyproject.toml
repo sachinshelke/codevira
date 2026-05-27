@@ -46,6 +46,9 @@ dependencies = [
   "pyyaml>=6.0",
   "mcp>=1.0.0",
   "watchdog>=3.0.0",
+  # tomllib is stdlib on 3.11+; tomli is the backport for the declared
+  # 3.10 support (used to read pyproject.toml project name).
+  "tomli>=2.0; python_version < '3.11'",
   "tree-sitter>=0.23.0",
   # v2.2.0: switched from tree-sitter-language-pack (351 MB, 17 grammars) to
   # individual grammar packages for the 4 most-used non-Python languages

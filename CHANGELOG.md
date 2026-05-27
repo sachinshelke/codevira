@@ -9,7 +9,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [Unreleased]
+## [3.0.0] — 2026-05-27 — Lean, audited, opinionated
 
 ### Hardened (RC audit — rounds 2 + 3, pre-publish)
 
@@ -215,7 +215,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [3.0.0] — 2026-05-22 — Lean, audited, opinionated
+### Initial 3.0.0 RC milestone (2026-05-22)
 
 > **Major version bump.** This is the biggest API contraction since
 > v2.0 shipped: 21 MCP tools deleted, 8 CLI subcommands deleted,

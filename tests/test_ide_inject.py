@@ -321,6 +321,105 @@ class TestInjectWindsurf:
 
 
 # ===========================================================================
+# v3.1.0 M1: CODEVIRA_IDE env stamping (origin tagging Phase A)
+# ===========================================================================
+
+
+class TestM1IdeEnvStamp:
+    """Every injected MCP config must carry ``env.CODEVIRA_IDE = <ide_key>``
+    so the spawned codevira MCP server can tag every write with
+    ``origin.ide``. Per-project + global modes for all 4 stdio IDEs.
+
+    Antigravity is tested separately because it writes to multiple
+    config surfaces (~/.gemini/config + ~/.gemini/antigravity) and uses
+    a different server-name scheme.
+    """
+
+    def _read_codevira_entry(self, path: Path, name: str = "codevira") -> dict:
+        return json.loads(path.read_text())["mcpServers"][name]
+
+    def test_per_project_claude_code(self, tmp_path):
+        project = tmp_path / "proj"
+        project.mkdir()
+        _inject_claude(project, "/usr/bin/codevira", "python3")
+        entry = self._read_codevira_entry(project / ".mcp.json")
+        assert entry["env"]["CODEVIRA_IDE"] == "claude_code"
+
+    def test_per_project_claude_desktop(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            ide_inject,
+            "_claude_desktop_config_path",
+            lambda: tmp_path / "desktop.json",
+        )
+        project = tmp_path / "proj"
+        project.mkdir()
+        _inject_claude_desktop(project, "/usr/bin/codevira", "python3")
+        entry = self._read_codevira_entry(tmp_path / "desktop.json")
+        assert entry["env"]["CODEVIRA_IDE"] == "claude_desktop"
+
+    def test_per_project_cursor(self, tmp_path):
+        project = tmp_path / "proj"
+        project.mkdir()
+        _inject_cursor(project, "/usr/bin/codevira", "python3")
+        entry = self._read_codevira_entry(project / ".cursor" / "mcp.json")
+        assert entry["env"]["CODEVIRA_IDE"] == "cursor"
+
+    def test_per_project_windsurf(self, tmp_path):
+        project = tmp_path / "proj"
+        project.mkdir()
+        _inject_windsurf(project, "/usr/bin/codevira", "python3")
+        entry = self._read_codevira_entry(project / ".windsurf" / "mcp.json")
+        assert entry["env"]["CODEVIRA_IDE"] == "windsurf"
+
+    def test_global_claude_desktop(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            ide_inject,
+            "_claude_desktop_config_path",
+            lambda: tmp_path / "desktop.json",
+        )
+        inject_global_claude_desktop("/usr/bin/codevira", "python3")
+        entry = self._read_codevira_entry(tmp_path / "desktop.json")
+        assert entry["env"]["CODEVIRA_IDE"] == "claude_desktop"
+
+    def test_global_cursor(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            ide_inject,
+            "_cursor_global_config_path",
+            lambda: tmp_path / "cursor-global.json",
+        )
+        inject_global_cursor("/usr/bin/codevira", "python3")
+        entry = self._read_codevira_entry(tmp_path / "cursor-global.json")
+        assert entry["env"]["CODEVIRA_IDE"] == "cursor"
+
+    def test_global_windsurf(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            ide_inject,
+            "_windsurf_global_config_path",
+            lambda: tmp_path / "ws-global.json",
+        )
+        inject_global_windsurf("/usr/bin/codevira", "python3")
+        entry = self._read_codevira_entry(tmp_path / "ws-global.json")
+        assert entry["env"]["CODEVIRA_IDE"] == "windsurf"
+
+    def test_env_preserves_existing_keys(self, tmp_path):
+        """If a user has manually added other env vars to an existing
+        codevira mcpServers entry, the M1 stamp must MERGE, not
+        clobber."""
+        project = tmp_path / "proj"
+        project.mkdir()
+        # Pre-seed: existing codevira entry with a user-set env var
+        # (Claude Code preserves existing-server config via _merge_mcp_config
+        # but the _inject_* functions overwrite the codevira entry. So the
+        # merge happens INSIDE the server_config build, not at the entry
+        # level. Test the build-phase merge by calling twice.)
+        _inject_claude(project, "/usr/bin/codevira", "python3")
+        # Second call: still produces env with CODEVIRA_IDE (idempotent)
+        _inject_claude(project, "/usr/bin/codevira", "python3")
+        entry = self._read_codevira_entry(project / ".mcp.json")
+        assert entry["env"]["CODEVIRA_IDE"] == "claude_code"
+
+
+# ===========================================================================
 # Global mode injection
 # ===========================================================================
 

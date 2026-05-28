@@ -529,6 +529,12 @@ def _inject_claude(project_root: Path, cmd_path: str, python_exe: str) -> str | 
     server_config = _build_server_config(
         cmd_path, python_exe, project_root, use_cwd=True
     )
+    # v3.1.0 M1: stamp CODEVIRA_IDE so the spawned MCP server tags
+    # every write with origin.ide="claude_code".
+    server_config["env"] = {
+        **(server_config.get("env") or {}),
+        "CODEVIRA_IDE": "claude_code",
+    }
     merged = _merge_mcp_config(existing, "codevira", server_config)
     _write_json_safe(config_path, merged)
     return str(config_path)
@@ -551,6 +557,11 @@ def _inject_claude_desktop(
     server_config = _build_server_config(
         cmd_path, python_exe, project_root, use_cwd=False
     )
+    # v3.1.0 M1: origin.ide stamp.
+    server_config["env"] = {
+        **(server_config.get("env") or {}),
+        "CODEVIRA_IDE": "claude_desktop",
+    }
 
     merged = _merge_mcp_config(existing, "codevira", server_config)
     _write_json_safe(config_path, merged)
@@ -564,6 +575,11 @@ def _inject_cursor(project_root: Path, cmd_path: str, python_exe: str) -> str | 
     server_config = _build_server_config(
         cmd_path, python_exe, project_root, use_cwd=True
     )
+    # v3.1.0 M1: origin.ide stamp.
+    server_config["env"] = {
+        **(server_config.get("env") or {}),
+        "CODEVIRA_IDE": "cursor",
+    }
     merged = _merge_mcp_config(existing, "codevira", server_config)
     _write_json_safe(config_path, merged)
     return str(config_path)
@@ -576,6 +592,11 @@ def _inject_windsurf(project_root: Path, cmd_path: str, python_exe: str) -> str 
     server_config = _build_server_config(
         cmd_path, python_exe, project_root, use_cwd=True
     )
+    # v3.1.0 M1: origin.ide stamp.
+    server_config["env"] = {
+        **(server_config.get("env") or {}),
+        "CODEVIRA_IDE": "windsurf",
+    }
     merged = _merge_mcp_config(existing, "codevira", server_config)
     _write_json_safe(config_path, merged)
     return str(config_path)
@@ -596,6 +617,11 @@ def _inject_antigravity(
     base_config = _build_server_config(
         cmd_path, python_exe, project_root, use_cwd=False
     )
+    # v3.1.0 M1: origin.ide stamp.
+    base_config["env"] = {
+        **(base_config.get("env") or {}),
+        "CODEVIRA_IDE": "antigravity",
+    }
     server_config = {
         "$typeName": "exa.cascade_plugins_pb.CascadePluginCommandTemplate",
         **base_config,
@@ -638,6 +664,11 @@ def inject_global_claude_code(cmd_path: str, python_exe: str) -> str | None:
     """
     config_path = _claude_global_config_path()
     server_config = _build_global_server_config(cmd_path, python_exe)
+    # v3.1.0 M1: origin.ide stamp (global Claude Code).
+    server_config["env"] = {
+        **(server_config.get("env") or {}),
+        "CODEVIRA_IDE": "claude_code",
+    }
 
     cli = _claude_cli_path()
     if cli is not None:
@@ -678,12 +709,22 @@ def _claude_cli_add_codevira(
     # the spawned MCP server, not flags to ``claude mcp add``.
     extra_args = list(server_config.get("args") or [])
 
+    # v3.1.0 M1: forward CODEVIRA_IDE env into the CLI-driven install
+    # so the `claude mcp add` write carries provenance too. Best-effort:
+    # older claude versions without --env will fail this call; the
+    # caller falls back to direct ~/.claude.json merge which sets env
+    # the same way.
+    env_pairs: list[str] = []
+    for k, v in (server_config.get("env") or {}).items():
+        env_pairs.extend(["--env", f"{k}={v}"])
+
     cmd = [
         cli,
         "mcp",
         "add",
         "--scope",
         "user",
+        *env_pairs,
         "codevira",
         cmd_path,
     ]
@@ -746,15 +787,20 @@ def inject_global_claude_desktop(cmd_path: str, python_exe: str) -> str | None:
     existing = _read_json_safe(config_path)
 
     is_python_fallback = cmd_path == python_exe
+    # v3.1.0 M1: origin.ide stamp included in the literal so mypy
+    # infers a wide-enough value type (env is a nested dict, not a
+    # list[str]).
     if is_python_fallback:
         server_config = {
             "command": cmd_path,
             "args": ["-m", "mcp_server"],
+            "env": {"CODEVIRA_IDE": "claude_desktop"},
         }
     else:
         server_config = {
             "command": cmd_path,
             "args": [],
+            "env": {"CODEVIRA_IDE": "claude_desktop"},
         }
 
     merged = _merge_mcp_config(existing, "codevira", server_config)
@@ -767,6 +813,11 @@ def inject_global_cursor(cmd_path: str, python_exe: str) -> str | None:
     config_path = _cursor_global_config_path()
     existing = _read_json_safe(config_path)
     server_config = _build_global_server_config(cmd_path, python_exe)
+    # v3.1.0 M1: origin.ide stamp.
+    server_config["env"] = {
+        **(server_config.get("env") or {}),
+        "CODEVIRA_IDE": "cursor",
+    }
     merged = _merge_mcp_config(existing, "codevira", server_config)
     _write_json_safe(config_path, merged)
     return str(config_path)
@@ -777,6 +828,11 @@ def inject_global_windsurf(cmd_path: str, python_exe: str) -> str | None:
     config_path = _windsurf_global_config_path()
     existing = _read_json_safe(config_path)
     server_config = _build_global_server_config(cmd_path, python_exe)
+    # v3.1.0 M1: origin.ide stamp.
+    server_config["env"] = {
+        **(server_config.get("env") or {}),
+        "CODEVIRA_IDE": "windsurf",
+    }
     merged = _merge_mcp_config(existing, "codevira", server_config)
     _write_json_safe(config_path, merged)
     return str(config_path)
@@ -789,6 +845,11 @@ def inject_global_antigravity(cmd_path: str, python_exe: str) -> str | None:
     sets the working directory when it starts the MCP server process.
     """
     base_config = _build_global_server_config(cmd_path, python_exe)
+    # v3.1.0 M1: origin.ide stamp.
+    base_config["env"] = {
+        **(base_config.get("env") or {}),
+        "CODEVIRA_IDE": "antigravity",
+    }
     server_config = {
         "$typeName": "exa.cascade_plugins_pb.CascadePluginCommandTemplate",
         **base_config,

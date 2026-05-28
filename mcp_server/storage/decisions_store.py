@@ -37,12 +37,28 @@ from __future__ import annotations
 
 import fnmatch
 import logging
+import secrets
 from datetime import datetime, timezone
 from typing import Any
 
 from mcp_server.storage import digest, fts5_index, jsonl_store, manifest, paths
 
 logger = logging.getLogger(__name__)
+
+
+def default_session_id() -> str:
+    """Generate a unique ad-hoc session id when the caller didn't supply one.
+
+    v3.0.1 fix: prior to this, an unattributed ``record_decision`` /
+    ``write_session_log`` defaulted to the LITERAL string ``"ad-hoc"``.
+    Every concurrent IDE (Claude Code, Cursor, Windsurf, Antigravity)
+    that didn't pass a slug collided into the same bucket — masking
+    session boundaries and breaking the v3.1.0 working-memory design
+    (which keys observations by session_id). Generating a unique
+    suffix per call disambiguates without forcing every caller to
+    invent a name.
+    """
+    return f"ad-hoc-{secrets.token_hex(3)}"
 
 
 # ─── Internal: merge amendments into base records ─────────────────────
@@ -95,7 +111,7 @@ def record(
 
     base_record = {
         "ts": datetime.now(timezone.utc).isoformat(),
-        "session_id": session_id or "ad-hoc",
+        "session_id": session_id or default_session_id(),
         "file_path": file_path,
         "decision": decision.strip(),
         "context": context,
@@ -165,7 +181,7 @@ def record_many(
         valid_records.append(
             {
                 "ts": datetime.now(timezone.utc).isoformat(),
-                "session_id": r.get("session_id") or "ad-hoc",
+                "session_id": r.get("session_id") or default_session_id(),
                 "file_path": r.get("file_path"),
                 "decision": text.strip(),
                 "context": r.get("context"),

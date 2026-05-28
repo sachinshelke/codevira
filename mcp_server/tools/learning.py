@@ -210,19 +210,26 @@ def record_decision(
 
     from mcp_server.storage import decisions_store
 
+    # v3.0.1: resolve the effective session_id ONCE up front so the
+    # response (echoed to the agent) matches the on-disk record. Prior
+    # to this, learning.py echoed the literal "ad-hoc" while
+    # decisions_store.record() wrote a unique "ad-hoc-XXXXXX" slug,
+    # leaving caller-visible and persisted state divergent.
+    effective_session_id = session_id or decisions_store.default_session_id()
+
     decision_id = decisions_store.record(
         decision=decision,
         file_path=file_path,
         context=context,
         do_not_revert=bool(do_not_revert),
-        session_id=session_id,
+        session_id=effective_session_id,
         tags=tags,
     )
 
     response: dict = {
         "recorded": True,
         "decision_id": decision_id,
-        "session_id": session_id or "ad-hoc",
+        "session_id": effective_session_id,
         "do_not_revert": bool(do_not_revert),
         "hint": (
             "Decision recorded as protected. Future search_decisions() "

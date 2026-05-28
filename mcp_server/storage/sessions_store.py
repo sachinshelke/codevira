@@ -30,7 +30,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from mcp_server.storage import jsonl_store, paths
+from mcp_server.storage import jsonl_store, origin, paths
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +54,10 @@ def write(
         "summary": summary,
         "decision_ids": list(decision_ids or []),
         "outcome": outcome,
+        # v3.1.0 M1: provenance tagging — which IDE/agent/machine
+        # wrote this session log. Reads tolerate absence on legacy
+        # records (v3.0.x sessions have no origin).
+        "origin": origin.current_origin(),
     }
     return jsonl_store.append_with_generated_id(
         paths.sessions_path(), record, prefix="S", width=6
@@ -83,6 +87,8 @@ def write_many(logs: list[dict[str, Any]]) -> tuple[list[str], list[dict[str, An
             "summary": log.get("summary"),
             "decision_ids": list(log.get("decisions") or log.get("decision_ids") or []),
             "outcome": log.get("outcome"),
+            # v3.1.0 M1: provenance tagging (see write() above).
+            "origin": origin.current_origin(),
         }
         # If decisions are passed as full dicts (legacy contract from
         # v2.1.x write_session_log), extract just their ids when present.

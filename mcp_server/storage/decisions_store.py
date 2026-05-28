@@ -41,7 +41,7 @@ import secrets
 from datetime import datetime, timezone
 from typing import Any
 
-from mcp_server.storage import digest, fts5_index, jsonl_store, manifest, paths
+from mcp_server.storage import digest, fts5_index, jsonl_store, manifest, origin, paths
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +120,9 @@ def record(
         "supersedes": None,
         "superseded_by": None,
         "outcome": None,
+        # v3.1.0 M1: provenance tagging. Optional in reads (v3.0.x
+        # records have no origin; readers treat as ide="unknown").
+        "origin": origin.current_origin(),
     }
 
     decision_id = jsonl_store.append_with_generated_id(
@@ -190,6 +193,8 @@ def record_many(
                 "supersedes": None,
                 "superseded_by": None,
                 "outcome": None,
+                # v3.1.0 M1: provenance tagging (see record() above).
+                "origin": origin.current_origin(),
             }
         )
 
@@ -358,6 +363,10 @@ def search(
             "created_at": d.get("ts"),
             "score": hit["score"],
             "snippet": hit.get("snippet"),
+            # v3.1.0 M1: pass origin through so check_conflict can
+            # surface provenance per candidate. None for v3.0.x records
+            # (callers treat absent → ide="unknown").
+            "origin": d.get("origin"),
         }
         results.append(result)
         if len(results) >= limit:

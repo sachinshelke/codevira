@@ -116,3 +116,108 @@ class TestDefaultSessionId:
         assert self._PATTERN.match(sessions[2])
         assert sessions[1] != sessions[2], "two unattributed siblings collided"
         assert sessions[3] == "explicit-2"
+
+
+class TestOriginTagging:
+    """v3.1.0 M1: every decision write carries origin: {ide,
+    agent_model, host_hash, ts}. Reads tolerate absence on legacy
+    v3.0.x records (treated as ide="unknown").
+    """
+
+    def test_record_stamps_origin(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("CODEVIRA_IDE", "claude_code")
+        decisions_store.record(decision="Use rate limiting")
+
+        from mcp_server.storage import jsonl_store, paths
+
+        rows = jsonl_store.read_all(paths.decisions_path())
+        bases = [r for r in rows if not r.get("_amendment_to_id")]
+        assert len(bases) == 1
+        origin_field = bases[0].get("origin")
+        assert origin_field is not None
+        assert origin_field["ide"] == "claude_code"
+        assert "host_hash" in origin_field and len(origin_field["host_hash"]) == 12
+        assert "ts" in origin_field
+
+    def test_record_many_stamps_origin(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("CODEVIRA_IDE", "cursor")
+        decisions_store.record_many(
+            [{"decision": "A"}, {"decision": "B"}, {"decision": "C"}]
+        )
+
+        from mcp_server.storage import jsonl_store, paths
+
+        rows = jsonl_store.read_all(paths.decisions_path())
+        for r in rows:
+            if r.get("_amendment_to_id"):
+                continue
+            assert r["origin"]["ide"] == "cursor"
+
+    def test_ide_unknown_when_env_unset(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("CODEVIRA_IDE", raising=False)
+        decisions_store.record(decision="Anonymous write")
+
+        from mcp_server.storage import jsonl_store, paths
+
+        rows = jsonl_store.read_all(paths.decisions_path())
+        bases = [r for r in rows if not r.get("_amendment_to_id")]
+        assert bases[0]["origin"]["ide"] == "unknown"
+
+    def test_backcompat_record_without_origin(self, project: Path) -> None:
+        """Hand-craft a legacy v3.0.x record (no ``origin`` field) and
+        verify every read path tolerates absence. This is the
+        regression test for the M1 promise that legacy records read
+        as ide="unknown" without crashing.
+        """
+        from mcp_server.storage import jsonl_store, paths
+
+        legacy = {
+            "id": "D000001",
+            "ts": "2026-05-01T00:00:00Z",
+            "session_id": "ad-hoc",  # the OLD literal default
+            "file_path": None,
+            "decision": "Legacy decision pre-3.1",
+            "context": None,
+            "do_not_revert": False,
+            "tags": [],
+            "supersedes": None,
+            "superseded_by": None,
+            "outcome": None,
+            # NOTE: no "origin" field — legacy 3.0.x shape
+        }
+        jsonl_store.append(paths.decisions_path(), legacy)
+
+        # Reads via the merged view: legacy record surfaces, origin missing.
+        merged = decisions_store._read_merged()
+        assert len(merged) == 1
+        assert "origin" not in merged[0] or merged[0].get("origin") is None
+
+        # Now write a NEW decision via the dev path — the new one carries origin,
+        # legacy doesn't. Both must coexist in subsequent reads.
+        decisions_store.record(decision="New decision under 3.1.0")
+        merged = decisions_store._read_merged()
+        assert len(merged) == 2
+        new_rec = next(r for r in merged if "New decision" in r["decision"])
+        assert new_rec["origin"]["host_hash"]
+        legacy_rec = next(r for r in merged if "Legacy decision" in r["decision"])
+        assert legacy_rec.get("origin") is None  # untouched
+
+    def test_search_surfaces_origin(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """decisions_store.search() includes origin per candidate so
+        check_conflict can surface provenance."""
+        monkeypatch.setenv("CODEVIRA_IDE", "windsurf")
+        decisions_store.record(
+            decision="Migrate database to PostgreSQL", tags=["db", "migration"]
+        )
+
+        hits = decisions_store.search("PostgreSQL migration", limit=5)
+        assert len(hits) >= 1
+        assert hits[0]["origin"]["ide"] == "windsurf"

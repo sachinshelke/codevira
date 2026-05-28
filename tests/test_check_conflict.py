@@ -291,3 +291,56 @@ class TestResponseShape:
     ) -> None:
         r = check_conflict("anything novel")
         assert r["threshold_used"] == _DUP_THRESHOLD  # v2.x callers
+
+
+class TestM1OriginSurface:
+    """v3.1.0 M1: each conflict/duplicate entry carries the candidate's
+    ``origin`` so agents can answer "this contradicts a decision Cursor
+    wrote 3 days ago"."""
+
+    def test_duplicate_entry_includes_origin(
+        self,
+        isolated_project: Path,
+        monkeypatch: "pytest.MonkeyPatch",  # type: ignore[name-defined]
+    ) -> None:
+        from mcp_server.storage import decisions_store
+
+        monkeypatch.setenv("CODEVIRA_IDE", "cursor")
+        decisions_store.record(
+            decision="Use bcrypt for password hashing",
+            file_path="auth.py",
+        )
+        r = check_conflict("Use bcrypt for password hashing")
+        assert r["status"] in ("duplicate", "conflict")
+        entries = r.get("duplicates") + r.get("conflicts")
+        assert entries, r
+        origin_field = entries[0].get("origin")
+        assert origin_field is not None, entries[0]
+        assert origin_field["ide"] == "cursor"
+
+    def test_origin_none_for_legacy_record(self, isolated_project: Path) -> None:
+        """Legacy v3.0.x decisions written without origin still surface
+        — the field is None (NOT a crash, NOT a placeholder)."""
+        from mcp_server.storage import jsonl_store, paths
+
+        # Hand-craft a legacy record without origin.
+        legacy = {
+            "id": "D000001",
+            "ts": "2026-05-01T00:00:00Z",
+            "session_id": "ad-hoc",
+            "file_path": "x.py",
+            "decision": "Use bcrypt for password hashing",
+            "context": None,
+            "do_not_revert": False,
+            "tags": [],
+            "supersedes": None,
+            "superseded_by": None,
+            "outcome": None,
+        }
+        jsonl_store.append(paths.decisions_path(), legacy)
+
+        r = check_conflict("Use bcrypt for password hashing")
+        entries = r.get("duplicates") + r.get("conflicts")
+        assert entries, r
+        # Origin field present in dict, value is None (no crash).
+        assert entries[0]["origin"] is None

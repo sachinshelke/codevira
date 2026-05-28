@@ -254,6 +254,10 @@ def check_conflict(
             "summary": (cand_text[:80] + "…") if len(cand_text) > 80 else cand_text,
             "file_path": cand.get("file_path"),
             "decision": cand_text,
+            # v3.1.0 M1: surface provenance so agents (and the user)
+            # can see "this contradicts a decision written by Cursor 3
+            # days ago" rather than just an opaque decision_id.
+            "origin": cand.get("origin"),
         }
         if is_protected:
             conflicts.append(entry)

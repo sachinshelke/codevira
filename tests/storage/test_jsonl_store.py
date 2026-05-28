@@ -301,3 +301,231 @@ class TestSizeBudget:
         elapsed = time.perf_counter() - t0
         assert elapsed < 1.0, f"1000 reads took {elapsed:.2f}s"
         assert len(records) == N
+
+
+# =====================================================================
+# v3.0.1 shared primitives: read_merged / compact / read_recent
+# =====================================================================
+
+
+class TestReadMerged:
+    """Covers the amendment-overlay primitive extracted from
+    decisions_store._read_merged. Convention: amendment record carries
+    the SAME ``id`` as the base + truthy ``_amendment_to_id`` marker;
+    later amendments win; orphans emit defensively; underscored fields
+    are NOT overlaid.
+    """
+
+    def test_base_only_passes_through(self, jsonl_path: Path) -> None:
+        jsonl_store.append(jsonl_path, {"id": "D000001", "decision": "Use bcrypt"})
+        merged = jsonl_store.read_merged(jsonl_path)
+        assert len(merged) == 1
+        assert merged[0]["decision"] == "Use bcrypt"
+
+    def test_single_amendment_overlays_field(self, jsonl_path: Path) -> None:
+        jsonl_store.append(
+            jsonl_path,
+            {"id": "D000001", "decision": "Use bcrypt", "do_not_revert": False},
+        )
+        jsonl_store.append(
+            jsonl_path,
+            {"id": "D000001", "_amendment_to_id": "D000001", "do_not_revert": True},
+        )
+        merged = jsonl_store.read_merged(jsonl_path)
+        assert len(merged) == 1
+        assert merged[0]["do_not_revert"] is True
+        assert merged[0]["decision"] == "Use bcrypt"  # untouched
+
+    def test_amendment_chain_three_deep(self, jsonl_path: Path) -> None:
+        """Plan B3: three amendments to the same base merge in order.
+
+        Each amendment targets the BASE id (not a prior amendment) —
+        amendment-of-amendment is explicitly not supported by this
+        contract. Later amendments win on overlapping fields.
+        """
+        jsonl_store.append(jsonl_path, {"id": "D000001", "tags": ["a"]})
+        jsonl_store.append(
+            jsonl_path,
+            {"id": "D000001", "_amendment_to_id": "D000001", "tags": ["a", "b"]},
+        )
+        jsonl_store.append(
+            jsonl_path,
+            {
+                "id": "D000001",
+                "_amendment_to_id": "D000001",
+                "do_not_revert": True,
+            },
+        )
+        jsonl_store.append(
+            jsonl_path,
+            {"id": "D000001", "_amendment_to_id": "D000001", "tags": ["final"]},
+        )
+        merged = jsonl_store.read_merged(jsonl_path)
+        assert len(merged) == 1
+        assert merged[0]["tags"] == ["final"]  # 3rd amendment wins
+        assert merged[0]["do_not_revert"] is True  # 2nd amendment preserved
+
+    def test_underscore_fields_not_overlaid(self, jsonl_path: Path) -> None:
+        """``_amendment_to_id`` marker + future ``_evicted`` / ``_promoted_to``
+        tombstones must NOT leak into user-visible state.
+        """
+        jsonl_store.append(jsonl_path, {"id": "D000001", "decision": "Use bcrypt"})
+        jsonl_store.append(
+            jsonl_path,
+            {
+                "id": "D000001",
+                "_amendment_to_id": "D000001",
+                "_evicted": True,
+                "do_not_revert": True,
+            },
+        )
+        merged = jsonl_store.read_merged(jsonl_path)
+        assert merged[0]["do_not_revert"] is True
+        # Underscored fields from the amendment must not pollute the base.
+        assert "_evicted" not in merged[0]
+        assert "_amendment_to_id" not in merged[0]
+
+    def test_insertion_order_preserved_across_bases(self, jsonl_path: Path) -> None:
+        for i in (3, 1, 2):  # intentionally out-of-numeric-order
+            jsonl_store.append(jsonl_path, {"id": f"D{i:06d}", "n": i})
+        merged = jsonl_store.read_merged(jsonl_path)
+        assert [r["id"] for r in merged] == ["D000003", "D000001", "D000002"]
+
+    def test_orphan_amendment_emits_for_diagnosis(self, jsonl_path: Path) -> None:
+        # Amendment without a preceding base — should NOT be silently
+        # dropped (defensive surfacing so users can diagnose).
+        jsonl_store.append(
+            jsonl_path,
+            {"id": "D000099", "_amendment_to_id": "D000099", "do_not_revert": True},
+        )
+        merged = jsonl_store.read_merged(jsonl_path)
+        assert len(merged) == 1
+        assert merged[0]["id"] == "D000099"
+
+    def test_missing_id_skipped(self, jsonl_path: Path) -> None:
+        jsonl_store.append(jsonl_path, {"id": "D000001", "ok": True})
+        jsonl_store.append(jsonl_path, {"decision": "no id here"})
+        merged = jsonl_store.read_merged(jsonl_path)
+        assert len(merged) == 1
+        assert merged[0]["id"] == "D000001"
+
+    def test_custom_field_names(self, jsonl_path: Path) -> None:
+        """Future v3.1 stores (e.g. working memory with W-prefixed ids)
+        reuse the same primitive via id_field / amendment_field overrides.
+        """
+        jsonl_store.append(jsonl_path, {"wid": "W000001", "content": "hello"})
+        jsonl_store.append(
+            jsonl_path,
+            {"wid": "W000001", "_promoted_to": "D000007", "content": "hello-v2"},
+        )
+        merged = jsonl_store.read_merged(
+            jsonl_path, id_field="wid", amendment_field="_promoted_to"
+        )
+        assert len(merged) == 1
+        assert merged[0]["content"] == "hello-v2"
+
+    def test_missing_file_returns_empty(self, tmp_path: Path) -> None:
+        assert jsonl_store.read_merged(tmp_path / "nope.jsonl") == []
+
+
+class TestCompact:
+    """Predicate-based atomic rewrite. Future v3.1 stores use this for
+    working-memory eviction (drop tombstoned entries during sync).
+    """
+
+    def test_drops_records_failing_predicate(self, jsonl_path: Path) -> None:
+        for i in range(5):
+            jsonl_store.append(jsonl_path, {"id": f"D{i:06d}", "drop_me": i % 2 == 0})
+        dropped = jsonl_store.compact(
+            jsonl_path, keep_predicate=lambda r: not r.get("drop_me")
+        )
+        assert dropped == 3  # i=0,2,4
+        remaining = jsonl_store.read_all(jsonl_path)
+        assert len(remaining) == 2
+        assert [r["id"] for r in remaining] == ["D000001", "D000003"]
+
+    def test_keep_all_is_noop_on_count(self, jsonl_path: Path) -> None:
+        for i in range(3):
+            jsonl_store.append(jsonl_path, {"id": f"D{i:06d}"})
+        dropped = jsonl_store.compact(jsonl_path, keep_predicate=lambda r: True)
+        assert dropped == 0
+        assert len(jsonl_store.read_all(jsonl_path)) == 3
+
+    def test_drop_all_yields_empty_file(self, jsonl_path: Path) -> None:
+        jsonl_store.append(jsonl_path, {"id": "D000001"})
+        jsonl_store.append(jsonl_path, {"id": "D000002"})
+        dropped = jsonl_store.compact(jsonl_path, keep_predicate=lambda r: False)
+        assert dropped == 2
+        assert jsonl_path.read_text() == ""
+
+    def test_missing_file_returns_zero(self, tmp_path: Path) -> None:
+        path = tmp_path / "nope.jsonl"
+        assert jsonl_store.compact(path, keep_predicate=lambda r: True) == 0
+
+    def test_preserves_malformed_lines(self, jsonl_path: Path) -> None:
+        """compact is filtering, not corruption cleanup — malformed
+        lines must survive so users can run ``codevira doctor``.
+        """
+        jsonl_store.append(jsonl_path, {"id": "D000001", "drop": False})
+        # Append a malformed line directly.
+        with open(jsonl_path, "ab") as fh:
+            fh.write(b"{this is not valid json\n")
+        jsonl_store.append(jsonl_path, {"id": "D000002", "drop": True})
+
+        dropped = jsonl_store.compact(
+            jsonl_path, keep_predicate=lambda r: not r.get("drop")
+        )
+        assert dropped == 1  # only D000002 dropped
+        content = jsonl_path.read_text()
+        assert "{this is not valid json" in content  # corrupt line preserved
+        assert "D000001" in content
+        assert "D000002" not in content
+
+    def test_trailing_newline_only_when_nonempty(self, jsonl_path: Path) -> None:
+        jsonl_store.append(jsonl_path, {"id": "D000001"})
+        jsonl_store.compact(jsonl_path, keep_predicate=lambda r: True)
+        # Non-empty file ends in exactly one newline (matches append style).
+        assert jsonl_path.read_text().endswith("\n")
+        assert not jsonl_path.read_text().endswith("\n\n")
+
+
+class TestReadRecent:
+    """Sort-by-ts-desc + slice. Extracted from sessions_store.read_recent."""
+
+    def test_newest_first(self, jsonl_path: Path) -> None:
+        jsonl_store.append(jsonl_path, {"id": "S000001", "ts": "2026-01-01T00:00:00Z"})
+        jsonl_store.append(jsonl_path, {"id": "S000002", "ts": "2026-03-01T00:00:00Z"})
+        jsonl_store.append(jsonl_path, {"id": "S000003", "ts": "2026-02-01T00:00:00Z"})
+        recent = jsonl_store.read_recent(jsonl_path, limit=10)
+        assert [r["id"] for r in recent] == ["S000002", "S000003", "S000001"]
+
+    def test_limit_slices(self, jsonl_path: Path) -> None:
+        for i in range(5):
+            jsonl_store.append(
+                jsonl_path,
+                {"id": f"S{i:06d}", "ts": f"2026-0{i + 1}-01T00:00:00Z"},
+            )
+        recent = jsonl_store.read_recent(jsonl_path, limit=2)
+        assert len(recent) == 2
+        assert recent[0]["id"] == "S000004"  # 2026-05
+        assert recent[1]["id"] == "S000003"  # 2026-04
+
+    def test_missing_ts_sorts_to_end(self, jsonl_path: Path) -> None:
+        jsonl_store.append(jsonl_path, {"id": "S000001", "ts": "2026-01-01T00:00:00Z"})
+        jsonl_store.append(jsonl_path, {"id": "S000002"})  # no ts
+        recent = jsonl_store.read_recent(jsonl_path, limit=10)
+        assert recent[0]["id"] == "S000001"
+        assert recent[-1]["id"] == "S000002"
+
+    def test_custom_ts_field(self, jsonl_path: Path) -> None:
+        jsonl_store.append(
+            jsonl_path, {"id": "X1", "created_at": "2026-01-01T00:00:00Z"}
+        )
+        jsonl_store.append(
+            jsonl_path, {"id": "X2", "created_at": "2026-02-01T00:00:00Z"}
+        )
+        recent = jsonl_store.read_recent(jsonl_path, limit=10, ts_field="created_at")
+        assert [r["id"] for r in recent] == ["X2", "X1"]
+
+    def test_missing_file_returns_empty(self, tmp_path: Path) -> None:
+        assert jsonl_store.read_recent(tmp_path / "nope.jsonl", limit=10) == []

@@ -106,10 +106,14 @@ def write_many(logs: list[dict[str, Any]]) -> tuple[list[str], list[dict[str, An
 
 
 def read_recent(limit: int = 20) -> list[dict[str, Any]]:
-    """Return the most recent ``limit`` session logs, newest first."""
-    all_sessions = jsonl_store.read_all(paths.sessions_path())
-    all_sessions.sort(key=lambda s: s.get("ts") or "", reverse=True)
-    return all_sessions[:limit]
+    """Return the most recent ``limit`` session logs, newest first.
+
+    Thin wrapper around the v3.0.1 shared primitive
+    ``jsonl_store.read_recent`` so v3.1 stores (working memory,
+    activity, reflections) get the same sort+slice behavior without
+    duplicating it.
+    """
+    return jsonl_store.read_recent(paths.sessions_path(), limit=limit)
 
 
 def by_session_id(session_id: str) -> list[dict[str, Any]]:

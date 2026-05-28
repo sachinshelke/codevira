@@ -33,6 +33,16 @@ Design principles:
 6. **UTF-8 throughout.** Decisions are human text; emoji, accents,
    Cyrillic, CJK all round-trip.
 
+7. **Schema versioning convention (v3.0.1+).** New JSONL stores
+   introduced from v3.1.0 onwards (working, skills, activity,
+   pending_conflicts, reflections) carry a top-level ``_schema_v``
+   integer on each record (starting at ``1``). Readers MUST tolerate
+   ``_schema_v`` absent (treats as v1) so legacy records keep working.
+   The existing ``decisions.jsonl`` and ``sessions.jsonl`` schemas are
+   UNCHANGED — they continue to read via field presence; no version
+   field is retroactively added. This module is shape-agnostic and does
+   not enforce versions; per-store wrappers may.
+
 History note: in v2.1.x we used SQLite for all of this. The git-diff
 hostility of binary blobs + the ChromaDB HNSW corruption pattern
 pushed us to plain text. JSONL gives us 99% of SQLite's benefits with
@@ -45,6 +55,7 @@ import io
 import json
 import logging
 import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -53,7 +64,7 @@ from typing import Any, Iterator
 # one implementation (Posix flock + Windows sentinel fallback). This
 # module imports the canonical version; the ``_file_lock`` private
 # alias preserves the symbol any internal caller used previously.
-from mcp_server.storage.atomic import file_lock as _file_lock
+from mcp_server.storage.atomic import atomic_write_text, file_lock as _file_lock
 
 logger = logging.getLogger(__name__)
 
@@ -388,3 +399,176 @@ def _compute_next_id_locked(
     if len(encoded) <= width:
         return f"{prefix}{encoded.rjust(width, '0')}"
     return f"{prefix}{encoded}"
+
+
+# =====================================================================
+# v3.0.1: shared primitives for per-store wrappers (read_merged,
+# compact, read_recent). Extracted from decisions_store._read_merged /
+# sessions_store.read_recent so the five v3.1.0 memory subsystems
+# (working, skills, activity, pending_conflicts, reflections) reuse
+# one tested implementation instead of duplicating the amendment-
+# overlay dance five times.
+# =====================================================================
+
+
+def read_merged(
+    path: Path,
+    *,
+    id_field: str = "id",
+    amendment_field: str = "_amendment_to_id",
+) -> list[dict[str, Any]]:
+    """Read a JSONL store and fold amendment lines into their base records.
+
+    Convention (matches existing decisions.jsonl semantics):
+
+    - **Base records** carry an ``id_field`` value and no truthy
+      ``amendment_field``. They emit in the file's insertion order.
+    - **Amendment records** carry the SAME ``id_field`` value as the
+      base they amend, PLUS a truthy ``amendment_field`` value
+      (typically equal to the same id — it is a marker, not a different
+      pointer). Their fields overlay onto the base; later amendments
+      win over earlier ones. Fields whose names start with ``"_"``
+      are treated as metadata and are NOT overlaid (so the marker
+      itself, and any future ``_promoted_to`` / ``_evicted`` style
+      tombstones, do not leak into user-visible state).
+    - **Orphan amendments** (amendment_field set but no matching base
+      seen yet) are emitted as their own record so a misordered or
+      truncated file can still be diagnosed by callers.
+    - **Amendment chains** target the base directly. There is no
+      recursive amendment-of-amendment semantic: every amendment must
+      reference the base id. Tests cover three consecutive amendments
+      to one base merging in order.
+
+    Args:
+        path: JSONL file path. Missing file returns ``[]``.
+        id_field: schema field carrying the record id. Defaults to
+            ``"id"`` for compatibility with decisions/sessions.
+        amendment_field: schema field whose truthiness marks the
+            record as an amendment. Defaults to ``"_amendment_to_id"``.
+
+    Returns:
+        List of merged record dicts in base-record insertion order.
+
+    See ``decisions_store._read_merged`` (the original implementation)
+    and ``mcp_server.storage.decisions_store`` for the canonical caller.
+    """
+    raw = read_all(path)
+    by_id: dict[str, dict[str, Any]] = {}
+    order: list[str] = []  # preserves insertion order of base records
+
+    for rec in raw:
+        did = str(rec.get(id_field, ""))
+        if not did:
+            continue
+        if rec.get(amendment_field):
+            # Overlay onto existing base, or emit as orphan.
+            base = by_id.get(did)
+            if base is None:
+                # Orphan amendment — should not happen in a well-formed
+                # file but don't crash; surface it for diagnosis.
+                by_id[did] = dict(rec)
+                order.append(did)
+            else:
+                base.update({k: v for k, v in rec.items() if not k.startswith("_")})
+        else:
+            if did not in by_id:
+                order.append(did)
+            by_id[did] = dict(rec)
+
+    return [by_id[did] for did in order]
+
+
+def compact(
+    path: Path,
+    *,
+    keep_predicate: Callable[[dict[str, Any]], bool],
+) -> int:
+    """Atomically rewrite ``path`` keeping only records where
+    ``keep_predicate(rec)`` returns True.
+
+    Used for capacity-bounded stores (e.g. v3.1 working-memory
+    eviction): after appending tombstone amendments throughout a
+    session, ``compact`` drops the tombstoned records during
+    ``codevira sync``.
+
+    Concurrency: holds the exclusive file lock for the ENTIRE
+    read-filter-write so no concurrent appender's record is lost in
+    the read-vs-write window. ``atomic_write_text`` does not take the
+    file lock itself (it relies on tempfile + os.replace for atomicity)
+    so calling it inside this lock does not deadlock.
+
+    Malformed lines are PRESERVED. This function's job is
+    predicate-based filtering, not corruption cleanup — use
+    ``codevira doctor`` for the latter so users don't silently lose
+    data they could otherwise diagnose.
+
+    Args:
+        path: target JSONL file. Missing file returns ``0`` (no-op).
+        keep_predicate: callable receiving each parsed dict; return
+            True to keep, False to drop. Exceptions inside the
+            predicate propagate (caller's bug, not silently swallowed).
+
+    Returns:
+        Number of records dropped.
+    """
+    if not path.is_file():
+        return 0
+
+    dropped = 0
+    with _file_lock(path, exclusive=True):
+        kept_lines: list[str] = []
+        with open(path, encoding="utf-8") as fh:
+            for raw in fh:
+                stripped = raw.rstrip("\n")
+                if not stripped:
+                    continue
+                try:
+                    rec = json.loads(stripped)
+                except json.JSONDecodeError:
+                    # Preserve corrupt lines — compaction is filtering,
+                    # not corruption cleanup.
+                    kept_lines.append(stripped)
+                    continue
+                if not isinstance(rec, dict):
+                    kept_lines.append(stripped)
+                    continue
+                if keep_predicate(rec):
+                    kept_lines.append(stripped)
+                else:
+                    dropped += 1
+
+        # Trailing newline only when there is content (matches append's
+        # one-record-per-line + final-newline convention).
+        new_content = ("\n".join(kept_lines) + "\n") if kept_lines else ""
+        atomic_write_text(path, new_content)
+
+    return dropped
+
+
+def read_recent(
+    path: Path,
+    *,
+    limit: int,
+    ts_field: str = "ts",
+) -> list[dict[str, Any]]:
+    """Return the most recent ``limit`` records, sorted by ``ts_field``
+    descending (newest first).
+
+    Records missing ``ts_field`` sort to the end (treated as empty
+    string for ordering). Extracted from
+    ``sessions_store.read_recent`` so v3.1 stores (working memory,
+    reflections, activity) get the same behavior without copying the
+    sort+slice dance.
+
+    Args:
+        path: JSONL file. Missing file returns ``[]``.
+        limit: maximum number of records to return.
+        ts_field: schema field carrying an ISO 8601 timestamp string.
+            Defaults to ``"ts"``.
+
+    Returns:
+        List of dicts, newest first, length ``≤ limit``.
+    """
+    all_records = read_all(path)
+    all_records.sort(key=lambda r: r.get(ts_field) or "", reverse=True)
+    return all_records[:limit]

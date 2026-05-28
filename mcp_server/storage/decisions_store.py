@@ -51,35 +51,15 @@ logger = logging.getLogger(__name__)
 def _read_merged() -> list[dict[str, Any]]:
     """Read decisions.jsonl + fold amendment lines into their base records.
 
-    Amendment lines have ``_amendment_to_id`` matching an original id;
-    their fields overlay the original (later amendments win over earlier).
-    Original records are emitted in their original order.
+    Thin wrapper around the v3.0.1 shared primitive
+    ``jsonl_store.read_merged`` so working/skills/activity/reflections
+    stores can reuse the SAME amendment-overlay semantics without
+    copying the merge dance. Behavior preserved exactly: amendment
+    records carry the same ``id`` as the base plus a truthy
+    ``_amendment_to_id`` marker; later amendments win; orphan
+    amendments emit as their own record for diagnosis.
     """
-    raw = jsonl_store.read_all(paths.decisions_path())
-    by_id: dict[str, dict[str, Any]] = {}
-    order: list[str] = []  # preserve insertion order of base records
-
-    for rec in raw:
-        did = str(rec.get("id", ""))
-        if not did:
-            continue
-        if rec.get("_amendment_to_id"):
-            # Overlay onto existing base.
-            base = by_id.get(did)
-            if base is None:
-                # Amendment without a base — shouldn't happen, but
-                # don't crash; surface it as its own record so the
-                # user can diagnose.
-                by_id[did] = dict(rec)
-                order.append(did)
-            else:
-                base.update({k: v for k, v in rec.items() if not k.startswith("_")})
-        else:
-            if did not in by_id:
-                order.append(did)
-            by_id[did] = dict(rec)
-
-    return [by_id[did] for did in order]
+    return jsonl_store.read_merged(paths.decisions_path())
 
 
 def get(decision_id: str) -> dict[str, Any] | None:

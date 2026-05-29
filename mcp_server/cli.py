@@ -1140,6 +1140,18 @@ def main() -> None:
         help="Decisions-only view (omit the code-file overlay)",
     )
     graph_parser.add_argument(
+        "--no-skills",
+        dest="with_skills",
+        action="store_false",
+        help="Omit the skills overlay (procedural memory)",
+    )
+    graph_parser.add_argument(
+        "--no-reflections",
+        dest="with_reflections",
+        action="store_false",
+        help="Omit the reflections overlay (LLM abstractions)",
+    )
+    graph_parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Show what would be rendered without writing",
@@ -1569,6 +1581,8 @@ def main() -> None:
             out=getattr(args, "out", None),
             dry_run=getattr(args, "dry_run", False),
             with_files=getattr(args, "with_files", True),
+            with_skills=getattr(args, "with_skills", True),
+            with_reflections=getattr(args, "with_reflections", True),
         )
         sys.exit(rc)
     elif args.command == "sync":

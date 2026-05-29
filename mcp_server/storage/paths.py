@@ -109,6 +109,28 @@ def skills_path(project_root: Path | None = None) -> Path:
     return codevira_dir(project_root) / "skills.jsonl"
 
 
+def reflections_path(project_root: Path | None = None) -> Path:
+    """v3.1.0 M8: durable LLM-generated abstractions over recent
+    episodic memory. Committed because reflections are semantic
+    artifacts (not scratchpad)."""
+    return codevira_dir(project_root) / "reflections.jsonl"
+
+
+def reflection_proposals_path(project_root: Path | None = None) -> Path:
+    """v3.1.0 M8: human-review staging for ``codevira reflect``.
+    Without ``--apply`` the CLI writes a proposal here so the user
+    can scan it before committing."""
+    return codevira_dir(project_root) / "reflection_proposals.jsonl"
+
+
+def reflection_prompt_path() -> Path:
+    """v3.1.0 M8: bundled prompt template path. Lives next to the
+    package so the wheel ships it via pyproject's package-data glob."""
+    return (
+        Path(__file__).resolve().parent.parent / "data" / "prompts" / "reflection_v1.md"
+    )
+
+
 def pending_conflicts_path(project_root: Path | None = None) -> Path:
     """v3.1.0 M6: cross-IDE conflict log materialized by
     ``codevira consensus check`` (Phase B). Each row is a conflict

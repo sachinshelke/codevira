@@ -1239,6 +1239,43 @@ def main() -> None:
         ),
     )
 
+    # v3.1.0 M8: reflections — codevira reflect [--period 7d]
+    # [--from-file PATH] [--apply] [--yes]. Without --from-file the
+    # CLI prints the rendered prompt + source-context summary for the
+    # user to feed to their own LLM; with --from-file it parses the
+    # LLM response and writes a proposal (or commits with --apply).
+    reflect_parser = subparsers.add_parser(
+        "reflect",
+        help="Build a reflection over recent decisions + sessions "
+        "(v3.1.0 M8). MCP sampling/createMessage integration ships "
+        "in v3.2; meanwhile this CLI renders the prompt and accepts "
+        "an LLM response via --from-file.",
+    )
+    reflect_parser.add_argument(
+        "--period",
+        type=int,
+        default=7,
+        help="Look-back window in days (default 7).",
+    )
+    reflect_parser.add_argument(
+        "--from-file",
+        type=str,
+        default=None,
+        help="Read an LLM YAML response from this file (per the prompt "
+        "template) and persist it as a reflection proposal.",
+    )
+    reflect_parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Commit to .codevira/reflections.jsonl (otherwise the "
+        "result lands in reflection_proposals.jsonl for review).",
+    )
+    reflect_parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="With --apply: skip the interactive confirm prompt.",
+    )
+
     # v3.1.0 M6 Phase B: cross-IDE consensus check (read-only). The
     # MCP surface (consensus_check / consensus_status) is also exposed.
     consensus_parser = subparsers.add_parser(
@@ -1560,6 +1597,18 @@ def main() -> None:
             keep_data=getattr(args, "keep_data", False),
         )
         sys.exit(rc)
+    elif args.command == "reflect":
+        # v3.1.0 M8: reflections CLI.
+        from mcp_server.cli_reflect import cmd_reflect
+
+        sys.exit(
+            cmd_reflect(
+                period_days=getattr(args, "period", 7),
+                from_file=getattr(args, "from_file", None),
+                apply=getattr(args, "apply", False),
+                yes=getattr(args, "yes", False),
+            )
+        )
     elif args.command == "consensus":
         # v3.1.0 M6: cross-IDE consensus CLI.
         consensus_action = getattr(args, "consensus_action", None)

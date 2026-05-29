@@ -1419,6 +1419,55 @@ async def list_tools() -> list[Tool]:
                 "required": ["decision_id"],
             },
         ),
+        # ---- v3.1.0 M8: reflections (episodic abstraction) ----
+        Tool(
+            name="reflect",
+            description=(
+                "v3.1.0 M8: Build the source context + rendered prompt for an "
+                "LLM abstraction over recent decisions + sessions. v3.1.0 "
+                "returns {sampling_supported: False, rendered_prompt, "
+                "source_context} so callers can feed the prompt to a locally-"
+                "available LLM. The MCP sampling/createMessage RPC integration "
+                "is the v3.2 deliverable; until then, use `codevira reflect "
+                "--from-file` to commit an LLM-supplied abstraction."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "period_days": {"type": "integer", "default": 7},
+                    "dry_run": {"type": "boolean", "default": True},
+                },
+            },
+        ),
+        Tool(
+            name="get_reflections",
+            description=("v3.1.0 M8: Top-K most recent reflections (newest first)."),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "top_k": {"type": "integer", "default": 5},
+                },
+            },
+        ),
+        Tool(
+            name="list_reflections",
+            description=(
+                "v3.1.0 M8: Filtered reflection list. 'since' is an ISO 8601 "
+                "timestamp cutoff; 'tags' is set intersection (every requested "
+                "tag must appear)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "since": {"type": "string"},
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "limit": {"type": "integer", "default": 50},
+                },
+            },
+        ),
         # ---- v1.5: Deep Graph Intelligence Tools ----
         Tool(
             name="query_graph",
@@ -1860,6 +1909,26 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             from mcp_server.tools.consensus import origin_of
 
             result = origin_of(decision_id=arguments["decision_id"])
+        # ---- v3.1.0 M8: reflections dispatch ----
+        elif name == "reflect":
+            from mcp_server.tools.reflections import reflect
+
+            result = reflect(
+                period_days=arguments.get("period_days", 7),
+                dry_run=arguments.get("dry_run", True),
+            )
+        elif name == "get_reflections":
+            from mcp_server.tools.reflections import get_reflections
+
+            result = get_reflections(top_k=arguments.get("top_k", 5))
+        elif name == "list_reflections":
+            from mcp_server.tools.reflections import list_reflections
+
+            result = list_reflections(
+                since=arguments.get("since"),
+                tags=arguments.get("tags"),
+                limit=arguments.get("limit", 50),
+            )
         else:
             result = {"error": f"Unknown tool: {name}"}
 

@@ -232,3 +232,70 @@ class TestWorkingPromote:
         assert new is not None
         assert wid in (new.get("context") or "")
         assert "D000001" in (new.get("context") or "")
+
+
+class TestWorkingPromoteLifecycleEdges:
+    """Edges around the tombstone overlay that the existing tests don't
+    cover: a re-promote attempt on an already-promoted entry, and the
+    fail-open contract when check_conflict raises."""
+
+    def test_re_promote_after_promote_rejected(self, project: Path) -> None:
+        wid = working_store.add("Use rate limits", kind="observation")
+        r1 = working.working_promote(wid, to="decision")
+        assert r1["promoted"] is True
+        # Attempting to promote the same entry again must be rejected
+        # because the source is tombstoned via _promoted_to (different
+        # code path from _evicted, hence its own test).
+        r2 = working.working_promote(wid, to="decision")
+        assert r2["promoted"] is False
+        assert (
+            "tombstoned" in (r2.get("error") or "").lower()
+            or "not found" in (r2.get("error") or "").lower()
+            or "already" in (r2.get("error") or "").lower()
+        )
+
+    def test_promote_propagates_source_session_id(self, project: Path) -> None:
+        """working_promote passes session_id from the source working
+        entry to decisions_store.record so the resulting decision
+        carries the same session attribution. Integration pin."""
+        from mcp_server.storage import decisions_store
+
+        wid = working_store.add("important", session_id="custom-sess-id")
+        r = working.working_promote(wid, to="decision")
+        assert r["promoted"] is True
+        new = decisions_store.get(r["target_id"])
+        assert new is not None
+        # Decision carries the source session_id.
+        assert new.get("session_id") == "custom-sess-id"
+
+    def test_get_working_context_header_uses_min(self, project: Path) -> None:
+        """get_working_context's markdown header uses
+        min(top_k, len(entries))."""
+        from mcp_server.tools.working import get_working_context
+
+        working_store.add("a", importance=5)
+        working_store.add("b", importance=5)
+        ctx = get_working_context(top_k=10)
+        # Only 2 entries → header should say top-2, not top-10.
+        assert "top-2" in ctx["markdown"], f"header drift: {ctx['markdown'][:120]!r}"
+
+    def test_check_conflict_failure_falls_open_to_promote(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """P9: if check_conflict raises, working_promote must still
+        promote (fail-open). Without this test, a broken conflict
+        checker would silently start blocking promotion."""
+        wid = working_store.add("important observation", kind="observation")
+
+        def boom(**kwargs):
+            raise RuntimeError("check_conflict went bad")
+
+        # Patch at the import site inside working.py.
+        from mcp_server.tools import check_conflict as cc_mod
+
+        monkeypatch.setattr(cc_mod, "check_conflict", boom)
+
+        r = working.working_promote(wid, to="decision")
+        # Fail-open: promote succeeds, no warning surfaced.
+        assert r["promoted"] is True
+        assert r.get("warning") is None or "conflict" not in str(r.get("warning"))

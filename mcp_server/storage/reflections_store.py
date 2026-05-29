@@ -54,7 +54,6 @@ the same — only the inner call swaps from stub to real.
 from __future__ import annotations
 
 import logging
-import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -75,33 +74,12 @@ MAX_INPUT_BYTES = 6 * 1024  # 6 KB cap on the source context envelope
 # ──────────────────────────────────────────────────────────────────────
 
 
-# Secret-shaped patterns. The goal is "obvious accidents", not crypto
-# defeat — these are line-level redactions before the LLM sees the
-# source. We replace each match with ``<redacted:KIND>`` so the
-# downstream reader knows something was stripped (for confidence
-# scoring) without exposing the content.
-_SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
-    ("api-key", re.compile(r"(?i)\b(api[_-]?key)\s*[:=]\s*\S+")),
-    ("bearer", re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._\-+/=]{8,}")),
-    ("password", re.compile(r"(?i)\bpassword\s*[:=]\s*\S+")),
-    ("aws-akia", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
-    # Long hex / base64 blob — 32+ chars of plausible token material.
-    ("long-token", re.compile(r"\b[A-Fa-f0-9]{32,}\b")),
-    ("long-b64", re.compile(r"\b[A-Za-z0-9+/]{40,}={0,2}\b")),
+# Re-export from the shared sanitize module so the public surface
+# (``reflections_store.scrub_sensitive``, ``_SECRET_PATTERNS``) stays
+# stable for existing callers + tests.
+from mcp_server.storage.sanitize import (  # noqa: E402
+    scrub_sensitive,
 )
-
-
-def scrub_sensitive(text: str) -> str:
-    """Replace recognised secret-shaped substrings with
-    ``<redacted:kind>`` markers. Conservative — better to over-redact
-    than to ship a key into a committed reflection.
-    """
-    if not isinstance(text, str) or not text:
-        return text
-    out = text
-    for kind, pattern in _SECRET_PATTERNS:
-        out = pattern.sub(f"<redacted:{kind}>", out)
-    return out
 
 
 # ──────────────────────────────────────────────────────────────────────

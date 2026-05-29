@@ -293,3 +293,62 @@ class TestPromoteSkillToPlaybook:
         # Pass a name that slugifies to empty.
         r = skills.promote_skill_to_playbook(kid, task_type="commit", name="!!!")
         assert r["promoted"] is False
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Secret-leak surface — REGRESSION-LOCK
+# ──────────────────────────────────────────────────────────────────────
+
+
+class TestProcedureSecretSanitization:
+    """v3.1.x fix: M3 now scrubs secret-shaped substrings in procedure
+    and summary at record time. Closes the gap where pasting a stack
+    trace with an API key into a procedure would land the secret in
+    skills.jsonl, the FTS5 index, and any promoted playbook markdown."""
+
+    _SECRET = "api_key=hunter2-deadbeefcafedeadbeef"
+
+    def test_procedure_secret_redacted_at_storage(self, project: Path) -> None:
+        r = skills.record_skill(
+            name="formerly-leaky-skill",
+            procedure=f"To call the API: curl -H '{self._SECRET}'",
+            summary=f"Uses {self._SECRET}",
+        )
+        kid = r["skill_id"]
+        rec = skills_store.get(kid)
+        assert rec is not None
+        # Raw secret stripped; redaction marker present.
+        assert "hunter2-deadbeefcafedeadbeef" not in rec["procedure"]
+        assert "<redacted:api-key>" in rec["procedure"]
+        assert "hunter2-deadbeefcafedeadbeef" not in rec["summary"]
+        assert "<redacted:api-key>" in rec["summary"]
+
+    def test_promote_archived_skill_currently_succeeds(self, project: Path) -> None:
+        """LOCKED-IN current behavior: promote_skill_to_playbook rejects
+        superseded skills but silently allows archived ones — the
+        archived skill is still promoted to a markdown file. If a
+        future change tightens this to require active status, the
+        test will fail and the new policy needs an explicit assert."""
+        kid = skills_store.record(name="archived-fixture", procedure="p")
+        skills_store.mark_archived(kid, reason="manual test")
+        r = skills.promote_skill_to_playbook(kid, task_type="commit")
+        assert r["promoted"] is True, (
+            "promote_skill_to_playbook now rejects archived skills — "
+            "update this test to assert the new policy."
+        )
+
+    def test_procedure_secret_redacted_in_playbook_markdown(
+        self, project: Path
+    ) -> None:
+        r = skills.record_skill(
+            name="formerly-leaky-playbook",
+            procedure=f"export TOKEN={self._SECRET}\nthen call /api",
+        )
+        kid = r["skill_id"]
+        promo = skills.promote_skill_to_playbook(kid, task_type="api_call")
+        assert promo["promoted"] is True
+        playbook_path = Path(promo["path"])
+        body = playbook_path.read_text(encoding="utf-8")
+        # Secret stripped before persistence → never reaches the playbook.
+        assert "hunter2-deadbeefcafedeadbeef" not in body
+        assert "<redacted:api-key>" in body

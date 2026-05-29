@@ -344,3 +344,19 @@ class TestM1OriginSurface:
         assert entries, r
         # Origin field present in dict, value is None (no crash).
         assert entries[0]["origin"] is None
+
+
+class TestCheckConflictLimitCap:
+    """check_conflict caps conflicts and duplicates at limit as a
+    runaway guard."""
+
+    def test_returned_entries_capped_at_limit(self) -> None:
+        from mcp_server.tools.check_conflict import check_conflict
+        from mcp_server.storage import decisions_store
+
+        # Seed 20 near-duplicate decisions.
+        for i in range(20):
+            decisions_store.record(decision="Use bcrypt for password hashing")
+        r = check_conflict("Use bcrypt for password hashing", limit=5)
+        # Cap respected on duplicates.
+        assert len(r["duplicates"]) <= 5

@@ -301,3 +301,155 @@ class TestCommitSession:
         working_store.commit_session("s")
         archived = jsonl_store.read_all(paths.working_archived_path("s"))
         assert len(archived) == 2  # appended twice; this is the documented behavior
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Lifecycle + security gaps
+# ──────────────────────────────────────────────────────────────────────
+
+
+class TestCommitSessionExcludesAllTombstones:
+    """list_session_entries excludes BOTH _evicted AND _promoted_to
+    tombstones. Existing tests cover only the _evicted path; this
+    locks the _promoted_to exclusion so a regression cannot re-surface
+    promoted scratchpad into the canonical archive."""
+
+    def test_promoted_entries_not_archived(self, project: Path) -> None:
+        sess = "sess-promo"
+        eid_a = working_store.add("observation A", session_id=sess)
+        eid_b = working_store.add("observation B", session_id=sess)
+        # Promote A — tombstoned as _promoted_to.
+        working_store.mark_promoted(eid_a, target_id="D000123")
+
+        r = working_store.commit_session(sess)
+
+        archived_ids = {
+            row["id"] for row in jsonl_store.read_all(paths.working_archived_path(sess))
+        }
+        assert eid_a not in archived_ids, (
+            "promoted entry leaked into archive — _promoted_to tombstone "
+            "must exclude it just like _evicted does"
+        )
+        assert eid_b in archived_ids
+        assert r["committed_count"] == 1
+
+
+class TestCommitSessionPathSafety:
+    """v3.1.x fix: commit_session validates session_id against
+    [A-Za-z0-9._-]+ before interpolating into the archive path. Closes
+    the gap where a malicious session_id could escape
+    .codevira/working_archived/."""
+
+    def test_traversal_session_id_rejected(self, project: Path) -> None:
+        sess = "../escape-attempt"
+        working_store.add("payload", session_id=sess)
+        with pytest.raises(ValueError, match="filesystem-unsafe characters"):
+            working_store.commit_session(sess)
+
+    def test_absolute_path_session_id_rejected(self, project: Path) -> None:
+        with pytest.raises(ValueError, match="filesystem-unsafe characters"):
+            working_store.commit_session("/etc/passwd")
+
+    def test_safe_session_id_accepted(self, project: Path) -> None:
+        # Slug + underscores + dots + hyphens — all allowed.
+        sess = "ad-hoc_2026.05.30"
+        working_store.add("payload", session_id=sess)
+        r = working_store.commit_session(sess)
+        assert r["committed_count"] == 1
+        assert sess in (r["destination"] or "")
+
+    def test_auto_generated_session_id_is_filesystem_safe(self) -> None:
+        """The auto-generated default is the only session-id source that
+        comes from us, not the user. Lock that it's filesystem-safe by
+        construction."""
+        from mcp_server.storage.decisions_store import default_session_id
+
+        sid = default_session_id()
+        assert (
+            "/" not in sid and "\\" not in sid and ".." not in sid
+        ), f"auto session_id became unsafe: {sid!r}"
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Decay-scoring + API surface minor/polish
+# ──────────────────────────────────────────────────────────────────────
+
+
+class TestListTopKTieBreak:
+    """When two entries score identically, list_top_k sorts by ts desc:
+    newer wins. Pin with two equal-importance entries written back-to-back."""
+
+    def test_newer_entry_wins_tie(self, project: Path) -> None:
+        import time
+
+        a = working_store.add("older", importance=5)
+        time.sleep(0.01)
+        b = working_store.add("newer", importance=5)
+        ranked = working_store.list_top_k(top_k=10)
+        # list_top_k returns merged records; the W-id lives under 'id'.
+        order = [e.get("id") for e in ranked]
+        assert order.index(b) < order.index(a)
+
+
+class TestComputeScoreFutureTsClamp:
+    """If ts is in the future (clock skew), (now - ts).total_seconds()
+    is negative; _compute_score clamps via max(0.0, ...) so exp() can't
+    exceed 1. Lock it."""
+
+    def test_future_ts_does_not_inflate_score(self, project: Path) -> None:
+        from datetime import datetime, timedelta, timezone
+
+        now = datetime.now(timezone.utc)
+        future = now + timedelta(hours=1)  # 1 hour in the future
+        rec = {
+            "ts": future.isoformat(),
+            "importance": 5,
+            "access_count": 0,
+        }
+        score = working_store._compute_score(rec, now=now)
+        # Without clamp: importance * exp(+1/6) * 0.5 ≈ 5.91, well over importance.
+        # With clamp: <= importance.
+        assert score <= 5.0 + 0.001, f"future-ts score not clamped: {score}"
+
+
+class TestComputeScoreMalformedFields:
+    """_compute_score coerces importance/access_count via int(); strings
+    that aren't parseable fall back to defaults (5, 0). Coverage gap."""
+
+    def test_string_importance_falls_back_to_default(self, project: Path) -> None:
+        from datetime import datetime, timezone
+
+        rec = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "importance": "not-a-number",
+            "access_count": 0,
+        }
+        score = working_store._compute_score(rec, now=datetime.now(timezone.utc))
+        # Default importance=5 should drive the score.
+        assert score > 4.0  # ~5 * exp(0) ≈ 5
+
+    def test_string_access_count_falls_back_to_zero(self, project: Path) -> None:
+        from datetime import datetime, timezone
+
+        rec = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "importance": 5,
+            "access_count": "n/a",
+        }
+        # Should not raise; access fallback to 0.
+        score = working_store._compute_score(rec, now=datetime.now(timezone.utc))
+        assert isinstance(score, float)
+
+
+class TestWorkingStoreGet:
+    """working_store.get is public API used by working_promote.
+    Direct coverage."""
+
+    def test_returns_none_for_missing_id(self, project: Path) -> None:
+        assert working_store.get("W999999") is None
+
+    def test_returns_merged_view_for_existing_id(self, project: Path) -> None:
+        eid = working_store.add("payload")
+        rec = working_store.get(eid)
+        assert rec is not None
+        assert rec["content"] == "payload"

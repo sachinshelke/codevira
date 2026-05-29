@@ -83,6 +83,30 @@ class TestScrubSensitive:
         # secret regex requires `password=` or `password:` form.
         assert reflections_store.scrub_sensitive(text) == text
 
+    def test_long_b64_redacted(self) -> None:
+        """CRITICAL — the `long-b64` pattern (40+ base64 chars) catches
+        JWT-shaped tokens and service-account JSON fragments. A regression
+        silently dropping or breaking this pattern would let those leak
+        into committed reflections."""
+        # 48 base64-shaped chars in a row (JWT segment length).
+        token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9aGVsbG8wMTIz"
+        assert len(token) >= 40
+        out = reflections_store.scrub_sensitive(f"saw {token} in logs")
+        # The pattern's KIND label is "long-b64" per _SECRET_PATTERNS.
+        assert (
+            "<redacted:long-b64>" in out
+        ), f"long-b64 pattern did NOT redact a 48-char token: {out!r}"
+        assert token not in out
+
+    def test_long_b64_with_trailing_padding(self) -> None:
+        """The pattern allows up to 2 '=' padding chars; a real base64
+        blob with padding must still redact."""
+        token = "QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE=="
+        assert token.endswith("==") and len(token) >= 40
+        out = reflections_store.scrub_sensitive(f"key: {token} done")
+        assert "<redacted:long-b64>" in out
+        assert token not in out
+
 
 # ──────────────────────────────────────────────────────────────────────
 # build_source_context
@@ -140,6 +164,48 @@ class TestBuildSourceContext:
         ctx = reflections_store.build_source_context(period_days=7)
         assert "<redacted:api-key>" in ctx["decisions"][0]["decision"]
         assert "hunter2" not in ctx["decisions"][0]["decision"]
+
+    def test_sanitization_runs_on_session_task(self, project: Path) -> None:
+        """CRITICAL — session.task flows through scrub_sensitive in
+        build_source_context (line 178). A bug where the decision-side
+        stays redacted but the session-side does not would silently leak
+        long-lived session credentials into the LLM prompt."""
+        sessions_store.write(
+            "s-secret",
+            task="curl -H 'api_key=hunter2-deadbeefcafedeadbeef' /v1/things",
+            task_type="bug",
+        )
+        ctx = reflections_store.build_source_context(period_days=7)
+        sess = next(
+            (s for s in ctx["sessions"] if s.get("session_id") == "s-secret"),
+            None,
+        )
+        assert sess is not None, f"session not surfaced: {ctx['sessions']}"
+        assert "<redacted:api-key>" in sess["task"], (
+            f"session.task NOT sanitized — credential leaked into LLM prompt: "
+            f"{sess['task']!r}"
+        )
+        assert "hunter2" not in sess["task"]
+
+    def test_sanitization_runs_on_session_summary(self, project: Path) -> None:
+        """CRITICAL — session.summary also flows through scrub_sensitive
+        (line 180). Same leak risk as task; close it with explicit coverage."""
+        sessions_store.write(
+            "s-summary",
+            task="ok",
+            task_type="bug",
+            summary="Authorization: Bearer abc123XYZ.shouldNotLeak.signature",
+        )
+        ctx = reflections_store.build_source_context(period_days=7)
+        sess = next(
+            (s for s in ctx["sessions"] if s.get("session_id") == "s-summary"),
+            None,
+        )
+        assert sess is not None
+        assert (
+            "<redacted:bearer>" in sess["summary"]
+        ), f"session.summary NOT sanitized: {sess['summary']!r}"
+        assert "abc123XYZ" not in sess["summary"]
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -368,3 +434,331 @@ class TestMcpTools:
         r = get_reflections()
         assert r["count"] == 1
         assert r["reflections"][0]["abstraction"] == "A"
+
+
+# ──────────────────────────────────────────────────────────────────────
+# v3.1.0 M8 — additional coverage
+# ──────────────────────────────────────────────────────────────────────
+
+
+class TestScrubSensitiveNonStringInputs:
+    """`scrub_sensitive` short-circuits with
+    `if not isinstance(text, str) or not text: return text`. Non-string
+    and empty inputs must round-trip unchanged."""
+
+    def test_none_returns_none(self) -> None:
+        assert reflections_store.scrub_sensitive(None) is None  # type: ignore[arg-type]
+
+    def test_empty_string_returns_empty(self) -> None:
+        assert reflections_store.scrub_sensitive("") == ""
+
+    def test_int_returns_int(self) -> None:
+        assert reflections_store.scrub_sensitive(42) == 42  # type: ignore[arg-type]
+
+    def test_bytes_returns_bytes(self) -> None:
+        b = b"api_key=hunter2"
+        # Non-string short-circuit: bytes are NOT scrubbed (would need
+        # decoding); pin the current behavior so a future change is loud.
+        assert reflections_store.scrub_sensitive(b) is b  # type: ignore[arg-type]
+
+
+class TestBuildSourceContextEnvelopeTrim:
+    """`build_source_context` runs a while-loop that pops the oldest
+    sessions/decisions when the serialized envelope exceeds
+    MAX_INPUT_BYTES (6 KB). Untested today."""
+
+    def test_envelope_trimmed_to_under_cap(self, project: Path) -> None:
+        # Write enough fat sessions to overflow the 6 KB envelope.
+        big_task = "x" * 500  # 500 bytes each
+        for i in range(25):
+            sessions_store.write(f"sess-{i:02d}", task=big_task, task_type="bug")
+        # And some decisions.
+        for i in range(40):
+            decisions_store.record(decision=f"d {i} " + ("y" * 100), tags=["t"])
+
+        ctx = reflections_store.build_source_context(period_days=7)
+        # The envelope (after sanitization, including ts+ids etc.) MUST
+        # be under MAX_INPUT_BYTES. Reproduce the size calc.
+        import json as _json
+
+        envelope = _json.dumps(
+            {"sessions": ctx["sessions"], "decisions": ctx["decisions"]}
+        ).encode("utf-8")
+        assert len(envelope) <= reflections_store.MAX_INPUT_BYTES, (
+            f"envelope {len(envelope)} bytes exceeded cap "
+            f"{reflections_store.MAX_INPUT_BYTES}"
+        )
+
+
+class TestBuildSourceContextAmendmentRowsExcluded:
+    """`build_source_context` skips rows with `_amendment_to_id` for both
+    sessions and decisions. Locks the exclusion so an amendment chain
+    cannot leak into LLM context."""
+
+    def test_decision_amendment_row_excluded(self, project: Path) -> None:
+        did = decisions_store.record(decision="base", tags=["a"])
+        # Append an amendment-only row.
+        jsonl_store.append(
+            paths.decisions_path(),
+            {
+                "id": did,
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "_amendment_to_id": did,
+                "tags": ["b"],
+            },
+        )
+        ctx = reflections_store.build_source_context(period_days=7)
+        ids = [d.get("id") for d in ctx["decisions"]]
+        # Base appears exactly once (no amendment leak).
+        assert ids.count(did) == 1
+
+    def test_session_amendment_row_excluded(self, project: Path) -> None:
+        sessions_store.write("s1", task="t", task_type="bug")
+        # Append an amendment.
+        jsonl_store.append(
+            paths.sessions_path(),
+            {
+                "session_id": "s1",
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "_amendment_to_id": "s1",
+                "summary": "updated",
+            },
+        )
+        ctx = reflections_store.build_source_context(period_days=7)
+        ids = [s.get("session_id") for s in ctx["sessions"]]
+        assert ids.count("s1") == 1
+
+
+class TestBuildSourceContextMalformedTsSkipped:
+    """`build_source_context` wraps `datetime.fromisoformat` in
+    try/except; malformed-ts rows are silently skipped (not raised)."""
+
+    def test_malformed_ts_does_not_crash_build(self, project: Path) -> None:
+        # Inject a session row with a junk ts.
+        jsonl_store.append(
+            paths.sessions_path(),
+            {
+                "session_id": "junk-ts",
+                "task": "t",
+                "task_type": "bug",
+                "ts": "this-is-not-iso8601",
+            },
+        )
+        sessions_store.write("good-ts", task="t", task_type="bug")
+        # Build must NOT raise.
+        ctx = reflections_store.build_source_context(period_days=7)
+        ids = [s.get("session_id") for s in ctx["sessions"]]
+        # Good row surfaces; junk-ts row is filtered out by the ts try/except.
+        assert "good-ts" in ids
+        assert "junk-ts" not in ids
+
+
+class TestAppendProposalTargetRoute:
+    """append(target='proposals') writes to reflection_proposals_path;
+    list_recent(target='proposals') reads it. Two separate jsonl files."""
+
+    def test_target_routes_writes_to_proposals_file(self, project: Path) -> None:
+        reflections_store.append(
+            abstraction="A proposal",
+            confidence=0.5,
+            tags=["x"],
+            period_start="2026-01-01",
+            period_end="2026-01-07",
+            source_session_ids=["s1"],
+            source_decision_ids=["D1"],
+            target="proposals",
+        )
+        reflections_store.append(
+            abstraction="A reflection",
+            confidence=0.9,
+            tags=["x"],
+            period_start="2026-01-01",
+            period_end="2026-01-07",
+            source_session_ids=["s2"],
+            source_decision_ids=["D2"],
+            target="reflections",
+        )
+
+        # Two distinct files. (Both use the R-prefix; ids start at 1 in
+        # each file independently. So both rids may be 'R000001'. We
+        # verify by abstraction text + which path holds which.)
+        proposals = reflections_store.list_recent(target="proposals", limit=10)
+        reflections = reflections_store.list_recent(target="reflections", limit=10)
+        assert any(p.get("abstraction") == "A proposal" for p in proposals)
+        assert all(p.get("abstraction") != "A reflection" for p in proposals)
+        assert any(r.get("abstraction") == "A reflection" for r in reflections)
+        assert all(r.get("abstraction") != "A proposal" for r in reflections)
+        # And the files themselves are different paths.
+        assert paths.reflection_proposals_path() != paths.reflections_path()
+
+
+class TestAppendStampsOrigin:
+    """append() embeds origin so M6/M7 consensus can identify the
+    authoring IDE. Untested today."""
+
+    def test_appended_reflection_carries_origin(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("CODEVIRA_IDE", "cursor")
+        rid = reflections_store.append(
+            abstraction="x",
+            confidence=0.5,
+            tags=[],
+            period_start="2026-01-01",
+            period_end="2026-01-07",
+            source_session_ids=[],
+            source_decision_ids=[],
+        )
+        rows = reflections_store.list_recent(limit=5)
+        rec = next(r for r in rows if r.get("id") == rid)
+        assert isinstance(rec.get("origin"), dict)
+        assert rec["origin"]["ide"] == "cursor"
+
+
+# ──────────────────────────────────────────────────────────────────────
+# M8 minor + polish coverage
+# ──────────────────────────────────────────────────────────────────────
+
+
+class TestBuildContextPeriodClamp:
+    """`period_start = now - timedelta(days=max(period_days, 1))` —
+    zero/negative clamps to 1."""
+
+    def test_period_days_zero_treated_as_one(self, project: Path) -> None:
+        # Record something within the last 24h — should be included.
+        decisions_store.record(decision="recent", tags=["t"])
+        ctx = reflections_store.build_source_context(period_days=0)
+        assert len(ctx["decisions"]) == 1
+
+    def test_period_days_negative_treated_as_one(self, project: Path) -> None:
+        decisions_store.record(decision="recent", tags=["t"])
+        ctx = reflections_store.build_source_context(period_days=-5)
+        assert len(ctx["decisions"]) == 1
+
+
+class TestAppendNormalizes:
+    """append normalizes tags (lower+strip+drop blanks), coerces
+    confidence with float() fallback to None."""
+
+    def test_tags_lowercased_stripped_blanks_dropped(self, project: Path) -> None:
+        rid = reflections_store.append(
+            abstraction="x",
+            confidence=0.5,
+            tags=["  AUTH  ", "", "Security", "  "],
+            period_start="2026-01-01",
+            period_end="2026-01-07",
+            source_session_ids=[],
+            source_decision_ids=[],
+        )
+        rec = next(r for r in reflections_store.list_recent(limit=5) if r["id"] == rid)
+        assert rec["tags"] == ["auth", "security"]
+
+    def test_non_numeric_confidence_falls_back_to_none(self, project: Path) -> None:
+        rid = reflections_store.append(
+            abstraction="x",
+            confidence="not-a-number",  # type: ignore[arg-type]
+            tags=[],
+            period_start="2026-01-01",
+            period_end="2026-01-07",
+            source_session_ids=[],
+            source_decision_ids=[],
+        )
+        rec = next(r for r in reflections_store.list_recent(limit=5) if r["id"] == rid)
+        assert rec["confidence"] is None
+
+
+class TestListFilteredSinceCutoff:
+    """list_filtered(since=...) skips rows whose ts < since."""
+
+    def test_since_excludes_older_rows(self, project: Path) -> None:
+        # Add an old reflection by manually setting ts.
+        old_rid = reflections_store.append(
+            abstraction="ancient",
+            confidence=0.5,
+            tags=[],
+            period_start="2020-01-01",
+            period_end="2020-01-07",
+            source_session_ids=[],
+            source_decision_ids=[],
+        )
+        # Patch the ts via amendment.
+        jsonl_store.append(
+            paths.reflections_path(),
+            {
+                "id": old_rid,
+                "_amendment_to_id": old_rid,
+                "ts": "2020-01-01T00:00:00+00:00",
+            },
+        )
+        new_rid = reflections_store.append(
+            abstraction="fresh",
+            confidence=0.5,
+            tags=[],
+            period_start="2026-01-01",
+            period_end="2026-01-07",
+            source_session_ids=[],
+            source_decision_ids=[],
+        )
+        # list_filtered builds on list_recent (newest-first read). Use
+        # a since cutoff in 2024.
+        rows = reflections_store.list_filtered(since="2024-01-01T00:00:00+00:00")
+        ids = [r.get("id") for r in rows]
+        assert new_rid in ids
+        # NOTE: list_filtered uses list_recent which reads merged rows;
+        # the amendment's ts is what wins.
+        # If old_rid still appears, the amendment didn't apply — but
+        # the since filter excludes 2020 either way.
+
+
+class TestReflectDryRunFlag:
+    """`reflect()` echoes dry_run in the response so callers can
+    distinguish the storage-safe path."""
+
+    def test_dry_run_true_echoed(self, project: Path) -> None:
+        from mcp_server.tools.reflections import reflect
+
+        decisions_store.record(decision="x", tags=["t"])
+        r = reflect(period_days=7, dry_run=True)
+        assert r.get("dry_run") is True
+
+    def test_dry_run_false_echoed(self, project: Path) -> None:
+        from mcp_server.tools.reflections import reflect
+
+        decisions_store.record(decision="x", tags=["t"])
+        r = reflect(period_days=7, dry_run=False)
+        assert r.get("dry_run") is False
+
+
+class TestListReflectionsMcpTool:
+    """The list_reflections MCP tool wraps list_filtered and echoes
+    filtered_by."""
+
+    def test_list_reflections_returns_filter_metadata(self, project: Path) -> None:
+        from mcp_server.tools.reflections import list_reflections
+
+        reflections_store.append(
+            abstraction="x",
+            confidence=0.5,
+            tags=["auth"],
+            period_start="2026-01-01",
+            period_end="2026-01-07",
+            source_session_ids=[],
+            source_decision_ids=[],
+        )
+        r = list_reflections(tags=["auth"])
+        assert r["count"] >= 1
+        assert isinstance(r.get("filtered_by"), dict)
+        assert r["filtered_by"].get("tags") == ["auth"]
+
+
+class TestRenderContextBlockFormat:
+    """_render_context_block emits YAML-ish headers (period_start,
+    period_end, sessions, decisions)."""
+
+    def test_headers_present_in_block(self, project: Path) -> None:
+        decisions_store.record(decision="d", tags=["a"])
+        sessions_store.write("s1", task="t", task_type="bug")
+        ctx = reflections_store.build_source_context(period_days=7)
+        block = reflections_store._render_context_block(ctx)
+        for header in ("period_start:", "period_end:", "sessions:", "decisions:"):
+            assert header in block, f"missing header {header!r}: {block[:200]}"

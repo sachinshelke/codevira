@@ -29,6 +29,7 @@ import sys
 import threading
 from pathlib import Path
 
+import pytest
 
 import mcp_server.ide_inject as ide_inject
 from mcp_server.ide_inject import (
@@ -1404,6 +1405,46 @@ class TestClaudeCodeCliShellOut:
         # We did NOT write to the file directly \u2014 that's the CLI's job.
         assert not config_file.exists()
 
+    def test_cli_argv_includes_env_codevira_ide(self, tmp_path, monkeypatch):
+        """CRITICAL \u2014 the CLI-shellout path (preferred when claude is on PATH)
+        MUST forward --env CODEVIRA_IDE=claude_code so every write tags origin.
+
+        Without this, the dominant deployment (claude CLI installed) silently
+        produces 'unknown' origins and every cross-IDE conflict reads as
+        'unknown vs <other>'.
+        """
+        config_file = tmp_path / "claude.json"
+        monkeypatch.setattr(
+            ide_inject, "_claude_global_config_path", lambda: config_file
+        )
+        monkeypatch.setattr(ide_inject, "_claude_cli_path", lambda: "/fake/claude")
+
+        captured: list[list[str]] = []
+
+        def fake_run(cmd, *args, **kwargs):
+            captured.append(list(cmd))
+
+            class _R:
+                returncode = 0
+                stderr = ""
+                stdout = "Added"
+
+            return _R()
+
+        monkeypatch.setattr("subprocess.run", fake_run)
+        inject_global_claude_code("/usr/bin/codevira", "python3")
+
+        # captured[1] is the `mcp add` call (captured[0] is the remove).
+        add_argv = captured[1]
+        # Inline check: --env CODEVIRA_IDE=claude_code must appear as adjacent
+        # tokens. We pair-scan rather than just checking membership so a
+        # regression that puts CODEVIRA_IDE in the wrong flag slot is caught.
+        pairs = list(zip(add_argv, add_argv[1:]))
+        assert ("--env", "CODEVIRA_IDE=claude_code") in pairs, (
+            f"--env CODEVIRA_IDE=claude_code not forwarded to claude CLI; "
+            f"argv was {add_argv}"
+        )
+
     def test_falls_back_to_direct_merge_when_cli_missing(self, tmp_path, monkeypatch):
         """When claude CLI is NOT on PATH, fall back to direct merge of
         ~/.claude.json."""
@@ -1704,3 +1745,233 @@ class TestAntigravity20Paths:
             cfg = home / ".gemini" / sub / "mcp_config.json"
             data = json.loads(cfg.read_text())
             assert any(k.startswith("codevira-") for k in data["mcpServers"])
+
+
+# ──────────────────────────────────────────────────────────────────────
+# v3.1.0 M1 — origin tag (CODEVIRA_IDE) on every injector path
+# ──────────────────────────────────────────────────────────────────────
+
+
+class TestM1OriginStampGlobalClaudeCode:
+    """The direct-merge fallback path (CLI absent / fails) MUST set
+    env.CODEVIRA_IDE=claude_code so writes from a direct-install user
+    still tag origin. Without this, the second-most-common deployment
+    silently produces 'unknown' origins."""
+
+    def test_direct_merge_fallback_stamps_ide(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "claude.json"
+        monkeypatch.setattr(
+            ide_inject, "_claude_global_config_path", lambda: config_file
+        )
+        monkeypatch.setattr(ide_inject, "_claude_cli_path", lambda: None)
+
+        inject_global_claude_code("/usr/bin/codevira", "python3")
+
+        data = json.loads(config_file.read_text())
+        entry = data["mcpServers"]["codevira"]
+        assert entry["env"]["CODEVIRA_IDE"] == "claude_code"
+
+
+class TestM1OriginStampAntigravity:
+    """inject_global_antigravity stamps env.CODEVIRA_IDE='antigravity' on
+    base_config BEFORE wrapping in the $typeName envelope. A spread-order
+    bug could silently drop env from one or both targets."""
+
+    def test_global_stamps_ide_in_all_surfaces(self, tmp_path, monkeypatch):
+        a = tmp_path / "a.json"
+        b = tmp_path / "b.json"
+        monkeypatch.setattr(ide_inject, "_antigravity_write_targets", lambda: [a, b])
+
+        ide_inject.inject_global_antigravity("/usr/bin/codevira", "python3")
+
+        for path in (a, b):
+            data = json.loads(path.read_text())
+            entry = data["mcpServers"]["codevira"]
+            assert (
+                entry["env"]["CODEVIRA_IDE"] == "antigravity"
+            ), f"target {path} missing CODEVIRA_IDE stamp"
+            # And the envelope survived too.
+            assert "$typeName" in entry
+            assert entry["$typeName"].startswith("exa.cascade_plugins_pb")
+
+    def test_per_project_stamps_ide_on_dict_spread(self, tmp_path, monkeypatch):
+        """_inject_antigravity stamps env on each per-project entry.
+        Locks in the dict-spread so a regression that loses env can't
+        silently ship."""
+        config_file = tmp_path / "mcp_config.json"
+        monkeypatch.setattr(
+            ide_inject, "_antigravity_write_targets", lambda: [config_file]
+        )
+        project = tmp_path / "proj"
+        project.mkdir()
+
+        ide_inject._inject_antigravity(
+            project, "/usr/bin/codevira", "python3", "myproj"
+        )
+
+        data = json.loads(config_file.read_text())
+        entry = next(iter(data["mcpServers"].values()))
+        assert entry["env"]["CODEVIRA_IDE"] == "antigravity"
+
+
+class TestRemoveCodeviraFromConfig:
+    """remove_codevira_from_config is a public uninstall surface with
+    documented semantics — removes 'codevira' AND any 'codevira-<x>'
+    Antigravity per-project entries. Has zero tests in the existing suite."""
+
+    def test_removes_plain_key(self, tmp_path):
+        cfg = tmp_path / "c.json"
+        cfg.write_text(
+            json.dumps({"mcpServers": {"codevira": {"x": 1}, "other": {"y": 2}}})
+        )
+        assert ide_inject.remove_codevira_from_config(cfg) is True
+        data = json.loads(cfg.read_text())
+        assert "codevira" not in data["mcpServers"]
+        assert "other" in data["mcpServers"]
+
+    def test_removes_antigravity_prefix_keys(self, tmp_path):
+        cfg = tmp_path / "c.json"
+        cfg.write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "codevira-myproj": {"x": 1},
+                        "codevira-otherproj": {"x": 2},
+                        "codevira": {"x": 3},
+                        "unrelated-server": {"x": 4},
+                    }
+                }
+            )
+        )
+        assert ide_inject.remove_codevira_from_config(cfg) is True
+        data = json.loads(cfg.read_text())
+        servers = data["mcpServers"]
+        # All three codevira* entries gone.
+        assert all(not k.startswith("codevira") for k in servers)
+        # Unrelated server preserved.
+        assert "unrelated-server" in servers
+
+    def test_returns_false_when_nothing_to_remove(self, tmp_path):
+        cfg = tmp_path / "c.json"
+        cfg.write_text(json.dumps({"mcpServers": {"only-other": {"x": 1}}}))
+        assert ide_inject.remove_codevira_from_config(cfg) is False
+        # File unchanged.
+        data = json.loads(cfg.read_text())
+        assert data["mcpServers"] == {"only-other": {"x": 1}}
+
+    def test_missing_file_returns_false(self, tmp_path):
+        assert ide_inject.remove_codevira_from_config(tmp_path / "nope.json") is False
+
+
+class TestM1UserEnvKeysOnTheCodeviraEntry:
+    """`_merge_mcp_config` replaces the entire codevira entry (it is a
+    'non-destructive' merge ONLY in the sense that it doesn't touch OTHER
+    servers — the codevira entry itself is OVERWRITTEN). This test
+    locks in that behavior so a future change to a deep-merge requires
+    explicit test update. Users who have customized codevira's env keys
+    on disk should be aware this is the current contract.
+
+    For OTHER servers (non-codevira) in the same config, the merge IS
+    non-destructive — that's also locked in below.
+    """
+
+    def test_other_server_entries_are_untouched(self, tmp_path, monkeypatch):
+        """Pre-seeded NON-codevira entries must survive an inject."""
+        config_file = tmp_path / "claude.json"
+        config_file.write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "my-other-server": {
+                            "command": "/my/server",
+                            "env": {"HTTP_PROXY": "http://corp:3128"},
+                        }
+                    }
+                }
+            )
+        )
+        monkeypatch.setattr(
+            ide_inject, "_claude_global_config_path", lambda: config_file
+        )
+        monkeypatch.setattr(ide_inject, "_claude_cli_path", lambda: None)
+
+        inject_global_claude_code("/usr/bin/codevira", "python3")
+
+        data = json.loads(config_file.read_text())
+        # Other server fully preserved.
+        other = data["mcpServers"]["my-other-server"]
+        assert other["command"] == "/my/server"
+        assert other["env"]["HTTP_PROXY"] == "http://corp:3128"
+        # And codevira appeared with its M1 stamp.
+        assert data["mcpServers"]["codevira"]["env"]["CODEVIRA_IDE"] == "claude_code"
+
+    def test_codevira_entry_is_currently_replaced_not_merged(
+        self, tmp_path, monkeypatch
+    ):
+        """Lock current behavior: the codevira entry is REPLACED whole.
+        If we ever switch to a deep-merge that preserves user-set keys
+        on the codevira entry, this test must be flipped to assert
+        the user key survives — the change deserves the visibility."""
+        config_file = tmp_path / "claude.json"
+        config_file.write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "codevira": {
+                            "command": "/old/path",
+                            "env": {"USER_CUSTOM_FLAG": "1"},
+                        }
+                    }
+                }
+            )
+        )
+        monkeypatch.setattr(
+            ide_inject, "_claude_global_config_path", lambda: config_file
+        )
+        monkeypatch.setattr(ide_inject, "_claude_cli_path", lambda: None)
+
+        inject_global_claude_code("/usr/bin/codevira", "python3")
+
+        data = json.loads(config_file.read_text())
+        env = data["mcpServers"]["codevira"]["env"]
+        # Stamp present.
+        assert env["CODEVIRA_IDE"] == "claude_code"
+        # Locked-in current behavior: user's custom key NOT preserved.
+        assert "USER_CUSTOM_FLAG" not in env, (
+            "_merge_mcp_config now deep-merges the codevira entry. "
+            "Update this test to assert USER_CUSTOM_FLAG survives."
+        )
+
+
+class TestM1AntigravityMultiTargetFailure:
+    """When write #2 of a multi-target Antigravity inject fails, write #1
+    has already happened. The current code has no rollback — this test
+    locks in that behaviour so a future atomicity change must be
+    explicit (the test would need updating)."""
+
+    def test_partial_state_on_second_target_failure(self, tmp_path, monkeypatch):
+        ok_target = tmp_path / "ok.json"
+        # bad_target points into a non-existent parent dir; _write_json_safe
+        # would need to mkdir it. We force a failure by making the parent
+        # itself a file (so mkdir raises NotADirectoryError).
+        bad_parent = tmp_path / "blocked"
+        bad_parent.write_text("not a dir")
+        bad_target = bad_parent / "x.json"
+
+        monkeypatch.setattr(
+            ide_inject,
+            "_antigravity_write_targets",
+            lambda: [ok_target, bad_target],
+        )
+
+        # Expect: write #1 succeeds, write #2 raises → propagates.
+        with pytest.raises(Exception):  # noqa: BLE001 — implementation may vary
+            ide_inject.inject_global_antigravity("/usr/bin/codevira", "python3")
+
+        # Lock current behavior: write #1 IS stamped on disk (no rollback).
+        assert ok_target.is_file(), (
+            "write #1 should be on disk (current non-atomic behavior). "
+            "If atomicity has been added, update this test."
+        )
+        data = json.loads(ok_target.read_text())
+        assert data["mcpServers"]["codevira"]["env"]["CODEVIRA_IDE"] == "antigravity"

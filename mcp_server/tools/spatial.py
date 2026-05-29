@@ -368,35 +368,47 @@ def _bfs_distances(start: str, *, max_depth: int) -> dict[str, int]:
     distances: dict[str, int] = {start: 0}
     frontier: set[str] = {start}
     try:
-        for depth in range(1, max_depth + 1):
-            if not frontier:
-                break
-            # Pull neighbors for the current frontier in one query.
-            placeholders = ",".join(["?"] * len(frontier))
-            cursor = conn.execute(
-                f"""
-                SELECT DISTINCT target_id AS neighbor FROM edges
-                WHERE source_id IN ({placeholders})
-                UNION
-                SELECT DISTINCT source_id AS neighbor FROM edges
-                WHERE target_id IN ({placeholders})
-                """,
-                list(frontier) + list(frontier),
+        try:
+            for depth in range(1, max_depth + 1):
+                if not frontier:
+                    break
+                # Pull neighbors for the current frontier in one query.
+                placeholders = ",".join(["?"] * len(frontier))
+                cursor = conn.execute(
+                    f"""
+                    SELECT DISTINCT target_id AS neighbor FROM edges
+                    WHERE source_id IN ({placeholders})
+                    UNION
+                    SELECT DISTINCT source_id AS neighbor FROM edges
+                    WHERE target_id IN ({placeholders})
+                    """,
+                    list(frontier) + list(frontier),
+                )
+                next_frontier: set[str] = set()
+                for row in cursor.fetchall():
+                    neighbor = row["neighbor"]
+                    if not neighbor or neighbor in distances:
+                        continue
+                    # Edges include both file nodes ("file:path") and
+                    # symbol nodes ("file:path::sym"). Normalize to the
+                    # file component so the result list matches
+                    # activity_store node_ids (per-file paths).
+                    file_neighbor = _node_id_to_file_path(neighbor)
+                    if file_neighbor and file_neighbor not in distances:
+                        distances[file_neighbor] = depth
+                        next_frontier.add(neighbor)
+                frontier = next_frontier
+        except sqlite3.DatabaseError as exc:
+            # v3.1.x bug fix: a junk-bytes db or a schema with the
+            # `edges` table missing makes the query raise. The connect-
+            # time guard above only catches connection setup failures;
+            # widen the safety net so spatial_nearby degrades to the
+            # neighborhood-only fallback instead of crashing.
+            logger.warning(
+                "spatial: BFS query failed (%s); falling back to self-only",
+                exc,
             )
-            next_frontier: set[str] = set()
-            for row in cursor.fetchall():
-                neighbor = row["neighbor"]
-                if not neighbor or neighbor in distances:
-                    continue
-                # Edges include both file nodes ("file:path") and symbol
-                # nodes ("file:path::sym"). Normalize to the file
-                # component so the result list matches activity_store
-                # node_ids (which are per-file paths).
-                file_neighbor = _node_id_to_file_path(neighbor)
-                if file_neighbor and file_neighbor not in distances:
-                    distances[file_neighbor] = depth
-                    next_frontier.add(neighbor)
-            frontier = next_frontier
+            distances = {start: 0}
     finally:
         try:
             conn.close()

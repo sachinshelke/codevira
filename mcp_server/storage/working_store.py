@@ -74,6 +74,7 @@ convention decisions.jsonl uses).
 from __future__ import annotations
 
 import math
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -327,16 +328,45 @@ def _build_compact_predicate(path):
     return predicate
 
 
+_SAFE_SESSION_ID = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+def _validate_session_id_for_filesystem(session_id: str) -> None:
+    """Reject session_ids that would escape the working_archived dir.
+
+    working_archived_path interpolates the session_id into a filename,
+    so a value like ``../../etc/foo`` would land outside .codevira/.
+    The safe set is alphanumerics + ``. _ -``; everything else is
+    rejected with a clear error.
+    """
+    if not isinstance(session_id, str) or not session_id:
+        raise ValueError(
+            "working_store.commit_session: session_id must be a non-empty string"
+        )
+    if not _SAFE_SESSION_ID.match(session_id):
+        raise ValueError(
+            f"working_store.commit_session: session_id {session_id!r} contains "
+            "filesystem-unsafe characters; only [A-Za-z0-9._-] is permitted."
+        )
+
+
 def commit_session(session_id: str) -> dict[str, Any]:
     """Copy a session's live entries from ``working.jsonl`` to
     ``.codevira/working_archived/<session_id>.jsonl``.
+
+    The session_id is validated against ``[A-Za-z0-9._-]+`` before
+    being interpolated into the destination path (P9: the archive
+    dir must never be escapable from user input).
 
     The original cache file is left untouched (the user may want to
     keep iterating). Idempotent: re-running for the same session_id
     appends fresh rows (the destination is its own append-only log).
 
     Returns ``{"session_id", "committed_count", "destination"}``.
+
+    Raises ``ValueError`` if ``session_id`` contains unsafe characters.
     """
+    _validate_session_id_for_filesystem(session_id)
     paths.ensure_dirs()
     entries = list_session_entries(session_id)
     if not entries:

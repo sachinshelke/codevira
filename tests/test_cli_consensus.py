@@ -278,3 +278,149 @@ class TestSessionContextConsensusPanel:
             ctx = learning.get_session_context()
         assert ctx["consensus"]["pending_count"] >= 1
         assert ctx["consensus"]["top"][0]["conflict_kind"] == "duplicate"
+
+
+# ──────────────────────────────────────────────────────────────────────
+# v3.1.0 M6 — additional coverage
+# ──────────────────────────────────────────────────────────────────────
+
+
+class TestAsymmetricConflictKind:
+    """The asymmetric branch in _check_pair fires when one of the pair
+    has do_not_revert AND overlap >= threshold AND jaccard < dup. Not
+    covered today — only the duplicate branch is exercised."""
+
+    def test_asymmetric_conflict_materialized(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("CODEVIRA_IDE", "claude_code")
+        # claude_code's protected decision — long enough to have shared
+        # tokens with a partial-overlap competitor.
+        decisions_store.record(
+            decision="Always rate-limit login attempts per IP and per user account",
+            do_not_revert=True,
+        )
+        # cursor writes a shorter decision that strongly overlaps with
+        # the protected one but isn't a duplicate.
+        monkeypatch.setenv("CODEVIRA_IDE", "cursor")
+        decisions_store.record(
+            decision="Rate-limit login attempts per IP",
+        )
+        # Scan from cursor's POV.
+        summary = consensus_store.scan_and_materialize()
+        assert summary["conflicts_recorded"] >= 1
+        pending = consensus_store.list_pending()
+        # At least one row should be the asymmetric kind.
+        assert any(
+            p["conflict_kind"] == "asymmetric-conflict" for p in pending
+        ), f"no asymmetric-conflict row: {pending}"
+
+
+class TestScanFromCallTimeIde:
+    """scan_and_materialize must read CODEVIRA_IDE at call-time (lazy
+    import of origin), not module-import-time. Verify by setting and
+    re-setting the env across two scans."""
+
+    def test_two_idents_independent_scans(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("CODEVIRA_IDE", "claude_code")
+        decisions_store.record(decision="X by claude_code")
+        # Cursor scan first.
+        monkeypatch.setenv("CODEVIRA_IDE", "cursor")
+        s1 = consensus_store.scan_and_materialize()
+        assert s1["current_ide"] == "cursor"
+        # Switch identity mid-process and rescan.
+        monkeypatch.setenv("CODEVIRA_IDE", "windsurf")
+        s2 = consensus_store.scan_and_materialize()
+        assert s2["current_ide"] == "windsurf"
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Minor + polish coverage
+# ──────────────────────────────────────────────────────────────────────
+
+
+class TestScanWithEmptyTokenization:
+    """_check_pair returns (None, 0.0) when either side's tokenize is
+    empty (punctuation-only)."""
+
+    def test_punctuation_only_decisions_yield_no_conflict(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("CODEVIRA_IDE", "claude_code")
+        decisions_store.record(decision="!!! ??? ...")
+        monkeypatch.setenv("CODEVIRA_IDE", "cursor")
+        decisions_store.record(decision="!!! ??? ...")
+        summary = consensus_store.scan_and_materialize()
+        # Both tokenize empty → no conflicts.
+        assert summary["conflicts_recorded"] == 0
+
+
+class TestCheckpointWriteSemantics:
+    """write_checkpoint stamps SCHEMA_V and ISO ts; consecutive writes
+    overwrite the previous row for the same IDE."""
+
+    def test_checkpoint_overwrites_not_appends(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        consensus_store.write_checkpoint("claude_code", last_seen_decision_id="D000001")
+        consensus_store.write_checkpoint("claude_code", last_seen_decision_id="D000002")
+        cp = consensus_store.read_checkpoint("claude_code")
+        assert cp["last_seen_decision_id"] == "D000002"
+
+    def test_checkpoint_ts_is_iso_tz_aware(self, project: Path) -> None:
+        from datetime import datetime
+
+        consensus_store.write_checkpoint("cursor", last_seen_decision_id="D000001")
+        cp = consensus_store.read_checkpoint("cursor")
+        ts = cp.get("last_seen_at")
+        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        assert dt.tzinfo is not None
+
+
+class TestConsensusStatusTopK:
+    """consensus_status: top_k=0 returns 0 pending rows; top_k > pending
+    returns all available."""
+
+    def test_top_k_zero_returns_empty(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("CODEVIRA_IDE", "claude_code")
+        decisions_store.record(
+            decision="Use bcrypt for password hashing", do_not_revert=True
+        )
+        monkeypatch.setenv("CODEVIRA_IDE", "cursor")
+        decisions_store.record(decision="Use bcrypt for password hashing")
+        consensus_store.scan_and_materialize()
+        r = consensus_status(top_k=0)
+        # top_k=0 → slice [:0] → empty pending list.
+        assert r["pending"] == []
+
+    def test_top_k_larger_than_count_returns_all(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("CODEVIRA_IDE", "claude_code")
+        decisions_store.record(
+            decision="Use bcrypt for password hashing", do_not_revert=True
+        )
+        monkeypatch.setenv("CODEVIRA_IDE", "cursor")
+        decisions_store.record(decision="Use bcrypt for password hashing")
+        consensus_store.scan_and_materialize()
+        r = consensus_status(top_k=999)
+        assert r["count"] >= 1
+        assert len(r["pending"]) == r["count"]
+
+
+class TestShortSummaryTruncation:
+    """_short_summary returns text unchanged if <=80 chars else
+    text[:79] + '…'."""
+
+    def test_short_text_unchanged(self) -> None:
+        assert consensus_store._short_summary("short text") == "short text"
+
+    def test_long_text_truncated_with_ellipsis(self) -> None:
+        long = "x" * 100
+        out = consensus_store._short_summary(long)
+        assert len(out) == 80
+        assert out.endswith("…")

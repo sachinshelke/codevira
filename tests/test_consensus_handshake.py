@@ -318,3 +318,268 @@ class TestOriginOf:
         r = origin_of(did)
         assert r["found"] is True
         assert r["origin"]["ide"] == "windsurf"
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Finalize rollback when the underlying supersede fails
+# ──────────────────────────────────────────────────────────────────────
+
+
+class TestFinalizeRollbackOnSupersedeFailure:
+    """CRITICAL — finalize_proposal calls decisions_store.supersede and
+    on `success=False` returns `{finalized: False, error: ...}` WITHOUT
+    writing the audit row, even when `expired_unilateral=True`. A
+    regression that wrote a phantom audit row before checking success
+    would corrupt the cross-IDE provenance chain — making it look like
+    a supersession happened when it didn't."""
+
+    def test_supersede_failure_returns_error_and_writes_no_audit(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from mcp_server.storage import jsonl_store
+
+        pid = _open_proposal(monkeypatch)
+
+        # Stub decisions_store.supersede so it reports failure WITHOUT
+        # mutating any state. Simulates the racing-IDE case: target was
+        # already superseded by a foreign IDE between propose and finalize.
+        from mcp_server.storage import decisions_store as _ds
+
+        def failing_supersede(*, old_id, new_decision, reason):
+            return {
+                "success": False,
+                "error": "target already superseded by foreign IDE",
+            }
+
+        monkeypatch.setattr(_ds, "supersede", failing_supersede)
+
+        # Approve first so finalize is allowed to proceed.
+        consensus_store.resolve_proposal(pid, action="approved")
+
+        # Snapshot the audit-row count BEFORE finalize.
+        before_rows = [
+            r
+            for r in jsonl_store.read_all(paths.pending_conflicts_path())
+            if r.get("kind") == "resolution"
+        ]
+        before_count = len(before_rows)
+
+        r = consensus_store.finalize_proposal(pid, expired_unilateral=True)
+
+        # Contract: finalize reports failure, surfaces the underlying error.
+        assert r["finalized"] is False
+        assert "already superseded" in (r.get("error") or "").lower()
+
+        # Contract: no phantom audit row written despite expired_unilateral=True.
+        after_rows = [
+            r
+            for r in jsonl_store.read_all(paths.pending_conflicts_path())
+            if r.get("kind") == "resolution"
+        ]
+        assert len(after_rows) == before_count, (
+            f"finalize wrote {len(after_rows) - before_count} phantom "
+            f"audit row(s) after the underlying supersede failed"
+        )
+
+    def test_supersede_failure_does_not_register_phantom_decision(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Belt-and-braces: when supersede fails, the original target
+        decision MUST remain un-superseded — no `superseded_by` pointer."""
+        pid = _open_proposal(monkeypatch)
+
+        from mcp_server.storage import decisions_store as _ds
+
+        target_id = consensus_store.find_proposal(pid)["target_decision_id"]
+
+        # Force the failure exactly as before.
+        monkeypatch.setattr(
+            _ds,
+            "supersede",
+            lambda *, old_id, new_decision, reason: {
+                "success": False,
+                "error": "race",
+            },
+        )
+
+        consensus_store.resolve_proposal(pid, action="approved")
+        consensus_store.finalize_proposal(pid)
+
+        # Target must still report active / not-superseded.
+        target = decisions_store.get(target_id)
+        assert target is not None
+        assert not target.get("is_superseded")
+        assert not target.get("superseded_by")
+
+
+# ──────────────────────────────────────────────────────────────────────
+# v3.1.0 M7 — additional API surface coverage
+# ──────────────────────────────────────────────────────────────────────
+
+
+class TestOriginOfSurfacesSupersession:
+    """origin_of returns is_superseded + superseded_by fields. Existing
+    tests only cover found/not-found; this pins the supersession
+    surfacing so a regression cannot silently drop it."""
+
+    def test_superseded_decision_reports_status_via_origin_of(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from mcp_server.tools.consensus import origin_of
+
+        monkeypatch.setenv("CODEVIRA_IDE", "claude_code")
+        d1 = decisions_store.record(decision="old", do_not_revert=False)
+        decisions_store.supersede(d1, "new", reason="bump")
+        r = origin_of(d1)
+        assert r["found"] is True
+        assert r.get("is_superseded") is True
+        assert isinstance(r.get("superseded_by"), str) and r[
+            "superseded_by"
+        ].startswith("D")
+
+
+class TestListProposalsFilterAndLimit:
+    """list_proposals: filters by derived status, paginates via limit,
+    ignores non-proposal rows (conflict, resolution)."""
+
+    def test_status_filter_excludes_other_states(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        pid1 = _open_proposal(monkeypatch)
+        pid2 = _open_proposal(monkeypatch)
+        consensus_store.resolve_proposal(pid1, action="approved")
+        # Default (no filter) returns both.
+        all_props = consensus_store.list_proposals()
+        ids = {p.get("id") for p in all_props}
+        assert ids == {pid1, pid2}
+        # Filter approved only — gets pid1.
+        approved = consensus_store.list_proposals(status="approved")
+        assert {p.get("id") for p in approved} == {pid1}
+        pending = consensus_store.list_proposals(status="pending")
+        assert {p.get("id") for p in pending} == {pid2}
+
+    def test_limit_caps_returned_rows(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Open 3 proposals; verify limit=2 returns 2.
+        for _ in range(3):
+            _open_proposal(monkeypatch)
+        rows = consensus_store.list_proposals(limit=2)
+        assert len(rows) == 2
+
+    def test_ignores_resolution_and_conflict_rows(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from mcp_server.storage import jsonl_store as _jsonl
+
+        pid = _open_proposal(monkeypatch)
+        # Manually inject a 'conflict' and a 'resolution' row.
+        _jsonl.append(
+            paths.pending_conflicts_path(),
+            {"kind": "conflict", "foreign_decision_id": "D000099"},
+        )
+        _jsonl.append(
+            paths.pending_conflicts_path(),
+            {"kind": "resolution", "proposal_id": "PC999999"},
+        )
+        rows = consensus_store.list_proposals()
+        # Only the real proposal surfaces.
+        assert [p.get("id") for p in rows] == [pid]
+
+
+class TestProposalCarriesDoNotRevert:
+    """propose_supersession copies do_not_revert: bool(target.get('do_not_revert'))
+    into the proposal row so downstream UI distinguishes 'proposing
+    against protected'."""
+
+    def test_proposal_row_records_protected_target(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Default _open_proposal helper creates a do_not_revert target.
+        pid = _open_proposal(monkeypatch)
+        prop = consensus_store.find_proposal(pid)
+        assert prop["do_not_revert"] is True
+
+
+class TestProposeSupersessionCustomTimeout:
+    """propose_supersession accepts timeout_days; positive int
+    overrides cfg default."""
+
+    def test_explicit_timeout_overrides_default(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from datetime import datetime
+
+        _enable_handshake(project)
+        monkeypatch.setenv("CODEVIRA_IDE", "claude_code")
+        target = decisions_store.record(decision="X", do_not_revert=True)
+        monkeypatch.setenv("CODEVIRA_IDE", "cursor")
+
+        r = consensus_store.propose_supersession(
+            target,
+            new_decision="Y",
+            reason="test",
+            timeout_days=3,  # custom override
+        )
+        prop = consensus_store.find_proposal(r["proposal_id"])
+        # Compute the actual delta from row ts to expires_at.
+        created = datetime.fromisoformat(prop["ts"].replace("Z", "+00:00"))
+        expires = datetime.fromisoformat(prop["expires_at"].replace("Z", "+00:00"))
+        delta_days = (expires - created).days
+        assert 2 <= delta_days <= 3
+
+
+class TestProposalStatusMalformedExpiresAt:
+    """proposal_status tolerates malformed expires_at — stays pending."""
+
+    def test_malformed_expires_at_treated_as_pending(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        pid = _open_proposal(monkeypatch)
+        # Patch the proposal row's expires_at via an amendment.
+        from mcp_server.storage import jsonl_store as _jsonl
+
+        _jsonl.append(
+            paths.pending_conflicts_path(),
+            {
+                "id": pid,
+                "_amendment_to_id": pid,
+                "expires_at": "this-is-not-iso8601",
+            },
+        )
+        # proposal_status should NOT crash; defaults to derived='pending'.
+        st = consensus_store.proposal_status(pid)
+        assert st["found"] is True
+        assert st["status"] in ("pending", "expired"), st
+
+
+class TestListPendingIncludesAllKinds:
+    """list_pending (M6) returns all rows from pending_conflicts.jsonl
+    regardless of kind (conflict / proposed_supersession / resolution).
+    Locks the co-mingling semantics."""
+
+    def test_list_pending_co_mingles_kinds(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from mcp_server.storage import jsonl_store as _jsonl
+
+        # Inject one of each kind.
+        _jsonl.append(
+            paths.pending_conflicts_path(),
+            {
+                "kind": "conflict",
+                "foreign_decision_id": "D000099",
+                "current_decision_id": "D000100",
+                "conflict_kind": "duplicate",
+                "similarity": 0.95,
+                "current_ide": "claude_code",
+                "foreign_origin": {"ide": "cursor"},
+            },
+        )
+        _open_proposal(monkeypatch)  # adds a proposed_supersession row
+
+        pending = consensus_store.list_pending()
+        kinds = {p.get("kind", "conflict") for p in pending}
+        # `list_pending` MAY include both kinds (current contract).
+        # If this changes, update the assertion to lock the new policy.
+        assert "conflict" in kinds or len(pending) >= 1

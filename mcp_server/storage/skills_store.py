@@ -80,7 +80,13 @@ import math
 from datetime import datetime, timezone
 from typing import Any
 
-from mcp_server.storage import fts5_index, jsonl_store, origin as origin_module, paths
+from mcp_server.storage import (
+    fts5_index,
+    jsonl_store,
+    origin as origin_module,
+    paths,
+    sanitize,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -136,11 +142,20 @@ def record(
     if not isinstance(procedure, str) or not procedure.strip():
         raise ValueError("skills_store.record: procedure must be a non-empty string")
     procedure = procedure.strip()
+    # Byte cap is checked on RAW input — otherwise a caller could bypass
+    # the cap by tucking a giant blob between the sanitizer's secret
+    # patterns (long b64 collapses to "<redacted:long-b64>").
     if len(procedure.encode("utf-8")) > _PROCEDURE_MAX_BYTES:
         raise ValueError(
             f"skills_store.record: procedure exceeds {_PROCEDURE_MAX_BYTES} "
             f"byte cap ({len(procedure.encode('utf-8'))} bytes given)"
         )
+    # v3.1.x bug fix: scrub api-keys / Bearer / passwords / AWS AKIA /
+    # long hex / long base64 BEFORE persisting. Without this, an agent
+    # that pastes a stack trace or curl example into a procedure leaks
+    # the secret into skills.jsonl, the FTS5 index, and any promoted
+    # playbook markdown — all of which are committed surfaces.
+    procedure = sanitize.scrub_sensitive(procedure)
     if summary is not None:
         if not isinstance(summary, str):
             raise ValueError("skills_store.record: summary must be a string or None")
@@ -148,6 +163,7 @@ def record(
             raise ValueError(
                 f"skills_store.record: summary exceeds {_SUMMARY_MAX_BYTES} byte cap"
             )
+        summary = sanitize.scrub_sensitive(summary)
     if source not in _VALID_SOURCES:
         raise ValueError(
             f"skills_store.record: source must be one of {sorted(_VALID_SOURCES)}; "
@@ -157,10 +173,25 @@ def record(
     # Triggers: normalize tags to lowercase + sort (mirrors decisions
     # convention); file_patterns kept verbatim (they're already
     # case-significant globs).
+    # v3.1.x bug fix: triggers.tags MUST be a list (or None). A bare
+    # string would silently iterate as characters and produce
+    # {'g','i','t'}, so reject with ValueError.
     norm_tags: list[str] = []
     file_patterns: list[str] = []
     if triggers:
-        raw_tags = triggers.get("tags") or []
+        raw_tags = triggers.get("tags")
+        if raw_tags is None:
+            raw_tags = []
+        elif isinstance(raw_tags, str):
+            raise ValueError(
+                "skills_store.record: triggers.tags must be a list, not a str "
+                f"(got {raw_tags!r}); pass [{raw_tags!r}] to add it as a single tag."
+            )
+        elif not isinstance(raw_tags, (list, tuple, set)):
+            raise ValueError(
+                f"skills_store.record: triggers.tags must be a list "
+                f"(got {type(raw_tags).__name__})"
+            )
         norm_tags = sorted({str(t).strip().lower() for t in raw_tags if str(t).strip()})
         raw_patterns = triggers.get("file_patterns") or []
         file_patterns = [str(p) for p in raw_patterns if isinstance(p, str)]

@@ -330,3 +330,98 @@ class TestDecisionsStoreIntegration:
         decisions_store.record(decision="Project-wide doctrine")
         # No file_path → no activity row.
         assert not paths.activity_path().is_file()
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Minor + polish coverage
+# ──────────────────────────────────────────────────────────────────────
+
+
+class TestListRecentMalformedTs:
+    """list_recent skips rows with bogus ts strings."""
+
+    def test_malformed_ts_skipped_when_since_filter_applied(
+        self, project: Path
+    ) -> None:
+        from datetime import datetime, timezone, timedelta
+        from mcp_server.storage import activity_store, jsonl_store
+
+        # list_recent only re-parses ts when a `since` filter is set.
+        # Inject a bad-ts row + a good-ts row, then query with since.
+        jsonl_store.append(
+            paths.activity_path(),
+            {
+                "node_id": "src/a.py",
+                "kind": activity_store.KIND_EDIT,
+                "ts": "not-a-date",
+            },
+        )
+        activity_store.add("src/b.py", kind=activity_store.KIND_EDIT)
+        since = datetime.now(timezone.utc) - timedelta(days=1)
+        recent = activity_store.list_recent(limit=10, since=since)
+        ids = [r.get("node_id") for r in recent]
+        assert "src/b.py" in ids
+        # Bad-ts row is filtered out because ts parsing fails inside the
+        # since branch.
+        assert "src/a.py" not in ids
+
+
+class TestNaiveTimestampCoercion:
+    """A row with a naive ts (no tzinfo) gets coerced to UTC; the row
+    still participates in compact/list_top_k filtering."""
+
+    def test_naive_ts_treated_as_utc(self, project: Path) -> None:
+        from datetime import datetime
+        from mcp_server.storage import activity_store, jsonl_store
+
+        # Naive iso ts (no tzinfo).
+        jsonl_store.append(
+            paths.activity_path(),
+            {
+                "node_id": "src/naive.py",
+                "kind": activity_store.KIND_EDIT,
+                "ts": datetime.now().isoformat(),  # naive!
+            },
+        )
+        # Should not be dropped by list_recent or visit_count_30d.
+        recent = activity_store.list_recent(limit=10)
+        assert any(r.get("node_id") == "src/naive.py" for r in recent)
+
+
+class TestListTopKFilesBadKindDropped:
+    """list_top_k_files iterates raw rows and skips rows whose kind is
+    not in _VALID_KINDS."""
+
+    def test_unknown_kind_silently_dropped(self, project: Path) -> None:
+        from mcp_server.storage import activity_store, jsonl_store
+
+        # Real edit.
+        activity_store.add("src/good.py", kind=activity_store.KIND_EDIT)
+        # Injected bad kind.
+        jsonl_store.append(
+            paths.activity_path(),
+            {
+                "node_id": "src/bad.py",
+                "kind": "imaginary-kind-not-in-valid-set",
+                "ts": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+        top = activity_store.list_top_k_files(top_k=10)
+        ids = [r["node_id"] for r in top]
+        assert "src/good.py" in ids
+        assert "src/bad.py" not in ids
+
+    def test_non_string_node_id_dropped(self, project: Path) -> None:
+        from mcp_server.storage import activity_store, jsonl_store
+
+        jsonl_store.append(
+            paths.activity_path(),
+            {
+                "node_id": 12345,  # not a str
+                "kind": activity_store.KIND_EDIT,
+                "ts": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+        # Should not crash.
+        top = activity_store.list_top_k_files(top_k=10)
+        assert isinstance(top, list)

@@ -920,6 +920,134 @@ async def list_tools() -> list[Tool]:
             ),
             inputSchema={"type": "object", "properties": {}},
         ),
+        # ---- v3.1.0 M2: working memory (intra-session scratchpad) ----
+        Tool(
+            name="working_add",
+            description=(
+                "v3.1.0 M2: Append one observation or goal to working memory "
+                "(intra-session, bounded, decay-scored scratchpad in "
+                ".codevira-cache/working.jsonl). 'observation' = a fact the agent saw "
+                "(file edited, error message, command output). 'goal' = what the agent "
+                "is currently trying to accomplish. Use working_promote to move an entry "
+                "to long-term memory (decision/skill/playbook) when it earns its keep."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "content": {
+                        "type": "string",
+                        "description": "Free-text markdown (max 2 KB)",
+                    },
+                    "kind": {
+                        "type": "string",
+                        "description": "observation | goal (default: observation)",
+                        "enum": ["observation", "goal"],
+                        "default": "observation",
+                    },
+                    "importance": {
+                        "type": "integer",
+                        "description": "1-10 (default 5). Errors = 7, decisions = 8+",
+                        "minimum": 1,
+                        "maximum": 10,
+                        "default": 5,
+                    },
+                    "confidence": {
+                        "type": "number",
+                        "description": "0.0-1.0, optional. Voyager-style belief strength",
+                    },
+                    "links": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional D-ids / S-ids this entry references",
+                    },
+                    "session_id": {
+                        "type": "string",
+                        "description": "Optional session slug; defaults to ad-hoc-XXXXXX",
+                    },
+                },
+                "required": ["content"],
+            },
+        ),
+        Tool(
+            name="working_get",
+            description=(
+                "v3.1.0 M2: Top-K live working-memory entries by decay score "
+                "(importance × exp(-Δt_hours / 6) + 0.5 × access_count). Filters by "
+                "kind / session_id. Tombstoned (evicted or promoted) entries are excluded."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "top_k": {
+                        "type": "integer",
+                        "description": "Max entries to return (default 10)",
+                        "default": 10,
+                    },
+                    "kind": {
+                        "type": "string",
+                        "description": "Filter to observation | goal (default: both)",
+                        "enum": ["observation", "goal"],
+                    },
+                    "session_id": {
+                        "type": "string",
+                        "description": "Filter to one session slug",
+                    },
+                },
+            },
+        ),
+        Tool(
+            name="working_promote",
+            description=(
+                "v3.1.0 M2: Promote a working-memory entry to long-term memory "
+                "and tombstone the source. to='decision' is the fully wired path "
+                "(calls check_conflict first; force=true overrides). to='skill' and "
+                "to='playbook' are reserved for M3+; the call returns "
+                "{deferred: true, milestone: ...} until those stores ship."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "entry_id": {
+                        "type": "string",
+                        "description": "The W-id from working_add / working_get",
+                    },
+                    "to": {
+                        "type": "string",
+                        "description": "Target LTM store",
+                        "enum": ["decision", "skill", "playbook"],
+                        "default": "decision",
+                    },
+                    "file_path": {"type": "string"},
+                    "context": {"type": "string"},
+                    "do_not_revert": {"type": "boolean", "default": False},
+                    "tags": {"type": "array", "items": {"type": "string"}},
+                    "force": {
+                        "type": "boolean",
+                        "description": "Skip check_conflict warning (e.g., on second-pass promote)",
+                        "default": False,
+                    },
+                },
+                "required": ["entry_id"],
+            },
+        ),
+        Tool(
+            name="get_working_context",
+            description=(
+                "v3.1.0 M2: Compact markdown rendering of the top working-memory "
+                "entries for ReAct-loop injection. Returns {markdown, entries, count}. "
+                "Capped at ~150 tokens of output (entries truncated at 120 chars each)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "top_k": {
+                        "type": "integer",
+                        "description": "Max entries to include (default 5)",
+                        "default": 5,
+                    },
+                },
+            },
+        ),
         # ---- v1.5: Deep Graph Intelligence Tools ----
         Tool(
             name="query_graph",
@@ -1214,6 +1342,42 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 symbol=arguments.get("symbol"),
                 query_type=arguments.get("query_type", "callees"),
             )
+        # ---- v3.1.0 M2: working memory dispatch ----
+        elif name == "working_add":
+            from mcp_server.tools.working import working_add
+
+            result = working_add(
+                content=arguments["content"],
+                kind=arguments.get("kind", "observation"),
+                importance=arguments.get("importance", 5),
+                confidence=arguments.get("confidence"),
+                links=arguments.get("links"),
+                session_id=arguments.get("session_id"),
+            )
+        elif name == "working_get":
+            from mcp_server.tools.working import working_get
+
+            result = working_get(
+                top_k=arguments.get("top_k", 10),
+                kind=arguments.get("kind"),
+                session_id=arguments.get("session_id"),
+            )
+        elif name == "working_promote":
+            from mcp_server.tools.working import working_promote
+
+            result = working_promote(
+                entry_id=arguments["entry_id"],
+                to=arguments.get("to", "decision"),
+                file_path=arguments.get("file_path"),
+                context=arguments.get("context"),
+                do_not_revert=arguments.get("do_not_revert", False),
+                tags=arguments.get("tags"),
+                force=arguments.get("force", False),
+            )
+        elif name == "get_working_context":
+            from mcp_server.tools.working import get_working_context
+
+            result = get_working_context(top_k=arguments.get("top_k", 5))
         else:
             result = {"error": f"Unknown tool: {name}"}
 

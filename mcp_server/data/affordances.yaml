@@ -1,0 +1,44 @@
+# Bundled affordances — v3.1.0 M4 Phase 2.
+#
+# Maps file-path globs to the high-level "things you can do here"
+# (the affordance keys). spatial_affordances(file_path) returns the
+# UNION of all matching pattern affordances. Globs use fnmatch
+# semantics (* matches across path components — be explicit when
+# scoping to a directory).
+#
+# Project-specific overrides live at .codevira/affordances.yaml; the
+# loader merges bundled defaults + project overrides (project wins on
+# pattern collisions).
+#
+# Affordance keys are conventional task_type names from the playbook
+# system so promote_skill_to_playbook(task_type=...) lands cleanly.
+
+- pattern: "mcp_server/tools/*.py"
+  affordances: [add_tool, write_test]
+
+- pattern: "mcp_server/storage/*.py"
+  affordances: [add_store, write_test]
+
+- pattern: "mcp_server/engine/policies/*.py"
+  affordances: [add_policy, write_test]
+
+- pattern: "indexer/*.py"
+  affordances: [add_parser_rule, write_test]
+
+- pattern: "tests/**/*.py"
+  affordances: [write_test, debug_pipeline]
+
+- pattern: "tests/*.py"
+  affordances: [write_test, debug_pipeline]
+
+- pattern: "*test*.py"
+  affordances: [write_test, debug_pipeline]
+
+- pattern: "Makefile"
+  affordances: [commit, debug_pipeline]
+
+- pattern: "pyproject.toml"
+  affordances: [release, commit]
+
+- pattern: "CHANGELOG.md"
+  affordances: [release, commit]

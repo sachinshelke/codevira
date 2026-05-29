@@ -1252,6 +1252,87 @@ async def list_tools() -> list[Tool]:
                 "required": ["skill_id", "task_type"],
             },
         ),
+        # ---- v3.1.0 M4: spatial memory ----
+        Tool(
+            name="spatial_nearby",
+            description=(
+                "v3.1.0 M4: Files topologically near a given file, ranked by "
+                "recent activity. Candidate set = BFS distance ≤ 2 over the "
+                "indexer graph (imports + call edges) ∪ same-neighborhood "
+                "files. Ranking: (1 / (1 + bfs_dist)) × log(1 + visit_count_30d). "
+                "Falls back to neighborhood-only if the indexer graph isn't built."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "Project-relative file path",
+                    },
+                    "k": {
+                        "type": "integer",
+                        "description": "Max neighbors to return (default 5)",
+                        "default": 5,
+                    },
+                },
+                "required": ["file_path"],
+            },
+        ),
+        Tool(
+            name="spatial_heat",
+            description=(
+                "v3.1.0 M4: Top-K most-touched files in a time window by "
+                "weighted activity (edits + decision_refs). Useful for "
+                "'where has attention been this week?' queries. Pass "
+                "since_days to limit the window; omit for all-time."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "top_k": {"type": "integer", "default": 20},
+                    "since_days": {
+                        "type": "integer",
+                        "description": (
+                            "Only count activity within the trailing N days "
+                            "(omit for all-time)"
+                        ),
+                    },
+                },
+            },
+        ),
+        Tool(
+            name="spatial_neighborhood",
+            description=(
+                "v3.1.0 M4: Return the neighborhood id + members for a file. "
+                "Folder-tree default (top-2 dir components, e.g., "
+                "'mcp_server/storage'); overridable via "
+                ".codevira/neighborhoods.yaml."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "file_path": {"type": "string"},
+                },
+                "required": ["file_path"],
+            },
+        ),
+        Tool(
+            name="spatial_affordances",
+            description=(
+                "v3.1.0 M4: Return the affordance keys (task_types) applicable "
+                "to a file based on the bundled + project affordances.yaml. "
+                "E.g., a file under mcp_server/tools/ typically affords "
+                "{add_tool, write_test}. Use the returned keys with "
+                "get_playbook(task_type) for relevant rules."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "file_path": {"type": "string"},
+                },
+                "required": ["file_path"],
+            },
+        ),
         # ---- v1.5: Deep Graph Intelligence Tools ----
         Tool(
             name="query_graph",
@@ -1640,6 +1721,29 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 name=arguments.get("name"),
                 force=arguments.get("force", False),
             )
+        # ---- v3.1.0 M4: spatial memory dispatch ----
+        elif name == "spatial_nearby":
+            from mcp_server.tools.spatial import spatial_nearby
+
+            result = spatial_nearby(
+                file_path=arguments["file_path"],
+                k=arguments.get("k", 5),
+            )
+        elif name == "spatial_heat":
+            from mcp_server.tools.spatial import spatial_heat
+
+            result = spatial_heat(
+                top_k=arguments.get("top_k", 20),
+                since_days=arguments.get("since_days"),
+            )
+        elif name == "spatial_neighborhood":
+            from mcp_server.tools.spatial import spatial_neighborhood
+
+            result = spatial_neighborhood(file_path=arguments["file_path"])
+        elif name == "spatial_affordances":
+            from mcp_server.tools.spatial import spatial_affordances
+
+            result = spatial_affordances(file_path=arguments["file_path"])
         else:
             result = {"error": f"Unknown tool: {name}"}
 

@@ -30,6 +30,10 @@
 - **D00001D** 3.0.0 BUILD COMPLETE (this session). All enhancements are built, tested, committed to local main, and the full release …
 - **D00001E** fix: Python 3.10 CI failure — agents_md_generator._project_name() and cli_init used bare `import tomllib` (stdlib 3.11+…
 - **D00001F** RESOLVED the known release-smoke tooling bug: replaced `head -1` with `sed -n '1p'` in Makefile release-smoke + wheel-n…  ·  `Makefile`  ·  _makefile, release, tooling_
+- **D00001G** v3.0.x storage prereq IMPLEMENTATION COMPLETE on branch release/3.0.1 (commits 6253940 + c1352d7). Patches 1+2+3 done: …  ·  _memory, prereq, storage, v3.0.1_
+- **D00001H** M1 Phase A origin tagging IMPLEMENTATION COMPLETE on release/3.0.1 (commits 618710a storage + ff06b3d ide_inject). orig…  ·  _consensus, m1, memory, origin, v3.1.0_
+
+_+109 more decision(s) — full log in `.codevira/decisions.jsonl`._
 
 
 For the full decision log + outcomes + reverts, see `.codevira/decisions.jsonl` or run `codevira list-decisions`.

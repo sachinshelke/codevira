@@ -1361,6 +1361,64 @@ async def list_tools() -> list[Tool]:
                 },
             },
         ),
+        Tool(
+            name="consensus_propose_supersession",
+            description=(
+                "v3.1.0 M7 Phase C: Open a cross-IDE supersession proposal. "
+                "Writes a 'proposed_supersession' row to pending_conflicts.jsonl "
+                "with expires_at = ts + handshake_timeout_days (default 14). "
+                "Opt-in: returns {disabled: True} unless "
+                "memory.consensus.handshake_enabled is set in "
+                ".codevira/config.yaml. Same-author fast-path returns "
+                "{fast_path: True} so the caller can route to "
+                "supersede_decision directly."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "target_decision_id": {"type": "string"},
+                    "new_decision": {"type": "string"},
+                    "reason": {"type": "string"},
+                },
+                "required": ["target_decision_id", "new_decision", "reason"],
+            },
+        ),
+        Tool(
+            name="consensus_resolve",
+            description=(
+                "v3.1.0 M7 Phase C: Approve, reject, or withdraw a pending "
+                "supersession proposal. Opt-in via "
+                "memory.consensus.handshake_enabled. The approving IDE should "
+                "match the target decision's origin IDE (or be 'unknown') "
+                "for cross-IDE proposals; withdrawals come from the "
+                "proposing IDE."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "proposal_id": {"type": "string"},
+                    "action": {
+                        "type": "string",
+                        "enum": ["approved", "rejected", "withdrawn"],
+                    },
+                    "comment": {"type": "string"},
+                },
+                "required": ["proposal_id", "action"],
+            },
+        ),
+        Tool(
+            name="origin_of",
+            description=(
+                "v3.1.0 M7: Return the M1 origin block attached to a decision "
+                "({ide, agent_model, host_hash, ts}) + protection / supersession "
+                "metadata. Always available regardless of the handshake flag."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {"decision_id": {"type": "string"}},
+                "required": ["decision_id"],
+            },
+        ),
         # ---- v1.5: Deep Graph Intelligence Tools ----
         Tool(
             name="query_graph",
@@ -1781,6 +1839,27 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             from mcp_server.tools.consensus import consensus_status
 
             result = consensus_status(top_k=arguments.get("top_k", 3))
+        # ---- v3.1.0 M7 Phase C: handshake dispatch ----
+        elif name == "consensus_propose_supersession":
+            from mcp_server.tools.consensus import consensus_propose_supersession
+
+            result = consensus_propose_supersession(
+                target_decision_id=arguments["target_decision_id"],
+                new_decision=arguments["new_decision"],
+                reason=arguments["reason"],
+            )
+        elif name == "consensus_resolve":
+            from mcp_server.tools.consensus import consensus_resolve
+
+            result = consensus_resolve(
+                proposal_id=arguments["proposal_id"],
+                action=arguments["action"],
+                comment=arguments.get("comment"),
+            )
+        elif name == "origin_of":
+            from mcp_server.tools.consensus import origin_of
+
+            result = origin_of(decision_id=arguments["decision_id"])
         else:
             result = {"error": f"Unknown tool: {name}"}
 

@@ -1239,6 +1239,23 @@ def main() -> None:
         ),
     )
 
+    # v3.1.0 M6 Phase B: cross-IDE consensus check (read-only). The
+    # MCP surface (consensus_check / consensus_status) is also exposed.
+    consensus_parser = subparsers.add_parser(
+        "consensus",
+        help="Cross-IDE consensus operations (v3.1.0 M6). `check` "
+        "materializes conflicts between decisions written by this IDE "
+        "vs other IDEs into .codevira/pending_conflicts.jsonl for "
+        "human review. No automatic resolution; the handshake "
+        "protocol is M7 (opt-in).",
+    )
+    consensus_sub = consensus_parser.add_subparsers(dest="consensus_action")
+    consensus_sub.add_parser(
+        "check",
+        help="Scan for conflicts since the last checkpoint; advance "
+        "this IDE's checkpoint.",
+    )
+
     # v3.1.0 M5: induced-skill candidate generation. CLI-only — the MCP
     # surface for skills is record_skill / get_skill / list_skills.
     induce_parser = subparsers.add_parser(
@@ -1543,6 +1560,18 @@ def main() -> None:
             keep_data=getattr(args, "keep_data", False),
         )
         sys.exit(rc)
+    elif args.command == "consensus":
+        # v3.1.0 M6: cross-IDE consensus CLI.
+        consensus_action = getattr(args, "consensus_action", None)
+        if consensus_action == "check":
+            from mcp_server.cli_consensus import cmd_consensus_check
+
+            sys.exit(cmd_consensus_check())
+        sys.stderr.write(
+            "codevira consensus: missing subcommand. Try `codevira "
+            "consensus check`.\n"
+        )
+        sys.exit(2)
     elif args.command == "induce-skills":
         # v3.1.0 M5: skill induction CLI.
         from mcp_server.cli_induce import cmd_induce_skills

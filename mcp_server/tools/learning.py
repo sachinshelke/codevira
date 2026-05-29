@@ -633,10 +633,44 @@ def get_session_context(since: str | None = None) -> dict:
         except Exception:
             pass
 
+        # v3.1.0 M6 Phase B: consensus panel. Top-3 pending cross-IDE
+        # conflicts ordered by (do_not_revert × recency). Capped at
+        # ~200 tokens. Best-effort: missing pending_conflicts.jsonl,
+        # store errors, etc. surface an empty count without crashing.
+        consensus_panel: dict = {"pending_count": 0, "top": []}
+        try:
+            from mcp_server.storage import consensus_store
+
+            pending = consensus_store.list_pending(limit=20)
+            # Sort: do_not_revert first, then by recency (already
+            # newest-first from read_recent).
+            pending.sort(
+                key=lambda r: (bool(r.get("do_not_revert")), r.get("ts") or ""),
+                reverse=True,
+            )
+            consensus_panel = {
+                "pending_count": len(pending),
+                "top": [
+                    {
+                        "pending_conflict_id": r.get("id"),
+                        "foreign_decision_id": r.get("foreign_decision_id"),
+                        "foreign_ide": (r.get("foreign_origin") or {}).get("ide"),
+                        "current_decision_id": r.get("current_decision_id"),
+                        "conflict_kind": r.get("conflict_kind"),
+                        "do_not_revert": r.get("do_not_revert"),
+                        "summary": _truncate(r.get("summary"), 80),
+                    }
+                    for r in pending[:3]
+                ],
+            }
+        except Exception:
+            pass
+
         return {
             "current_phase": current_phase,
             "drift_warning": drift_warning,
             "working": working_panel,
+            "consensus": consensus_panel,
             "recent_sessions": [
                 {
                     "session_id": s["session_id"],

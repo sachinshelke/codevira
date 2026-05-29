@@ -109,6 +109,31 @@ def skills_path(project_root: Path | None = None) -> Path:
     return codevira_dir(project_root) / "skills.jsonl"
 
 
+def pending_conflicts_path(project_root: Path | None = None) -> Path:
+    """v3.1.0 M6: cross-IDE conflict log materialized by
+    ``codevira consensus check`` (Phase B). Each row is a conflict
+    surfaced for human review — no automatic resolution. Lives in
+    ``.codevira/`` (canonical, gitable) so a teammate's pending
+    review survives `git pull`.
+
+    See ``working_archived_path`` for the D000012 lock note.
+    """
+    return codevira_dir(project_root) / "pending_conflicts.jsonl"
+
+
+def ide_checkpoint_path(ide_key: str, project_root: Path | None = None) -> Path:
+    """v3.1.0 M6: per-IDE checkpoint marking the last decision id this
+    IDE has scanned. ``codevira consensus check`` updates this after
+    each run so we only re-examine decisions written by other IDEs
+    since the checkpoint.
+
+    Filename is the ide_key (claude_code, cursor, …). Callers MUST
+    keep ide_key filesystem-safe; the v3.1.0 origin schema enforces
+    a fixed enum so this is safe by construction.
+    """
+    return codevira_dir(project_root) / "checkpoints" / f"{ide_key}.json"
+
+
 def induction_proposals_path(project_root: Path | None = None) -> Path:
     """v3.1.0 M5: human-review staging file for ``codevira induce-skills``.
 

@@ -1333,6 +1333,34 @@ async def list_tools() -> list[Tool]:
                 "required": ["file_path"],
             },
         ),
+        # ---- v3.1.0 M6 Phase B: consensus (read-only) ----
+        Tool(
+            name="consensus_check",
+            description=(
+                "v3.1.0 M6 Phase B: Scan decisions written since this IDE's "
+                "checkpoint, surface cross-IDE conflicts to "
+                ".codevira/pending_conflicts.jsonl, advance the checkpoint. "
+                "Read-only — no automatic resolution. The Phase C handshake "
+                "protocol (one IDE proposing supersession to another) is "
+                "M7 and ships disabled by default."
+            ),
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        Tool(
+            name="consensus_status",
+            description=(
+                "v3.1.0 M6: Return the count of pending cross-IDE conflicts + "
+                "top-K rows (default 3). Useful as a status check from inside "
+                "the agent loop; the get_session_context payload also "
+                "carries a 'consensus' panel based on this data."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "top_k": {"type": "integer", "default": 3},
+                },
+            },
+        ),
         # ---- v1.5: Deep Graph Intelligence Tools ----
         Tool(
             name="query_graph",
@@ -1744,6 +1772,15 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             from mcp_server.tools.spatial import spatial_affordances
 
             result = spatial_affordances(file_path=arguments["file_path"])
+        # ---- v3.1.0 M6 Phase B: consensus dispatch ----
+        elif name == "consensus_check":
+            from mcp_server.tools.consensus import consensus_check
+
+            result = consensus_check()
+        elif name == "consensus_status":
+            from mcp_server.tools.consensus import consensus_status
+
+            result = consensus_status(top_k=arguments.get("top_k", 3))
         else:
             result = {"error": f"Unknown tool: {name}"}
 

@@ -163,6 +163,20 @@ def working_path(project_root: Path | None = None) -> Path:
     return codevira_cache_dir(project_root) / "working.jsonl"
 
 
+def activity_path(project_root: Path | None = None) -> Path:
+    """v3.1.0 M4: spatial-activity log (per-machine, gitignored).
+
+    Stores ``edit`` / ``decision_ref`` rows as the agent works through
+    the codebase. The ``codevira spatial export-activity`` CLI is the
+    opt-in path to share aggregated heat with a team; the raw log
+    itself stays local because attention patterns are per-developer.
+
+    See ``working_archived_path`` for the D000012 lock note — same
+    reasoning applies.
+    """
+    return codevira_cache_dir(project_root) / "activity.jsonl"
+
+
 # ─── Convenience operations ───────────────────────────────────────────
 
 

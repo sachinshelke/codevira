@@ -149,6 +149,26 @@ def record(
     except Exception as exc:  # noqa: BLE001
         logger.warning("decisions_store.record: digest update failed: %s", exc)
 
+    # v3.1.0 M4: a decision tied to a file is a high-signal "attention"
+    # event. Mirror it into the activity log so spatial_heat surfaces
+    # the file. Best-effort (P9 — the decision is already persisted).
+    _activity_origin = base_record["origin"]
+    _activity_session = base_record["session_id"]
+    if file_path:
+        try:
+            from mcp_server.storage import activity_store
+
+            activity_store.add(
+                str(file_path),
+                kind=activity_store.KIND_DECISION_REF,
+                session_id=str(_activity_session) if _activity_session else None,
+                origin_override=_activity_origin
+                if isinstance(_activity_origin, dict)
+                else None,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("decisions_store.record: activity add failed: %s", exc)
+
     # Phase D — regenerate AGENTS.md so other AI tools (Copilot, Codex,
     # Cursor, Gemini, Factory, Amp, Windsurf, Zed, RooCode, Jules) see
     # the new decision on their next prompt. Best-effort (P9).

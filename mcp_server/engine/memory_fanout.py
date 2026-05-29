@@ -111,11 +111,13 @@ def dispatch(event: HookEvent) -> None:
 
 
 def flush() -> None:
-    """Drain the buffer into working.jsonl. Atomic per-record append.
+    """Drain the buffer into working.jsonl + activity.jsonl.
 
-    Each buffered entry becomes one ``working_store.add()`` call.
-    Failures inside individual writes are logged and skipped so a
-    single malformed entry can't poison the rest of the batch.
+    Each buffered entry becomes one ``working_store.add()`` call,
+    plus — for file-edit observations carrying ``_activity_file_path``
+    metadata — one ``activity_store.add(kind="edit")`` row. Failures
+    inside individual writes are logged and skipped so a single
+    malformed entry can't poison the rest of the batch.
     """
     global _BUFFER
     if not _BUFFER:
@@ -128,20 +130,40 @@ def flush() -> None:
 
     try:
         from mcp_server.storage import working_store
-
-        for rec in drained:
-            try:
-                working_store.add(
-                    content=rec["content"],
-                    kind=rec.get("kind", "observation"),
-                    importance=rec.get("importance", 4),
-                    links=rec.get("links") or [],
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.debug("memory_fanout.flush: individual add failed: %s", exc)
-                continue
     except Exception as exc:  # noqa: BLE001
         logger.debug("memory_fanout.flush: working_store import failed: %s", exc)
+        return
+
+    # activity_store import is best-effort — older installs without M4
+    # still get the working observation written.
+    try:
+        from mcp_server.storage import activity_store
+    except Exception:  # noqa: BLE001
+        activity_store = None  # type: ignore[assignment]
+
+    for rec in drained:
+        try:
+            working_store.add(
+                content=rec["content"],
+                kind=rec.get("kind", "observation"),
+                importance=rec.get("importance", 4),
+                links=rec.get("links") or [],
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("memory_fanout.flush: working add failed: %s", exc)
+
+        # v3.1.0 M4: if the originating tool was a file edit, mirror the
+        # observation as an activity row so spatial_heat / spatial_nearby
+        # have a heat signal. _activity_file_path is set by
+        # _build_observation below; never present on Bash records.
+        if activity_store is not None and rec.get("_activity_file_path"):
+            try:
+                activity_store.add(
+                    rec["_activity_file_path"],
+                    kind=activity_store.KIND_EDIT,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("memory_fanout.flush: activity add failed: %s", exc)
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -188,6 +210,13 @@ def _build_observation(event: HookEvent) -> dict[str, Any] | None:
             "content": f"{tool_name}: touched {file_path}",
             "kind": "observation",
             "importance": 7 if has_error else 4,
+            # v3.1.0 M4: mirror this edit into activity.jsonl too. The
+            # flusher detects this hidden field and writes an activity
+            # row alongside the working observation; non-file tools
+            # (e.g., Bash) omit it.
+            "_activity_file_path": (
+                str(file_path) if file_path and file_path != "<unknown>" else None
+            ),
         }
 
     if tool_name == "Bash":

@@ -109,6 +109,17 @@ def skills_path(project_root: Path | None = None) -> Path:
     return codevira_dir(project_root) / "skills.jsonl"
 
 
+def induction_proposals_path(project_root: Path | None = None) -> Path:
+    """v3.1.0 M5: human-review staging file for ``codevira induce-skills``.
+
+    Without ``--apply``, the induction CLI writes proposed skills here
+    so the user can scan them before committing to ``skills.jsonl``.
+    Lives in ``.codevira/`` (canonical, gitable) so a teammate's
+    induction run isn't lost.
+    """
+    return codevira_dir(project_root) / "induction_proposals.jsonl"
+
+
 def working_archived_path(session_id: str, project_root: Path | None = None) -> Path:
     """v3.1.0 M2: opt-in commit target for working-memory entries.
 

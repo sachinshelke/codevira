@@ -1239,6 +1239,29 @@ def main() -> None:
         ),
     )
 
+    # v3.1.0 M5: induced-skill candidate generation. CLI-only — the MCP
+    # surface for skills is record_skill / get_skill / list_skills.
+    induce_parser = subparsers.add_parser(
+        "induce-skills",
+        help="Cluster productive sessions and propose induced skills "
+        "(v3.1.0 M5). Without --apply: writes proposals to "
+        ".codevira/induction_proposals.jsonl for human review. With "
+        "--apply: interactively confirms each proposal (use --yes to "
+        "skip prompts in CI).",
+    )
+    induce_parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Commit the proposals as induced skills "
+        "(otherwise dry-run to induction_proposals.jsonl)",
+    )
+    induce_parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="With --apply: skip the interactive confirm prompt "
+        "(non-interactive, CI-safe).",
+    )
+
     # v3.1.0 M2 Phase 3: working-memory subcommands. The MCP tool
     # surface (working_add / working_get / working_promote) is the
     # everyday agent-facing API; this CLI tier is the escape hatch for
@@ -1520,6 +1543,16 @@ def main() -> None:
             keep_data=getattr(args, "keep_data", False),
         )
         sys.exit(rc)
+    elif args.command == "induce-skills":
+        # v3.1.0 M5: skill induction CLI.
+        from mcp_server.cli_induce import cmd_induce_skills
+
+        sys.exit(
+            cmd_induce_skills(
+                apply=getattr(args, "apply", False),
+                yes=getattr(args, "yes", False),
+            )
+        )
     elif args.command == "working":
         # v3.1.0 M2 Phase 3: working-memory subcommands.
         working_action = getattr(args, "working_action", None)

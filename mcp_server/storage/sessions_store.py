@@ -43,8 +43,21 @@ def write(
     summary: str | None = None,
     decision_ids: list[str] | None = None,
     outcome: str | None = None,
+    task_type: str | None = None,
+    skill_ids: list[str] | None = None,
 ) -> str:
-    """Append a single session log; return generated id."""
+    """Append a single session log; return generated id.
+
+    v3.1.0 M5: ``task_type`` and ``skill_ids`` are additive (optional)
+    fields. Legacy v3.0.x readers tolerate their absence. They feed
+    the M5 induction pipeline + the outcomes_writer skill-fan-out:
+      - task_type ∈ {feature, bug, refactor, release, docs, other};
+        induction clusters sessions by task_type.
+      - skill_ids: skills used during the session; when
+        ``outcomes_writer`` classifies the session's decisions, the
+        result is fanned out as ``mark_used(skill_id, success=...)``
+        for each.
+    """
     paths.ensure_dirs()
     record = {
         "ts": datetime.now(timezone.utc).isoformat(),
@@ -54,6 +67,9 @@ def write(
         "summary": summary,
         "decision_ids": list(decision_ids or []),
         "outcome": outcome,
+        # v3.1.0 M5
+        "task_type": task_type,
+        "skill_ids": list(skill_ids or []),
         # v3.1.0 M1: provenance tagging — which IDE/agent/machine
         # wrote this session log. Reads tolerate absence on legacy
         # records (v3.0.x sessions have no origin).
@@ -87,6 +103,10 @@ def write_many(logs: list[dict[str, Any]]) -> tuple[list[str], list[dict[str, An
             "summary": log.get("summary"),
             "decision_ids": list(log.get("decisions") or log.get("decision_ids") or []),
             "outcome": log.get("outcome"),
+            # v3.1.0 M5: optional induction-pipeline + skill-fan-out
+            # signals. Legacy records tolerate absence.
+            "task_type": log.get("task_type"),
+            "skill_ids": list(log.get("skill_ids") or []),
             # v3.1.0 M1: provenance tagging (see write() above).
             "origin": origin.current_origin(),
         }

@@ -205,6 +205,25 @@ def observe_all(*, project_root: Path | None = None) -> dict[str, Any]:
     new_outcomes: list[dict[str, Any]] = []
     head_sha = _run_git(["rev-parse", "HEAD"], project_root).strip()
 
+    # v3.1.0 M5: cache session_id → skill_ids so the per-decision
+    # fan-out is O(1) lookup rather than O(N_sessions) per decision.
+    session_skills: dict[str, set[str]] = {}
+    try:
+        for s in jsonl_store.read_all(paths.sessions_path(project_root)):
+            sid = s.get("session_id")
+            if not isinstance(sid, str):
+                continue
+            skill_ids = s.get("skill_ids") or []
+            if not isinstance(skill_ids, list):
+                continue
+            bucket = session_skills.setdefault(sid, set())
+            for k in skill_ids:
+                if isinstance(k, str) and k:
+                    bucket.add(k)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("outcomes_writer: failed to read sessions: %s", exc)
+    fanout_summary = {"skill_marks_success": 0, "skill_marks_failure": 0}
+
     for d in active:
         if d.get("is_superseded") or d.get("superseded_by"):
             continue  # don't track outcomes for retired decisions
@@ -213,6 +232,32 @@ def observe_all(*, project_root: Path | None = None) -> dict[str, Any]:
             counts["unclassified"] += 1
             continue
         counts[outcome_type] += 1
+
+        # v3.1.0 M5: fan out the classification to skills used in the
+        # same session. ``kept`` is a success signal; ``reverted`` is
+        # a failure. ``modified`` is no-op (the decision's intent
+        # survives — we just don't get a signal). Best-effort: if
+        # skills_store fails, decision outcome still lands.
+        if outcome_type in ("kept", "reverted"):
+            d_session_id = d.get("session_id") or ""
+            skill_ids = session_skills.get(d_session_id, set())
+            if skill_ids:
+                try:
+                    from mcp_server.storage import skills_store
+
+                    success = outcome_type == "kept"
+                    for sid in skill_ids:
+                        skills_store.mark_used(sid, success=success)
+                        if success:
+                            fanout_summary["skill_marks_success"] += 1
+                        else:
+                            fanout_summary["skill_marks_failure"] += 1
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "outcomes_writer: skill fan-out failed for %s: %s",
+                        d.get("id"),
+                        exc,
+                    )
 
         # Skip if the SAME outcome already exists for this decision at this HEAD.
         if d.get("outcome") == outcome_type:
@@ -259,6 +304,8 @@ def observe_all(*, project_root: Path | None = None) -> dict[str, Any]:
         **counts,
         "outcomes_appended": len(new_outcomes),
         "head_sha": head_sha[:12] if head_sha else None,
+        # v3.1.0 M5: skill reinforcement fan-out totals.
+        **fanout_summary,
     }
 
 

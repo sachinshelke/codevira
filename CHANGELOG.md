@@ -9,6 +9,242 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [3.1.0] — Five memory subsystems + cross-IDE consensus
+
+v3.1.0 adds five memory subsystems on top of the v3.0.x decision
+log, plus a cross-IDE consensus layer. Every addition is additive
+to the existing schemas; v3.0.x records continue to read without
+migration. The MCP surface gains 22 new tools across the new
+subsystems.
+
+### v3.0.x storage prereq (ships first)
+
+- **`refactor(jsonl_store)`** — extract `read_merged` / `compact` /
+  `read_recent` from `decisions_store._read_merged` /
+  `sessions_store.read_recent`. The five new memory subsystems
+  share this amendment-overlay primitive instead of duplicating
+  it. Tests cover amendment-chain-three-deep recursion semantics.
+  Zero behavior change for existing callers.
+
+- **`fix(session_id)`** — `decisions_store.record` and
+  `sessions_store.write` now default `session_id` to
+  `f"ad-hoc-{secrets.token_hex(3)}"` (e.g., `ad-hoc-a1b2c3`)
+  instead of the literal string `"ad-hoc"`. Every concurrent IDE
+  that didn't pass a slug previously collided into one bucket;
+  the unique-per-call default fixes cross-IDE attribution.
+
+### M1 — Origin tagging (provenance)
+
+Every decision and session write now carries an `origin` block:
+
+```json
+"origin": {"ide": "claude_code", "agent_model": "...",
+           "host_hash": "<12 hex chars>", "ts": "..."}
+```
+
+- `host_hash` = `sha1(uuid.getnode() bytes + username)[:12]` —
+  stable per machine (MAC-based, `platform.node()` fallback),
+  privacy-preserving (no plaintext hostname/username leaks).
+- `CODEVIRA_IDE` env var read at MCP server startup; default
+  `"unknown"`. `ide_inject.py` now writes `CODEVIRA_IDE=<ide_key>`
+  into the MCP config block for all 10 supported IDE configs
+  (Claude Code, Claude Desktop, Cursor, Windsurf, Antigravity —
+  per-project + global).
+- `check_conflict` response includes the candidate's `origin` so
+  agents can see "this conflicts with a decision Cursor wrote 3
+  days ago" instead of just an opaque decision_id.
+- Reads tolerate `origin` absent (legacy v3.0.x records treated
+  as `ide="unknown"`).
+
+### M2 — Working memory
+
+Bounded, decay-scored intra-session scratchpad.
+
+- `.codevira-cache/working.jsonl` (per-machine, ephemeral,
+  gitignored). Auto-populated by `post_tool_use` hook on Edit /
+  Write / MultiEdit / NotebookEdit / update_node (importance 4),
+  Bash (importance 3), tool errors (importance bumped to 7).
+- 4 MCP tools: `working_add`, `working_get`, `working_promote`
+  (to=decision|skill|playbook with check_conflict gate), and
+  `get_working_context` (compact markdown for ReAct loops).
+- Decay score: `importance × exp(-Δt_hours / 6) + 0.5 ×
+  access_count`. Top-3 surfaces in `get_session_context`.
+- Eviction = amendment tombstone; periodic compaction during
+  `codevira sync`.
+- CLI: `codevira working commit <session_id>` archives a
+  session's live entries to
+  `.codevira/working_archived/<session_id>.jsonl`.
+
+### M3 — Skill library (procedural memory)
+
+`.codevira/skills.jsonl` (canonical, team-shareable). FTS5
+retrieval + composite ranking.
+
+- `skill_fts` virtual table in the existing
+  `.codevira-cache/fts5.sqlite`. Independent staleness key
+  (`skill_source_mtime`) so the existing decisions tracking is
+  unaffected.
+- Composite ranking:
+  `score = 0.5 × BM25_norm + 0.3 × tag_jaccard + 0.2 ×
+  recency_decay(τ=30d)`. Never-used skills score 0 recency —
+  reinforcement, not existence, drives the recency signal.
+- 6 MCP tools: `record_skill`, `get_skill`, `apply_skill_outcome`,
+  `list_skills`, `supersede_skill`,
+  `promote_skill_to_playbook` (writes
+  `.codevira/playbooks/<task_type>/<slug>.md`).
+- Lifecycle states: `active` (default), `archived` (5 consec
+  failures OR `unused_days ≥ 90` — configurable; do_not_revert
+  exempt), `superseded` (final).
+- M5 wires git-derived outcomes_writer to skill reinforcement (see
+  below).
+
+### M4 — Spatial memory
+
+Activity heatmap + folder-tree neighborhoods + affordances.
+
+- `.codevira-cache/activity.jsonl` (per-machine). Auto-emitted on
+  Edit/Write via `memory_fanout` + on `decisions_store.record`
+  when `file_path` is set. Schema: `{id, ts, node_id, kind:
+  edit|decision_ref, session_id, origin, _schema_v: 1}`.
+- 4 MCP tools: `spatial_nearby` (BFS ≤ 2 hops over the indexer
+  graph + same-neighborhood union, ranked by `(1/(1+bfs_dist)) ×
+  log(1+visit_count_30d)`), `spatial_heat`,
+  `spatial_neighborhood`, `spatial_affordances`.
+- Folder-tree neighborhoods (top-2 dir components, e.g.,
+  `mcp_server/storage`). Project-overridable via
+  `.codevira/neighborhoods.yaml`.
+- Bundled `mcp_server/data/affordances.yaml` mapping file globs to
+  task_type affordances (e.g., `mcp_server/tools/*.py` →
+  `{add_tool, write_test}`). Project override:
+  `.codevira/affordances.yaml`; bundled + project union per match.
+
+### M5 — Skill induction wired to outcomes_writer
+
+Closes the reinforcement loop. Two pieces:
+
+- **Sessions schema additions**: `task_type` (`feature` | `bug` |
+  `refactor` | `release` | `docs` | `other`) and `skill_ids: []`
+  (skills used during the session). Additive; legacy sessions
+  tolerate absence.
+- **outcomes_writer fan-out**: when `observe_all()` classifies a
+  decision as `kept` or `reverted`, each skill referenced via
+  `skill_ids` on the same session gets `mark_used(success=…)`.
+  Pre-builds a `{session_id → set[skill_id]}` index so the
+  per-decision fan-out is O(1). Best-effort: skill errors log and
+  drop without blocking the decision-outcome write.
+- **CLI**: `codevira induce-skills [--apply] [--yes]` —
+  deterministic induction (no LLM in v3.1.0). Pipeline: filter
+  sessions with ≥80% kept; group by task_type; cluster by
+  tag-Jaccard ≥ 0.5; keep clusters ≥3 sessions; render candidate
+  skill with `name = "<task_type>: <top-3 tags>"`,
+  `procedure = bullet-summary of session.task +
+  decision.decision` (capped 30 lines).
+
+### M6 — Consensus Phase B (cross-IDE conflict check, read-only)
+
+- Per-IDE checkpoint files
+  `.codevira/checkpoints/<ide_key>.json` keyed on
+  `last_seen_decision_id` — zero-padded base-36 D-ids preserve
+  monotonic ordering without clock drift.
+- `consensus_store.scan_and_materialize()`: walks decisions with
+  `id > checkpoint`, partitions by `origin.ide` into
+  `current_corpus` + `foreign`, runs the reused `check_conflict`
+  tokenize/Jaccard/overlap math on every pair, records matches as
+  PC-prefixed rows in `.codevira/pending_conflicts.jsonl`.
+- 2 MCP tools: `consensus_check`, `consensus_status`.
+  `get_session_context` surfaces a top-3 panel sorted by
+  `(do_not_revert × recency)`.
+- CLI: `codevira consensus check`. Read-only — no amendment rows
+  written on decisions.
+
+### M7 — Consensus Phase C handshake (opt-in, default off)
+
+Opt-in belief-revision protocol gated behind
+`memory.consensus.handshake_enabled` in `.codevira/config.yaml`.
+
+- New `config.py` helper for dotted-key lookups against
+  `.codevira/config.yaml`.
+- `propose_supersession` (cross-IDE) appends a
+  `proposed_supersession` row with `expires_at = ts +
+  handshake_timeout_days` (default 14, configurable). Same-IDE
+  fast-path returns `{fast_path: True}` so the caller routes to
+  `decisions_store.supersede` directly.
+- `resolve_proposal(action: approved|rejected|withdrawn)`
+  appends a resolution row carrying `resolver_origin`.
+- `finalize_proposal(expired_unilateral=False)` — approved
+  proposals turn into a real `decisions_store.supersede` call.
+  Expired proposals require `expired_unilateral=True` (deadlock
+  safety); the audit row records the force-finalize.
+- 3 MCP tools: `consensus_propose_supersession`,
+  `consensus_resolve`, `origin_of` (provenance lookup; always
+  available).
+- Row kind taxonomy in pending_conflicts.jsonl: `conflict` (M6),
+  `proposed_supersession` (M7), `resolution` (M7).
+
+### M8 — Reflections (durable LLM abstractions)
+
+Generative-Agents-style abstractions over recent decisions +
+sessions.
+
+- `.codevira/reflections.jsonl` (canonical, committed) +
+  `.codevira/reflection_proposals.jsonl` (review staging).
+- `scrub_sensitive` strips api keys, Bearer tokens, passwords,
+  AWS-style AKIA, long hex/base64 from source records before the
+  LLM sees them.
+- `build_source_context` aggregates sessions + decisions in the
+  period window with plan caps (≤30 sessions, ≤100 decisions,
+  ≤6 KB envelope).
+- Bundled prompt template at
+  `mcp_server/data/prompts/reflection_v1.md`.
+- **MCP sampling integration scope**: v3.1.0 ships the storage +
+  sanitization + prompt rendering + the API surface. The
+  `sampling/createMessage` RPC that asks the host LLM for the
+  abstraction is the **v3.2** deliverable. v3.1.0 `reflect()`
+  returns `{sampling_supported: False, rendered_prompt,
+  source_context, deferred_to: "v3.2"}`; the CLI accepts an LLM
+  response via `--from-file`.
+- 3 MCP tools: `reflect`, `get_reflections`, `list_reflections`.
+- CLI: `codevira reflect [--period 7d] [--from-file PATH]
+  [--apply] [--yes]`. Render mode prints the prompt;
+  `--from-file` parses the LLM YAML response and writes a
+  proposal; `--apply --yes` commits to `reflections.jsonl`.
+
+### Schema versioning convention
+
+All NEW JSONL stores (`working`, `skills`, `activity`,
+`pending_conflicts`, `reflections`) carry `_schema_v: 1` on each
+record. Readers tolerate absence (treats as v1). Existing
+`decisions.jsonl` / `sessions.jsonl` are unchanged.
+
+### `get_session_context` panels
+
+Now carries five panels in addition to the existing roadmap /
+recent decisions:
+  - `working` — top-3 live entries (M2).
+  - `consensus` — top-3 pending conflicts (M6) sorted by
+    `(do_not_revert × recency)`.
+The plan reserves panels for working, skills, spatial,
+reflections in future ticks if value justifies the token cost.
+
+### Tests
+
+~450+ new tests across `tests/storage/`, `tests/test_tools_*`,
+`tests/test_cli_*`, `tests/test_reflections.py`,
+`tests/test_consensus_handshake.py`, etc. The full v3.1.0 suite
+runs in <20s; zero regressions from the v3.0.x baseline.
+
+### Locked decisions honored
+
+The v3.0.0 locks remain intact:
+- D000001 (atomic writes through `mcp_server/storage/atomic.py`)
+- D000012 (WRITE-path forbidden-root validation via
+  `ensure_dirs`)
+- The v2.2.0 "no embeddings; FTS5 + Jaccard only" decision —
+  M3's skill retrieval and M6's conflict check both use the
+  existing FTS5/Jaccard infrastructure; no new embedding deps.
+
+---
+
 ## [3.0.0] — 2026-05-27 — Lean, audited, opinionated
 
 ### Hardened (RC audit — rounds 2 + 3, pre-publish)

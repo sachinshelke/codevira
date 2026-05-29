@@ -22,6 +22,7 @@ trouble.
 This adapter handles MCP tool calls. For Claude Code lifecycle hooks,
 see ``claude_code_hooks.py`` instead.
 """
+
 from __future__ import annotations
 
 import time
@@ -70,6 +71,11 @@ def post_call(
     (token meter, style check, AI-promotion-score updates). The verdict
     is returned for callers that want to surface ``warn`` messages, but
     can be ignored.
+
+    v3.1.0 M2 Phase 3: after the engine dispatch returns, ``memory_fanout``
+    is called as a pure side-effect step — it records a working-memory
+    observation from the tool call without affecting the verdict. Fan-out
+    failure is logged and dropped (the verdict is already committed).
     """
     try:
         event = _build_post_event(tool_name, arguments, output)
@@ -77,14 +83,28 @@ def post_call(
         return PolicyVerdict.allow(metadata={"_wiring_error": "build_event_failed"})
 
     try:
-        return dispatch(event)
+        verdict = dispatch(event)
     except Exception:  # noqa: BLE001
-        return PolicyVerdict.allow(metadata={"_wiring_error": "dispatch_failed"})
+        verdict = PolicyVerdict.allow(metadata={"_wiring_error": "dispatch_failed"})
+
+    # v3.1.0 M2 Phase 3: memory fan-out. Sequenced AFTER policy eval so
+    # the verdict isn't affected by fan-out behavior. Fail-open.
+    try:
+        from mcp_server.engine.memory_fanout import dispatch as _fanout_dispatch
+
+        _fanout_dispatch(event)
+    except Exception:  # noqa: BLE001
+        # Fail-open: never let an observation-write failure change the
+        # caller's verdict. Logging stays in the fan-out module.
+        pass
+
+    return verdict
 
 
 # ----------------------------------------------------------------------
 # Helpers
 # ----------------------------------------------------------------------
+
 
 def _build_pre_event(tool_name: str, arguments: dict[str, Any]) -> HookEvent:
     """Construct a PRE_TOOL_USE HookEvent from MCP-style call_tool args.
@@ -122,6 +142,7 @@ def _build_pre_event(tool_name: str, arguments: dict[str, Any]) -> HookEvent:
             # Round-4 HIGH #1: path-traversal containment.
             try:
                 import os
+
                 common = Path(os.path.commonpath([str(project_root), str(resolved)]))
                 if common == project_root:
                     target_file = resolved

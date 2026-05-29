@@ -1239,6 +1239,29 @@ def main() -> None:
         ),
     )
 
+    # v3.1.0 M2 Phase 3: working-memory subcommands. The MCP tool
+    # surface (working_add / working_get / working_promote) is the
+    # everyday agent-facing API; this CLI tier is the escape hatch for
+    # a human user operating on the per-machine cache outside an IDE.
+    working_parser = subparsers.add_parser(
+        "working",
+        help="Operate on working memory (v3.1.0 M2). `commit <session_id>` "
+        "copies a session's live scratchpad entries from the per-machine "
+        "cache (.codevira-cache/working.jsonl) to the canonical archive "
+        "(.codevira/working_archived/<session_id>.jsonl).",
+    )
+    working_sub = working_parser.add_subparsers(dest="working_action")
+    working_commit_parser = working_sub.add_parser(
+        "commit",
+        help="Promote a session's live working entries to the canonical archive.",
+    )
+    working_commit_parser.add_argument(
+        "session_id",
+        help="Session slug to commit (the value the MCP tool reported as "
+        "session_id, typically `ad-hoc-XXXXXX` or an explicit slug you "
+        "passed to working_add).",
+    )
+
     engine_parser = subparsers.add_parser(
         "engine",
         help="Internal: lifecycle-hook engine entry (called by hook scripts)",
@@ -1497,6 +1520,18 @@ def main() -> None:
             keep_data=getattr(args, "keep_data", False),
         )
         sys.exit(rc)
+    elif args.command == "working":
+        # v3.1.0 M2 Phase 3: working-memory subcommands.
+        working_action = getattr(args, "working_action", None)
+        if working_action == "commit":
+            from mcp_server.cli_working import cmd_working_commit
+
+            sys.exit(cmd_working_commit(getattr(args, "session_id", None)))
+        sys.stderr.write(
+            "codevira working: missing subcommand. Try `codevira working commit "
+            "<session_id>`.\n"
+        )
+        sys.exit(2)
     elif args.command == "engine":
         # Internal — Claude Code hook scripts call us with `engine handle <event>`.
         engine_action = getattr(args, "engine_action", None)

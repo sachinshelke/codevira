@@ -325,6 +325,71 @@ class TestGetSessionContext:
     # (the changesets feature was deleted; this test exercised the
     # graceful-fallback for an import path that no longer exists).
 
+    def test_session_context_working_panel_empty(self, tmp_path, monkeypatch):
+        """v3.1.0 M2 Phase 3: empty working memory surfaces as
+        {entries: [], count: 0} — never crashes the catch-me-up call."""
+        _, _, db = _setup_project(tmp_path, monkeypatch)
+        db.close()
+
+        with patch(
+            "mcp_server.tools.roadmap.get_roadmap",
+            return_value={"current_phase": {}},
+        ):
+            result = learning.get_session_context()
+
+        assert "working" in result
+        assert result["working"]["entries"] == []
+        assert result["working"]["count"] == 0
+
+    def test_session_context_working_panel_populated(self, tmp_path, monkeypatch):
+        """v3.1.0 M2 Phase 3: top-3 live entries surface, capped, with
+        truncated content (120 chars per plan's token budget)."""
+        _, _, db = _setup_project(tmp_path, monkeypatch)
+        db.close()
+
+        from mcp_server.storage import working_store
+
+        # Seed 5 entries — panel should show top 3 by decay/importance.
+        working_store.add("low signal", importance=2)
+        working_store.add("medium signal", importance=5)
+        working_store.add("high signal", importance=9)
+        working_store.add("goal: ship M2", kind="goal", importance=8)
+        working_store.add("x" * 200, importance=6)  # truncation check
+
+        with patch(
+            "mcp_server.tools.roadmap.get_roadmap",
+            return_value={"current_phase": {}},
+        ):
+            result = learning.get_session_context()
+
+        panel = result["working"]
+        assert panel["count"] == 3, panel
+        # Top entry must be the highest-importance one.
+        assert panel["entries"][0]["importance"] == 9
+        # Truncation: any 120+ char content shows the ellipsis marker.
+        long_entry = next((e for e in panel["entries"] if e["importance"] == 6), None)
+        if long_entry is not None:
+            assert len(long_entry["content"]) <= 124  # 120 + "..."
+
+    def test_session_context_working_panel_failure_graceful(
+        self, tmp_path, monkeypatch
+    ):
+        """If working_store.list_top_k raises, the panel surfaces as
+        empty rather than breaking get_session_context."""
+        _, _, db = _setup_project(tmp_path, monkeypatch)
+        db.close()
+
+        with patch(
+            "mcp_server.storage.working_store.list_top_k",
+            side_effect=Exception("synthetic"),
+        ):
+            with patch(
+                "mcp_server.tools.roadmap.get_roadmap",
+                return_value={"current_phase": {}},
+            ):
+                result = learning.get_session_context()
+        assert result["working"] == {"entries": [], "count": 0}
+
     def test_session_context_empty_db(self, tmp_path, monkeypatch):
         _, _, db = _setup_project(tmp_path, monkeypatch)
         db.close()

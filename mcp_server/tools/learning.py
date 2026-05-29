@@ -606,9 +606,37 @@ def get_session_context(since: str | None = None) -> dict:
         except Exception:
             drift_warning = None
 
+        # v3.1.0 M2 Phase 3: working-memory panel. Surfaces the top-3
+        # live observations/goals so the agent sees its own recent
+        # scratchpad in the catch-me-up payload. Capped at 3 entries
+        # (~150 tokens) to honor the get_session_context token budget.
+        # Best-effort: any failure (no working.jsonl yet, store error)
+        # surfaces an empty entries list rather than crashing the
+        # session-context call.
+        working_panel: dict = {"entries": [], "count": 0}
+        try:
+            from mcp_server.storage import working_store
+
+            top = working_store.list_top_k(top_k=3)
+            working_panel = {
+                "entries": [
+                    {
+                        "entry_id": e.get("id"),
+                        "kind": e.get("kind"),
+                        "content": _truncate(e.get("content"), 120),
+                        "importance": e.get("importance"),
+                    }
+                    for e in top
+                ],
+                "count": len(top),
+            }
+        except Exception:
+            pass
+
         return {
             "current_phase": current_phase,
             "drift_warning": drift_warning,
+            "working": working_panel,
             "recent_sessions": [
                 {
                     "session_id": s["session_id"],

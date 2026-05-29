@@ -183,15 +183,32 @@ _TEMPLATE = """<!DOCTYPE html>
   #detail .tag { display:inline-block; background:#23262f; border-radius:4px;
                  padding:1px 6px; margin:2px 3px 0 0; font-size:11px; }
   #detail .txt { white-space:pre-wrap; margin-top:6px; }
-  #canvasWrap { flex:1; position:relative; }
+  #canvasWrap { flex:1; position:relative; overflow:hidden; }
+  /* Controls bar floats over the canvas, top-right */
+  #controls { position:absolute; top:10px; right:10px; z-index:5;
+              display:flex; gap:6px; }
+  #controls button { background:#15171d; color:#cdd2dd; border:1px solid #2a2d35;
+                     border-radius:6px; padding:6px 10px; font-size:11px;
+                     cursor:pointer; }
+  #controls button:hover { background:#1d2029; }
+  #hint { position:absolute; bottom:10px; left:10px; right:10px; text-align:center;
+          color:#5a6072; font-size:11px; pointer-events:none; z-index:4; }
   svg { width:100%; height:100%; display:block; cursor:grab; }
-  .node circle { stroke:#0f1115; stroke-width:1.5px; cursor:pointer; }
-  .node text { fill:#cdd2dd; font-size:10px; pointer-events:none; }
-  .edge { stroke:#4a4f5c; stroke-width:1.2px; }
+  svg.panning { cursor:grabbing; }
+  .node circle { stroke:#0f1115; stroke-width:1.5px; cursor:pointer;
+                 transition:stroke-width 0.1s; }
+  .node:hover circle, .node.focus circle { stroke:#fff; stroke-width:2.5px; }
+  .node text { fill:#cdd2dd; font-size:10px; pointer-events:none;
+               opacity:0; transition:opacity 0.1s; }
+  /* Labels visible only on hover, when filter-matched, or when zoomed in. */
+  .show-labels .node text { opacity:0.85; }
+  .node.match text, .node:hover text, .node.focus text { opacity:1; }
+  .edge { stroke:#4a4f5c; stroke-width:1.2px; transition:opacity 0.1s; }
   .edge-supersedes { marker-end:url(#arrow); }
   .edge-touches { stroke:#3a3f4b; stroke-dasharray:3 3; }
   .edge-depends { stroke:#2f6f4f; }
   .dim { opacity:0.1; }
+  .edge.lit { stroke:#cdd2dd; stroke-width:1.8px; opacity:1; }
 </style>
 </head>
 <body>
@@ -200,6 +217,7 @@ _TEMPLATE = """<!DOCTYPE html>
   <div id="meta">@@GENERATED@@</div>
   <input id="q" placeholder="filter: id / text / tag / file…" autocomplete="off">
   <label class="row"><input type="checkbox" id="protOnly"> protected (do_not_revert) only</label>
+  <label class="row"><input type="checkbox" id="alwaysLabels"> always show labels</label>
   <div id="stats"></div>
   <div class="legend">
     <span><i class="dot" style="background:#e5534b"></i>protected</span>
@@ -210,28 +228,66 @@ _TEMPLATE = """<!DOCTYPE html>
   <div id="detail"></div>
 </div>
 <div id="canvasWrap">
-  <svg id="svg"><defs>
-    <marker id="arrow" viewBox="0 0 10 10" refX="22" refY="5" markerWidth="7"
-            markerHeight="7" orient="auto-start-reverse">
-      <path d="M0 0 L10 5 L0 10 z" fill="#6b7280"/>
-    </marker>
-  </defs></svg>
+  <div id="controls">
+    <button id="btnFit" title="Re-fit the graph to the canvas">⛶ Fit</button>
+    <button id="btnZoomIn" title="Zoom in">＋</button>
+    <button id="btnZoomOut" title="Zoom out">－</button>
+    <button id="btnReset" title="Reset node positions (re-run the layout)">↻ Layout</button>
+  </div>
+  <div id="hint">drag empty space to pan · scroll to zoom · drag a node to pin · hover to focus</div>
+  <svg id="svg">
+    <defs>
+      <marker id="arrow" viewBox="0 0 10 10" refX="22" refY="5" markerWidth="7"
+              markerHeight="7" orient="auto-start-reverse">
+        <path d="M0 0 L10 5 L0 10 z" fill="#6b7280"/>
+      </marker>
+    </defs>
+    <g id="viewport"></g>
+  </svg>
 </div>
 <script>
 const DATA = @@DATA@@;
 const svg = document.getElementById('svg');
+const viewport = document.getElementById('viewport');
 const NS = 'http://www.w3.org/2000/svg';
 const W = svg.clientWidth || 900, H = svg.clientHeight || 700;
 const byId = {};
-DATA.nodes.forEach((n,i) => {
-  n.x = W/2 + Math.cos(i)*Math.min(W,H)*0.3 + (Math.random()-0.5)*40;
-  n.y = H/2 + Math.sin(i)*Math.min(W,H)*0.3 + (Math.random()-0.5)*40;
-  n.vx = 0; n.vy = 0; byId[n.id] = n;
+
+// Pre-compute degree per node so we can size by importance + seed the
+// initial layout (high-degree hubs go to inner radii).
+const degree = {};
+DATA.edges.forEach(e => {
+  degree[e.source] = (degree[e.source]||0) + 1;
+  degree[e.target] = (degree[e.target]||0) + 1;
+});
+DATA.nodes.forEach(n => { n.degree = degree[n.id] || 0; });
+
+// Initial seeding: sort by degree desc and place on concentric rings.
+// High-degree nodes near the center → readable hub-spoke layout.
+const sorted = DATA.nodes.slice().sort((a,b) => b.degree - a.degree);
+sorted.forEach((n, i) => {
+  const ring = Math.floor(i / 12);
+  const slot = i % 12;
+  const r = Math.min(W,H) * (0.1 + ring*0.12);
+  const ang = (slot / 12) * Math.PI * 2 + ring * 0.4;
+  n.x = W/2 + Math.cos(ang) * r + (Math.random()-0.5)*20;
+  n.y = H/2 + Math.sin(ang) * r + (Math.random()-0.5)*20;
+  n.vx = 0; n.vy = 0;
+  n.pinned = false;
+  byId[n.id] = n;
+});
+
+// Neighbor index for hover-focus + filter-edge-lookup.
+const neighbors = {};
+DATA.nodes.forEach(n => { neighbors[n.id] = new Set(); });
+DATA.edges.forEach(e => {
+  if (neighbors[e.source]) neighbors[e.source].add(e.target);
+  if (neighbors[e.target]) neighbors[e.target].add(e.source);
 });
 
 // Bounded force layout (P5: fixed iteration count, no live animation loop).
 function layout() {
-  const ITER = 220, k = Math.sqrt((W*H) / Math.max(1, DATA.nodes.length));
+  const ITER = 240, k = Math.sqrt((W*H) / Math.max(1, DATA.nodes.length));
   for (let it=0; it<ITER; it++) {
     for (let a=0; a<DATA.nodes.length; a++) {
       const na = DATA.nodes[a];
@@ -239,7 +295,7 @@ function layout() {
         const nb = DATA.nodes[b];
         let dx = na.x-nb.x, dy = na.y-nb.y;
         let d = Math.sqrt(dx*dx+dy*dy) || 0.01;
-        const rep = (k*k) / d / 8;
+        const rep = (k*k) / d / 7;
         dx/=d; dy/=d;
         na.vx += dx*rep; na.vy += dy*rep;
         nb.vx -= dx*rep; nb.vy -= dy*rep;
@@ -250,18 +306,24 @@ function layout() {
       if (!s || !t) return;
       let dx = t.x-s.x, dy = t.y-s.y;
       let d = Math.sqrt(dx*dx+dy*dy) || 0.01;
-      const att = (d*d) / k / 90;
+      const att = (d*d) / k / 80;
       dx/=d; dy/=d;
       s.vx += dx*att; s.vy += dy*att;
       t.vx -= dx*att; t.vy -= dy*att;
     });
     DATA.nodes.forEach(n => {
+      if (n.pinned) { n.vx = n.vy = 0; return; }
       n.vx += (W/2 - n.x)*0.002; n.vy += (H/2 - n.y)*0.002;
       n.x += Math.max(-30, Math.min(30, n.vx)); n.y += Math.max(-30, Math.min(30, n.vy));
       n.vx *= 0.85; n.vy *= 0.85;
-      n.x = Math.max(30, Math.min(W-30, n.x)); n.y = Math.max(20, Math.min(H-20, n.y));
     });
   }
+}
+
+function nodeRadius(n) {
+  if (n.type === 'file') return 5 + Math.min(4, n.degree * 0.4);
+  const base = n.do_not_revert ? 8 : 6;
+  return base + Math.min(8, Math.sqrt(n.degree));
 }
 
 function color(n) {
@@ -272,7 +334,7 @@ function color(n) {
 }
 
 function render() {
-  while (svg.lastChild && svg.lastChild.tagName !== 'defs') svg.removeChild(svg.lastChild);
+  while (viewport.firstChild) viewport.removeChild(viewport.firstChild);
   DATA.edges.forEach(e => {
     const s = byId[e.source], t = byId[e.target];
     if (!s || !t) return;
@@ -281,21 +343,24 @@ function render() {
     l.setAttribute('x1',s.x); l.setAttribute('y1',s.y);
     l.setAttribute('x2',t.x); l.setAttribute('y2',t.y);
     l.dataset.s = e.source; l.dataset.t = e.target;
-    svg.appendChild(l);
+    viewport.appendChild(l);
   });
   DATA.nodes.forEach(n => {
     const g = document.createElementNS(NS,'g');
     g.setAttribute('class','node'); g.dataset.id = n.id;
     g.setAttribute('transform', `translate(${n.x},${n.y})`);
     const c = document.createElementNS(NS,'circle');
-    c.setAttribute('r', n.type==='file' ? 6 : (n.do_not_revert ? 9 : 7));
+    c.setAttribute('r', nodeRadius(n));
     c.setAttribute('fill', color(n));
     const tx = document.createElementNS(NS,'text');
-    tx.setAttribute('x', 11); tx.setAttribute('y', 3);
+    tx.setAttribute('x', nodeRadius(n) + 4); tx.setAttribute('y', 3);
     tx.textContent = n.type === 'file' ? n.label : n.id;
     g.appendChild(c); g.appendChild(tx);
-    g.addEventListener('click', () => showDetail(n));
-    svg.appendChild(g);
+    g.addEventListener('click', (ev) => { ev.stopPropagation(); showDetail(n); });
+    g.addEventListener('mouseenter', () => focusNode(n.id));
+    g.addEventListener('mouseleave', () => focusNode(null));
+    attachDrag(g, n);
+    viewport.appendChild(g);
   });
 }
 
@@ -308,6 +373,7 @@ function showDetail(n) {
     d.innerHTML =
       `<h2>📄 ${esc(n.label)}</h2>` +
       `<div class="k">${esc(n.file_path)}</div>` +
+      `<div><span class="k">degree:</span> ${n.degree}</div>` +
       `<div class="txt">Code file referenced by one or more decisions. Dashed edges link decisions that touch it; green edges are code dependencies between files.</div>`;
     return;
   }
@@ -317,14 +383,151 @@ function showDetail(n) {
     `<div><span class="k">file:</span> ${esc(n.file_path||'—')}</div>` +
     `<div><span class="k">when:</span> ${esc((n.ts||'').slice(0,19))}` +
       ` &nbsp;<span class="k">session:</span> ${esc(n.session_id||'—')}</div>` +
+    `<div><span class="k">degree:</span> ${n.degree}</div>` +
     (n.is_superseded?`<div class="k">(superseded)</div>`:``) +
     `<div>${tags}</div>` +
     `<div class="txt">${esc(n.decision)}</div>`;
 }
 
+// Hover-focus: light up a node + 1-hop neighbors, dim everything else.
+let focusedId = null;
+function focusNode(id) {
+  focusedId = id;
+  if (id === null) {
+    document.querySelectorAll('.node').forEach(g => g.classList.remove('focus'));
+    document.querySelectorAll('.edge').forEach(l => l.classList.remove('lit'));
+    applyFilter();
+    return;
+  }
+  const lit = new Set([id, ...(neighbors[id] || [])]);
+  document.querySelectorAll('.node').forEach(g => {
+    const nid = g.dataset.id;
+    g.classList.toggle('focus', nid === id);
+    g.classList.toggle('dim', !lit.has(nid));
+  });
+  document.querySelectorAll('.edge').forEach(l => {
+    const touches = (l.dataset.s === id) || (l.dataset.t === id);
+    l.classList.toggle('lit', touches);
+    l.classList.toggle('dim', !(lit.has(l.dataset.s) && lit.has(l.dataset.t)));
+  });
+}
+
+// Pan + zoom via a viewport transform. Saving t.x/t.y/t.k as state.
+const t = { x: 0, y: 0, k: 1 };
+function applyTransform() {
+  viewport.setAttribute('transform', `translate(${t.x},${t.y}) scale(${t.k})`);
+  // Auto-show labels when zoomed in enough.
+  svg.classList.toggle('show-labels',
+    t.k >= 1.4 || document.getElementById('alwaysLabels').checked);
+}
+
+let panning = false, panStart = null;
+svg.addEventListener('mousedown', (ev) => {
+  if (ev.target.closest('.node')) return;  // drag-node owns this case
+  panning = true; svg.classList.add('panning');
+  panStart = { x: ev.clientX - t.x, y: ev.clientY - t.y };
+});
+window.addEventListener('mousemove', (ev) => {
+  if (!panning) return;
+  t.x = ev.clientX - panStart.x;
+  t.y = ev.clientY - panStart.y;
+  applyTransform();
+});
+window.addEventListener('mouseup', () => {
+  panning = false; svg.classList.remove('panning');
+});
+svg.addEventListener('wheel', (ev) => {
+  ev.preventDefault();
+  const rect = svg.getBoundingClientRect();
+  const cx = ev.clientX - rect.left, cy = ev.clientY - rect.top;
+  const factor = ev.deltaY < 0 ? 1.15 : 1/1.15;
+  // Zoom centered on cursor: keep (cx,cy) under the same data point.
+  t.x = cx - (cx - t.x) * factor;
+  t.y = cy - (cy - t.y) * factor;
+  t.k = Math.max(0.2, Math.min(6, t.k * factor));
+  applyTransform();
+}, { passive:false });
+
+// Drag-to-pin a node (lifts it out of the layout's center pull).
+function attachDrag(g, n) {
+  let dragging = false, dx = 0, dy = 0;
+  g.addEventListener('mousedown', (ev) => {
+    ev.stopPropagation();
+    dragging = true;
+    const cursor = clientToCanvas(ev);
+    dx = cursor.x - n.x; dy = cursor.y - n.y;
+    n.pinned = true;
+  });
+  window.addEventListener('mousemove', (ev) => {
+    if (!dragging) return;
+    const cursor = clientToCanvas(ev);
+    n.x = cursor.x - dx; n.y = cursor.y - dy;
+    g.setAttribute('transform', `translate(${n.x},${n.y})`);
+    // Update incident edges in place (avoid full re-render).
+    document.querySelectorAll('.edge').forEach(l => {
+      if (l.dataset.s === n.id) { l.setAttribute('x1', n.x); l.setAttribute('y1', n.y); }
+      if (l.dataset.t === n.id) { l.setAttribute('x2', n.x); l.setAttribute('y2', n.y); }
+    });
+  });
+  window.addEventListener('mouseup', () => { dragging = false; });
+}
+
+function clientToCanvas(ev) {
+  const rect = svg.getBoundingClientRect();
+  return {
+    x: (ev.clientX - rect.left - t.x) / t.k,
+    y: (ev.clientY - rect.top - t.y) / t.k,
+  };
+}
+
+// Fit-to-view: compute bounding box of all nodes and set t accordingly.
+function fitToView(margin) {
+  margin = margin || 40;
+  let minX=Infinity, minY=Infinity, maxX=-Infinity, maxY=-Infinity;
+  DATA.nodes.forEach(n => {
+    const r = nodeRadius(n);
+    if (n.x-r < minX) minX = n.x-r;
+    if (n.y-r < minY) minY = n.y-r;
+    if (n.x+r > maxX) maxX = n.x+r;
+    if (n.y+r > maxY) maxY = n.y+r;
+  });
+  const rect = svg.getBoundingClientRect();
+  const cw = rect.width, ch = rect.height;
+  const bw = Math.max(1, maxX-minX), bh = Math.max(1, maxY-minY);
+  const k = Math.min(6, Math.min((cw-margin*2)/bw, (ch-margin*2)/bh));
+  t.k = k;
+  t.x = (cw - (minX+maxX) * k) / 2;
+  t.y = (ch - (minY+maxY) * k) / 2;
+  applyTransform();
+}
+
+document.getElementById('btnFit').addEventListener('click', () => fitToView());
+document.getElementById('btnZoomIn').addEventListener('click', () => {
+  t.k = Math.min(6, t.k * 1.25); applyTransform();
+});
+document.getElementById('btnZoomOut').addEventListener('click', () => {
+  t.k = Math.max(0.2, t.k / 1.25); applyTransform();
+});
+document.getElementById('btnReset').addEventListener('click', () => {
+  DATA.nodes.forEach(n => { n.pinned = false; });
+  // Re-seed + re-layout for a clean rerun.
+  sorted.forEach((n, i) => {
+    const ring = Math.floor(i / 12);
+    const slot = i % 12;
+    const r = Math.min(W,H) * (0.1 + ring*0.12);
+    const ang = (slot / 12) * Math.PI * 2 + ring * 0.4;
+    n.x = W/2 + Math.cos(ang) * r + (Math.random()-0.5)*20;
+    n.y = H/2 + Math.sin(ang) * r + (Math.random()-0.5)*20;
+  });
+  layout(); render(); fitToView(); applyFilter();
+});
+
 const q = document.getElementById('q');
 const protOnly = document.getElementById('protOnly');
+const alwaysLabels = document.getElementById('alwaysLabels');
+
 function applyFilter() {
+  if (focusedId !== null) return;  // hover focus takes precedence
   const term = q.value.trim().toLowerCase();
   const matchIds = new Set();
   DATA.nodes.forEach(n => {
@@ -337,10 +540,15 @@ function applyFilter() {
     }
     if (ok) matchIds.add(n.id);
   });
-  document.querySelectorAll('.node').forEach(g =>
-    g.classList.toggle('dim', !matchIds.has(g.dataset.id)));
+  const showAll = matchIds.size === DATA.nodes.length;
+  document.querySelectorAll('.node').forEach(g => {
+    const m = matchIds.has(g.dataset.id);
+    g.classList.toggle('dim', !showAll && !m);
+    g.classList.toggle('match', !showAll && m && term.length > 0);
+  });
   document.querySelectorAll('.edge').forEach(l =>
-    l.classList.toggle('dim', !(matchIds.has(l.dataset.s) && matchIds.has(l.dataset.t))));
+    l.classList.toggle('dim',
+      !showAll && !(matchIds.has(l.dataset.s) && matchIds.has(l.dataset.t))));
   const nFiles = DATA.nodes.filter(n => n.type === 'file').length;
   const nDec = DATA.nodes.length - nFiles;
   document.getElementById('stats').textContent =
@@ -348,8 +556,12 @@ function applyFilter() {
 }
 q.addEventListener('input', applyFilter);
 protOnly.addEventListener('change', applyFilter);
+alwaysLabels.addEventListener('change', applyTransform);
 
-layout(); render(); applyFilter();
+// Init: layout, render, fit, then apply filter so stats render.
+layout(); render(); fitToView(); applyFilter();
+// Recompute fit on window resize so the graph stays usable.
+window.addEventListener('resize', () => fitToView());
 </script>
 </body>
 </html>

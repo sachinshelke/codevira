@@ -1048,6 +1048,210 @@ async def list_tools() -> list[Tool]:
                 },
             },
         ),
+        # ---- v3.1.0 M3: skill library (procedural memory) ----
+        Tool(
+            name="record_skill",
+            description=(
+                "v3.1.0 M3: Author a new skill in the canonical store "
+                "(.codevira/skills.jsonl). Skills encode 'how to do X in "
+                "this project' as markdown procedures. Calls check_conflict "
+                "against the SKILLS corpus before writing; near-duplicate "
+                "warnings can be overridden via force=True. Use supersede_skill "
+                "to version an existing skill, or promote_skill_to_playbook to "
+                "promote a skill into the existing playbook system."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Short identifier (e.g., 'git-rebase-workflow')",
+                    },
+                    "procedure": {
+                        "type": "string",
+                        "description": "Markdown body of how to do this thing (max 2 KB)",
+                    },
+                    "summary": {
+                        "type": "string",
+                        "description": "Optional one-liner (max 256 B)",
+                    },
+                    "triggers": {
+                        "type": "object",
+                        "properties": {
+                            "tags": {"type": "array", "items": {"type": "string"}},
+                            "file_patterns": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                            },
+                        },
+                        "description": (
+                            "Discovery hints: tags (lowercased, set-membership "
+                            "for jaccard ranking) + file_patterns (fnmatch globs "
+                            "for file-scoped retrieval)"
+                        ),
+                    },
+                    "source": {
+                        "type": "string",
+                        "enum": ["explicit", "induced"],
+                        "default": "explicit",
+                    },
+                    "do_not_revert": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": (
+                            "Exempt from auto-archive sweep; flag canonical "
+                            "doctrine."
+                        ),
+                    },
+                    "force": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "Skip duplicate-check warning",
+                    },
+                },
+                "required": ["name", "procedure"],
+            },
+        ),
+        Tool(
+            name="get_skill",
+            description=(
+                "v3.1.0 M3: Composite-ranked search over active skills. "
+                "score = 0.5 × BM25_norm + 0.3 × tag_jaccard + 0.2 × recency_decay "
+                "(τ=30d, never-used skills score 0 recency). Returns hits with "
+                "score_breakdown for debuggability. Pass file_path to filter "
+                "skills whose trigger file_patterns don't match."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Search keywords (e.g., 'rebase main')",
+                    },
+                    "top_k": {"type": "integer", "default": 5},
+                    "file_path": {
+                        "type": "string",
+                        "description": (
+                            "Optional file path to filter skills by their "
+                            "trigger file_patterns (fnmatch). Skills with no "
+                            "patterns match anything (not filtered)."
+                        ),
+                    },
+                },
+                "required": ["query"],
+            },
+        ),
+        Tool(
+            name="apply_skill_outcome",
+            description=(
+                "v3.1.0 M3: Manually record one outcome for a skill — success "
+                "or failure. Reinforces the reinforcement loop (resets "
+                "consecutive_failures on success; auto-archives at 5 consecutive "
+                "failures unless do_not_revert=True). The canonical signal in "
+                "M5+ comes from outcomes_writer.py (git-derived, not "
+                "agent-self-reported); this tool is the manual override."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "skill_id": {"type": "string"},
+                    "success": {"type": "boolean"},
+                },
+                "required": ["skill_id", "success"],
+            },
+        ),
+        Tool(
+            name="list_skills",
+            description=(
+                "v3.1.0 M3: Filtered list of skills. status='active' (default) "
+                "returns the daily-driver set; 'all' returns every state; any "
+                "other value filters to that one state. tags filter is set "
+                "intersection."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "description": "active | archived | superseded | all",
+                        "default": "active",
+                    },
+                    "source": {
+                        "type": "string",
+                        "enum": ["explicit", "induced"],
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "limit": {"type": "integer", "default": 50},
+                },
+            },
+        ),
+        Tool(
+            name="supersede_skill",
+            description=(
+                "v3.1.0 M3: Version a skill. Writes a new skill that supersedes "
+                "old_id; amendment-marks the old as 'superseded' with a backref. "
+                "Triggers inherit from the old skill when not supplied. The old "
+                "skill no longer surfaces in search after this; it's still "
+                "retrievable via list_skills(status='superseded') for audit."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "old_id": {"type": "string"},
+                    "name": {"type": "string"},
+                    "procedure": {"type": "string"},
+                    "summary": {"type": "string"},
+                    "triggers": {
+                        "type": "object",
+                        "properties": {
+                            "tags": {"type": "array", "items": {"type": "string"}},
+                            "file_patterns": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                            },
+                        },
+                    },
+                    "reason": {"type": "string"},
+                    "do_not_revert": {"type": "boolean", "default": False},
+                },
+                "required": ["old_id", "name", "procedure"],
+            },
+        ),
+        Tool(
+            name="promote_skill_to_playbook",
+            description=(
+                "v3.1.0 M3: Write the skill's procedure as a playbook markdown "
+                "file at .codevira/playbooks/<task_type>/<name>.md. Refuses on "
+                "existing file unless force=True so hand-written playbooks "
+                "aren't clobbered. After promotion the procedure is also "
+                "discoverable via get_playbook(task_type)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "skill_id": {"type": "string"},
+                    "task_type": {
+                        "type": "string",
+                        "description": (
+                            "Playbook directory name (e.g., 'commit', "
+                            "'add_tool', 'debug_pipeline')"
+                        ),
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": (
+                            "Optional filename slug; defaults to "
+                            "slugified(skill.name)"
+                        ),
+                    },
+                    "force": {"type": "boolean", "default": False},
+                },
+                "required": ["skill_id", "task_type"],
+            },
+        ),
         # ---- v1.5: Deep Graph Intelligence Tools ----
         Tool(
             name="query_graph",
@@ -1378,6 +1582,64 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             from mcp_server.tools.working import get_working_context
 
             result = get_working_context(top_k=arguments.get("top_k", 5))
+        # ---- v3.1.0 M3: skill library dispatch ----
+        elif name == "record_skill":
+            from mcp_server.tools.skills import record_skill
+
+            result = record_skill(
+                name=arguments["name"],
+                procedure=arguments["procedure"],
+                summary=arguments.get("summary"),
+                triggers=arguments.get("triggers"),
+                source=arguments.get("source", "explicit"),
+                do_not_revert=arguments.get("do_not_revert", False),
+                force=arguments.get("force", False),
+            )
+        elif name == "get_skill":
+            from mcp_server.tools.skills import get_skill
+
+            result = get_skill(
+                query=arguments["query"],
+                top_k=arguments.get("top_k", 5),
+                file_path=arguments.get("file_path"),
+            )
+        elif name == "apply_skill_outcome":
+            from mcp_server.tools.skills import apply_skill_outcome
+
+            result = apply_skill_outcome(
+                skill_id=arguments["skill_id"],
+                success=arguments["success"],
+            )
+        elif name == "list_skills":
+            from mcp_server.tools.skills import list_skills
+
+            result = list_skills(
+                status=arguments.get("status", "active"),
+                source=arguments.get("source"),
+                tags=arguments.get("tags"),
+                limit=arguments.get("limit", 50),
+            )
+        elif name == "supersede_skill":
+            from mcp_server.tools.skills import supersede_skill
+
+            result = supersede_skill(
+                old_id=arguments["old_id"],
+                name=arguments["name"],
+                procedure=arguments["procedure"],
+                summary=arguments.get("summary"),
+                triggers=arguments.get("triggers"),
+                reason=arguments.get("reason", ""),
+                do_not_revert=arguments.get("do_not_revert", False),
+            )
+        elif name == "promote_skill_to_playbook":
+            from mcp_server.tools.skills import promote_skill_to_playbook
+
+            result = promote_skill_to_playbook(
+                skill_id=arguments["skill_id"],
+                task_type=arguments["task_type"],
+                name=arguments.get("name"),
+                force=arguments.get("force", False),
+            )
         else:
             result = {"error": f"Unknown tool: {name}"}
 

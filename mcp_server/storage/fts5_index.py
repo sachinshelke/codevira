@@ -48,6 +48,15 @@ logger = logging.getLogger(__name__)
 _TABLE = "decision_fts"
 _META_TABLE = "fts_meta"
 
+# v3.1.0 M3 Phase 2: skills FTS5 table coexists in the same .sqlite
+# file. Separate meta key (``skill_source_mtime``) so the staleness
+# check tracks decisions and skills independently. Weights below
+# (name 3.0 / summary 1.5 / procedure 1.0) match the plan's stated
+# ranking; tags is UNINDEXED — agents can supply tags as a separate
+# Jaccard filter at the skills_store layer rather than letting FTS5
+# stem them.
+_SKILL_TABLE = "skill_fts"
+
 # Schema is intentionally minimal — FTS5 is fast even without elaborate
 # tokenization tweaks. Porter stemmer covers "auth" → "authentication"
 # style matches; remove_diacritics handles café/cafe; ascii fallback
@@ -60,6 +69,18 @@ USING fts5(
     context,
     summary,
     file_path,
+    tags UNINDEXED,
+    tokenize = "porter unicode61 remove_diacritics 2"
+);
+"""
+
+_CREATE_SKILL_SQL = f"""
+CREATE VIRTUAL TABLE IF NOT EXISTS {_SKILL_TABLE}
+USING fts5(
+    skill_id UNINDEXED,
+    name,
+    summary,
+    procedure,
     tags UNINDEXED,
     tokenize = "porter unicode61 remove_diacritics 2"
 );
@@ -118,6 +139,7 @@ def _ensure_tables(conn: sqlite3.Connection) -> None:
     except Exception:  # noqa: BLE001
         pass
     conn.execute(_CREATE_SQL)
+    conn.execute(_CREATE_SKILL_SQL)  # v3.1.0 M3 Phase 2
     conn.execute(_CREATE_META_SQL)
     conn.commit()
 
@@ -292,6 +314,174 @@ def staleness_check(decisions_path: Path, index_path: Path) -> bool:
         except (TypeError, ValueError):
             return True
         # Use a 1-second epsilon to tolerate filesystems with second-precision mtime.
+        return src_mtime > idx_mtime + 1.0
+    finally:
+        conn.close()
+
+
+# ─── Skills FTS5 (v3.1.0 M3 Phase 2) ─────────────────────────────────
+
+
+def rebuild_skills_from_jsonl(skills_path: Path, index_path: Path) -> int:
+    """Drop + recreate the skill_fts table from skills.jsonl.
+
+    Returns the number of indexed skills. Skips superseded entries to
+    match ``list_skills`` default behavior. Same atomicity contract as
+    ``rebuild_from_jsonl`` — single transaction inside the connection.
+    """
+    conn = _connect(index_path)
+    try:
+        _ensure_tables(conn)
+        records = jsonl_store.read_merged(skills_path)
+
+        with conn:
+            conn.execute(f"DELETE FROM {_SKILL_TABLE}")
+            for r in records:
+                if r.get("status") == "superseded":
+                    continue
+                conn.execute(
+                    f"INSERT INTO {_SKILL_TABLE} "
+                    "(skill_id, name, summary, procedure, tags) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (
+                        str(r.get("id", "")),
+                        r.get("name") or "",
+                        r.get("summary") or "",
+                        r.get("procedure") or "",
+                        " ".join((r.get("triggers") or {}).get("tags") or []),
+                    ),
+                )
+            try:
+                src_mtime = skills_path.stat().st_mtime
+            except OSError:
+                src_mtime = 0
+            conn.execute(
+                f"INSERT OR REPLACE INTO {_META_TABLE}(key, value) VALUES(?, ?)",
+                ("skill_source_mtime", str(src_mtime)),
+            )
+            count = conn.execute(f"SELECT COUNT(*) FROM {_SKILL_TABLE}").fetchone()[0]
+        return int(count)
+    finally:
+        conn.close()
+
+
+def add_skill(index_path: Path, skill: dict[str, Any]) -> None:
+    """Incrementally index one skill. Called after skills_store.record.
+
+    Idempotent: an existing skill_id is DELETEd before INSERT, so a
+    second add (e.g., after an amendment) cleanly replaces the row.
+    Skips superseded skills so they don't pollute search results.
+    """
+    if skill.get("status") == "superseded":
+        return
+
+    conn = _connect(index_path)
+    try:
+        _ensure_tables(conn)
+        kid = str(skill.get("id", ""))
+        if not kid:
+            return
+        with conn:
+            conn.execute(f"DELETE FROM {_SKILL_TABLE} WHERE skill_id = ?", (kid,))
+            conn.execute(
+                f"INSERT INTO {_SKILL_TABLE} "
+                "(skill_id, name, summary, procedure, tags) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    kid,
+                    skill.get("name") or "",
+                    skill.get("summary") or "",
+                    skill.get("procedure") or "",
+                    " ".join((skill.get("triggers") or {}).get("tags") or []),
+                ),
+            )
+    finally:
+        conn.close()
+
+
+def search_skills(
+    index_path: Path,
+    query: str,
+    *,
+    limit: int = 5,
+) -> list[dict[str, Any]]:
+    """BM25-ranked FTS5 search over the skill library.
+
+    Returns ``[{"skill_id": str, "score": float, "snippet": str}, ...]``
+    sorted ascending by BM25 distance (best matches first). Weights
+    per the plan: name 3.0, summary 1.5, procedure 1.0; tags is
+    UNINDEXED so it doesn't contribute to BM25 ranking.
+
+    Bad-query handling mirrors ``search()``: malformed inputs return
+    [] rather than raising.
+    """
+    if not index_path.is_file():
+        return []
+    if not query or not query.strip():
+        return []
+    sanitized = _sanitize_fts_query(query)
+    if not sanitized:
+        return []
+
+    conn = _connect(index_path)
+    try:
+        try:
+            cursor = conn.execute(
+                f"""
+                SELECT skill_id,
+                       bm25({_SKILL_TABLE}, 3.0, 1.5, 1.0, 0.0) AS score,
+                       snippet({_SKILL_TABLE}, 2, '[', ']', '…', 12) AS snippet
+                FROM {_SKILL_TABLE}
+                WHERE {_SKILL_TABLE} MATCH ?
+                ORDER BY score
+                LIMIT ?
+                """,
+                (sanitized, limit),
+            )
+            return [
+                {
+                    "skill_id": row["skill_id"],
+                    "score": float(row["score"]),
+                    "snippet": row["snippet"],
+                }
+                for row in cursor.fetchall()
+            ]
+        except sqlite3.OperationalError as exc:
+            logger.warning(
+                "fts5_index.search_skills: query failed (%r); returning empty: %s",
+                query,
+                exc,
+            )
+            return []
+    finally:
+        conn.close()
+
+
+def skill_staleness_check(skills_path: Path, index_path: Path) -> bool:
+    """Return True if the skills FTS5 index is older than skills.jsonl.
+
+    Tracked under a separate meta key (``skill_source_mtime``) so it
+    doesn't collide with the decisions staleness signal.
+    """
+    if not index_path.is_file():
+        return True
+    if not skills_path.is_file():
+        return False  # nothing to index
+    src_mtime = skills_path.stat().st_mtime
+
+    conn = _connect(index_path)
+    try:
+        _ensure_tables(conn)
+        row = conn.execute(
+            f"SELECT value FROM {_META_TABLE} WHERE key = ?",
+            ("skill_source_mtime",),
+        ).fetchone()
+        if row is None:
+            return True
+        try:
+            idx_mtime = float(row["value"])
+        except (TypeError, ValueError):
+            return True
         return src_mtime > idx_mtime + 1.0
     finally:
         conn.close()

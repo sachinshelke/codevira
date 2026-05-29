@@ -339,3 +339,142 @@ class TestDecaySweep:
         res = skills_store.decay_sweep(now=future)
         # Already archived → skipped (not double-counted).
         assert kid not in res["archived"]
+
+
+# ──────────────────────────────────────────────────────────────────────
+# search (composite ranking — v3.1.0 M3 Phase 2)
+# ──────────────────────────────────────────────────────────────────────
+
+
+class TestSearch:
+    """Composite ranking:
+    score = 0.5 × BM25_norm + 0.3 × tag_jaccard + 0.2 × recency_decay
+    """
+
+    def test_empty_query_returns_empty(self, project: Path) -> None:
+        skills_store.record(name="x", procedure="step 1\nstep 2")
+        assert skills_store.search("") == []
+        assert skills_store.search("   ") == []
+
+    def test_finds_skill_by_procedure_text(self, project: Path) -> None:
+        skills_store.record(
+            name="git-rebase-workflow",
+            procedure="Fetch origin then rebase against main",
+            summary="how we rebase",
+            triggers={"tags": ["git", "rebase"]},
+        )
+        results = skills_store.search("rebase main")
+        assert len(results) == 1
+        assert results[0]["name"] == "git-rebase-workflow"
+        assert results[0]["score"] > 0
+        # Composite breakdown surfaces for debug.
+        bd = results[0]["score_breakdown"]
+        assert "bm25_norm" in bd
+        assert "tag_jaccard" in bd
+        assert "recency_decay" in bd
+
+    def test_excludes_archived_skills(self, project: Path) -> None:
+        kid_a = skills_store.record(name="alpha", procedure="rebase against main")
+        kid_b = skills_store.record(name="beta", procedure="rebase against main")
+        skills_store.mark_archived(kid_b)
+        results = skills_store.search("rebase main")
+        ids = {r["id"] for r in results}
+        assert kid_a in ids
+        assert kid_b not in ids
+
+    def test_excludes_superseded_skills(self, project: Path) -> None:
+        kid_a = skills_store.record(name="v1", procedure="old way to rebase main")
+        skills_store.supersede(kid_a, name="v2", procedure="new way to rebase main")
+        results = skills_store.search("rebase main")
+        ids = {r["id"] for r in results}
+        assert kid_a not in ids
+        # v2 still appears.
+        assert any(r["name"] == "v2" for r in results)
+
+    def test_tag_jaccard_boosts_score(self, project: Path) -> None:
+        # Skill A: matches text only; no relevant tags.
+        skills_store.record(
+            name="A",
+            procedure="run pytest with coverage",
+            triggers={"tags": ["unrelated"]},
+        )
+        # Skill B: matches text AND shares tags with the query terms.
+        skills_store.record(
+            name="B",
+            procedure="run pytest with coverage",
+            triggers={"tags": ["pytest", "coverage"]},
+        )
+        results = skills_store.search("pytest coverage")
+        # B should rank ABOVE A because tag_jaccard adds to the composite.
+        names = [r["name"] for r in results]
+        assert names.index("B") < names.index("A")
+
+    def test_recency_decay_uses_last_used_at(self, project: Path) -> None:
+        """Older skills decay; recently-used ones rank higher even at
+        equal BM25."""
+        skills_store.record(name="A", procedure="touch files")  # never used
+        kid_new = skills_store.record(name="B", procedure="touch files")
+        # Mark B as recently used to set last_used_at to ~now.
+        skills_store.mark_used(kid_new, success=True)
+        results = skills_store.search("touch files")
+        # B (just used) should rank above A (never used).
+        if len(results) == 2:
+            assert results[0]["id"] == kid_new
+
+    def test_file_path_filter(self, project: Path) -> None:
+        # Skill with a Python-only file_patterns trigger.
+        skills_store.record(
+            name="py-specific",
+            procedure="run pytest on the file",
+            triggers={"tags": ["pytest"], "file_patterns": ["*.py"]},
+        )
+        # Skill with no patterns — matches anything.
+        skills_store.record(
+            name="generic",
+            procedure="run pytest on the file",
+            triggers={"tags": ["pytest"]},
+        )
+        # Searching for a Python file: both surface.
+        py_results = skills_store.search("pytest", file_path="src/auth.py")
+        py_names = {r["name"] for r in py_results}
+        assert py_names == {"py-specific", "generic"}
+
+        # Searching for a Markdown file: the py-specific skill is filtered out.
+        md_results = skills_store.search("pytest", file_path="README.md")
+        md_names = {r["name"] for r in md_results}
+        assert md_names == {"generic"}
+
+    def test_ranking_weights_overridable(self, project: Path) -> None:
+        skills_store.record(
+            name="A",
+            procedure="rebase main",
+            triggers={"tags": ["rebase", "main"]},
+        )
+        # All weight on tag jaccard — score should equal tag overlap.
+        results = skills_store.search(
+            "rebase main",
+            ranking_weights={"bm25": 0.0, "tag": 1.0, "recency": 0.0},
+        )
+        assert len(results) == 1
+        # With weights={0, 1, 0}, the composite = tag_jaccard.
+        breakdown = results[0]["score_breakdown"]
+        assert abs(results[0]["score"] - breakdown["tag_jaccard"]) < 1e-3
+
+    def test_top_k_caps_results(self, project: Path) -> None:
+        for i in range(10):
+            skills_store.record(name=f"skill-{i}", procedure="some procedure text")
+        results = skills_store.search("procedure", top_k=3)
+        assert len(results) == 3
+
+    def test_search_lazy_rebuild_on_stale_index(self, project: Path) -> None:
+        """First search() on a fresh project rebuilds the index from
+        skills.jsonl rather than returning empty."""
+        kid = skills_store.record(name="x", procedure="rebase against main")
+        # Force the FTS5 index to be stale by deleting it.
+        from mcp_server.storage import paths as _paths
+
+        if _paths.fts5_path().is_file():
+            _paths.fts5_path().unlink()
+        # Search should still work — rebuild kicks in.
+        results = skills_store.search("rebase")
+        assert any(r["id"] == kid for r in results)

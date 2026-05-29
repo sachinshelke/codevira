@@ -76,10 +76,11 @@ folds them into the canonical view at read time. Underscored fields
 from __future__ import annotations
 
 import logging
+import math
 from datetime import datetime, timezone
 from typing import Any
 
-from mcp_server.storage import jsonl_store, origin as origin_module, paths
+from mcp_server.storage import fts5_index, jsonl_store, origin as origin_module, paths
 
 logger = logging.getLogger(__name__)
 
@@ -192,9 +193,20 @@ def record(
         "_schema_v": SCHEMA_V,
     }
 
-    return jsonl_store.append_with_generated_id(
+    skill_id = jsonl_store.append_with_generated_id(
         paths.skills_path(), base_record, prefix="K", width=6
     )
+    base_record["id"] = skill_id
+
+    # v3.1.0 M3 Phase 2: incrementally update the FTS5 skill_fts index
+    # so searches don't wait for a sync. Best-effort (P9 — never fail
+    # the write on a cache miss).
+    try:
+        fts5_index.add_skill(paths.fts5_path(), base_record)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("skills_store.record: FTS5 add_skill failed: %s", exc)
+
+    return skill_id
 
 
 def mark_used(skill_id: str, *, success: bool) -> dict[str, Any]:
@@ -441,6 +453,129 @@ def list_all(
 
 
 # ──────────────────────────────────────────────────────────────────────
+# Search (composite ranking)
+# ──────────────────────────────────────────────────────────────────────
+
+
+# Default tuning per the plan: 0.5 * BM25_norm + 0.3 * tag_jaccard +
+# 0.2 * recency_decay (τ_days = 30). Overridable per-call so a
+# config flag in M9 can tune without code changes.
+DEFAULT_RANKING_WEIGHTS = {"bm25": 0.5, "tag": 0.3, "recency": 0.2}
+_RECENCY_TAU_DAYS = 30.0
+# How many FTS5 candidates to pull per requested top-K. Wider net so
+# the tag+recency rerank can promote a strong candidate that BM25
+# ranked just below the cut.
+_CANDIDATE_OVERSAMPLE = 4
+
+
+def search(
+    query: str,
+    *,
+    top_k: int = 5,
+    file_path: str | None = None,
+    ranking_weights: dict[str, float] | None = None,
+    now: datetime | None = None,
+) -> list[dict[str, Any]]:
+    """Rank active skills against a query via the composite formula.
+
+    ::
+
+        score = 0.5 × BM25_norm + 0.3 × tag_jaccard + 0.2 × recency_decay
+
+    Where:
+      - ``BM25_norm = -bm25_raw / max(-bm25_raw)`` over the candidate
+        set (FTS5 BM25 is a negative distance — lower = better; we
+        flip the sign before normalizing).
+      - ``tag_jaccard = |query_tokens ∩ skill_tags| / |union|`` over
+        the query tokens (lowercased, ≥ 3 chars) and the skill's
+        trigger tags.
+      - ``recency_decay = exp(-Δdays_since_last_used / 30)`` where
+        ``last_used_at`` (or ``ts`` if never used) is the reference.
+
+    ``file_path`` (optional): filters out skills whose ``triggers.
+    file_patterns`` don't match the path (fnmatch). Empty / absent
+    patterns means the skill matches anything (no filter).
+
+    Superseded / archived skills are excluded — search is the
+    everyday surface, daily-driver only.
+
+    Returns each result with ``score_breakdown`` so callers can
+    inspect the composition (useful for debugging weight tuning).
+    """
+    weights = ranking_weights or DEFAULT_RANKING_WEIGHTS
+    now_dt = now or datetime.now(timezone.utc)
+
+    if not query or not query.strip():
+        return []
+
+    # Lazy rebuild — the FTS5 cache is stateless; rebuilding when
+    # stale keeps writes cheap and reads correct.
+    if fts5_index.skill_staleness_check(paths.skills_path(), paths.fts5_path()):
+        try:
+            fts5_index.rebuild_skills_from_jsonl(paths.skills_path(), paths.fts5_path())
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("skills_store.search: FTS5 rebuild failed: %s", exc)
+
+    hits = fts5_index.search_skills(
+        paths.fts5_path(), query, limit=max(top_k * _CANDIDATE_OVERSAMPLE, top_k)
+    )
+    if not hits:
+        return []
+
+    # Flip BM25 (negative → positive) for normalization.
+    raw_pos = [-h["score"] for h in hits]
+    max_pos = max(raw_pos) if raw_pos else 1.0
+    if max_pos <= 0:
+        max_pos = 1.0  # all-zero corpus; avoid div-by-zero
+
+    query_tokens = _tokenize_for_jaccard(query)
+
+    merged = jsonl_store.read_merged(paths.skills_path())
+    by_id = {str(s.get("id")): s for s in merged}
+
+    out: list[dict[str, Any]] = []
+    for hit, pos in zip(hits, raw_pos, strict=False):
+        skill = by_id.get(hit["skill_id"])
+        if skill is None:
+            continue
+        if skill.get("status", STATUS_ACTIVE) != STATUS_ACTIVE:
+            continue
+        if file_path is not None and not _matches_file_pattern(skill, file_path):
+            continue
+
+        bm25_norm = pos / max_pos
+        tag_jaccard = _tag_jaccard(query_tokens, skill)
+        recency = _recency_decay(skill, now=now_dt)
+        composite = (
+            weights.get("bm25", 0.0) * bm25_norm
+            + weights.get("tag", 0.0) * tag_jaccard
+            + weights.get("recency", 0.0) * recency
+        )
+
+        out.append(
+            {
+                "id": skill.get("id"),
+                "name": skill.get("name"),
+                "summary": skill.get("summary"),
+                "procedure": skill.get("procedure"),
+                "triggers": skill.get("triggers"),
+                "status": skill.get("status"),
+                "do_not_revert": skill.get("do_not_revert"),
+                "score": round(composite, 4),
+                "score_breakdown": {
+                    "bm25_norm": round(bm25_norm, 4),
+                    "tag_jaccard": round(tag_jaccard, 4),
+                    "recency_decay": round(recency, 4),
+                },
+                "snippet": hit.get("snippet"),
+            }
+        )
+
+    out.sort(key=lambda r: r["score"], reverse=True)
+    return out[:top_k]
+
+
+# ──────────────────────────────────────────────────────────────────────
 # Maintenance
 # ──────────────────────────────────────────────────────────────────────
 
@@ -493,6 +628,75 @@ def decay_sweep(
 # ──────────────────────────────────────────────────────────────────────
 # Helpers
 # ──────────────────────────────────────────────────────────────────────
+
+
+def _tokenize_for_jaccard(query: str) -> set[str]:
+    """Lowercased tokens ≥ 3 chars from the query, for tag-Jaccard
+    overlap. Punctuation is stripped to match the FTS5 sanitizer's
+    behavior loosely (not exactly — this is a relevance heuristic).
+    """
+    out: set[str] = set()
+    for raw in query.split():
+        t = raw.strip("\"'.,;:!?()[]{}").lower()
+        if len(t) >= 3:
+            out.add(t)
+    return out
+
+
+def _tag_jaccard(query_tokens: set[str], skill: dict[str, Any]) -> float:
+    """``|A ∩ B| / |A ∪ B|`` over query tokens and skill tags.
+
+    Returns 0.0 if either set is empty (no overlap signal available).
+    """
+    skill_tags = set((skill.get("triggers") or {}).get("tags") or [])
+    if not query_tokens or not skill_tags:
+        return 0.0
+    inter = query_tokens & skill_tags
+    union = query_tokens | skill_tags
+    if not union:
+        return 0.0
+    return len(inter) / len(union)
+
+
+def _recency_decay(
+    skill: dict[str, Any],
+    *,
+    now: datetime,
+    tau_days: float = _RECENCY_TAU_DAYS,
+) -> float:
+    """``exp(-Δdays_since_last_used / τ)`` per the plan.
+
+    ``last_used_at`` is the reference. **Never-used skills score 0**
+    — recency is a *usage* signal, not an existence signal. A
+    freshly-recorded skill still surfaces via BM25 + tag-Jaccard;
+    once it's used at least once, the recency component starts
+    contributing.
+
+    Malformed timestamps also score 0 — be conservative.
+    """
+    last_used = skill.get("last_used_at")
+    if not isinstance(last_used, str):
+        return 0.0
+    try:
+        ref = datetime.fromisoformat(last_used)
+        if ref.tzinfo is None:
+            ref = ref.replace(tzinfo=timezone.utc)
+        delta_days = max(0.0, (now - ref).total_seconds() / 86400.0)
+        return math.exp(-delta_days / tau_days)
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def _matches_file_pattern(skill: dict[str, Any], file_path: str) -> bool:
+    """True if any of the skill's ``triggers.file_patterns`` fnmatches
+    ``file_path`` — or if the skill has no patterns (no filter).
+    """
+    import fnmatch
+
+    patterns = (skill.get("triggers") or {}).get("file_patterns") or []
+    if not patterns:
+        return True
+    return any(fnmatch.fnmatch(file_path, p) for p in patterns)
 
 
 def _safe_estimate_tokens(text: str) -> int:

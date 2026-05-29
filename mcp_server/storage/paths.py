@@ -95,6 +95,29 @@ def config_path(project_root: Path | None = None) -> Path:
     return codevira_dir(project_root) / "config.yaml"
 
 
+def working_archived_path(session_id: str, project_root: Path | None = None) -> Path:
+    """v3.1.0 M2: opt-in commit target for working-memory entries.
+
+    Default working memory lives in ``.codevira-cache/working.jsonl``
+    (per-machine, ephemeral). When a session produces scratchpad worth
+    team-sharing, ``codevira working commit <session_id>`` copies the
+    non-evicted entries here under a session-named file so the rest of
+    the repo (and other developers) can see them.
+
+    NOTE on locked decision D000012: that decision protects the
+    JSONL WRITE path's forbidden-root validation via ``ensure_dirs()``.
+    This helper is pure path computation — no write, no bypass — so it
+    does not conflict. Writers landing on this path MUST still call
+    ``ensure_dirs()`` first (the working_archived subdir is created
+    lazily there).
+
+    The session_id is interpolated into the filename; callers MUST
+    ensure it's filesystem-safe — the v3.0.1 default-session-id helper
+    produces ``ad-hoc-XXXXXX`` which is safe by construction.
+    """
+    return codevira_dir(project_root) / "working_archived" / f"{session_id}.jsonl"
+
+
 # ─── Cache files (in .codevira-cache/, gitignored) ────────────────────
 
 
@@ -108,6 +131,22 @@ def graph_cache_path(project_root: Path | None = None) -> Path:
 
 def hash_cache_path(project_root: Path | None = None) -> Path:
     return codevira_cache_dir(project_root) / "hash-cache.db"
+
+
+def working_path(project_root: Path | None = None) -> Path:
+    """v3.1.0 M2: working-memory entries.
+
+    Lives in the cache dir because working memory is intra-session and
+    ephemeral by definition; committing it would leak the agent's
+    scratchpad into git. The opt-in commit path
+    (``working_archived_path``) is the canonical surface when a
+    session produces something worth team-sharing.
+
+    See ``working_archived_path`` for the D000012 lock note — same
+    reasoning applies (additive path computation, ensure_dirs still
+    owns root validation).
+    """
+    return codevira_cache_dir(project_root) / "working.jsonl"
 
 
 # ─── Convenience operations ───────────────────────────────────────────

@@ -95,6 +95,20 @@ def config_path(project_root: Path | None = None) -> Path:
     return codevira_dir(project_root) / "config.yaml"
 
 
+def skills_path(project_root: Path | None = None) -> Path:
+    """v3.1.0 M3: skill library store.
+
+    Canonical (lives in ``.codevira/``, committed) because skills are
+    team-shareable procedural knowledge. Schema-versioned per the
+    v3.0.1 forward-compat convention (records carry ``_schema_v: 1``).
+
+    See ``working_archived_path`` for the D000012 lock note — same
+    reasoning applies (additive path computation, ensure_dirs still
+    owns root validation).
+    """
+    return codevira_dir(project_root) / "skills.jsonl"
+
+
 def working_archived_path(session_id: str, project_root: Path | None = None) -> Path:
     """v3.1.0 M2: opt-in commit target for working-memory entries.
 

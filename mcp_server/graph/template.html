@@ -1035,6 +1035,14 @@ function renderLegend() {
     wrap.appendChild(legendItem('#f0883e', `modified (${o.modified || 0})`));
     wrap.appendChild(legendItem('#ff6b6b', `reverted (${o.reverted || 0})`));
     wrap.appendChild(legendItem('#6b7280', `unclassified (${o.unclassified || 0})`));
+    // Disambiguate the dim gray on files/skills/reflections — those are
+    // NOT 'unclassified', they just don't have an outcome concept.
+    const note = document.createElement('span');
+    note.textContent = 'decisions only';
+    note.style.color = 'var(--text-mute)';
+    note.style.fontStyle = 'italic';
+    note.style.fontSize = '10px';
+    wrap.appendChild(note);
   }
 }
 
@@ -1191,6 +1199,10 @@ function showDetail(n) {
 
 let focusedId = null;
 function focusNode(id) {
+  // v3.1.x: hover-focus is suppressed inside lineage-trace mode so the
+  // lineage emphasis doesn't fight the focus dimming. Exiting lineage
+  // mode is the only way to use hover-focus again.
+  if (lineageActive) return;
   focusedId = id;
   if (id === null) {
     document.querySelectorAll('.node').forEach(g => g.classList.remove('focus'));
@@ -2064,7 +2076,15 @@ document.getElementById('layout').addEventListener('change', () => {
   DATA.nodes.forEach(n => { n.pinned = false; });
   runLayout(); render(); fitToView();
 });
-document.getElementById('q').addEventListener('input', applyVisibility);
+// v3.1.x: debounce search input. The ranked-score pass is O(N * tokens)
+// per keystroke; at the 2000-node cap that's perceptibly laggy without
+// debouncing. 120ms trailing-edge is the sweet spot — fast enough that
+// type-then-look feels instant, slow enough to coalesce typing bursts.
+let _qDebounce = null;
+document.getElementById('q').addEventListener('input', () => {
+  if (_qDebounce) clearTimeout(_qDebounce);
+  _qDebounce = setTimeout(applyVisibility, 120);
+});
 document.getElementById('protOnly').addEventListener('change', applyVisibility);
 document.getElementById('alwaysLabels').addEventListener('change', applyTransform);
 document.querySelectorAll('.ftype, .fkind').forEach(c =>

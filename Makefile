@@ -252,7 +252,7 @@ release-verify-version:
 	@echo "  ✓ In sync with origin (or no upstream tracking)"
 	@# 4. Cross-check version in __init__.py if it declares __version__.
 	@if [ -f mcp_server/__init__.py ]; then \
-		INIT_VER=$$(grep -E "^__version__" mcp_server/__init__.py 2>/dev/null | sed -E 's/.*=\s*"([^"]+)".*/\1/'); \
+		INIT_VER=$$(grep -E "^__version__" mcp_server/__init__.py 2>/dev/null | sed -E 's/.*= *"([^"]+)".*/\1/'); \
 		if [ -n "$$INIT_VER" ] && [ "$$INIT_VER" != "$(VERSION)" ]; then \
 			echo "  ✗ Version drift: pyproject.toml=$(VERSION) but mcp_server/__init__.py=$$INIT_VER"; \
 			exit 1; \

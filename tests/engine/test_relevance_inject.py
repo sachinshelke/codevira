@@ -257,6 +257,47 @@ class TestScoringComponents:
         # can be tuned. The test passes either way.
 
 
+class TestCrossToolWedgeRegression:
+    """v3.1.x: a single-FTS-match decision (no tag overlap, no file
+    overlap) is the WEAKEST signal in the system but it's load-bearing
+    — it's how Tool A's decision reaches Tool B when Tool B's prompt
+    only shares decision-text keywords. If this stops injecting, the
+    whole cross-tool memory promise dies silently.
+
+    This regression test exists because bumping _DEFAULT_MIN_SCORE
+    0.10 → 0.25 in 6d2a6d6 broke exactly this scenario. The
+    test_cross_tool_universality e2e tests caught it but were not in
+    `make test-e2e` at the time. Even after widening the gate, the
+    score model deserves a strict unit-level assertion."""
+
+    def test_single_fts_match_no_tags_no_file_overlap_DOES_inject(
+        self, seeded_decisions
+    ):
+        """The minimum-signal case: prompt mentions text from a
+        decision but shares no tags or files with it. Score reduces
+        to FTS_WEIGHT(0.2) × outcome_weight(0.5) = 0.10 — must clear
+        _DEFAULT_MIN_SCORE(0.10) and inject. If a future change
+        tightens scoring, the wedge breaks; fix the score model, do
+        NOT skip this test."""
+        policy = RelevanceInject()
+        # Use a keyword that's ONLY in seeded decision text (no tag,
+        # no file match in seeded_decisions).
+        event = _make_prompt_event(
+            "Looking at pgvector for embedding lookups in production",
+            seeded_decisions,
+        )
+        verdict = policy.evaluate(event, signals=None)
+        assert verdict.action == "inject", (
+            f"WEDGE BROKEN at the unit level: single-FTS-match decision "
+            f"did not inject. action={verdict.action}. This is the same "
+            f"regression class as 6d2a6d6 (threshold bump 0.10→0.25). "
+            f"If you intentionally tightened scoring, restore single-FTS "
+            f"matchability — it's load-bearing for cross-tool memory."
+        )
+        ids = verdict.metadata.get("decisions_injected") or []
+        assert len(ids) >= 1, "inject happened but no decision_id surfaced"
+
+
 class TestCacheStability:
     """Same input must produce same bytes — for Anthropic prompt cache."""
 

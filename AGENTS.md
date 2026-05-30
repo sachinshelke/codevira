@@ -33,7 +33,7 @@
 - **D00001G** v3.0.x storage prereq IMPLEMENTATION COMPLETE on branch release/3.0.1 (commits 6253940 + c1352d7). Patches 1+2+3 done: …  ·  _memory, prereq, storage, v3.0.1_
 - **D00001H** M1 Phase A origin tagging IMPLEMENTATION COMPLETE on release/3.0.1 (commits 618710a storage + ff06b3d ide_inject). orig…  ·  _consensus, m1, memory, origin, v3.1.0_
 
-_+230 more decision(s) — full log in `.codevira/decisions.jsonl`._
+_+290 more decision(s) — full log in `.codevira/decisions.jsonl`._
 
 
 For the full decision log + outcomes + reverts, see `.codevira/decisions.jsonl` or run `codevira list-decisions`.

@@ -103,6 +103,34 @@ def cmd_sync(*, dry_run: bool = False, verbose: bool = False) -> int:
         print(f"  ✗ AGENTS.md regenerate failed: {exc}", file=sys.stderr)
         return 1
 
+    # v3.1.x: opt-in outcome classification. If the project has a git
+    # working tree, run observe-git so the decisions get outcome
+    # tags (kept/modified/reverted) — this drives the v3.1.x outcome
+    # lens + Q&A "what got reverted" features. Best-effort; we never
+    # fail the sync on git troubles (project might not be a git repo
+    # at all, which is fine).
+    try:
+        from mcp_server.storage import outcomes_writer
+
+        summary = outcomes_writer.observe_all()
+        if "error" in summary:
+            if verbose:
+                print(f"  ⓘ observe-git skipped: {summary['error']}")
+        else:
+            counts = (
+                f"{summary.get('kept', 0)} kept · "
+                f"{summary.get('modified', 0)} modified · "
+                f"{summary.get('reverted', 0)} reverted · "
+                f"{summary.get('unclassified', 0)} unclassified"
+            )
+            print(
+                f"  ✓ observe-git ({counts}, "
+                f"{summary.get('outcomes_appended', 0)} new outcome(s))"
+            )
+    except Exception as exc:  # noqa: BLE001 — never block sync on outcome wiring
+        if verbose:
+            print(f"  ⓘ observe-git skipped: {exc}", file=sys.stderr)
+
     print()
     print("  ✓ Sync complete.")
     print()

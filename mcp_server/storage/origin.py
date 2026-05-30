@@ -71,6 +71,22 @@ from functools import lru_cache
 _IDE_UNKNOWN = "unknown"
 
 
+def _normalize_agent_model(raw: str | None) -> str | None:
+    """Strip whitespace; coerce the strings 'null' / 'none' / '' to None.
+
+    v3.1.x fix: previously a CODEVIRA_AGENT_MODEL set to whitespace OR
+    the literal string 'null'/'None' passed through to the origin
+    record. Downstream consensus checks string-compare agent_model;
+    those bogus values would polute the provenance chain.
+    """
+    if raw is None:
+        return None
+    s = raw.strip()
+    if not s or s.lower() in {"null", "none"}:
+        return None
+    return s
+
+
 def current_origin() -> dict[str, str | None]:
     """Build the origin dict for *this* call.
 
@@ -82,7 +98,7 @@ def current_origin() -> dict[str, str | None]:
     """
     return {
         "ide": os.environ.get("CODEVIRA_IDE", _IDE_UNKNOWN),
-        "agent_model": os.environ.get("CODEVIRA_AGENT_MODEL") or None,
+        "agent_model": _normalize_agent_model(os.environ.get("CODEVIRA_AGENT_MODEL")),
         "host_hash": _host_hash(),
         "ts": datetime.now(timezone.utc).isoformat(),
     }

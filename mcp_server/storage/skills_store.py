@@ -462,6 +462,10 @@ def list_all(
     surface. Tags filter is intersection: a skill matches only if it
     has ALL the requested tags.
     """
+    # v3.1.x bug fix: previously the for-loop appended-then-checked, so
+    # limit=0 returned the first match instead of [].
+    if limit <= 0:
+        return []
     merged = jsonl_store.read_merged(paths.skills_path())
     norm_tags_filter = (
         {str(t).strip().lower() for t in tags if str(t).strip()} if tags else None

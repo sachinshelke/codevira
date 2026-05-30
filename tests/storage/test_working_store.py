@@ -453,3 +453,28 @@ class TestWorkingStoreGet:
         rec = working_store.get(eid)
         assert rec is not None
         assert rec["content"] == "payload"
+
+
+# ──────────────────────────────────────────────────────────────────────
+# v3.1.x — secret sanitization at write
+# ──────────────────────────────────────────────────────────────────────
+
+
+class TestWorkingStoreSecretSanitization:
+    """working_store.add scrubs secret-shaped substrings in content.
+    Working memory is per-machine + gitignored so the direct leak
+    surface is small, but a working entry can be promoted to a decision
+    (committed) — so we scrub at write time."""
+
+    def test_content_secret_redacted(self, project: Path) -> None:
+        eid = working_store.add(
+            "noticed api_key=hunter2-deadbeefcafedeadbeef in the response"
+        )
+        rec = working_store.get(eid)
+        assert "hunter2-deadbeefcafedeadbeef" not in rec["content"]
+        assert "<redacted:api-key>" in rec["content"]
+
+    def test_clean_content_passes_through(self, project: Path) -> None:
+        eid = working_store.add("the auth handler retries on 429")
+        rec = working_store.get(eid)
+        assert rec["content"] == "the auth handler retries on 429"

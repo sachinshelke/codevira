@@ -283,3 +283,50 @@ class TestSyncIntegration:
         # The decision id should be in the Locked section.
         locked_section = content[content.find("Locked") :]
         assert did in locked_section
+
+
+# ──────────────────────────────────────────────────────────────────────
+# v3.1.x — idempotency (P5 churn fix)
+# ──────────────────────────────────────────────────────────────────────
+
+
+class TestRegenerateIdempotent:
+    """regenerate() must NOT bump mtime / rewrite the file when the
+    computed content equals what's already on disk. Previously every
+    sync produced a fresh write, causing perpetual uncommitted drift."""
+
+    def test_second_regen_is_noop_when_content_unchanged(
+        self, isolated_project
+    ) -> None:
+        from mcp_server.storage import decisions_store
+
+        decisions_store.record(decision="stable decision", tags=["x"])
+        agents_md_generator.regenerate()
+        target = isolated_project / "AGENTS.md"
+        mtime1 = target.stat().st_mtime
+        # No new decisions; regenerate should produce identical content.
+        import time
+
+        time.sleep(0.05)  # ensure clock would tick if a write occurred
+        agents_md_generator.regenerate()
+        mtime2 = target.stat().st_mtime
+        assert mtime1 == mtime2, (
+            f"regenerate() rewrote file despite unchanged content "
+            f"(mtime drifted: {mtime1} → {mtime2})"
+        )
+
+    def test_real_change_does_write(self, isolated_project) -> None:
+        """Sanity: a new decision DOES bump mtime."""
+        from mcp_server.storage import decisions_store
+
+        decisions_store.record(decision="first decision", tags=["x"])
+        agents_md_generator.regenerate()
+        target = isolated_project / "AGENTS.md"
+        mtime1 = target.stat().st_mtime
+        import time
+
+        time.sleep(0.05)
+        decisions_store.record(decision="second decision", tags=["y"])
+        agents_md_generator.regenerate()
+        mtime2 = target.stat().st_mtime
+        assert mtime2 > mtime1

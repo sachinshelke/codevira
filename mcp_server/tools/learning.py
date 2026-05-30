@@ -138,6 +138,8 @@ def record_decision(
     session_id: str | None = None,
     tags: list[str] | None = None,
     force: bool = False,
+    alternatives_considered: list[str] | None = None,
+    would_re_examine_if: str | None = None,
 ) -> dict:
     """Record a single decision with optional do_not_revert flag.
 
@@ -224,6 +226,8 @@ def record_decision(
         do_not_revert=bool(do_not_revert),
         session_id=effective_session_id,
         tags=tags,
+        alternatives_considered=alternatives_considered,
+        would_re_examine_if=would_re_examine_if,
     )
 
     response: dict = {

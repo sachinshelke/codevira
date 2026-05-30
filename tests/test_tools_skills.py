@@ -323,19 +323,24 @@ class TestProcedureSecretSanitization:
         assert "hunter2-deadbeefcafedeadbeef" not in rec["summary"]
         assert "<redacted:api-key>" in rec["summary"]
 
-    def test_promote_archived_skill_currently_succeeds(self, project: Path) -> None:
-        """LOCKED-IN current behavior: promote_skill_to_playbook rejects
-        superseded skills but silently allows archived ones — the
-        archived skill is still promoted to a markdown file. If a
-        future change tightens this to require active status, the
-        test will fail and the new policy needs an explicit assert."""
+    def test_promote_archived_skill_rejected_by_default(self, project: Path) -> None:
+        """v3.1.x fix: promote_skill_to_playbook now refuses archived
+        skills (low-value: 5+ consecutive failures or 90+ days unused).
+        Callers can override with force=True after a deliberate review."""
         kid = skills_store.record(name="archived-fixture", procedure="p")
         skills_store.mark_archived(kid, reason="manual test")
         r = skills.promote_skill_to_playbook(kid, task_type="commit")
-        assert r["promoted"] is True, (
-            "promote_skill_to_playbook now rejects archived skills — "
-            "update this test to assert the new policy."
-        )
+        assert r["promoted"] is False
+        assert "archived" in (r.get("error") or "").lower()
+        assert "force" in (r.get("error") or "")
+
+    def test_promote_archived_skill_with_force_succeeds(self, project: Path) -> None:
+        """force=True allows promotion of an archived skill (escape
+        hatch when the user has a deliberate reason)."""
+        kid = skills_store.record(name="archived-fixture", procedure="p")
+        skills_store.mark_archived(kid, reason="manual test")
+        r = skills.promote_skill_to_playbook(kid, task_type="commit", force=True)
+        assert r["promoted"] is True
 
     def test_procedure_secret_redacted_in_playbook_markdown(
         self, project: Path

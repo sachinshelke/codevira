@@ -41,7 +41,15 @@ import secrets
 from datetime import datetime, timezone
 from typing import Any
 
-from mcp_server.storage import digest, fts5_index, jsonl_store, manifest, origin, paths
+from mcp_server.storage import (
+    digest,
+    fts5_index,
+    jsonl_store,
+    manifest,
+    origin,
+    paths,
+    sanitize,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -97,8 +105,22 @@ def record(
     do_not_revert: bool = False,
     session_id: str | None = None,
     tags: list[str] | None = None,
+    alternatives_considered: list[str] | None = None,
+    would_re_examine_if: str | None = None,
 ) -> str:
     """Append one decision; return the generated ID.
+
+    v3.1.x adds counter-decision discipline:
+
+    - ``alternatives_considered`` (list[str]): the strongest alternatives
+      we rejected. Surfaces the *losers* of the decision so future
+      sessions can see what was considered and weigh whether to revisit.
+      Empty list / None is allowed (legacy decisions, trivial choices).
+    - ``would_re_examine_if`` (str): the condition that should trigger
+      a re-examination of this decision. Especially valuable when paired
+      with ``do_not_revert`` — turns the one-way ratchet into an active
+      precondition. Example: "if PyPI package size exceeds 5 MB" or
+      "if a user reports a leaked secret in a committed memory file".
 
     Side effects: incrementally updates manifest.yaml + FTS5 cache.
     """
@@ -109,17 +131,42 @@ def record(
     # applies; doing it here keeps the on-disk record clean too).
     norm_tags = sorted({str(t).strip().lower() for t in (tags or []) if str(t).strip()})
 
+    # v3.1.x: scrub api-key / Bearer / password / AWS AKIA / long hex /
+    # long base64 BEFORE persisting. A user prompt or stack trace pasted
+    # into a decision text/context could otherwise commit a secret into
+    # decisions.jsonl, the FTS5 index, the digest, and AGENTS.md.
+    sanitized_decision = sanitize.scrub_sensitive(decision.strip())
+    sanitized_context = sanitize.scrub_sensitive(context) if context else context
+
+    # v3.1.x: alternatives are sanitized too (a "rejected option" string
+    # can carry a secret just like the chosen decision can).
+    sanitized_alternatives = [
+        sanitize.scrub_sensitive(str(a).strip())
+        for a in (alternatives_considered or [])
+        if str(a).strip()
+    ]
+    sanitized_re_examine = (
+        sanitize.scrub_sensitive(would_re_examine_if.strip())
+        if would_re_examine_if and would_re_examine_if.strip()
+        else None
+    )
+
     base_record = {
         "ts": datetime.now(timezone.utc).isoformat(),
         "session_id": session_id or default_session_id(),
         "file_path": file_path,
-        "decision": decision.strip(),
-        "context": context,
+        "decision": sanitized_decision,
+        "context": sanitized_context,
         "do_not_revert": bool(do_not_revert),
         "tags": norm_tags,
         "supersedes": None,
         "superseded_by": None,
         "outcome": None,
+        # v3.1.x: counter-decision discipline. Surfaces the rejected
+        # alternatives + the trigger that should force a re-examination.
+        # Empty/None tolerated on read (legacy v3.0.x records).
+        "alternatives_considered": sanitized_alternatives,
+        "would_re_examine_if": sanitized_re_examine,
         # v3.1.0 M1: provenance tagging. Optional in reads (v3.0.x
         # records have no origin; readers treat as ide="unknown").
         "origin": origin.current_origin(),

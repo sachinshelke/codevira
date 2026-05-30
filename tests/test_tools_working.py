@@ -120,12 +120,17 @@ class TestGetWorkingContext:
         assert "Working memory" in r["markdown"]
 
     def test_long_content_truncated_in_markdown(self, project: Path) -> None:
-        long_content = "x" * 500
+        # NOTE: deliberately mix in spaces so the sanitizer's long-b64
+        # pattern ([A-Za-z0-9+/]{40,}) doesn't collapse a single 500-char
+        # token. Use a sentence repeated to push past the truncation cap.
+        long_content = ("the observation goes on and on and on. " * 13).strip()
+        assert len(long_content) > 400
         working.working_add(long_content)
         r = working.get_working_context()
         # Truncated at 120 chars + ellipsis in the markdown line.
         assert "..." in r["markdown"]
-        # The structured `entries` view keeps full content.
+        # The structured `entries` view keeps full content (sanitizer
+        # passes prose through unchanged — no secret patterns hit).
         assert r["entries"][0]["content"] == long_content
 
 

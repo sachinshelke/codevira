@@ -801,19 +801,19 @@ class TestListAllLimitBoundary:
     """list_all uses `if len(out) >= limit: break`. limit=0 → []. limit
     above count → all rows."""
 
-    def test_limit_zero_returns_first_only_known_quirk(self, project: Path) -> None:
-        """LOCKED-IN current behavior: list_all does
-        `out.append(r); if len(out) >= limit: break` so limit=0 returns
-        exactly 1 row (the first match), not []. Surprising surface;
-        documented here so any future tightening to 'limit=0 → []' is
-        explicit."""
+    def test_limit_zero_returns_empty(self, project: Path) -> None:
+        """v3.1.x fix: list_all(limit=0) now short-circuits to []
+        (previously the for-loop did append-then-check, returning the
+        first row)."""
         for i in range(3):
             skills_store.record(name=f"s-{i}", procedure="p")
-        out = skills_store.list_all(limit=0)
-        assert len(out) == 1, (
-            f"list_all(limit=0) returned {len(out)} rows — if 0 now "
-            f"means 'no rows', flip this assertion to == 0."
-        )
+        assert skills_store.list_all(limit=0) == []
+
+    def test_limit_negative_returns_empty(self, project: Path) -> None:
+        """Negative limit short-circuits to [] too (defensive: same
+        clamp as limit=0)."""
+        skills_store.record(name="x", procedure="p")
+        assert skills_store.list_all(limit=-1) == []
 
     def test_limit_above_count_returns_all(self, project: Path) -> None:
         for i in range(3):

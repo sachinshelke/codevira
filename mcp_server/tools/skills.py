@@ -301,6 +301,21 @@ def promote_skill_to_playbook(
                 f"({skill.get('superseded_by')}) instead."
             ),
         }
+    # v3.1.x bug fix: archived skills are low-value by definition (5+
+    # consecutive failures OR 90+ days unused). Promoting one writes
+    # the dead skill into a committed playbook, where it then competes
+    # with active skills. Refuse unless force=True.
+    if skill.get("status") == "archived" and not force:
+        return {
+            "promoted": False,
+            "error": (
+                f"skill {skill_id} is archived (low-value: "
+                f"{skill.get('failure_count', 0)} failure(s), "
+                f"{skill.get('unused_days', 0)} days unused). "
+                "Pass force=True to promote anyway, or revive via "
+                "apply_skill_outcome(success=True) first."
+            ),
+        }
 
     # Resolve the destination filename.
     effective_name = name or skill.get("name") or skill_id

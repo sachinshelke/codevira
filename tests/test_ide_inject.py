@@ -1944,16 +1944,15 @@ class TestM1UserEnvKeysOnTheCodeviraEntry:
 
 
 class TestM1AntigravityMultiTargetFailure:
-    """When write #2 of a multi-target Antigravity inject fails, write #1
-    has already happened. The current code has no rollback — this test
-    locks in that behaviour so a future atomicity change must be
-    explicit (the test would need updating)."""
+    """v3.1.x fix: multi-target Antigravity writes are now atomic at
+    the cross-file level. Snapshot pre-write; on any write failure,
+    restore the successfully-written targets. Either all stamped or
+    none — no asymmetric provenance state."""
 
-    def test_partial_state_on_second_target_failure(self, tmp_path, monkeypatch):
+    def test_rollback_on_second_target_failure_no_target_stamped(
+        self, tmp_path, monkeypatch
+    ):
         ok_target = tmp_path / "ok.json"
-        # bad_target points into a non-existent parent dir; _write_json_safe
-        # would need to mkdir it. We force a failure by making the parent
-        # itself a file (so mkdir raises NotADirectoryError).
         bad_parent = tmp_path / "blocked"
         bad_parent.write_text("not a dir")
         bad_target = bad_parent / "x.json"
@@ -1964,14 +1963,36 @@ class TestM1AntigravityMultiTargetFailure:
             lambda: [ok_target, bad_target],
         )
 
-        # Expect: write #1 succeeds, write #2 raises → propagates.
-        with pytest.raises(Exception):  # noqa: BLE001 — implementation may vary
+        with pytest.raises(Exception):  # noqa: BLE001
             ide_inject.inject_global_antigravity("/usr/bin/codevira", "python3")
 
-        # Lock current behavior: write #1 IS stamped on disk (no rollback).
-        assert ok_target.is_file(), (
-            "write #1 should be on disk (current non-atomic behavior). "
-            "If atomicity has been added, update this test."
+        # v3.1.x fix: write #1 was rolled back when write #2 failed.
+        # ok_target didn't exist before; rollback unlinked it.
+        assert (
+            not ok_target.is_file()
+        ), "rollback failed — write #1 still on disk after write #2 fail"
+
+    def test_rollback_restores_pre_write_content_when_target_existed(
+        self, tmp_path, monkeypatch
+    ):
+        """If target had pre-existing content, rollback restores it
+        (not just unlinks)."""
+        ok_target = tmp_path / "ok.json"
+        ok_target.write_text('{"mcpServers": {"other-server": {"command": "x"}}}')
+        original = ok_target.read_text()
+
+        bad_parent = tmp_path / "blocked"
+        bad_parent.write_text("not a dir")
+        bad_target = bad_parent / "x.json"
+
+        monkeypatch.setattr(
+            ide_inject,
+            "_antigravity_write_targets",
+            lambda: [ok_target, bad_target],
         )
-        data = json.loads(ok_target.read_text())
-        assert data["mcpServers"]["codevira"]["env"]["CODEVIRA_IDE"] == "antigravity"
+
+        with pytest.raises(Exception):  # noqa: BLE001
+            ide_inject.inject_global_antigravity("/usr/bin/codevira", "python3")
+
+        # Pre-write content restored exactly.
+        assert ok_target.read_text() == original

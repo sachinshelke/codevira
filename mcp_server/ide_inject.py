@@ -629,13 +629,37 @@ def _inject_antigravity(
 
     # Antigravity 2.0: write into every config surface the user has
     # (shared ~/.gemini/config/ and/or per-app ~/.gemini/antigravity/).
-    written: list[str] = []
-    for config_path in _antigravity_write_targets():
-        existing = _read_json_safe(config_path)
-        merged = _merge_mcp_config(existing, server_name, server_config)
-        _write_json_safe(config_path, merged)
-        written.append(str(config_path))
-    return "; ".join(written) if written else None
+    # v3.1.x: cross-target atomicity — snapshot pre-write, rollback on
+    # any failure (see inject_global_antigravity for rationale).
+    targets = _antigravity_write_targets()
+    snapshots: list[tuple[Path, str | None]] = []
+    written: list[Path] = []
+    try:
+        for config_path in targets:
+            existing = _read_json_safe(config_path)
+            merged = _merge_mcp_config(existing, server_name, server_config)
+            snapshots.append(
+                (
+                    config_path,
+                    config_path.read_text(encoding="utf-8")
+                    if config_path.is_file()
+                    else None,
+                )
+            )
+            _write_json_safe(config_path, merged)
+            written.append(config_path)
+    except Exception:
+        for p in written:
+            orig = next((s for sp, s in snapshots if sp == p), None)
+            try:
+                if orig is None:
+                    p.unlink(missing_ok=True)
+                else:
+                    p.write_text(orig, encoding="utf-8")
+            except OSError:
+                pass
+        raise
+    return "; ".join(str(p) for p in written) if written else None
 
 
 # ---------------------------------------------------------------------------
@@ -856,13 +880,39 @@ def inject_global_antigravity(cmd_path: str, python_exe: str) -> str | None:
     }
     # Antigravity 2.0: write into every config surface the user has
     # (shared ~/.gemini/config/ and/or per-app ~/.gemini/antigravity/).
-    written: list[str] = []
-    for config_path in _antigravity_write_targets():
-        existing = _read_json_safe(config_path)
-        merged = _merge_mcp_config(existing, "codevira", server_config)
-        _write_json_safe(config_path, merged)
-        written.append(str(config_path))
-    return "; ".join(written) if written else None
+    # v3.1.x: snapshot each target's pre-write content; on any write
+    # failure, restore the previously-written targets so the user never
+    # ends up with one stamped config and one un-stamped (asymmetric
+    # provenance breaks cross-IDE consensus).
+    targets = _antigravity_write_targets()
+    snapshots: list[tuple[Path, str | None]] = []
+    written: list[Path] = []
+    try:
+        for config_path in targets:
+            existing = _read_json_safe(config_path)
+            merged = _merge_mcp_config(existing, "codevira", server_config)
+            snapshots.append(
+                (
+                    config_path,
+                    config_path.read_text(encoding="utf-8")
+                    if config_path.is_file()
+                    else None,
+                )
+            )
+            _write_json_safe(config_path, merged)
+            written.append(config_path)
+    except Exception:
+        for p in written:
+            orig = next((s for sp, s in snapshots if sp == p), None)
+            try:
+                if orig is None:
+                    p.unlink(missing_ok=True)
+                else:
+                    p.write_text(orig, encoding="utf-8")
+            except OSError:
+                pass
+        raise
+    return "; ".join(str(p) for p in written) if written else None
 
 
 def inject_claude_http_url(url: str) -> str | None:

@@ -221,3 +221,119 @@ class TestOriginTagging:
         hits = decisions_store.search("PostgreSQL migration", limit=5)
         assert len(hits) >= 1
         assert hits[0]["origin"]["ide"] == "windsurf"
+
+
+# ──────────────────────────────────────────────────────────────────────
+# v3.1.x — secret sanitization at write
+# ──────────────────────────────────────────────────────────────────────
+
+
+class TestDecisionSecretSanitization:
+    """decisions_store.record now scrubs api-key / Bearer / password /
+    AWS AKIA / long hex / long base64 in both the decision text and the
+    optional context field. A pasted curl example or stack trace must
+    NOT land its secret in decisions.jsonl (committed)."""
+
+    def test_decision_text_secret_redacted(self, project: Path) -> None:
+        did = decisions_store.record(
+            decision="see api_key=hunter2-deadbeefcafedeadbeef for endpoint",
+            tags=["test"],
+        )
+        rec = decisions_store.get(did)
+        assert rec is not None
+        assert "hunter2-deadbeefcafedeadbeef" not in rec["decision"]
+        assert "<redacted:api-key>" in rec["decision"]
+
+    def test_context_secret_redacted(self, project: Path) -> None:
+        did = decisions_store.record(
+            decision="use bcrypt",
+            context="Authorization: Bearer abc123XYZdef456GHIjkl789",
+            tags=["auth"],
+        )
+        rec = decisions_store.get(did)
+        assert rec.get("context") is not None
+        assert "abc123XYZdef456GHIjkl789" not in rec["context"]
+        assert "<redacted:bearer>" in rec["context"]
+
+    def test_clean_text_passes_through_unchanged(self, project: Path) -> None:
+        did = decisions_store.record(
+            decision="Use snake_case for Python variables.",
+            context="Matches PEP8.",
+        )
+        rec = decisions_store.get(did)
+        assert rec["decision"] == "Use snake_case for Python variables."
+        assert rec["context"] == "Matches PEP8."
+
+
+# ──────────────────────────────────────────────────────────────────────
+# v3.1.x — counter-decision discipline (P4 + M2)
+# ──────────────────────────────────────────────────────────────────────
+
+
+class TestCounterDecisionFields:
+    """alternatives_considered + would_re_examine_if are NEW v3.1.x
+    fields on decisions_store.record. Legacy v3.0.x decisions are
+    tolerated (fields absent / null on read)."""
+
+    def test_alternatives_and_re_examine_persisted(self, project: Path) -> None:
+        did = decisions_store.record(
+            decision="Use bcrypt for password hashing",
+            tags=["auth"],
+            alternatives_considered=[
+                "argon2id (rejected: heavier on cheap mobile clients)",
+                "scrypt (rejected: less well-vetted in our ecosystem)",
+            ],
+            would_re_examine_if=(
+                "if argon2id native bindings ship in the stdlib OR "
+                "if we move off mobile clients"
+            ),
+        )
+        rec = decisions_store.get(did)
+        assert len(rec["alternatives_considered"]) == 2
+        assert "argon2id" in rec["alternatives_considered"][0]
+        assert "would_re_examine_if" in rec
+        assert "argon2id" in rec["would_re_examine_if"]
+
+    def test_defaults_when_not_provided(self, project: Path) -> None:
+        did = decisions_store.record(decision="trivial", tags=["x"])
+        rec = decisions_store.get(did)
+        # New fields exist on every fresh write (empty list / None).
+        assert rec["alternatives_considered"] == []
+        assert rec["would_re_examine_if"] is None
+
+    def test_alternatives_are_sanitized(self, project: Path) -> None:
+        """A 'rejected option' string can leak a secret just like the
+        chosen decision can."""
+        did = decisions_store.record(
+            decision="use OAuth2",
+            alternatives_considered=[
+                "static api_key=hunter2-deadbeefcafedeadbeef in env"
+            ],
+            would_re_examine_if=("if Bearer abc123XYZdef456GHIjkl789 expires"),
+        )
+        rec = decisions_store.get(did)
+        assert "hunter2-deadbeefcafedeadbeef" not in rec["alternatives_considered"][0]
+        assert "<redacted:api-key>" in rec["alternatives_considered"][0]
+        assert "abc123XYZ" not in rec["would_re_examine_if"]
+        assert "<redacted:bearer>" in rec["would_re_examine_if"]
+
+    def test_empty_strings_dropped_from_alternatives(self, project: Path) -> None:
+        did = decisions_store.record(
+            decision="x",
+            alternatives_considered=["valid", "", "  ", "also valid"],
+        )
+        rec = decisions_store.get(did)
+        assert rec["alternatives_considered"] == ["valid", "also valid"]
+
+    def test_record_decision_tool_threads_new_fields(self, project: Path) -> None:
+        from mcp_server.tools.learning import record_decision
+
+        r = record_decision(
+            decision="x",
+            alternatives_considered=["alt1", "alt2"],
+            would_re_examine_if="if condition X holds",
+        )
+        assert r["recorded"] is True
+        rec = decisions_store.get(r["decision_id"])
+        assert rec["alternatives_considered"] == ["alt1", "alt2"]
+        assert rec["would_re_examine_if"] == "if condition X holds"

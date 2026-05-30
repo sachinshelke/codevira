@@ -226,22 +226,30 @@ def _merge_into_file(target_path: Path, block: str) -> None:
     """
     target_path.parent.mkdir(parents=True, exist_ok=True)
 
+    existing_text: str | None = None
     if not target_path.is_file():
         new_content = block + "\n"
     else:
-        existing = target_path.read_text(encoding="utf-8")
-        begin_idx = existing.find(_BEGIN_MARKER)
-        end_idx = existing.find(_END_MARKER)
+        existing_text = target_path.read_text(encoding="utf-8")
+        begin_idx = existing_text.find(_BEGIN_MARKER)
+        end_idx = existing_text.find(_END_MARKER)
         if begin_idx == -1 or end_idx == -1 or end_idx < begin_idx:
             # No prior block — prepend ours at the top, preserve the rest.
-            new_content = block + "\n\n" + existing
+            new_content = block + "\n\n" + existing_text
         else:
             # Replace the existing block (from begin_marker through
             # end_marker inclusive); keep everything before + after.
-            before = existing[:begin_idx]
+            before = existing_text[:begin_idx]
             after_start = end_idx + len(_END_MARKER)
-            after = existing[after_start:]
+            after = existing_text[after_start:]
             new_content = before + block + after
+
+    # v3.1.x: idempotency check kills the auto-regenerate churn.
+    # Previously every codevira write → sync → unconditional rewrite,
+    # bumping mtime + producing a perpetual uncommitted diff even
+    # when no content actually changed.
+    if existing_text is not None and existing_text == new_content:
+        return  # no-op, no mtime bump, no churn
 
     # v3.0.0 round-3: atomic write via shared storage.atomic helper.
     # Round-2 fixed the fixed-suffix tmp race inline; round-3

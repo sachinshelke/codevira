@@ -27,7 +27,7 @@ Call these MCP tools at the moments the description matches your action — they
 
 - For commits that fix a bug, prefer commit messages starting with `fix:`, `bug:`, `hotfix:`, or `fixes #N`. Codevira scans these into a fix-history database used by the Anti-Regression hero to block silent re-introduction of fixed bugs.
 
-### Before you finish a meaningful unit of work — NON-NEGOTIABLE
+### Before you finish a meaningful unit of work — STRONG RECOMMENDATION
 
 Codevira's promise is "the project remembers what you did." That promise breaks if you don't write to it. Before you respond to the user with the final result of a meaningful change, **call ONE of these**:
 
@@ -36,7 +36,9 @@ Codevira's promise is "the project remembers what you did." That promise breaks 
 - **`complete_changeset(changeset_id, decisions=[...])`** — if you closed a multi-file fix
 - **`write_session_log(...)`** — at minimum, at the end of any session that produced commits or non-trivial output
 
-A session that ships code WITHOUT a codevira write call leaves the project's memory stale for the next AI. That's the most common way the wedge breaks. Treat it as part of the definition-of-done, not optional.
+A session that ships code WITHOUT a codevira write call leaves the project's memory stale for the next AI. That's the most common way the wedge breaks. Treat it as part of the definition-of-done.
+
+**Honest accounting (v3.1.x):** This is currently a "should" enforced by convention, not a "must" enforced by the engine. Codevira does not (today) block your final response when commits exist and no session log was written. Enforcement at the hook layer is on the roadmap. Until it lands, this is on the honor system — and on your judgment for what counts as "meaningful." If you shipped code, you should log it; if you only answered a question, you don't need to.
 
 ### When you see "Roadmap drift detected" in your SessionStart context
 

@@ -248,11 +248,23 @@ class TestAgentModelWhitespaceNormalization:
     (covered). Whitespace and literal 'null'/'None' currently pass
     through. Lock the gap so the future trim/normalize lands deliberately."""
 
-    def test_whitespace_only_currently_passes_through(self, monkeypatch) -> None:
+    def test_whitespace_only_normalized_to_none(self, monkeypatch) -> None:
+        """v3.1.x fix: whitespace-only CODEVIRA_AGENT_MODEL → None so
+        consensus checks don't string-compare against junk values."""
         monkeypatch.setenv("CODEVIRA_AGENT_MODEL", "   ")
-        # Locked-in current behavior.
-        assert origin.current_origin()["agent_model"] == "   "
+        assert origin.current_origin()["agent_model"] is None
 
-    def test_literal_null_string_passes_through(self, monkeypatch) -> None:
+    def test_literal_null_string_normalized_to_none(self, monkeypatch) -> None:
+        """The literal strings 'null' / 'None' (any case) → None."""
         monkeypatch.setenv("CODEVIRA_AGENT_MODEL", "null")
-        assert origin.current_origin()["agent_model"] == "null"
+        assert origin.current_origin()["agent_model"] is None
+        monkeypatch.setenv("CODEVIRA_AGENT_MODEL", "None")
+        assert origin.current_origin()["agent_model"] is None
+        monkeypatch.setenv("CODEVIRA_AGENT_MODEL", "NULL")
+        assert origin.current_origin()["agent_model"] is None
+
+    def test_real_model_id_passes_through_stripped(self, monkeypatch) -> None:
+        """Real model IDs survive normalization (leading/trailing
+        whitespace stripped)."""
+        monkeypatch.setenv("CODEVIRA_AGENT_MODEL", "  claude-opus-4-7  ")
+        assert origin.current_origin()["agent_model"] == "claude-opus-4-7"

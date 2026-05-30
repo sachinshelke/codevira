@@ -30,7 +30,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from mcp_server.storage import jsonl_store, origin, paths
+from mcp_server.storage import jsonl_store, origin, paths, sanitize
 
 logger = logging.getLogger(__name__)
 
@@ -59,12 +59,17 @@ def write(
         for each.
     """
     paths.ensure_dirs()
+    # v3.1.x: scrub secrets in narrative fields before persisting. M8
+    # already sanitizes sessions on the LLM-input path; doing it AT WRITE
+    # time means the secret never lands in sessions.jsonl in the first
+    # place (committed surface) and nothing downstream needs to repeat
+    # the scrub.
     record = {
         "ts": datetime.now(timezone.utc).isoformat(),
         "session_id": session_id,
-        "task": task,
+        "task": sanitize.scrub_sensitive(task) if task else task,
         "phase": phase,
-        "summary": summary,
+        "summary": sanitize.scrub_sensitive(summary) if summary else summary,
         "decision_ids": list(decision_ids or []),
         "outcome": outcome,
         # v3.1.0 M5

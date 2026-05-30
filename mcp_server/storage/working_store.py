@@ -78,7 +78,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
-from mcp_server.storage import jsonl_store, origin, paths
+from mcp_server.storage import jsonl_store, origin, paths, sanitize
 
 
 # Schema constants
@@ -121,11 +121,19 @@ def add(
         )
     if not isinstance(content, str) or not content:
         raise ValueError("working_store.add: content must be a non-empty string")
+    # Byte cap on RAW input — checked before sanitization so a caller
+    # can't bypass the cap by tucking giant blobs between the scrubber's
+    # secret patterns (long b64 collapses to "<redacted:long-b64>").
     if len(content.encode("utf-8")) > _CONTENT_MAX_BYTES:
         raise ValueError(
             f"working_store.add: content exceeds {_CONTENT_MAX_BYTES} byte cap "
             f"({len(content.encode('utf-8'))} bytes given)"
         )
+    # v3.1.x: scrub api-key / Bearer / password / AWS AKIA / long hex /
+    # long base64 BEFORE persisting. Working memory is per-machine + gitignored
+    # so the leak surface is smaller than M3/M8, but the entry can be
+    # promoted to a decision (which IS committed), so we must scrub here.
+    content = sanitize.scrub_sensitive(content)
     if not isinstance(importance, int) or not (1 <= importance <= 10):
         raise ValueError(
             f"working_store.add: importance must be int in 1..10; got {importance!r}"

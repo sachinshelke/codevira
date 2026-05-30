@@ -269,12 +269,6 @@ release-verify-version:
 			exit 1; \
 		fi; \
 		\
-		# v3.1.1: freshness check — if any mcp_server/ or indexer/ \
-		# source file is newer than CHANGELOG.md, the entry is probably \
-		# stale relative to the wheel. Catches "I edited code but didn't \
-		# update changelog" — the exact gap that briefly published 3.1.0 \
-		# without docs. \
-		CHANGELOG_MTIME=$$(stat -f %m CHANGELOG.md 2>/dev/null || stat -c %Y CHANGELOG.md); \
 		NEWER=$$(find mcp_server indexer -type f \( -name "*.py" -o -name "*.html" \) -newer CHANGELOG.md 2>/dev/null | wc -l | tr -d ' '); \
 		if [ "$$NEWER" -gt "0" ]; then \
 			echo "  ✗ CHANGELOG.md is OLDER than $$NEWER source file(s) under mcp_server/ + indexer/."; \

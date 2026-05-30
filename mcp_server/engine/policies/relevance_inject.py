@@ -66,7 +66,16 @@ logger = logging.getLogger(__name__)
 _DEFAULT_MODE = "inject"
 _DEFAULT_MAX_DECISIONS = 3
 _DEFAULT_MAX_TOKENS = 600
-_DEFAULT_MIN_SCORE = 0.10  # decisions below this never inject
+# v3.1.x: raised from 0.10 → 0.25. Per-component weights are
+# TAG=0.4, FILE=0.4, FTS=0.2; a single tag match × default outcome
+# weight (0.5) = 0.20, which used to clear the old 0.10 threshold.
+# That meant any decision tagged with a common token (e.g. "engine",
+# "policy") surfaced on every prompt that mentioned the token, even
+# tangentially. 0.25 requires either (a) two source matches OR
+# (b) a single source match with a strong outcome weight (≥0.7).
+# Override via .codevira/config.yaml: memory.relevance_min_score.
+# Locked by D000010 (procedural: must run make test-e2e BEFORE commit).
+_DEFAULT_MIN_SCORE = 0.25
 _MIN_PROMPT_CHARS = 10  # ignore tiny prompts (e.g. "ok", "thanks")
 _MODES = ("off", "inject")
 

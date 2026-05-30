@@ -69,7 +69,7 @@ test-unit:
 	$(PYTHON) -m pytest tests/ -q --ignore=tests/e2e --ignore=tests/integration
 
 test-e2e:
-	$(PYTHON) -m pytest tests/e2e/test_first_contact.py tests/e2e/test_product_invariants.py -v
+	$(PYTHON) -m pytest tests/e2e/test_first_contact.py tests/e2e/test_product_invariants.py tests/e2e/test_cross_tool_universality.py -v
 
 # v2.1.2 hardening — integration suite (slower; runs in gauntlet):
 #   MCP round-trip, help-text linter, sandboxed-parent. Skipped from

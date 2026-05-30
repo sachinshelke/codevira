@@ -66,16 +66,18 @@ logger = logging.getLogger(__name__)
 _DEFAULT_MODE = "inject"
 _DEFAULT_MAX_DECISIONS = 3
 _DEFAULT_MAX_TOKENS = 600
-# v3.1.x: raised from 0.10 → 0.25. Per-component weights are
-# TAG=0.4, FILE=0.4, FTS=0.2; a single tag match × default outcome
-# weight (0.5) = 0.20, which used to clear the old 0.10 threshold.
-# That meant any decision tagged with a common token (e.g. "engine",
-# "policy") surfaced on every prompt that mentioned the token, even
-# tangentially. 0.25 requires either (a) two source matches OR
-# (b) a single source match with a strong outcome weight (≥0.7).
-# Override via .codevira/config.yaml: memory.relevance_min_score.
-# Locked by D000010 (procedural: must run make test-e2e BEFORE commit).
-_DEFAULT_MIN_SCORE = 0.25
+# REVERTED to 0.10 in 2026-05-30 after the bump to 0.25 broke the
+# cross-tool universality wedge (test_decision_recorded_in_tool_a_
+# visible_in_tool_b_via_inject). With weights TAG=0.4, FILE=0.4,
+# FTS=0.2 and the default outcome weight 0.5, a single-FTS-match
+# decision (no tags, no file overlap) scores exactly 0.10 — the
+# 0.25 threshold would suppress it entirely. The wedge is load-
+# bearing; suppress noise some other way (e.g. raise per-source
+# weights, or add a recency penalty for stale tags).
+# Locked by D000010 (procedural: must run make test-e2e BEFORE
+# commit). NOTE: the test-e2e target was missing
+# tests/e2e/test_cross_tool_universality.py — fixed in same commit.
+_DEFAULT_MIN_SCORE = 0.10
 _MIN_PROMPT_CHARS = 10  # ignore tiny prompts (e.g. "ok", "thanks")
 _MODES = ("off", "inject")
 

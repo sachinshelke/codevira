@@ -54,9 +54,90 @@
             background:var(--bg-1); border:1px solid var(--border-soft);
             border-radius:10px; pointer-events:none; display:none; }
   #qBadge.active { display:block; color:var(--accent); border-color:var(--accent); }
-  #qHelp { color:var(--text-mute); font-size:10px; margin-bottom:12px; }
+  #qHelp { color:var(--text-mute); font-size:10px; margin-bottom:8px; }
   #qHelp code { background:var(--bg-2); padding:1px 4px; border-radius:3px;
                 color:var(--text-dim); }
+
+  /* v3.1.x: ranked search results panel */
+  #rankedResults { margin-bottom:12px; max-height:280px; overflow:auto;
+                   border:1px solid var(--border-soft); border-radius:7px;
+                   background:var(--bg-2); }
+  #rankedResults .hdr { padding:6px 10px; font-size:10px; color:var(--text-mute);
+                        text-transform:uppercase; letter-spacing:0.1em;
+                        border-bottom:1px solid var(--border-soft);
+                        position:sticky; top:0; background:var(--bg-2); z-index:2; }
+  .r-row { padding:7px 10px; cursor:pointer; border-bottom:1px solid var(--border-soft);
+           display:flex; align-items:center; gap:8px; }
+  .r-row:hover { background:var(--bg-1); }
+  .r-row:last-child { border-bottom:none; }
+  .r-row .r-id { font:11px/1 ui-monospace,monospace; color:var(--accent);
+                 min-width:60px; }
+  .r-row .r-snippet { flex:1; font-size:12px; color:var(--text);
+                      overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .r-row .r-score { font:10px/1 ui-monospace,monospace; color:var(--text-mute);
+                    min-width:32px; text-align:right; }
+  .r-row .r-badges { display:flex; gap:3px; }
+  .r-badge { font-size:9px; padding:1px 5px; border-radius:8px;
+             background:var(--bg-1); border:1px solid var(--border-soft);
+             color:var(--text-dim); }
+  .r-badge.prot { color:var(--c-protected); border-color:var(--c-protected); }
+  .r-badge.kept { color:#3fb88a; border-color:#3fb88a; }
+  .r-badge.reverted { color:var(--c-protected); border-color:var(--c-protected); }
+  .r-badge.modified { color:var(--warn); border-color:var(--warn); }
+  .r-badge.superseded { color:var(--text-mute); }
+
+  /* v3.1.x: Q&A answer panel */
+  #askAnswer { margin-bottom:12px; padding:10px 12px;
+               border:1px solid var(--accent); border-radius:7px;
+               background:rgba(124,140,255,0.08); font-size:12px; color:var(--text); }
+  #askAnswer .a-intent { font-size:10px; color:var(--accent);
+                         text-transform:uppercase; letter-spacing:0.1em;
+                         margin-bottom:6px; }
+  #askAnswer .a-body { line-height:1.55; }
+  #askAnswer .a-body b { color:var(--text); }
+  #askAnswer .a-body code { background:var(--bg-2); padding:1px 4px;
+                            border-radius:3px; font:11px/1 ui-monospace,monospace;
+                            color:var(--accent); cursor:pointer; }
+  #askAnswer .a-list { margin:4px 0 0; padding-left:18px; color:var(--text-dim); }
+  #askAnswer .a-list li { margin-bottom:2px; }
+
+  /* v3.1.x: rich-detail panel additions */
+  #detail .field { margin-top:8px; }
+  #detail .field-label { color:var(--text-mute); font-size:10px;
+                         text-transform:uppercase; letter-spacing:0.08em;
+                         margin-bottom:3px; }
+  #detail .alts { background:var(--bg-1); padding:6px 9px; border-radius:5px;
+                  border:1px solid var(--border-soft); font-size:11px;
+                  color:var(--text-dim); }
+  #detail .alts li { margin-bottom:3px; }
+  #detail .re-examine { background:var(--bg-1); padding:6px 9px;
+                        border-radius:5px; border-left:3px solid var(--warn);
+                        font-size:11px; color:var(--text); font-style:italic; }
+  #detail .outcome-badge { display:inline-block; padding:1px 7px;
+                           border-radius:8px; font-size:10px;
+                           text-transform:uppercase; letter-spacing:0.06em; }
+  #detail .outcome-badge.kept { color:#3fb88a; border:1px solid #3fb88a; }
+  #detail .outcome-badge.modified { color:var(--warn); border:1px solid var(--warn); }
+  #detail .outcome-badge.reverted { color:var(--c-protected);
+                                    border:1px solid var(--c-protected); }
+  #detail .outcome-badge.unclassified { color:var(--text-mute);
+                                        border:1px solid var(--text-mute); }
+  #detail .chain { display:flex; flex-wrap:wrap; gap:4px;
+                   align-items:center; font:10px/1.4 ui-monospace,monospace; }
+  #detail .chain button { padding:2px 6px; border-radius:4px;
+                          background:var(--bg-1); border:1px solid var(--border-soft);
+                          color:var(--text-dim); cursor:pointer; font:inherit; }
+  #detail .chain button.current { color:var(--accent); border-color:var(--accent);
+                                   font-weight:bold; }
+  #detail .chain .arrow { color:var(--text-mute); }
+
+  /* Lineage-trace mode: extra emphasis on supersedes edges + chain nodes */
+  svg.lineage-mode .edge { opacity:0.05; }
+  svg.lineage-mode .edge.lineage { stroke:var(--warn); stroke-width:3px;
+                                    opacity:1; }
+  svg.lineage-mode .node { opacity:0.15; }
+  svg.lineage-mode .node.lineage { opacity:1; }
+  svg.lineage-mode .node.lineage .shape { stroke:var(--warn); stroke-width:2.5px; }
 
   /* Dropdown rows */
   .group { margin:10px 0; border:1px solid var(--border-soft); border-radius:8px;
@@ -360,10 +441,20 @@
   <div id="meta">@@GENERATED@@</div>
 
   <div id="qWrap">
-    <input id="q" placeholder="search… tag: ide: kind: protected: since: until:" autocomplete="off" aria-label="Search nodes">
+    <input id="q" placeholder="search or ask… ('what did we decide about auth?')" autocomplete="off" aria-label="Search or ask the graph">
     <span id="qBadge"></span>
   </div>
-  <div id="qHelp">tokens: <code>tag:</code> <code>ide:</code> <code>kind:</code> <code>protected:</code> <code>since:</code> <code>until:</code></div>
+  <div id="qHelp">
+    tokens: <code>tag:</code> <code>ide:</code> <code>kind:</code> <code>protected:</code> <code>since:</code> <code>until:</code>
+    <br>ask: <code>what about X</code> · <code>why did we</code> · <code>what got reverted</code> · <code>what's protected</code>
+  </div>
+  <!-- v3.1.x: ranked search panel. Populated by applyVisibility when
+       a query string is non-trivial; hidden when empty. Click row →
+       centers + selects the node. -->
+  <div id="rankedResults" style="display:none"></div>
+  <!-- v3.1.x: Q&A answer panel. Populated when intent-detect matches
+       a known pattern (what/why/which). -->
+  <div id="askAnswer" style="display:none"></div>
 
   <div class="row">
     <span class="label">Lens</span>
@@ -374,6 +465,7 @@
       <option value="age">Age (recency)</option>
       <option value="protection">Protection</option>
       <option value="status">Status</option>
+      <option value="outcome">Outcome (kept/modified/reverted)</option>
     </select>
   </div>
   <div class="row">
@@ -704,6 +796,13 @@ function colorForLens(n, lens) {
       if (n.type === 'skill' && n.status === 'archived') return '#8a6a4a';
       if (n.do_not_revert) return '#ff6b6b';
       return '#7c8cff';
+    case 'outcome':
+      // v3.1.x: color by classified outcome (kept/modified/reverted/unclassified).
+      if (n.type !== 'decision') return '#3a3f4b';
+      if (n.outcome === 'kept') return '#3fb88a';
+      if (n.outcome === 'modified') return '#f0883e';
+      if (n.outcome === 'reverted') return '#ff6b6b';
+      return '#6b7280';  // unclassified
   }
   return '#6b7280';
 }
@@ -930,6 +1029,12 @@ function renderLegend() {
     wrap.appendChild(legendItem('#ff6b6b', 'protected'));
     wrap.appendChild(legendItem('#6b7280', 'superseded'));
     wrap.appendChild(legendItem('#8a6a4a', 'archived'));
+  } else if (lens === 'outcome') {
+    const o = DATA.meta.outcomes || {};
+    wrap.appendChild(legendItem('#3fb88a', `kept (${o.kept || 0})`));
+    wrap.appendChild(legendItem('#f0883e', `modified (${o.modified || 0})`));
+    wrap.appendChild(legendItem('#ff6b6b', `reverted (${o.reverted || 0})`));
+    wrap.appendChild(legendItem('#6b7280', `unclassified (${o.unclassified || 0})`));
   }
 }
 
@@ -1018,15 +1123,50 @@ function showDetail(n) {
       `<div class="txt">${esc(n.abstraction)}</div>` +
       neighborButtons(n.id);
   } else {
+    // Decision rich-detail (v3.1.x).
+    const outcomeBadge = n.outcome
+      ? `<span class="outcome-badge ${esc(n.outcome)}">${esc(n.outcome)}</span>`
+      : `<span class="outcome-badge unclassified">unclassified</span>`;
+    const altsBlock = (n.alternatives_considered || []).length
+      ? `<div class="field"><div class="field-label">alternatives considered</div>` +
+        `<ul class="alts">` +
+        n.alternatives_considered.map(a => `<li>${esc(a)}</li>`).join('') +
+        `</ul></div>`
+      : '';
+    const reExamine = n.would_re_examine_if
+      ? `<div class="field"><div class="field-label">would re-examine if</div>` +
+        `<div class="re-examine">${esc(n.would_re_examine_if)}</div></div>`
+      : '';
+    const ctxBlock = n.context
+      ? `<div class="field"><div class="field-label">context</div>` +
+        `<div class="txt">${esc(n.context)}</div></div>`
+      : '';
+    // Lineage chain (only when decision is part of a supersedes chain).
+    const chain = (DATA.meta.chains && DATA.meta.chains[n.id]) || null;
+    const lineageBlock = chain
+      ? `<div class="field"><div class="field-label">lineage (oldest → newest) — ` +
+        `<a href="#" data-action="lineage-mode" data-id="${esc(n.id)}">trace</a></div>` +
+        `<div class="chain">` +
+        chain.map((cid, i) =>
+          (i > 0 ? '<span class="arrow">→</span>' : '') +
+          `<button data-jump="${esc(cid)}" class="${cid === n.id ? 'current' : ''}">${esc(cid)}</button>`
+        ).join('') +
+        `</div></div>`
+      : '';
     body =
-      `<h2>${esc(n.id)} ${n.do_not_revert?'🔒':''}</h2>` +
+      `<h2>${esc(n.id)} ${n.do_not_revert?'🔒':''} ${outcomeBadge}</h2>` +
       `<div><span class="k">file:</span> ${esc(n.file_path||'—')}</div>` +
       `<div><span class="k">when:</span> ${esc((n.ts||'').slice(0,19))}` +
         ` · <span class="k">session:</span> ${esc(n.session_id||'—')}</div>` +
       `<div><span class="k">degree:</span> ${n.degree}` +
         (n.is_superseded?` · <span class="k">superseded</span>`:``) + `</div>` +
       `<div>${tags}${ide}</div>` +
-      `<div class="txt">${esc(n.decision)}</div>` +
+      `<div class="field"><div class="field-label">decision</div>` +
+      `<div class="txt">${esc(n.decision)}</div></div>` +
+      ctxBlock +
+      altsBlock +
+      reExamine +
+      lineageBlock +
       neighborButtons(n.id);
   }
   d.innerHTML = body;
@@ -1034,6 +1174,13 @@ function showDetail(n) {
     b.addEventListener('click', () => {
       const nb = byId[b.dataset.jump];
       if (nb) { selectNode(nb); focusNode(nb.id); centerOn(nb); }
+    });
+  });
+  // v3.1.x: lineage-trace action — pin the supersedes chain.
+  d.querySelectorAll('a[data-action="lineage-mode"]').forEach(a => {
+    a.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      enterLineageMode(a.dataset.id);
     });
   });
 }
@@ -1318,6 +1465,58 @@ function clearIsolation() {
 document.querySelector('#isoChip button').addEventListener('click', clearIsolation);
 
 // ─────────────────────────────────────────────────────────────────
+// v3.1.x — LINEAGE TRACE MODE
+// ─────────────────────────────────────────────────────────────────
+// Click "trace" on a decision's lineage block → enter lineage mode:
+// the supersedes chain is highlighted, everything else dimmed. Esc
+// (or click empty canvas) exits.
+
+let lineageActive = false;
+function enterLineageMode(decisionId) {
+  const chain = (DATA.meta.chains && DATA.meta.chains[decisionId]) || null;
+  if (!chain || chain.length < 2) return;
+  const chainSet = new Set(chain);
+  svg.classList.add('lineage-mode');
+  document.querySelectorAll('.node').forEach(g => {
+    g.classList.toggle('lineage', chainSet.has(g.dataset.id));
+  });
+  document.querySelectorAll('.edge').forEach(l => {
+    l.classList.toggle(
+      'lineage',
+      l.dataset.kind === 'supersedes'
+        && chainSet.has(l.dataset.s)
+        && chainSet.has(l.dataset.t)
+    );
+  });
+  lineageActive = true;
+  // Fit-to-view of just the chain nodes.
+  const chainNodes = chain.map(id => byId[id]).filter(Boolean);
+  if (chainNodes.length) {
+    let mnX=Infinity, mnY=Infinity, mxX=-Infinity, mxY=-Infinity;
+    chainNodes.forEach(n => {
+      const r = nodeRadius(n);
+      mnX = Math.min(mnX, n.x - r); mnY = Math.min(mnY, n.y - r);
+      mxX = Math.max(mxX, n.x + r); mxY = Math.max(mxY, n.y + r);
+    });
+    const rect = document.getElementById('svgWrap').getBoundingClientRect();
+    const bw = Math.max(1, mxX-mnX), bh = Math.max(1, mxY-mnY);
+    const k = Math.min(6, Math.min((rect.width-160)/bw, (rect.height-160)/bh));
+    t.k = Math.max(k, 0.5);
+    t.x = (rect.width - (mnX+mxX) * t.k) / 2;
+    t.y = (rect.height - (mnY+mxY) * t.k) / 2;
+    applyTransform();
+  }
+}
+function exitLineageMode() {
+  if (!lineageActive) return;
+  svg.classList.remove('lineage-mode');
+  document.querySelectorAll('.node.lineage, .edge.lineage').forEach(el => {
+    el.classList.remove('lineage');
+  });
+  lineageActive = false;
+}
+
+// ─────────────────────────────────────────────────────────────────
 // EDGE HOVER TOOLTIP
 // ─────────────────────────────────────────────────────────────────
 
@@ -1500,9 +1699,250 @@ function applyVisibility() {
     qb.classList.remove('active');
   }
 
+  // v3.1.x: ranked search panel + Q&A intent detection.
+  renderRankedAndAsk(document.getElementById('q').value, matchIds);
+
   updateTimeLabels(tb);
   renderMinimap();
   writeHashState();
+}
+
+// ─────────────────────────────────────────────────────────────────
+// v3.1.x — RANKED SEARCH + Q&A
+// ─────────────────────────────────────────────────────────────────
+
+// Score a node against the user's free-text query. BM25-ish: token
+// overlap on (decision text + name + summary + abstraction + tags +
+// file_path + label) weighted by inverse-frequency-ish (longer matches
+// score more), plus a recency bump (newer wins ties).
+function _scoreForQuery(n, queryTokens) {
+  if (!queryTokens.length) return 0;
+  const hay = [
+    n.id, n.decision, n.name, n.summary, n.procedure, n.abstraction,
+    n.context, n.would_re_examine_if,
+    (n.tags || []).join(' '),
+    (n.alternatives_considered || []).join(' '),
+    n.file_path, n.label, n.ide,
+  ].filter(Boolean).join(' ').toLowerCase();
+  if (!hay) return 0;
+  let score = 0;
+  for (const tok of queryTokens) {
+    if (!tok) continue;
+    // Count occurrences. Cheap proxy for TF.
+    let pos = 0, hits = 0;
+    while ((pos = hay.indexOf(tok, pos)) !== -1) { hits++; pos += tok.length; }
+    if (hits === 0) continue;
+    // Diminishing returns: log(1+hits) * length boost.
+    score += Math.log(1 + hits) * Math.max(1, tok.length / 4);
+  }
+  if (score === 0) return 0;
+  // Tag exact-match bonus.
+  const tagSet = new Set((n.tags || []).map(t => t.toLowerCase()));
+  for (const tok of queryTokens) {
+    if (tagSet.has(tok)) score += 0.5;
+  }
+  // Recency bump: newer decisions slightly favored. (0..0.3)
+  if (n.tsMs) score += 0.3 * ((n.tsMs - TS_MIN) / TS_SPAN);
+  // do_not_revert is signal-rich: small bump.
+  if (n.do_not_revert) score += 0.2;
+  return score;
+}
+
+function renderRankedAndAsk(rawQuery, _matchIds) {
+  const panel = document.getElementById('rankedResults');
+  const askEl = document.getElementById('askAnswer');
+  const queryRaw = (rawQuery || '').trim();
+  if (queryRaw.length < 3) {
+    panel.style.display = 'none';
+    askEl.style.display = 'none';
+    return;
+  }
+
+  // Q&A intent detection — runs over the raw query so we can detect
+  // natural-language patterns even when token filters are present.
+  const ask = _detectIntent(queryRaw);
+  if (ask) {
+    askEl.innerHTML =
+      `<div class="a-intent">${esc(ask.intent)}</div>` +
+      `<div class="a-body">${ask.body}</div>`;
+    askEl.style.display = 'block';
+    // Wire result-row jumps inside the answer body.
+    askEl.querySelectorAll('code[data-jump]').forEach(c => {
+      c.addEventListener('click', () => {
+        const nb = byId[c.dataset.jump];
+        if (nb) { selectNode(nb); centerOn(nb); }
+      });
+    });
+  } else {
+    askEl.style.display = 'none';
+  }
+
+  // Ranked search — runs the FREE-TEXT portion of the query (drop tokens
+  // like tag:/ide:/kind: so they don't pollute scoring).
+  const freeText = queryRaw.toLowerCase()
+    .split(/\s+/)
+    .filter(t => t && !/^(tag|ide|kind|protected|since|until):/.test(t));
+  if (freeText.length === 0) {
+    panel.style.display = 'none';
+    return;
+  }
+  const scored = [];
+  for (const n of DATA.nodes) {
+    if (n._hidden) continue;  // respect type/edge/time filters
+    const s = _scoreForQuery(n, freeText);
+    if (s > 0) scored.push({ n, s });
+  }
+  scored.sort((a, b) => b.s - a.s);
+  const topK = scored.slice(0, 10);
+  if (!topK.length) {
+    panel.innerHTML = `<div class="hdr">No matches for "${esc(queryRaw)}"</div>`;
+    panel.style.display = 'block';
+    return;
+  }
+  const rows = topK.map(({ n, s }) => {
+    const badges = [];
+    if (n.do_not_revert) badges.push('<span class="r-badge prot">🔒</span>');
+    if (n.outcome) badges.push(`<span class="r-badge ${esc(n.outcome)}">${esc(n.outcome)}</span>`);
+    if (n.is_superseded) badges.push('<span class="r-badge superseded">superseded</span>');
+    const label = n.type === 'file' ? esc(n.label || n.id)
+                : n.type === 'skill' ? esc(n.name || n.id)
+                : esc(n.id);
+    const snippet = (n.decision || n.summary || n.abstraction || n.label || '').slice(0, 110);
+    return (
+      `<div class="r-row" data-jump="${esc(n.id)}">` +
+        `<span class="r-id">${label}</span>` +
+        `<span class="r-snippet">${esc(snippet)}</span>` +
+        `<span class="r-badges">${badges.join('')}</span>` +
+        `<span class="r-score">${s.toFixed(2)}</span>` +
+      `</div>`
+    );
+  }).join('');
+  panel.innerHTML =
+    `<div class="hdr">${topK.length} ranked result(s) — click to inspect</div>` + rows;
+  panel.style.display = 'block';
+  panel.querySelectorAll('.r-row').forEach(row => {
+    row.addEventListener('click', () => {
+      const nb = byId[row.dataset.jump];
+      if (nb) { selectNode(nb); centerOn(nb); }
+    });
+  });
+}
+
+// Q&A intent patterns. Each returns {intent, body} or null.
+function _detectIntent(query) {
+  const q = query.toLowerCase().trim();
+  // "what did we decide about X" / "what about X"
+  let m = q.match(/^(?:what (?:did we |do we |have we )?(?:decided?|decide(?:d)?) (?:about|on|for) |what about |decisions? (?:about|on|for) )(.+?)\??$/);
+  if (m) return _answerAbout(m[1].trim(), 'WHAT WE DECIDED ABOUT ' + m[1].trim().toUpperCase());
+
+  // "why did we pick X" / "why X" — surfaces alternatives_considered
+  m = q.match(/^(?:why (?:did we )?(?:pick|choose|use|go with|adopt)|why )(.+?)\??$/);
+  if (m) return _answerWhy(m[1].trim());
+
+  // "what got reverted" — show outcome=reverted decisions
+  if (/^what(?:'s|s| was| got| has been)?(?: been)? reverted\??$/.test(q)
+      || /^(?:show me )?reverted decisions?\??$/.test(q)) {
+    return _answerOutcome('reverted');
+  }
+  // "what's protected" / "what's locked"
+  if (/^what(?:'s|s| is)?(?: been)? (?:protected|locked|do_not_revert|do-not-revert)\??$/.test(q)
+      || /^(?:show me )?(?:protected|locked) decisions?\??$/.test(q)) {
+    return _answerProtected();
+  }
+  // "what worked" / "what's been kept"
+  if (/^what (?:worked|was kept|got kept|stuck)\??$/.test(q)) {
+    return _answerOutcome('kept');
+  }
+  return null;
+}
+
+function _answerAbout(topic, intentLabel) {
+  const tokens = topic.toLowerCase().split(/\s+/).filter(t => t.length >= 3);
+  if (!tokens.length) return null;
+  const scored = DATA.nodes
+    .filter(n => n.type === 'decision' && !n._hidden)
+    .map(n => ({ n, s: _scoreForQuery(n, tokens) }))
+    .filter(x => x.s > 0)
+    .sort((a, b) => b.s - a.s)
+    .slice(0, 3);
+  if (!scored.length) {
+    return { intent: intentLabel, body: `<i>No decisions match "${esc(topic)}". Try recording one via record_decision.</i>` };
+  }
+  const top = scored[0].n;
+  let body = `Top match: <code data-jump="${esc(top.id)}">${esc(top.id)}</code> &mdash; ${esc((top.decision || '').slice(0, 200))}`;
+  if (top.outcome) body += `<br><b>Outcome:</b> ${esc(top.outcome)}`;
+  if ((top.alternatives_considered || []).length) {
+    body += '<br><b>Alternatives considered:</b><ul class="a-list">' +
+      top.alternatives_considered.map(a => `<li>${esc(a)}</li>`).join('') + '</ul>';
+  }
+  if (top.would_re_examine_if) {
+    body += `<br><b>Would re-examine if:</b> <i>${esc(top.would_re_examine_if)}</i>`;
+  }
+  if (scored.length > 1) {
+    body += '<br><br><b>Other matches:</b><ul class="a-list">' +
+      scored.slice(1).map(({n}) =>
+        `<li><code data-jump="${esc(n.id)}">${esc(n.id)}</code> ${esc((n.decision || '').slice(0, 80))}</li>`
+      ).join('') + '</ul>';
+  }
+  return { intent: intentLabel, body };
+}
+
+function _answerWhy(topic) {
+  const tokens = topic.toLowerCase().split(/\s+/).filter(t => t.length >= 3);
+  const scored = DATA.nodes
+    .filter(n => n.type === 'decision' && !n._hidden)
+    .map(n => ({ n, s: _scoreForQuery(n, tokens) }))
+    .filter(x => x.s > 0)
+    .sort((a, b) => b.s - a.s)
+    .slice(0, 1);
+  if (!scored.length) {
+    return { intent: 'WHY ' + topic.toUpperCase(),
+             body: `<i>No matching decision found for "${esc(topic)}".</i>` };
+  }
+  const top = scored[0].n;
+  const alts = top.alternatives_considered || [];
+  let body = `<code data-jump="${esc(top.id)}">${esc(top.id)}</code>: ${esc((top.decision || '').slice(0, 180))}`;
+  if (top.context) body += `<br><b>Context:</b> ${esc(top.context.slice(0, 200))}`;
+  if (alts.length) {
+    body += '<br><b>Why this won (rejected alternatives):</b><ul class="a-list">' +
+      alts.map(a => `<li>${esc(a)}</li>`).join('') + '</ul>';
+  } else {
+    body += '<br><i>(No alternatives_considered recorded. record_decision now accepts this field — capture losers next time.)</i>';
+  }
+  if (top.would_re_examine_if) {
+    body += `<br><b>Would re-examine if:</b> <i>${esc(top.would_re_examine_if)}</i>`;
+  }
+  return { intent: 'WHY ' + topic.toUpperCase(), body };
+}
+
+function _answerOutcome(kind) {
+  const matches = DATA.nodes
+    .filter(n => n.type === 'decision' && n.outcome === kind && !n._hidden)
+    .sort((a, b) => (b.tsMs || 0) - (a.tsMs || 0))
+    .slice(0, 8);
+  const counts = DATA.meta.outcomes || {};
+  let body = `<b>${counts[kind] || 0}</b> decision(s) with outcome=<b>${esc(kind)}</b>` +
+             ` (of ${(counts.kept||0)+(counts.modified||0)+(counts.reverted||0)+(counts.unclassified||0)} total).`;
+  if (matches.length) {
+    body += '<ul class="a-list">' + matches.map(n =>
+      `<li><code data-jump="${esc(n.id)}">${esc(n.id)}</code> ${esc((n.decision || '').slice(0, 80))}</li>`
+    ).join('') + '</ul>';
+  }
+  return { intent: kind.toUpperCase() + ' OUTCOMES', body };
+}
+
+function _answerProtected() {
+  const matches = DATA.nodes
+    .filter(n => n.type === 'decision' && n.do_not_revert && !n._hidden)
+    .sort((a, b) => (b.tsMs || 0) - (a.tsMs || 0))
+    .slice(0, 10);
+  let body = `<b>${matches.length}</b> protected (do_not_revert) decision(s) visible. Click to inspect.`;
+  if (matches.length) {
+    body += '<ul class="a-list">' + matches.map(n =>
+      `<li><code data-jump="${esc(n.id)}">${esc(n.id)}</code> ${esc((n.decision || '').slice(0, 80))}</li>`
+    ).join('') + '</ul>';
+  }
+  return { intent: 'PROTECTED DECISIONS', body };
 }
 
 function updateTimeLabels(tb) {
@@ -1633,11 +2073,12 @@ document.getElementById('timeLo').addEventListener('input', applyVisibility);
 document.getElementById('timeHi').addEventListener('input', applyVisibility);
 document.getElementById('playBtn').addEventListener('click', togglePlay);
 
-// Click empty canvas → clear selection.
+// Click empty canvas → clear selection (and exit lineage mode).
 svg.addEventListener('click', (ev) => {
   if (ev.target.closest('.node') || ev.target.closest('.edge-hit')) return;
   selectedId = null;
   document.querySelectorAll('.node').forEach(g => g.classList.remove('selected'));
+  exitLineageMode();
 });
 
 // Keyboard navigation.
@@ -1659,6 +2100,7 @@ window.addEventListener('keydown', (ev) => {
   if (ev.key === 'Escape') {
     closeHelp(); closeCtx();
     if (document.getElementById('helpDlg').style.display === 'block') return;
+    if (lineageActive) { exitLineageMode(); return; }
     if (isolateSet) { clearIsolation(); return; }
     document.getElementById('q').value = '';
     selectedId = null;

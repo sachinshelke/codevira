@@ -179,6 +179,69 @@ class TestBuildGraph:
         assert not any(e["target"] == "D999" for e in covers)
         assert g["meta"]["counts"]["reflections"] == 1
 
+    def test_decision_surfaces_outcome_and_counter_fields(self):
+        """v3.1.x viewer overhaul: outcome, alternatives_considered,
+        would_re_examine_if, context must round-trip onto the node."""
+        decisions = [
+            {
+                "id": "D1",
+                "decision": "use bcrypt",
+                "outcome": "kept",
+                "alternatives_considered": ["argon2", "scrypt"],
+                "would_re_examine_if": "if argon2 lands in stdlib",
+                "context": "hashed passwords, no clear winner",
+            }
+        ]
+        g = _build_graph(decisions, with_files=False)
+        n = g["nodes"][0]
+        assert n["outcome"] == "kept"
+        assert n["alternatives_considered"] == ["argon2", "scrypt"]
+        assert n["would_re_examine_if"] == "if argon2 lands in stdlib"
+        assert n["context"] == "hashed passwords, no clear winner"
+
+    def test_meta_outcomes_distribution(self):
+        decisions = [
+            {"id": "D1", "decision": "x", "outcome": "kept"},
+            {"id": "D2", "decision": "y", "outcome": "modified"},
+            {"id": "D3", "decision": "z", "outcome": "reverted"},
+            {"id": "D4", "decision": "w"},  # unclassified
+        ]
+        g = _build_graph(decisions, with_files=False)
+        assert g["meta"]["outcomes"] == {
+            "kept": 1,
+            "modified": 1,
+            "reverted": 1,
+            "unclassified": 1,
+        }
+
+    def test_meta_chains_precomputes_supersedes_lineage(self):
+        """For every decision in a supersedes chain, meta.chains[id]
+        is the full ordered list oldest → newest."""
+        decisions = [
+            {
+                "id": "D1",
+                "decision": "v1",
+                "superseded_by": "D2",
+                "is_superseded": True,
+            },
+            {
+                "id": "D2",
+                "decision": "v2",
+                "supersedes": "D1",
+                "superseded_by": "D3",
+                "is_superseded": True,
+            },
+            {"id": "D3", "decision": "v3", "supersedes": "D2"},
+            {"id": "D9", "decision": "singleton"},
+        ]
+        g = _build_graph(decisions, with_files=False)
+        chains = g["meta"]["chains"]
+        assert chains["D1"] == ["D1", "D2", "D3"]
+        assert chains["D2"] == ["D1", "D2", "D3"]
+        assert chains["D3"] == ["D1", "D2", "D3"]
+        # Singleton has no chain.
+        assert "D9" not in chains
+
     def test_skill_supersedes_chain(self):
         skills = [
             {
@@ -329,6 +392,40 @@ class TestRenderHtml:
         # Drop-shadow filter is actually applied via CSS on shapes
         assert "filter:url(#nodeShadow)" in h
         assert "filter:url(#nodeGlow)" in h
+
+    def test_template_wires_v3_1x_search_qa_lineage(self):
+        """v3.1.x viewer overhaul: ranked search panel + Q&A + outcome
+        lens + lineage trace mode must all be wired into the template."""
+        h = render_graph_html([{"id": "D1", "decision": "x", "outcome": "kept"}])
+        # New panel containers
+        assert 'id="rankedResults"' in h
+        assert 'id="askAnswer"' in h
+        # New lens option
+        assert 'value="outcome"' in h
+        # New JS landmarks
+        for sym in (
+            "renderRankedAndAsk",
+            "_scoreForQuery",
+            "_detectIntent",
+            "_answerAbout",
+            "_answerWhy",
+            "_answerOutcome",
+            "_answerProtected",
+            "enterLineageMode",
+            "exitLineageMode",
+            "lineage-mode",
+        ):
+            assert sym in h, f"missing JS symbol {sym}"
+        # Lineage-mode CSS
+        assert "svg.lineage-mode" in h
+        # Rich-detail field classes
+        for cls in (
+            ".alts",
+            ".re-examine",
+            ".outcome-badge",
+            ".chain",
+        ):
+            assert cls in h, f"missing CSS class {cls}"
 
     def test_protected_node_gets_protected_class_in_render(self):
         """Protected (do_not_revert) decisions must be marked so the glow

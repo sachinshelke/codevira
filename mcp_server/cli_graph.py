@@ -160,6 +160,16 @@ def _build_graph(
                 "ts": ts,
                 "session_id": d.get("session_id") or "",
                 "ide": ide,
+                # v3.1.x viewer overhaul: surface the M5 outcome
+                # + the P4+M2 counter-decision fields so the rich-
+                # detail panel can render WHY a decision won AND
+                # what would force re-examination.
+                "outcome": d.get("outcome"),
+                "alternatives_considered": list(d.get("alternatives_considered") or []),
+                "would_re_examine_if": d.get("would_re_examine_if"),
+                "context": d.get("context"),
+                "supersedes": d.get("supersedes"),
+                "superseded_by": d.get("superseded_by"),
             }
         )
         sup_by = d.get("superseded_by")
@@ -257,6 +267,34 @@ def _build_graph(
             if str(did) in decision_ids:
                 edges.append({"source": rid, "target": str(did), "kind": "covers"})
 
+    # v3.1.x viewer overhaul: precompute the supersedes chain per
+    # decision id so the lineage-trace UI doesn't BFS at click time.
+    # Each chain is the predecessor list ordered oldest → newest;
+    # the selected node itself is included so the chain renders as a
+    # single contiguous path.
+    chains: dict[str, list[str]] = {}
+    sup_to_new: dict[str, str] = {}
+    for e in edges:
+        if e["kind"] == "supersedes":
+            sup_to_new[e["source"]] = e["target"]
+    new_to_sup = {v: k for k, v in sup_to_new.items()}
+
+    for did in {n["id"] for n in nodes if n["type"] == "decision"}:
+        # Walk backwards to the root.
+        head = did
+        seen = {head}
+        while head in new_to_sup and new_to_sup[head] not in seen:
+            head = new_to_sup[head]
+            seen.add(head)
+        # Now walk forward from the root through .superseded_by chain.
+        chain = [head]
+        cur = head
+        while cur in sup_to_new and sup_to_new[cur] not in chain:
+            cur = sup_to_new[cur]
+            chain.append(cur)
+        if len(chain) >= 2:
+            chains[did] = chain
+
     meta = {
         "tags": sorted(all_tags),
         "ides": sorted(all_ides),
@@ -267,6 +305,31 @@ def _build_graph(
             "files": sum(1 for n in nodes if n["type"] == "file"),
             "skills": sum(1 for n in nodes if n["type"] == "skill"),
             "reflections": sum(1 for n in nodes if n["type"] == "reflection"),
+        },
+        # v3.1.x: chains[decision_id] = [oldest, ..., current] for any
+        # decision in a supersedes lineage. Empty for singletons.
+        "chains": chains,
+        # v3.1.x: outcome distribution for the Q&A "what got reverted?"
+        # shortcut + the outcome-lens legend.
+        "outcomes": {
+            "kept": sum(
+                1
+                for n in nodes
+                if n["type"] == "decision" and n.get("outcome") == "kept"
+            ),
+            "modified": sum(
+                1
+                for n in nodes
+                if n["type"] == "decision" and n.get("outcome") == "modified"
+            ),
+            "reverted": sum(
+                1
+                for n in nodes
+                if n["type"] == "decision" and n.get("outcome") == "reverted"
+            ),
+            "unclassified": sum(
+                1 for n in nodes if n["type"] == "decision" and not n.get("outcome")
+            ),
         },
     }
 

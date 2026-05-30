@@ -9,6 +9,193 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [3.1.1] — 2026-05-30 — Hardening, viewer overhaul, G3, sync-observe-git
+
+v3.1.1 is the hardening release that supersedes the brief 3.1.0
+window. Same five memory subsystems, but the read/write surface
+is tightened (secret scrubbing across every store), the viewer
+graduates from "look at the graph" to "interrogate the memory"
+(ranked search + Q&A + outcome lens + lineage trace), and the
+last permanently-skipped gauntlet gate (G3 real-IDE smoke) ships
+as a real check.
+
+If you installed 3.1.0, `pip install --upgrade codevira` brings
+you straight to 3.1.1. 3.1.0 is yanked: undocumented at release
+time (this CHANGELOG entry didn't ship with it), superseded
+without code regressions.
+
+### Memory hardening
+
+- **Secret scrubbing across every store.** M8 (reflections) and
+  M3 (skills) already scrubbed; v3.1.1 brings parity to M2
+  (working) and to `decisions_store.record` (decision text +
+  context). One shared module: `mcp_server/storage/sanitize.py`.
+  Patterns: api-key, Bearer, password, AWS AKIA, long hex,
+  long base64. Scrub runs at the storage-write boundary so the
+  secret never lands on disk in committed surfaces.
+- **`commit_session` path-traversal hardening.** Previously
+  `commit_session("../escape")` would write outside
+  `.codevira/working_archived/`. Now validates `session_id`
+  against `[A-Za-z0-9._-]+`; non-conforming inputs raise
+  `ValueError`.
+- **`skills_store.record(triggers={"tags": "git"})` rejected.**
+  Previously a bare string would silently iterate as characters
+  and persist `["g", "i", "t"]`. Now raises `ValueError` pointing
+  the caller to wrap as a list.
+- **BFS query-time crash fix.** `spatial._bfs_distances` now
+  catches `sqlite3.DatabaseError` raised inside the query loop
+  (not only at connect-time). A corrupt-bytes `graph.db` or a
+  schema with missing `edges` table falls back to neighborhood-
+  only mode instead of crashing `spatial_nearby`.
+- **`skills_store.list_all(limit=0)` returns `[]`.** Previously
+  the for-loop did append-then-check, returning the first row
+  instead of empty.
+- **`promote_skill_to_playbook` refuses archived skills.** A
+  low-value skill (5+ consecutive failures OR 90+ days unused)
+  is now refused unless `force=True` is passed. Previously
+  promoted silently and competed with active skills.
+- **`origin.current_origin` normalizes agent_model.** Whitespace
+  and the literal strings `"null"` / `"None"` (any case) collapse
+  to `None`. Downstream consensus-check string compares no longer
+  see junk values.
+- **Antigravity multi-target atomicity.** `inject_global_antigravity`
+  + `_inject_antigravity` now snapshot each target's pre-write
+  content. On any write failure, all successfully-written targets
+  are restored from snapshot. Either every target is stamped or
+  none — no asymmetric provenance state from a mid-iteration
+  failure.
+
+### Counter-decision discipline (schema change, back-compat)
+
+`decisions_store.record` + `record_decision` MCP tool grew two
+optional fields:
+
+- `alternatives_considered: list[str]` — the strongest options
+  you rejected. Surfaces in the viewer's rich-detail panel.
+- `would_re_examine_if: str` — the condition that should force
+  a re-examination. Pair with `do_not_revert=True` to turn the
+  one-way ratchet into a self-documenting precondition.
+
+Both fields are optional, sanitized on write, and tolerated as
+absent/null on read for legacy records.
+
+### `codevira graph` viewer overhaul
+
+The viewer graduates from a passive force-layout to an active
+interrogation tool. Major additions:
+
+- **Ranked search panel.** Free-text queries now produce a
+  top-K ranked panel under the search box (BM25-ish: token
+  overlap + recency + protected boost). Each row: id, snippet,
+  outcome badge, protected lock, score. Click any row →
+  centers + selects + opens the rich detail panel.
+- **Q&A intent detection** (no LLM dependency, pure regex).
+  Four shapes today: `what did we decide about X`, `why did
+  we pick X`, `what got reverted`, `what's protected`. Each
+  produces a synthesized answer with clickable decision-id
+  chips that jump in the graph.
+- **Rich detail panel for decisions.** Surfaces the new
+  counter-decision fields (alternatives_considered as a list,
+  would_re_examine_if as an italic banner), context as a
+  scrollable block, outcome badge in the title, and the full
+  supersedes lineage chain (clickable predecessors + successors).
+- **Outcome lens.** New "Outcome" choice in the lens dropdown.
+  Colors decisions by classification: `kept`=green, `modified`=
+  amber, `reverted`=coral, `unclassified`=gray. Legend shows
+  per-bucket counts.
+- **Lineage trace mode.** Click "trace" in the lineage block on
+  any decision in a supersedes chain — everything dims, the
+  chain stays full opacity with extra-thick warning-colored
+  edges, camera fits to the chain. Esc exits.
+- **`alternatives_considered` + `would_re_examine_if` surfaced**
+  in the rich detail panel.
+- **Search debouncing** (120ms trailing-edge) so the ranked-
+  score pass doesn't lag on typing bursts at the 2000-node cap.
+
+The viewer's underlying file split: `mcp_server/cli_graph.py`
+shrank 84KB → 14KB by extracting the HTML/CSS/JS template into
+`mcp_server/graph/template.html`. Public API unchanged.
+
+### `codevira sync` auto-classifies outcomes
+
+Every `codevira sync` (manual or automatic) now runs
+`observe-git` as a best-effort tail step. The outcome lens in
+the viewer + the Q&A "what got reverted" surface now have real
+data on every sync — previously stayed gray because outcome
+classification was opt-in. Non-git projects degrade silently.
+
+### G3 — real-IDE smoke (the last stubbed gate)
+
+`scripts/check_real_ide_smoke.sh` was a stub returning exit 2
+("skipped") since v2.0. Now ships a real implementation:
+
+- Locates codevira on PATH (the same binary IDE configs invoke).
+- For each detected IDE config (Claude Code, Claude Desktop,
+  Cursor, Windsurf, Antigravity — per-app + shared paths):
+  validates JSON; "empty file" treated as not-configured;
+  malformed JSON treated as hard fail.
+- Verifies `codevira` (or `codevira-<safe_name>`) is registered;
+  reports `env.CODEVIRA_IDE` state (pre-v3.1.0 installs show
+  as missing with re-setup guidance).
+- Spawns a real MCP stdio server (`codevira --project-dir <tmp>`),
+  runs initialize + tools/list. Thresholds: initialize 5s budget
+  (warm-load OK), tools/list 1s HARD (Claude Desktop disconnect
+  class), tool count ≥20.
+
+Evidence file now records `G3_real_ide_smoke: true` for the
+first time since v2.0.
+
+### Process / discipline
+
+- **`test_cross_tool_universality` added to `make test-e2e`.**
+  Previously the procedural lock (D000010) said "run test-e2e
+  before changing engine policies." The gate only included
+  `test_first_contact` + `test_product_invariants`. A bump to
+  `_DEFAULT_MIN_SCORE` 0.10 → 0.25 broke the cross-tool wedge
+  silently because the test that catches it wasn't in the gate.
+  Reverted the bump; widened the gate; added a wedge-regression
+  unit test (`TestCrossToolWedgeRegression`) so the same class
+  of regression also fails at the fast unit-test layer.
+- **`make release-verify-version` BSD sed fix.** The version
+  drift check used `sed -E 's/.*=\s*"([^"]+)".*/\1/'` which is
+  GNU-only; BSD sed (macOS default) doesn't recognize `\s` in
+  `-E`. Replaced with `= *` (literal space).
+- **CLAUDE.md "MUST"/"SHOULD" honesty.** The
+  "before-you-finish" contract claimed `MUST call
+  write_session_log` but no engine layer enforced it. Downgraded
+  to STRONG RECOMMENDATION with explicit "engine enforcement on
+  roadmap" note.
+- **AGENTS.md idempotency.** `agents_md_generator.regenerate`
+  now compares computed content vs existing and short-circuits
+  when identical (no write, no mtime bump). Kills the
+  perpetual uncommitted-drift loop where every codevira write
+  bumped AGENTS.md even when content didn't change.
+
+### Tests + suite
+
+- Full project suite: 2538 → 2540 passing, 28 skipped, 0
+  failures.
+- Widened `make test-e2e` gate: 39 → 43 passing.
+- All 4 product fixes verified end-to-end through the fresh-
+  built wheel + against AgentStore's real memory.
+
+### Locked decisions honored
+
+D000010 procedural gate ran on every engine-policy change.
+D000001 (atomic disk writes) honored. D000012 (project-root
+validation) honored.
+
+### Yanked
+
+- **3.1.0 yanked 2026-05-30.** Same code shape; released
+  without this CHANGELOG entry. Process gap, not code gap.
+  Existing pins still work; new `pip install codevira` lands
+  on 3.1.1 directly.
+
+---
+
+---
+
 ## [3.1.0] — Five memory subsystems + cross-IDE consensus
 
 v3.1.0 adds five memory subsystems on top of the v3.0.x decision

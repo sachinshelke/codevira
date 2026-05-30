@@ -268,6 +268,24 @@ release-verify-version:
 			echo "    Promote the [Unreleased] section to [$(VERSION)] before releasing."; \
 			exit 1; \
 		fi; \
+		\
+		# v3.1.1: freshness check — if any mcp_server/ or indexer/ \
+		# source file is newer than CHANGELOG.md, the entry is probably \
+		# stale relative to the wheel. Catches "I edited code but didn't \
+		# update changelog" — the exact gap that briefly published 3.1.0 \
+		# without docs. \
+		CHANGELOG_MTIME=$$(stat -f %m CHANGELOG.md 2>/dev/null || stat -c %Y CHANGELOG.md); \
+		NEWER=$$(find mcp_server indexer -type f \( -name "*.py" -o -name "*.html" \) -newer CHANGELOG.md 2>/dev/null | wc -l | tr -d ' '); \
+		if [ "$$NEWER" -gt "0" ]; then \
+			echo "  ✗ CHANGELOG.md is OLDER than $$NEWER source file(s) under mcp_server/ + indexer/."; \
+			echo "    The current $(VERSION) entry is probably stale relative to the wheel."; \
+			echo "    Either: (a) update the entry to cover the new commits, OR"; \
+			echo "    (b) bump the patch version + add a new entry."; \
+			echo "    First offenders:"; \
+			find mcp_server indexer -type f \( -name "*.py" -o -name "*.html" \) -newer CHANGELOG.md 2>/dev/null | head -5 | sed 's/^/      /'; \
+			exit 1; \
+		fi; \
+		echo "  ✓ CHANGELOG.md is fresh (newer than every tracked source file)"; \
 	fi
 	@# 6. Tag check: if tag exists, must point at HEAD.
 	@if git rev-parse "v$(VERSION)" >/dev/null 2>&1; then \

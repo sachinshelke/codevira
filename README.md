@@ -92,6 +92,28 @@ every AI tool, on every project, on your local machine.**
 
 ---
 
+## What's new in v3.1.1 — hardening + interrogable memory
+
+> 3.1.1 supersedes the briefly-published 3.1.0 (which shipped
+> without this README/CHANGELOG entry). Same code shape; this
+> release is the documented one. Brings five memory subsystems
+> (M1–M9 from 3.1.0) plus the v3.1.1 hardening + viewer overhaul.
+
+| Area | What you get |
+|---|---|
+| **Five memory subsystems** | Origin tagging (M1), working memory (M2), skill library with FTS5 ranking (M3), spatial memory + activity heatmap (M4), skill induction wired to outcomes (M5), cross-IDE consensus check + handshake (M6/M7), reflections (M8). 22 new MCP tools. |
+| **Secret scrubbing everywhere** | Decisions, sessions, working memory, skills, reflections — every store scrubs api-key / Bearer / password / AWS AKIA / long hex / long base64 at the write boundary. One shared `mcp_server/storage/sanitize.py`. |
+| **Counter-decision discipline** | `record_decision` now accepts `alternatives_considered: list[str]` and `would_re_examine_if: str` — losing options + invalidation trigger surface in the viewer's rich-detail panel. Optional + back-compat. |
+| **Interrogable graph viewer** | `codevira graph` is no longer a passive force-layout. Free-text search → top-K ranked panel with score + outcome badge. Q&A intent detection ("what did we decide about X", "what got reverted", "what's protected"). Outcome lens (kept/modified/reverted). Lineage trace mode for supersession chains. |
+| **Auto outcome classification** | `codevira sync` now runs `observe-git` as a best-effort tail step — outcomes flow into the viewer's outcome lens automatically. |
+| **G3 real-IDE smoke** | The last permanently-skipped gauntlet gate now ships as a real check. Verifies codevira is registered in each detected IDE config + MCP `tools/list` round-trips in <1s. |
+| **AGENTS.md no more churn** | `regenerate()` is now idempotent — no rewrite when content unchanged, no perpetual uncommitted-drift loop. |
+| **4 silent bugs fixed** | `commit_session("../escape")` rejected; `triggers.tags="git"` rejected; `list_all(limit=0)` returns `[]`; spatial BFS catches query-time sqlite errors. |
+
+Full v3.1.1 release notes: [CHANGELOG.md](CHANGELOG.md#311--2026-05-30--hardening-viewer-overhaul-g3-sync-observe-git).
+
+---
+
 ## What's new in v3.0.0 — audited, lean, opinionated
 
 > Major version. v3.0.0 is the biggest API contraction since v2.0

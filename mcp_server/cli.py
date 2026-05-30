@@ -1382,7 +1382,7 @@ def main() -> None:
     )
     engine_sub.add_parser(
         "enable",
-        help="Re-enable hook engine policies (removes " "~/.codevira/engine.disabled).",
+        help="Re-enable hook engine policies (removes ~/.codevira/engine.disabled).",
     )
     engine_sub.add_parser(
         "status",
@@ -1631,8 +1631,7 @@ def main() -> None:
 
             sys.exit(cmd_consensus_check())
         sys.stderr.write(
-            "codevira consensus: missing subcommand. Try `codevira "
-            "consensus check`.\n"
+            "codevira consensus: missing subcommand. Try `codevira consensus check`.\n"
         )
         sys.exit(2)
     elif args.command == "induce-skills":

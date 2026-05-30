@@ -104,7 +104,7 @@ where = ["."]
 include = ["mcp_server*", "indexer*"]
 
 [tool.setuptools.package-data]
-mcp_server = ["data/**/*", "data/*"]
+mcp_server = ["data/**/*", "data/*", "graph/*.html"]
 
 [tool.pytest.ini_options]
 # v2.1.2 hardening: register custom markers so pytest doesn't emit

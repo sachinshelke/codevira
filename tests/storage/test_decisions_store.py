@@ -337,3 +337,188 @@ class TestCounterDecisionFields:
         rec = decisions_store.get(r["decision_id"])
         assert rec["alternatives_considered"] == ["alt1", "alt2"]
         assert rec["would_re_examine_if"] == "if condition X holds"
+
+
+# ──────────────────────────────────────────────────────────────────────
+# v3.2.0 — reaffirm + do_not_revert soft-expire
+# ──────────────────────────────────────────────────────────────────────
+
+
+class TestReaffirmAndSoftExpire:
+    def test_reaffirm_appends_amendment_with_timestamp(self, project: Path) -> None:
+        decision_id = decisions_store.record(
+            decision="lock me",
+            do_not_revert=True,
+        )
+        result = decisions_store.reaffirm(decision_id)
+        assert result["success"] is True
+        assert result["decision_id"] == decision_id
+        assert isinstance(result["reaffirmed_at"], str)
+
+        rec = decisions_store.get(decision_id)
+        assert rec["reaffirmed_at"] == result["reaffirmed_at"]
+        # do_not_revert flag is preserved (amendment overlay merges)
+        assert rec["do_not_revert"] is True
+
+    def test_reaffirm_missing_decision_returns_error(self, project: Path) -> None:
+        result = decisions_store.reaffirm("D999999")
+        assert result["success"] is False
+        assert "not found" in result["error"]
+
+    def test_compute_dnr_soft_expire_not_protected_is_never_expired(
+        self,
+        project: Path,
+    ) -> None:
+        decision_id = decisions_store.record(decision="x", do_not_revert=False)
+        rec = decisions_store.get(decision_id)
+        result = decisions_store.compute_dnr_soft_expire(rec, max_age_days=1)
+        assert result["soft_expired"] is False
+        # age_days still computed for observability
+        assert result["age_days"] is not None and result["age_days"] >= 0
+
+    def test_compute_dnr_soft_expire_fresh_protected_not_expired(
+        self,
+        project: Path,
+    ) -> None:
+        decision_id = decisions_store.record(decision="x", do_not_revert=True)
+        rec = decisions_store.get(decision_id)
+        result = decisions_store.compute_dnr_soft_expire(rec, max_age_days=180)
+        assert result["soft_expired"] is False
+        assert result["age_days"] == 0
+        assert result["max_age_days"] == 180
+
+    def test_compute_dnr_soft_expire_old_protected_is_expired(
+        self,
+        project: Path,
+    ) -> None:
+        # Use a synthetic record with an old ts directly.
+        synthetic = {
+            "id": "D000099",
+            "ts": "2020-01-01T00:00:00+00:00",
+            "do_not_revert": True,
+        }
+        result = decisions_store.compute_dnr_soft_expire(
+            synthetic,
+            max_age_days=180,
+        )
+        assert result["soft_expired"] is True
+        assert result["age_days"] > 180
+
+    def test_compute_dnr_soft_expire_reaffirmed_resets_clock(
+        self,
+        project: Path,
+    ) -> None:
+        from datetime import datetime, timezone
+
+        synthetic = {
+            "id": "D000099",
+            "ts": "2020-01-01T00:00:00+00:00",
+            "reaffirmed_at": datetime.now(timezone.utc).isoformat(),
+            "do_not_revert": True,
+        }
+        result = decisions_store.compute_dnr_soft_expire(
+            synthetic,
+            max_age_days=180,
+        )
+        assert result["soft_expired"] is False
+        assert result["age_days"] == 0
+
+    def test_compute_dnr_soft_expire_threshold_zero_disables(
+        self,
+        project: Path,
+    ) -> None:
+        synthetic = {
+            "id": "D000099",
+            "ts": "2020-01-01T00:00:00+00:00",
+            "do_not_revert": True,
+        }
+        result = decisions_store.compute_dnr_soft_expire(
+            synthetic,
+            max_age_days=0,
+        )
+        assert result["soft_expired"] is False  # disabled
+        # But age_days still reported for observability
+        assert result["age_days"] > 0
+
+    def test_compute_dnr_soft_expire_no_ts_returns_none_age(
+        self,
+        project: Path,
+    ) -> None:
+        synthetic = {"id": "D000099", "do_not_revert": True}
+        result = decisions_store.compute_dnr_soft_expire(
+            synthetic,
+            max_age_days=180,
+        )
+        assert result["soft_expired"] is False
+        assert result["age_days"] is None
+        assert result["effective_ts"] is None
+
+    def test_dnr_soft_expire_days_env_var_override(
+        self,
+        project: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("CODEVIRA_DNR_SOFT_EXPIRE_DAYS", "30")
+        assert decisions_store.dnr_soft_expire_days() == 30
+
+    def test_dnr_soft_expire_days_env_unset_uses_default(
+        self,
+        project: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("CODEVIRA_DNR_SOFT_EXPIRE_DAYS", raising=False)
+        # Default is 180 days per the module constant
+        assert decisions_store.dnr_soft_expire_days() == 180
+
+    def test_dnr_soft_expire_days_bogus_env_falls_back(
+        self,
+        project: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("CODEVIRA_DNR_SOFT_EXPIRE_DAYS", "nonsense")
+        assert decisions_store.dnr_soft_expire_days() == 180
+
+    def test_dnr_soft_expire_days_negative_falls_back(
+        self,
+        project: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("CODEVIRA_DNR_SOFT_EXPIRE_DAYS", "-5")
+        assert decisions_store.dnr_soft_expire_days() == 180
+
+
+class TestReaffirmDecisionTool:
+    """v3.2.0 MCP tool surface."""
+
+    def test_reaffirm_tool_calls_storage(self, project: Path) -> None:
+        from mcp_server.tools.learning import reaffirm_decision
+
+        decision_id = decisions_store.record(decision="x", do_not_revert=True)
+        result = reaffirm_decision(decision_id)
+        assert result["success"] is True
+        assert result["decision_id"] == decision_id
+        assert "reaffirmed_at" in result
+
+        # Persists via the storage layer
+        rec = decisions_store.get(decision_id)
+        assert rec["reaffirmed_at"] == result["reaffirmed_at"]
+
+    def test_reaffirm_tool_rejects_empty_id(self, project: Path) -> None:
+        from mcp_server.tools.learning import reaffirm_decision
+
+        result = reaffirm_decision("")
+        assert result["success"] is False
+        assert "non-empty string" in result["error"]
+
+    def test_reaffirm_tool_rejects_non_string_id(self, project: Path) -> None:
+        from mcp_server.tools.learning import reaffirm_decision
+
+        result = reaffirm_decision(None)  # type: ignore[arg-type]
+        assert result["success"] is False
+
+    def test_reaffirm_tool_propagates_not_found(self, project: Path) -> None:
+        from mcp_server.tools.learning import reaffirm_decision
+
+        result = reaffirm_decision("D999999")
+        assert result["success"] is False
+        assert "not found" in result["error"]

@@ -342,6 +342,34 @@ def set_decision_flag(
     )
 
 
+def reaffirm_decision(decision_id: str) -> dict:
+    """v3.2.0: refresh a ``do_not_revert`` decision's soft-expire clock.
+
+    Long-lived locked decisions can grow stale — the world that made
+    them right may have changed. v3.2.0 introduces a soft expiry surfaced
+    via ``dnr_soft_expired`` on search/list output (default 180 days,
+    override via ``CODEVIRA_DNR_SOFT_EXPIRE_DAYS``).
+
+    When a soft-expired decision is still load-bearing, call
+    ``reaffirm_decision(id)`` to reset the clock. The amendment is
+    append-only — the lineage of reaffirmations is preserved in the
+    JSONL log.
+
+    For semantic rewrites use ``supersede_decision``; for flipping
+    ``do_not_revert`` itself use ``set_decision_flag``. ``reaffirm_decision``
+    is the lightweight "still valid" signal.
+
+    Returns ``{success, decision_id, reaffirmed_at}`` on success;
+    ``{success: False, error}`` if the decision doesn't exist.
+    """
+    if not decision_id or not isinstance(decision_id, str):
+        return {"success": False, "error": "decision_id must be a non-empty string"}
+
+    from mcp_server.storage import decisions_store
+
+    return decisions_store.reaffirm(decision_id=decision_id)
+
+
 # v2.2.0+ (2026-05-22 surface-cut audit batch 6):
 #   - record_decisions (batch) deleted: agents called single endpoints
 #     in practice; batch saved theoretical round-trips that never

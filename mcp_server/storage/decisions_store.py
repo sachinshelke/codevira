@@ -472,6 +472,137 @@ def mark_protected(decision_id: str) -> dict[str, Any]:
     return {"success": True, "decision_id": decision_id, "do_not_revert": True}
 
 
+def reaffirm(decision_id: str) -> dict[str, Any]:
+    """v3.2.0: refresh a ``do_not_revert`` decision's soft-expire clock.
+
+    Appends an amendment with ``reaffirmed_at: <now>``. Consumers (and
+    :func:`compute_dnr_soft_expire`) treat this as the new effective
+    age of the lock — so callers can keep a long-standing decision
+    "live" without rewriting it.
+
+    No-op semantics: the function always appends an amendment, even if
+    the decision has been reaffirmed recently. Callers wanting "only if
+    expired" semantics check :func:`compute_dnr_soft_expire` first.
+
+    Returns ``{success, decision_id, reaffirmed_at}`` on success;
+    ``{success: False, error}`` if the decision doesn't exist.
+    """
+    paths.ensure_dirs()
+    if get(decision_id) is None:
+        return {"success": False, "error": f"decision {decision_id} not found"}
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    amendment = {
+        "id": decision_id,
+        "ts": now_iso,
+        "_amendment_to_id": decision_id,
+        "reaffirmed_at": now_iso,
+    }
+    jsonl_store.append(paths.decisions_path(), amendment)
+    rebuild_indexes()
+    return {
+        "success": True,
+        "decision_id": decision_id,
+        "reaffirmed_at": now_iso,
+    }
+
+
+# v3.2.0: do_not_revert soft-expire.
+#
+# Long-lived `do_not_revert` decisions can grow stale — the world that
+# made them right may have changed. v3.2.0 introduces a SOFT expiry: a
+# decision still loads as locked, but readers can see it's overdue for
+# a check via the {dnr_soft_expired, dnr_age_days} fields surfaced by
+# search/list. The lock itself does NOT auto-flip; the user (or a
+# future engine policy) decides what to do.
+#
+# Default threshold: 180 days (~6 months). Override per process via
+# CODEVIRA_DNR_SOFT_EXPIRE_DAYS. Set to 0 to disable (always live).
+
+_DEFAULT_DNR_SOFT_EXPIRE_DAYS = 180
+
+
+def _parse_iso_to_dt(ts: str | None) -> datetime | None:
+    if not isinstance(ts, str) or not ts.strip():
+        return None
+    s = ts.strip()
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    try:
+        return datetime.fromisoformat(s)
+    except ValueError:
+        return None
+
+
+def _dnr_effective_dt(decision: dict[str, Any]) -> datetime | None:
+    """The reference time for measuring a do_not_revert decision's age.
+
+    Picks the LATEST of ``reaffirmed_at`` and ``ts`` (the original write).
+    Returns None when neither is parseable.
+    """
+    candidates = [
+        _parse_iso_to_dt(decision.get("reaffirmed_at")),
+        _parse_iso_to_dt(decision.get("ts")),
+    ]
+    valid = [d for d in candidates if d is not None]
+    if not valid:
+        return None
+    return max(valid)
+
+
+def dnr_soft_expire_days() -> int:
+    """Active threshold (in days). Reads CODEVIRA_DNR_SOFT_EXPIRE_DAYS env
+    var; falls back to the default. 0 means disabled."""
+    import os
+
+    raw = os.environ.get("CODEVIRA_DNR_SOFT_EXPIRE_DAYS")
+    if raw is None or not raw.strip():
+        return _DEFAULT_DNR_SOFT_EXPIRE_DAYS
+    try:
+        v = int(raw.strip())
+        return v if v >= 0 else _DEFAULT_DNR_SOFT_EXPIRE_DAYS
+    except ValueError:
+        return _DEFAULT_DNR_SOFT_EXPIRE_DAYS
+
+
+def compute_dnr_soft_expire(
+    decision: dict[str, Any],
+    *,
+    max_age_days: int | None = None,
+) -> dict[str, Any]:
+    """Compute soft-expire status for one merged decision dict.
+
+    Returns ``{soft_expired, age_days, max_age_days, effective_ts}``.
+
+    - ``soft_expired`` is True iff the decision is protected
+      (``do_not_revert``) AND the effective age (max of ``reaffirmed_at``
+      and original ``ts``) exceeds ``max_age_days``.
+    - When the threshold is 0 (disabled), ``soft_expired`` is always
+      False — but ``age_days`` is still computed for observability.
+    - A non-protected decision has ``soft_expired=False`` regardless of
+      age (no lock to expire).
+    """
+    threshold = max_age_days if max_age_days is not None else dnr_soft_expire_days()
+    eff = _dnr_effective_dt(decision)
+    if eff is None:
+        return {
+            "soft_expired": False,
+            "age_days": None,
+            "max_age_days": threshold,
+            "effective_ts": None,
+        }
+    now = datetime.now(timezone.utc)
+    age_days = max(0, int((now - eff).total_seconds() // 86400))
+    is_protected = bool(decision.get("do_not_revert"))
+    soft_expired = bool(is_protected and threshold > 0 and age_days > threshold)
+    return {
+        "soft_expired": soft_expired,
+        "age_days": age_days,
+        "max_age_days": threshold,
+        "effective_ts": eff.isoformat(),
+    }
+
+
 def set_flag(
     decision_id: str,
     *,

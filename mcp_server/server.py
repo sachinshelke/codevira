@@ -641,6 +641,31 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="reaffirm_decision",
+            description=(
+                "v3.2.0: refresh a do_not_revert decision's soft-expire "
+                "clock. Long-lived locked decisions can grow stale; "
+                "v3.2.0 surfaces a 'dnr_soft_expired' flag on search/"
+                "list output (default 180 days, override via "
+                "CODEVIRA_DNR_SOFT_EXPIRE_DAYS). Call this on a "
+                "still-load-bearing soft-expired decision to reset the "
+                "clock — appends a single 'reaffirmed_at' amendment to "
+                ".codevira/decisions.jsonl. For semantic rewrites use "
+                "supersede_decision; for flipping the flag use "
+                "set_decision_flag."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "decision_id": {
+                        "type": "string",
+                        "description": "Decision id to reaffirm (e.g. 'D000007')",
+                    },
+                },
+                "required": ["decision_id"],
+            },
+        ),
+        Tool(
             name="check_conflict",
             description=(
                 "Check whether a proposed decision contradicts any "
@@ -1693,6 +1718,15 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 decision_id=arguments["decision_id"],
                 do_not_revert=arguments.get("do_not_revert"),
                 tags=arguments.get("tags"),
+            )
+        elif name == "reaffirm_decision":
+            # v3.2.0 do_not_revert soft-expire: append a reaffirmed_at
+            # amendment so the decision's age clock resets. See
+            # decisions_store.compute_dnr_soft_expire for the threshold.
+            from mcp_server.tools.learning import reaffirm_decision
+
+            result = reaffirm_decision(
+                decision_id=arguments["decision_id"],
             )
         elif name == "check_conflict":
             # v2.1.2 Item 20.

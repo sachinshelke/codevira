@@ -23,6 +23,30 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Session log enforcer uses `git log --since=@<epoch>` rather than
   the locale-dependent ISO form so the count is correct on machines
   whose TZ is not UTC.
+- **Graph viewer Q&A vocab expansion** — three new ask-the-graph
+  patterns: `who decided X` (groups by IDE, surfaces cross-tool
+  authorship), `when did we X` (chronological with first/last
+  dates), `compare X and Y` / `X vs Y` (side-by-side top match per
+  topic with outcome/protected badges).
+- **`reflect()` real MCP `sampling/createMessage` path** — the v3.1.0
+  stub deferred the actual LLM call to v3.2. v3.2.0 ships
+  `reflect_async()` that calls
+  `server_session.create_message(...)` when the connected client
+  advertises sampling capability; persists the abstraction via
+  `reflections_store.append` when `dry_run=False`. Any failure
+  (no session, no capability, LLM error, malformed response)
+  gracefully degrades to the v3.1.0 stub shape with a
+  `sampling_error` diagnostic field for `codevira doctor`. The
+  sync `reflect()` is retained for CLI callers.
+- **`do_not_revert` soft-expire** — long-lived locked decisions can
+  grow stale. `compute_dnr_soft_expire(decision, max_age_days=N)`
+  returns `{soft_expired, age_days, max_age_days, effective_ts}`
+  so consumers can surface "needs reaffirmation" without auto-
+  flipping the flag. Default threshold 180 days; override via
+  `CODEVIRA_DNR_SOFT_EXPIRE_DAYS` (0 = disabled). New MCP tool
+  `reaffirm_decision(decision_id)` resets the clock by appending
+  a `reaffirmed_at` amendment; the lineage is preserved in the
+  JSONL log.
 
 ### Changed
 

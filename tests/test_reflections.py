@@ -403,12 +403,16 @@ class TestCmdReflect:
 
 class TestMcpTools:
     def test_reflect_returns_sampling_supported_false(self, project: Path) -> None:
+        """Sync reflect() (CLI entry) always returns the stub shape — sampling
+        only runs through the async MCP path."""
         decisions_store.record(decision="x")
         from mcp_server.tools.reflections import reflect
 
         r = reflect()
         assert r["sampling_supported"] is False
-        assert r["deferred_to"] == "v3.2"
+        # v3.2.0 renamed the deferred_to marker since sampling now exists
+        # for MCP callers but is N/A for sync.
+        assert r["deferred_to"] == "v3.2-or-host-without-sampling"
         assert "rendered_prompt" in r
         assert "source_context" in r
 
@@ -762,3 +766,188 @@ class TestRenderContextBlockFormat:
         block = reflections_store._render_context_block(ctx)
         for header in ("period_start:", "period_end:", "sessions:", "decisions:"):
             assert header in block, f"missing header {header!r}: {block[:200]}"
+
+
+# ──────────────────────────────────────────────────────────────────────
+# v3.2.0 — reflect_async (sampling/createMessage path)
+# ──────────────────────────────────────────────────────────────────────
+
+
+class _FakeContent:
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+
+class _FakeResult:
+    def __init__(self, text: str, model: str = "test-llm") -> None:
+        self.content = _FakeContent(text)
+        self.model = model
+
+
+class _FakeSession:
+    """Mimics the subset of mcp ServerSession reflect_async touches."""
+
+    def __init__(
+        self,
+        *,
+        advertise_sampling: bool = True,
+        canned_response: str = "Generated abstraction.",
+        raise_exc: Exception | None = None,
+    ) -> None:
+        if advertise_sampling:
+
+            class _Sampling:
+                pass
+
+            class _Caps:
+                def __init__(self) -> None:
+                    self.sampling = _Sampling()
+
+            class _Params:
+                def __init__(self) -> None:
+                    self.capabilities = _Caps()
+
+            self.client_params = _Params()
+        else:
+            self.client_params = None  # no capabilities advertised
+        self._canned = canned_response
+        self._raise = raise_exc
+        self.create_message_called = 0
+        self.last_messages: list = []
+
+    async def create_message(self, *, messages, max_tokens, **kw):
+        self.create_message_called += 1
+        self.last_messages = messages
+        if self._raise is not None:
+            raise self._raise
+        return _FakeResult(self._canned)
+
+
+class TestReflectAsyncSampling:
+    @pytest.fixture(autouse=True)
+    def _patch_mcp_types_samplingmessage(self):
+        """test_server.py installs a stub mcp.types module that lacks
+        SamplingMessage. Patch a stub class in for this test class so
+        reflect_async's lazy `from mcp.types import SamplingMessage`
+        succeeds — the FakeSession never actually uses the class, so a
+        plain duck-type works."""
+        import sys
+
+        mt = sys.modules.get("mcp.types")
+        if mt is None:
+            yield
+            return
+        had = hasattr(mt, "SamplingMessage")
+        if not had:
+
+            class _StubSamplingMessage:
+                def __init__(self, **kw):
+                    self.__dict__.update(kw)
+
+            mt.SamplingMessage = _StubSamplingMessage
+        try:
+            yield
+        finally:
+            if not had and hasattr(mt, "SamplingMessage"):
+                delattr(mt, "SamplingMessage")
+
+    @staticmethod
+    def _run(coro):
+        import asyncio
+
+        return asyncio.run(coro)
+
+    def test_no_session_falls_back_to_stub(self, project: Path) -> None:
+        from mcp_server.tools.reflections import reflect_async
+
+        result = self._run(reflect_async(server_session=None))
+        assert result["sampling_supported"] is False
+        assert result["sampling_error"] == "no_server_session"
+        assert "rendered_prompt" in result
+
+    def test_session_without_sampling_capability_falls_back(
+        self,
+        project: Path,
+    ) -> None:
+        from mcp_server.tools.reflections import reflect_async
+
+        sess = _FakeSession(advertise_sampling=False)
+        result = self._run(reflect_async(server_session=sess))
+        assert result["sampling_supported"] is False
+        assert result["sampling_error"] == "client_did_not_advertise_sampling"
+        assert sess.create_message_called == 0
+
+    def test_sampling_success_dry_run_returns_abstraction_no_persist(
+        self,
+        project: Path,
+    ) -> None:
+        from mcp_server.tools.reflections import reflect_async
+
+        decisions_store.record(decision="X", tags=["t1"])
+        sessions_store.write("s1", task="x", task_type="bug")
+
+        sess = _FakeSession(canned_response="My abstraction body.")
+        before = len(reflections_store.list_recent(limit=999))
+        result = self._run(reflect_async(server_session=sess, dry_run=True))
+
+        assert result["sampling_supported"] is True
+        assert result["abstraction"] == "My abstraction body."
+        assert result["persisted"] is False
+        assert result["reflection_id"] is None
+        assert result["model_used"] == "test-llm"
+        assert sess.create_message_called == 1
+
+        after = len(reflections_store.list_recent(limit=999))
+        assert after == before, "dry_run must not write"
+
+    def test_sampling_success_persists_when_dry_run_false(
+        self,
+        project: Path,
+    ) -> None:
+        from mcp_server.tools.reflections import reflect_async
+
+        decisions_store.record(decision="X", tags=["t1"])
+        sessions_store.write("s1", task="x", task_type="bug")
+
+        sess = _FakeSession(canned_response="Committed abstraction.")
+        before = len(reflections_store.list_recent(limit=999))
+        result = self._run(reflect_async(server_session=sess, dry_run=False))
+
+        assert result["sampling_supported"] is True
+        assert result["persisted"] is True
+        assert isinstance(result["reflection_id"], str)
+        assert result["reflection_id"].startswith("R")
+
+        recent = reflections_store.list_recent(limit=999)
+        assert len(recent) == before + 1
+        assert recent[0]["abstraction"] == "Committed abstraction."
+        assert recent[0]["model_used"] == "test-llm"
+
+    def test_sampling_exception_falls_back_to_stub(
+        self,
+        project: Path,
+    ) -> None:
+        from mcp_server.tools.reflections import reflect_async
+
+        sess = _FakeSession(raise_exc=RuntimeError("transport closed"))
+        result = self._run(reflect_async(server_session=sess))
+        assert result["sampling_supported"] is False
+        assert "RuntimeError" in (result["sampling_error"] or "")
+        assert "transport closed" in (result["sampling_error"] or "")
+
+    def test_empty_llm_response_falls_back(self, project: Path) -> None:
+        from mcp_server.tools.reflections import reflect_async
+
+        sess = _FakeSession(canned_response="   ")  # whitespace-only
+        result = self._run(reflect_async(server_session=sess))
+        assert result["sampling_supported"] is False
+        assert result["sampling_error"] == "empty_or_non_text_response"
+
+    def test_sync_reflect_unchanged_in_v320(self, project: Path) -> None:
+        """The sync reflect() entry stays on the v3.1.0 stub shape so the
+        CLI keeps working."""
+        from mcp_server.tools.reflections import reflect
+
+        result = reflect(period_days=7, dry_run=True)
+        assert result["sampling_supported"] is False
+        assert "rendered_prompt" in result

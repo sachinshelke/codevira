@@ -1911,11 +1911,22 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             result = origin_of(decision_id=arguments["decision_id"])
         # ---- v3.1.0 M8: reflections dispatch ----
         elif name == "reflect":
-            from mcp_server.tools.reflections import reflect
+            from mcp_server.tools.reflections import reflect_async
 
-            result = reflect(
+            # v3.2.0: try the host LLM via sampling/createMessage when
+            # this tool runs inside an active MCP request context.
+            # reflect_async degrades to the v3.1.0 stub on any failure,
+            # so this is safe even when the host doesn't support sampling.
+            mcp_session = None
+            try:
+                mcp_session = server.request_context.session
+            except LookupError:
+                pass
+
+            result = await reflect_async(
                 period_days=arguments.get("period_days", 7),
                 dry_run=arguments.get("dry_run", True),
+                server_session=mcp_session,
             )
         elif name == "get_reflections":
             from mcp_server.tools.reflections import get_reflections

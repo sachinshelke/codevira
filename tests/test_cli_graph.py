@@ -411,11 +411,25 @@ class TestRenderHtml:
             "_answerWhy",
             "_answerOutcome",
             "_answerProtected",
+            # v3.2.0 vocab expansion
+            "_answerWho",
+            "_answerWhen",
+            "_answerCompare",
             "enterLineageMode",
             "exitLineageMode",
             "lineage-mode",
         ):
             assert sym in h, f"missing JS symbol {sym}"
+
+    def test_template_wires_v3_2x_qa_vocab_help(self):
+        """v3.2.0 Q&A vocab expansion: cheatsheet must surface new patterns."""
+        h = render_graph_html([{"id": "D1", "decision": "x"}])
+        for phrase in (
+            "who decided X",
+            "when did we X",
+            "compare X and Y",
+        ):
+            assert phrase in h, f"cheatsheet missing prompt: {phrase}"
         # Lineage-mode CSS
         assert "svg.lineage-mode" in h
         # Rich-detail field classes

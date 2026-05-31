@@ -446,7 +446,7 @@
   </div>
   <div id="qHelp">
     tokens: <code>tag:</code> <code>ide:</code> <code>kind:</code> <code>protected:</code> <code>since:</code> <code>until:</code>
-    <br>ask: <code>what about X</code> · <code>why did we</code> · <code>what got reverted</code> · <code>what's protected</code>
+    <br>ask: <code>what about X</code> · <code>why did we</code> · <code>who decided X</code> · <code>when did we X</code> · <code>compare X and Y</code> · <code>what got reverted</code> · <code>what's protected</code>
   </div>
   <!-- v3.1.x: ranked search panel. Populated by applyVisibility when
        a query string is non-trivial; hidden when empty. Click row →
@@ -1865,6 +1865,19 @@ function _detectIntent(query) {
   if (/^what (?:worked|was kept|got kept|stuck)\??$/.test(q)) {
     return _answerOutcome('kept');
   }
+  // v3.2.0: "who decided X" / "who chose X" / "which ide decided X"
+  m = q.match(/^(?:who (?:decided|chose|made the (?:call|decision) (?:about|on|for))|which (?:ide|tool) (?:decided|chose) (?:about|on|for)?)\s+(.+?)\??$/);
+  if (m) return _answerWho(m[1].trim());
+
+  // v3.2.0: "when did we X" / "when was X decided" / "timeline of X"
+  m = q.match(/^(?:when (?:did we|was|did)|timeline (?:of|for))\s+(.+?)\??$/);
+  if (m) return _answerWhen(m[1].trim());
+
+  // v3.2.0: "compare X and Y" / "compare X vs Y" / "X vs Y"
+  m = q.match(/^(?:compare\s+)?(.+?)\s+(?:vs\.?|versus|and|or)\s+(.+?)\??$/);
+  if (m && /\bcompare\b|\bvs\b|\bversus\b/.test(q)) {
+    return _answerCompare(m[1].trim(), m[2].trim());
+  }
   return null;
 }
 
@@ -1955,6 +1968,101 @@ function _answerProtected() {
     ).join('') + '</ul>';
   }
   return { intent: 'PROTECTED DECISIONS', body };
+}
+
+// v3.2.0: "who decided X" — group matching decisions by IDE.
+function _answerWho(topic) {
+  const tokens = topic.toLowerCase().split(/\s+/).filter(t => t.length >= 3);
+  if (!tokens.length) return null;
+  const scored = DATA.nodes
+    .filter(n => n.type === 'decision' && !n._hidden)
+    .map(n => ({ n, s: _scoreForQuery(n, tokens) }))
+    .filter(x => x.s > 0)
+    .sort((a, b) => b.s - a.s)
+    .slice(0, 20);
+  if (!scored.length) {
+    return { intent: 'WHO DECIDED ' + topic.toUpperCase(),
+             body: `<i>No decisions match "${esc(topic)}".</i>` };
+  }
+  // Group by IDE — surfaces cross-tool authorship that's invisible from
+  // the rank-only view.
+  const byIde = {};
+  for (const {n} of scored) {
+    const ide = n.ide || 'unknown';
+    if (!byIde[ide]) byIde[ide] = [];
+    byIde[ide].push(n);
+  }
+  const ideEntries = Object.entries(byIde).sort((a, b) => b[1].length - a[1].length);
+  let body = `<b>${scored.length}</b> matching decision(s), authored by <b>${ideEntries.length}</b> IDE(s):`;
+  body += '<ul class="a-list">' + ideEntries.map(([ide, list]) => {
+    const sample = list.slice(0, 2).map(n =>
+      `<code data-jump="${esc(n.id)}">${esc(n.id)}</code>`
+    ).join(', ');
+    const more = list.length > 2 ? ` <i>(+${list.length - 2} more)</i>` : '';
+    return `<li><b>${esc(ide)}</b> — ${list.length} decision(s); e.g. ${sample}${more}</li>`;
+  }).join('') + '</ul>';
+  return { intent: 'WHO DECIDED ' + topic.toUpperCase(), body };
+}
+
+// v3.2.0: "when did we X" — chronological timeline of matching decisions.
+function _answerWhen(topic) {
+  const tokens = topic.toLowerCase().split(/\s+/).filter(t => t.length >= 3);
+  if (!tokens.length) return null;
+  const scored = DATA.nodes
+    .filter(n => n.type === 'decision' && !n._hidden && n.tsMs !== null)
+    .map(n => ({ n, s: _scoreForQuery(n, tokens) }))
+    .filter(x => x.s > 0)
+    .sort((a, b) => (a.n.tsMs || 0) - (b.n.tsMs || 0))  // chronological
+    .slice(0, 8);
+  if (!scored.length) {
+    return { intent: 'WHEN ' + topic.toUpperCase(),
+             body: `<i>No timestamped decisions match "${esc(topic)}".</i>` };
+  }
+  const earliest = scored[0].n;
+  const latest = scored[scored.length - 1].n;
+  let body = `<b>${scored.length}</b> matching decision(s) — first: <b>${esc((earliest.ts||'').slice(0,10))}</b>, last: <b>${esc((latest.ts||'').slice(0,10))}</b>.`;
+  body += '<ul class="a-list">' + scored.map(({n}) =>
+    `<li><code>${esc((n.ts||'').slice(0,10))}</code> <code data-jump="${esc(n.id)}">${esc(n.id)}</code> ${esc((n.decision || '').slice(0, 70))}</li>`
+  ).join('') + '</ul>';
+  return { intent: 'WHEN ' + topic.toUpperCase(), body };
+}
+
+// v3.2.0: "compare X and Y" — side-by-side top match per topic.
+function _answerCompare(topicA, topicB) {
+  const findTop = (topic) => {
+    const tokens = topic.toLowerCase().split(/\s+/).filter(t => t.length >= 3);
+    if (!tokens.length) return null;
+    const scored = DATA.nodes
+      .filter(n => n.type === 'decision' && !n._hidden)
+      .map(n => ({ n, s: _scoreForQuery(n, tokens) }))
+      .filter(x => x.s > 0)
+      .sort((a, b) => b.s - a.s)
+      .slice(0, 3);
+    return scored;
+  };
+  const a = findTop(topicA);
+  const b = findTop(topicB);
+  if (!a || !b) {
+    return { intent: 'COMPARE',
+             body: `<i>Need at least 3 chars per topic. Got "${esc(topicA)}" vs "${esc(topicB)}".</i>` };
+  }
+  const col = (label, hits) => {
+    if (!hits.length) {
+      return `<div><b>${esc(label)}</b><br><i>no matches</i></div>`;
+    }
+    const top = hits[0].n;
+    let s = `<div><b>${esc(label)}</b><br>` +
+            `<code data-jump="${esc(top.id)}">${esc(top.id)}</code> · ${hits.length} match(es)<br>` +
+            esc((top.decision || '').slice(0, 140));
+    if (top.outcome) s += `<br><i>outcome: ${esc(top.outcome)}</i>`;
+    if (top.do_not_revert) s += `<br><i>protected (do_not_revert)</i>`;
+    return s + '</div>';
+  };
+  const body =
+    `<div style="display:grid;grid-template-columns:1fr 1fr;gap:1em;">` +
+    col(topicA, a) + col(topicB, b) +
+    `</div>`;
+  return { intent: `COMPARE: ${topicA.toUpperCase()} vs ${topicB.toUpperCase()}`, body };
 }
 
 function updateTimeLabels(tb) {

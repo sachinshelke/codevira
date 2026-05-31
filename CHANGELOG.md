@@ -7,6 +7,29 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [Unreleased] — v3.2.0 work-in-progress
+
+### Added
+
+- **`session_log_enforcer` policy** — closes the "before-you-finish"
+  honesty gap CLAUDE.md downgraded to honor-system in v3.1.1. Listens
+  on `SESSION_START` (records `{session_id, started_at, project_root}`
+  to `.codevira-cache/active_sessions.jsonl`) and `STOP` (counts
+  git commits since `started_at`, scans `.codevira/sessions.jsonl`
+  for any entry in the session window). If commits > 0 AND no
+  in-window log → emits `warn` via Claude Code's `systemMessage`
+  channel with a `write_session_log(...)` call template. Default
+  mode `warn`; opt-in `block` via `CODEVIRA_SESSION_LOG_ENFORCER_MODE=block`.
+- Session log enforcer uses `git log --since=@<epoch>` rather than
+  the locale-dependent ISO form so the count is correct on machines
+  whose TZ is not UTC.
+
+### Changed
+
+- CLAUDE.md: removed the "Honest accounting (v3.1.x)" footnote that
+  explained the gap was on the honor system. Replaced with engine-
+  enforcement description + mode-switch documentation.
+
 ---
 
 ## [3.1.1] — 2026-05-30 — Hardening, viewer overhaul, G3, sync-observe-git

@@ -101,7 +101,8 @@ class TestL1_TenHeroes:
         # v2.2.0+ surface cut (2026-05-22 audit): Hero 7
         # (LiveStyleEnforcement), Hero 10 (AIPromotionScore), Hero 9
         # (ProactiveIntentInference), and Hero 3 (ProactiveScopeContractLock)
-        # were all DELETED. Default set: 6 (5 heroes + 1 v2.1.2 item).
+        # were all DELETED. v3.2.0 ADDED session_log_enforcer.
+        # Default set: 7 (5 heroes + 1 v2.1.2 item + 1 v3.2.0 enforcer).
         expected = {
             "blast_radius_veto",  # Hero 4
             "decision_lock",  # Hero 1 (unique enforcement wedge)
@@ -109,6 +110,7 @@ class TestL1_TenHeroes:
             "token_budget_persist",  # Hero 6
             "anti_regression",  # Hero 2
             "post_edit_graph_refresh",  # v2.1.2 Item 4
+            "session_log_enforcer",  # v3.2.0 — hook-layer write_session_log enforcement
             # Hero 8 (Decision Replay) is a browse surface, not a policy.
         }
         assert names == expected, (

@@ -38,7 +38,7 @@ Codevira's promise is "the project remembers what you did." That promise breaks 
 
 A session that ships code WITHOUT a codevira write call leaves the project's memory stale for the next AI. That's the most common way the wedge breaks. Treat it as part of the definition-of-done.
 
-**Honest accounting (v3.1.x):** This is currently a "should" enforced by convention, not a "must" enforced by the engine. Codevira does not (today) block your final response when commits exist and no session log was written. Enforcement at the hook layer is on the roadmap. Until it lands, this is on the honor system — and on your judgment for what counts as "meaningful." If you shipped code, you should log it; if you only answered a question, you don't need to.
+**Engine enforcement (v3.2.0+):** The `session_log_enforcer` policy fires on `Stop` events. If the session shipped commits AND no `write_session_log` was called between `SESSION_START` and now, it emits a `warn` via Claude Code's `systemMessage` channel. Default mode is `warn` (non-blocking nudge); set `CODEVIRA_SESSION_LOG_ENFORCER_MODE=block` to force the AI to retry, or `off` to disable. v3.2.1 plans to default to `block` once warn-mode instrumentation confirms low noise. Logging is still your judgment call for what counts as "meaningful" — if you only answered a question with no commits, the policy stays silent.
 
 ### When you see "Roadmap drift detected" in your SessionStart context
 

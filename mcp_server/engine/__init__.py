@@ -50,6 +50,7 @@ def register_default_policies() -> None:
     from mcp_server.engine.policies.decision_lock import DecisionLock
     from mcp_server.engine.policies.post_edit_refresh import PostEditGraphRefresh
     from mcp_server.engine.policies.relevance_inject import RelevanceInject
+    from mcp_server.engine.policies.session_log_enforcer import SessionLogEnforcer
     from mcp_server.engine.policies.token_budget import TokenBudgetPersist
 
     # v2.2.0+ surface cut (2026-05-22 audit): LiveStyleEnforcement,
@@ -64,6 +65,7 @@ def register_default_policies() -> None:
         TokenBudgetPersist,  # Hero 6
         AntiRegression,  # Hero 2
         PostEditGraphRefresh,  # v2.1.2 Item 4
+        SessionLogEnforcer,  # v3.2.0 hook-layer enforcement of write_session_log
     ):
         if not policy_cls.enabled_by_default:
             continue  # opt-in only — caller registers manually

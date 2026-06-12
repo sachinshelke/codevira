@@ -17,10 +17,12 @@ import pytest
 
 from mcp_server.engine.events import EventType, HookEvent
 from mcp_server.engine.policies.session_log_enforcer import (
+    _OUTCOMES_MAX_BYTES,
     SessionLogEnforcer,
     _active_path,
     _count_commits_since,
     _lookup_active,
+    _outcomes_path,
     _session_log_written,
 )
 
@@ -502,3 +504,132 @@ class TestRegistration:
         register_default_policies()
         names = [p.name for p in registered_policies()]
         assert names.count("session_log_enforcer") == 1
+
+
+# =====================================================================
+# v3.3.0 — STOP-outcome instrumentation (data source for the
+# warn→block default flip)
+# =====================================================================
+
+
+def _read_outcomes(project_root: Path) -> list[dict]:
+    path = _outcomes_path(project_root)
+    if not path.exists():
+        return []
+    return [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+class TestOutcomesInstrumentation:
+    def _start_session(
+        self, policy: SessionLogEnforcer, project: Path, ts: float
+    ) -> None:
+        policy.evaluate(
+            _make_event(
+                EventType.SESSION_START, project, session_id="s1", timestamp=ts
+            ),
+            None,
+        )
+
+    def _stop(self, policy: SessionLogEnforcer, project: Path):
+        return policy.evaluate(
+            _make_event(EventType.STOP, project, session_id="s1"),
+            None,
+        )
+
+    def test_gap_records_gap_warned(self, git_project: Path) -> None:
+        policy = SessionLogEnforcer()
+        ts = _ts_after_head(git_project)
+        self._start_session(policy, git_project, ts)
+        _git_commit(git_project, "feat: work", at_epoch=ts + 10)
+
+        verdict = self._stop(policy, git_project)
+
+        assert verdict.action == "warn"
+        outcomes = _read_outcomes(git_project)
+        assert len(outcomes) == 1
+        assert outcomes[0]["outcome"] == "gap_warned"
+        assert outcomes[0]["commit_count"] == 1
+        assert outcomes[0]["mode"] == "warn"
+        assert outcomes[0]["session_id"] == "s1"
+
+    def test_compliant_recorded(self, git_project: Path) -> None:
+        policy = SessionLogEnforcer()
+        ts = _ts_after_head(git_project)
+        self._start_session(policy, git_project, ts)
+        _git_commit(git_project, "feat: work", at_epoch=ts + 10)
+        _write_session_log_entry(git_project, ts_epoch=ts + 5)
+
+        verdict = self._stop(policy, git_project)
+
+        assert verdict.is_allowing()
+        outcomes = _read_outcomes(git_project)
+        assert [o["outcome"] for o in outcomes] == ["compliant"]
+
+    def test_no_commits_recorded_as_skip(self, git_project: Path) -> None:
+        policy = SessionLogEnforcer()
+        ts = _ts_after_head(git_project)
+        self._start_session(policy, git_project, ts)
+
+        verdict = self._stop(policy, git_project)
+
+        assert verdict.is_allowing()
+        outcomes = _read_outcomes(git_project)
+        assert [o["outcome"] for o in outcomes] == ["skip_no_commits"]
+        assert outcomes[0]["commit_count"] == 0
+
+    def test_block_mode_records_gap_blocked(
+        self, git_project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("CODEVIRA_SESSION_LOG_ENFORCER_MODE", "block")
+        policy = SessionLogEnforcer()
+        ts = _ts_after_head(git_project)
+        self._start_session(policy, git_project, ts)
+        _git_commit(git_project, "feat: work", at_epoch=ts + 10)
+
+        verdict = self._stop(policy, git_project)
+
+        assert verdict.action == "block"
+        outcomes = _read_outcomes(git_project)
+        assert [o["outcome"] for o in outcomes] == ["gap_blocked"]
+        assert outcomes[0]["mode"] == "block"
+
+    def test_rotation_at_size_cap(self, git_project: Path) -> None:
+        """P5 bound: file at the cap rotates to .1 before the append."""
+        policy = SessionLogEnforcer()
+        ts = _ts_after_head(git_project)
+        self._start_session(policy, git_project, ts)
+
+        path = _outcomes_path(git_project)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        filler = json.dumps({"outcome": "filler"})
+        line_count = (_OUTCOMES_MAX_BYTES // len(filler)) + 1
+        path.write_text((filler + "\n") * line_count, encoding="utf-8")
+        assert path.stat().st_size >= _OUTCOMES_MAX_BYTES
+
+        self._stop(policy, git_project)
+
+        rotated = path.with_suffix(path.suffix + ".1")
+        assert rotated.exists()
+        assert rotated.stat().st_size >= _OUTCOMES_MAX_BYTES
+        fresh = _read_outcomes(git_project)
+        assert len(fresh) == 1  # only the new record
+
+    def test_instrumentation_failure_never_changes_verdict(
+        self, git_project: Path
+    ) -> None:
+        """Outcomes path unwritable (a directory) → verdict still correct."""
+        policy = SessionLogEnforcer()
+        ts = _ts_after_head(git_project)
+        self._start_session(policy, git_project, ts)
+        _git_commit(git_project, "feat: work", at_epoch=ts + 10)
+        # open(..., "a") on a directory raises IsADirectoryError (OSError)
+        _outcomes_path(git_project).mkdir(parents=True, exist_ok=True)
+
+        verdict = self._stop(policy, git_project)
+
+        assert verdict.action == "warn"
+        assert "write_session_log" in (verdict.message or "")

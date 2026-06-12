@@ -38,7 +38,7 @@ Codevira's promise is "the project remembers what you did." That promise breaks 
 
 A session that ships code WITHOUT a codevira write call leaves the project's memory stale for the next AI. That's the most common way the wedge breaks. Treat it as part of the definition-of-done.
 
-**Engine enforcement (v3.2.0+):** The `session_log_enforcer` policy fires on `Stop` events. If the session shipped commits AND no `write_session_log` was called between `SESSION_START` and now, it emits a `warn` via Claude Code's `systemMessage` channel. Default mode is `warn` (non-blocking nudge); set `CODEVIRA_SESSION_LOG_ENFORCER_MODE=block` to force the AI to retry, or `off` to disable. v3.2.1 plans to default to `block` once warn-mode instrumentation confirms low noise. Logging is still your judgment call for what counts as "meaningful" — if you only answered a question with no commits, the policy stays silent.
+**Engine enforcement (v3.2.0+):** The `session_log_enforcer` policy fires on `Stop` events. If the session shipped commits AND no `write_session_log` was called between `SESSION_START` and now, it emits a `warn` via Claude Code's `systemMessage` channel. Default mode is `warn` (non-blocking nudge); set `CODEVIRA_SESSION_LOG_ENFORCER_MODE=block` to force the AI to retry, or `off` to disable. v3.3.0 instruments every Stop verdict to `.codevira-cache/enforcer_outcomes.jsonl`; the default flips to `block` once that data confirms warn-mode is low-noise. Logging is still your judgment call for what counts as "meaningful" — if you only answered a question with no commits, the policy stays silent.
 
 ### When you see "Roadmap drift detected" in your SessionStart context
 
@@ -115,13 +115,22 @@ CLI: `codevira consensus check`.
 
 `.codevira/reflections.jsonl` (committed). LLM-generated abstractions over recent decisions + sessions.
 
-- **`reflect(period_days=7, dry_run=True)`** — build the source context + render the prompt. v3.1.0 returns `sampling_supported: False` + `rendered_prompt` (the MCP sampling/createMessage RPC ships in v3.2). Use the CLI to commit an LLM response.
+- **`reflect(period_days=7, dry_run=True)`** — build the source context + render the prompt. With `dry_run=False`, v3.2.0+ runs the real MCP sampling/createMessage RPC when the client supports sampling; clients without sampling get `sampling_supported: False` + `rendered_prompt` (commit the LLM response via the CLI instead).
 - **`get_reflections(top_k=5)`** — most recent reflections.
 - **`list_reflections(since?, tags?, limit=50)`** — filtered list.
 
 CLI: `codevira reflect [--period 7d] [--from-file PATH] [--apply] [--yes]`.
 
 Sanitization pass strips api keys / Bearer tokens / passwords / AWS AKIA / long hex / long base64 from the source context before the LLM sees it.
+
+### Preferences — cross-project communication style (v3.3.0)
+
+How the user likes their AI to work ("keep answers short", "tests first") — learned from real prompts, no rules or keyword matching.
+
+- The `prompt_capture` engine policy records every user prompt (sanitized, size-capped) to `.codevira-cache/prompts.jsonl` automatically.
+- **`distill_preferences()`** — call it when the Stop-hook nudge asks (fires at ≥10 pending prompts, 24h cooldown). One MCP-sampling call extracts durable preferences into `~/.codevira/global.db` — user-scoped, visible from every project.
+- **`search_preferences(category?)`** — retrieve learned preferences (e.g. category="communication").
+- `get_session_context()` already includes a one-line `style` panel (top-3 communication preferences, ~30 tokens) — match it without being asked.
 
 ## Tool budget discipline
 

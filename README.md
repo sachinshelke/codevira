@@ -129,7 +129,7 @@ Full v3.1.1 release notes: [CHANGELOG.md](CHANGELOG.md#311--2026-05-30--hardenin
 |---|---|
 | **Decision storage** | Moved into `<repo>/.codevira/decisions.jsonl` (git-tracked, one decision per line). v2.x stored decisions in `~/.codevira/projects/<key>/graph/graph.db` (a SQLite blob nobody could read). |
 | **AGENTS.md is the nudge file** | Per-IDE nudges (CLAUDE.md / GEMINI.md / .windsurfrules / .cursor/rules/codevira.mdc / .github/copilot-instructions.md) all deleted. Every modern AI tool reads AGENTS.md natively. Slim 5 KB cap; auto-regenerated from decisions; user content outside the `<!-- codevira:begin -->...<!-- codevira:end -->` markers preserved byte-for-byte. |
-| **MCP tool surface** | 46 → 24 tools (-48%; 23 surfaced to AI clients, 1 admin-only). The audit found 22 tools that nobody called in real usage (preferences, learned_rules, changesets, project_maturity, list_nodes / add_node / update_node / export_graph, etc.). All deleted. |
+| **MCP tool surface** | 46 → 24 tools (-48%; 23 surfaced to AI clients, 1 admin-only). The audit found 22 tools that nobody called in real usage (preferences, learned_rules, changesets, project_maturity, list_nodes / add_node / update_node / export_graph, etc.). All deleted. (v3.1.0 later added 24 memory-subsystem tools, and v3.3.0 brought preferences back redesigned — `distill_preferences` / `search_preferences`, LLM-distilled from real prompts instead of the unused v2.x CRUD.) |
 | **CLI surface** | 23 → 15 commands (-35%). Deleted: `heal` (use `reset`), `budget`, `agents`, `hooks`, `register`, `configure`, `report` (folded into `doctor`), `calibrate`, `insights`. |
 | **IDE detection hardened** | No more false-positives from stale `~/.cursor/` dirs. Each IDE needs a STRONG signal (binary on PATH, or verified config file). Pass `--ide X --force` to override when the detector misses an install. |
 | **`codevira uninstall`** | New command. Reverses every system write made by `init`/`setup`: drops the MCP entry from `~/.claude.json`, deletes `~/.claude/hooks/codevira-*.sh`, strips codevira-tagged registrations from `~/.claude/settings.json`, removes per-project `.codevira/` + `.codevira-cache/`, strips the codevira block from AGENTS.md. Optional `--keep-data`. |
@@ -353,12 +353,16 @@ servers you aren't actively using.
 
 ## MCP Tools
 
-**23 tools** surfaced to AI clients via `tools/list` (token-optimized,
-summary-first). One additional admin tool (`refresh_graph`) is
-registered but hidden from `tools/list` because it runs automatically
-in the background — humans invoke it via `codevira sync`.
-v3.0.0 cut 21 v2.x tools that produced noise or had no real users —
-see [CHANGELOG.md](CHANGELOG.md) for the full kill list.
+**49 tools** surfaced to AI clients via `tools/list` (token-optimized,
+summary-first): the core decision/roadmap/graph surface plus the
+v3.1.0 memory subsystems (working memory, skills, spatial, consensus,
+reflections) and the v3.3.0 preference tools. One additional admin
+tool (`refresh_graph`) is registered but hidden from `tools/list`
+because it runs automatically in the background — humans invoke it via
+`codevira sync`. Set `CODEVIRA_TOOL_PROFILE=lean` to advertise only
+the daily-driver subset. v3.0.0 cut 21 v2.x tools that produced noise
+or had no real users — see [CHANGELOG.md](CHANGELOG.md) for the full
+kill list.
 
 ### Reads — the memory surface
 
@@ -369,7 +373,6 @@ see [CHANGELOG.md](CHANGELOG.md) for the full kill list.
 | `list_decisions` | Paginate / filter: `since_date`, `file_pattern`, `protected_only`, `tags`, `include_superseded`. |
 | `list_tags` | Enumerate all tags with decision counts. |
 | `get_history(file_path)` | Recent decisions touching a file. |
-| `get_decision_confidence(file_path?, pattern?)` | Outcome-based reliability score for a file/area. |
 | `check_conflict(decision_text)` | Surface duplicate / contradictory decisions BEFORE you write. |
 
 ### Writes — capturing decisions
@@ -378,6 +381,8 @@ see [CHANGELOG.md](CHANGELOG.md) for the full kill list.
 |---|---|
 | `record_decision` | Capture an architectural decision. Optional `do_not_revert=true` triggers hard enforcement at the Claude Code PreToolUse hook. Supports `tags`, `force`, `session_id`. |
 | `supersede_decision(old_id, new_decision, reason)` | Retire an old decision and link to its replacement. Audit trail preserved. |
+| `reaffirm_decision(decision_id)` | Re-confirm a soft-expired `do_not_revert` lock is still wanted. |
+| `set_decision_flag(decision_id, ...)` | Toggle `do_not_revert` / tags on an existing decision. |
 | `write_session_log` | Structured session record. |
 
 ### Roadmap
@@ -405,6 +410,23 @@ see [CHANGELOG.md](CHANGELOG.md) for the full kill list.
 | `get_code(file_path, symbol)` | Full source of one function or class. |
 | `get_playbook(task_type)` | Curated rules for: `add_tool`, `add_service`, `add_schema`, `debug_pipeline`, `commit`, `write_test`. |
 
+### Memory subsystems (v3.1.0)
+
+| Subsystem | Tools | What it covers |
+|---|---|---|
+| Working memory | `working_add`, `working_get`, `working_promote`, `get_working_context` | Intra-session scratchpad (decay-scored, capacity-bounded). |
+| Skill library | `record_skill`, `get_skill`, `apply_skill_outcome`, `list_skills`, `supersede_skill`, `promote_skill_to_playbook` | Reusable procedures with composite-ranked retrieval and git-driven reinforcement. |
+| Spatial | `spatial_nearby`, `spatial_heat`, `spatial_neighborhood`, `spatial_affordances` | Code-as-space: activity heatmap, neighborhoods, what task types apply where. |
+| Consensus | `consensus_check`, `consensus_status`, `consensus_propose_supersession`, `consensus_resolve`, `origin_of` | Cross-IDE conflict detection + provenance. |
+| Reflections | `reflect`, `get_reflections`, `list_reflections` | LLM-generated abstractions over recent decisions + sessions (MCP sampling). |
+
+### Preferences (v3.3.0)
+
+| Tool | Description |
+|---|---|
+| `distill_preferences` | Session-end LLM distillation of captured prompts into durable, user-scoped preferences (`~/.codevira/global.db`). |
+| `search_preferences(category?)` | Retrieve learned preferences — communication style, workflow habits — across all projects. |
+
 ### MCP Workflow Prompts
 
 | Prompt | Description |
@@ -414,7 +436,7 @@ see [CHANGELOG.md](CHANGELOG.md) for the full kill list.
 > v3.0.0 removed 4 v2.x prompts (`review_changes`, `debug_issue`,
 > `pre_commit_check`, `architecture_overview`) because they referenced
 > deleted MCP tools. The slim surface means the AI can synthesize
-> these workflows from the 25 kept tools directly.
+> these workflows from the kept tools directly.
 
 ---
 

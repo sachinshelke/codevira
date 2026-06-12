@@ -91,11 +91,27 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Export payload `schema_version` bumped 1 → 2 (adds `table_sources`,
   `source_jsonl_dir`; `source_db` may now be `null`).
 
+### Changed
+
+- **CLI help text cleaned up.** `codevira --help` no longer leaks
+  internal release archaeology: stale version promises ("[Preview,
+  v1.7]", "ships in v3.2"), internal codenames ("Hero 8", "M2/M5/M6"),
+  and references to the v2.x Chroma vector store (removed in v3.0) are
+  gone. `reset --vectors` now correctly describes itself as legacy
+  v2.x cleanup. No flag or behavior changes.
+
 ### Docs
 
 - New FAQ entry: how to back up Codevira memory / move it to a new
   machine (canonical `.codevira/` vs rebuildable cache vs
   `~/.codevira/global.db`), verified against a simulated machine switch.
+- Stale-content sweep ahead of v3.3.0: README tool tables now cover all
+  49 surfaced tools (v3.1.0 memory subsystems + v3.3.0 preferences;
+  removed the `get_decision_confidence` row — tool deleted in v2.2.0),
+  `docs/architecture.md` updated to the v3.3.0 surface (49 tools,
+  8 engine policies), CLAUDE.md reflect/enforcer sections updated to
+  shipped reality, and the abandoned v1.2.0 `website/` directory
+  (marketing tools deleted in v2.x/v3.0) removed.
 
 ## [3.2.0] — 2026-06-01 — Engine enforcement, sampling, soft-expire
 

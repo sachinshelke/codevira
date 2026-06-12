@@ -1,13 +1,16 @@
-# Codevira v3.0.0 — Architecture
+# Codevira — Architecture (v3.3.0)
 
-> v3.0.0 ships codevira as a lean cross-IDE decision-enforcement layer.
+> Codevira is a lean cross-IDE decision-enforcement layer.
 > ~1-2 MB per project. In your repo. No cloud. No vectors. MIT.
 >
-> Changed from v2.2.0: tool surface contracted from 33 → 23 (changesets,
+> History: v3.0.0 contracted the tool surface 33 → 23 (changesets,
 > preferences, and learned_rules tools removed per the 2026-05-22
-> surface-cut audit). Storage write paths consolidated through
+> surface-cut audit) and consolidated all storage writes through
 > `mcp_server/storage/atomic.py` for crash-safety + concurrent-writer
-> safety on both Posix and Windows.
+> safety on both Posix and Windows. v3.1.0 added five memory
+> subsystems (working memory, skills, spatial, consensus, reflections;
+> +24 tools). v3.3.0 added preference capture (`distill_preferences` /
+> `search_preferences`) — the tool surface is now 49 AI-facing tools.
 
 ## The three layers (top to bottom)
 
@@ -24,26 +27,35 @@
 │  CODEVIRA MCP SERVER                                              │
 │  ~85 MB pipx install, <100ms cold start                           │
 │                                                                   │
-│  Tools (23 surfaced to AI clients):                               │
+│  Tools (49 surfaced to AI clients):                               │
 │    Decisions: record_decision / search_decisions / list_decisions │
 │               / list_tags / supersede_decision / check_conflict   │
-│               / get_history                                       │
+│               / get_history / reaffirm_decision /                 │
+│               set_decision_flag                                   │
 │    Sessions:  write_session_log / get_session_context             │
 │    Phases:    get_roadmap / get_phase / add_phase /               │
 │               update_phase_status / defer_phase / complete_phase  │
 │               / bulk_import_phases / update_next_action           │
 │    Code graph: get_node / get_impact / query_graph                │
 │               / get_signature / get_code / get_playbook           │
+│    Memory (v3.1.0): working_* / *_skill[s] / spatial_* /          │
+│               consensus_* / origin_of / reflect[ions]             │
+│    Preferences (v3.3.0): distill_preferences /                    │
+│               search_preferences                                  │
 │                                                                   │
-│  Hooks (6 active engine policies):                                │
+│  Hooks (8 active engine policies):                                │
 │    PreToolUse → DecisionLock blocks Edit/Write that violate       │
 │                 do_not_revert. (THE moat — no competitor blocks)  │
 │                 + AntiRegression blocks reintroducing a fix       │
 │                 + BlastRadiusVeto warns on high-impact edits      │
 │    UserPromptSubmit → RelevanceInject injects ≤3 decisions or     │
 │                       0 tokens off-topic                          │
+│                       + PromptCapture records sanitized prompts   │
+│                         for preference distillation (v3.3.0)      │
 │    PostToolUse → PostEditGraphRefresh keeps code graph fresh      │
 │                  + TokenBudgetPersist for session budgets         │
+│    Stop → SessionLogEnforcer nudges write_session_log when        │
+│           commits shipped without one (v3.2.0)                    │
 └───────────────────────────────────────────────────────────────────┘
                             │
                             │  read/write — all writes go through

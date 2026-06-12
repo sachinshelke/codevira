@@ -5,6 +5,7 @@ The 10 scenarios listed in docs/heroes/04-blast-radius.md "Acceptance
 test list", plus a few unit tests for the signature-detection helper
 which has its own contract (multi-language regex correctness).
 """
+
 from __future__ import annotations
 
 import os
@@ -77,6 +78,7 @@ def _spy_signals(
     class _SpySignals:
         def __init__(self):
             self.impact_calls: list[Path] = []
+
         def impact(self, path: Path) -> dict:
             self.impact_calls.append(path)
             return impact_for.get(path, {})
@@ -101,7 +103,6 @@ def _clear_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class TestAcceptanceScenarios:
-
     def test_1_non_edit_event_allowed(self):
         """Read / Bash / Glob events must allow without checking impact."""
         policy = BlastRadiusVeto()
@@ -115,7 +116,8 @@ class TestAcceptanceScenarios:
         policy = BlastRadiusVeto()
         target = Path("/p/foo.py")
         event = _make_event(
-            target=target, proposed_diff="--- before\ndef f(): pass\n--- after\ndef g(): pass\n"
+            target=target,
+            proposed_diff="--- before\ndef f(): pass\n--- after\ndef g(): pass\n",
         )
         # Empty signals → no impact data
         verdict = policy.evaluate(event, _signals_with_impact())
@@ -126,9 +128,9 @@ class TestAcceptanceScenarios:
         policy = BlastRadiusVeto()
         target = Path("/p/foo.py")
         # Default block_threshold = 5; 2 callers is well under.
-        signals = _signals_with_impact({
-            target: {"found": True, "blast_radius": 2, "affected": []}
-        })
+        signals = _signals_with_impact(
+            {target: {"found": True, "blast_radius": 2, "affected": []}}
+        )
         event = _make_event(
             target=target,
             proposed_diff="--- before\ndef f(x): pass\n--- after\ndef f(x, y): pass\n",
@@ -144,10 +146,15 @@ class TestAcceptanceScenarios:
         """
         policy = BlastRadiusVeto()
         target = Path("/p/foo.py")
-        signals = _signals_with_impact({
-            target: {"found": True, "blast_radius": 20,
-                     "affected": [{"file": "a.py"}, {"file": "b.py"}]}
-        })
+        signals = _signals_with_impact(
+            {
+                target: {
+                    "found": True,
+                    "blast_radius": 20,
+                    "affected": [{"file": "a.py"}, {"file": "b.py"}],
+                }
+            }
+        )
         diff = (
             "--- before\n"
             "def auth_token(user_id):\n"
@@ -164,15 +171,21 @@ class TestAcceptanceScenarios:
         """High radius + sig change → block with diagnostic."""
         policy = BlastRadiusVeto()
         target = Path("/p/auth.py")
-        signals = _signals_with_impact({
-            target: {
-                "found": True, "blast_radius": 12,
-                "affected": [
-                    {"file": "x.py"}, {"file": "y.py"}, {"file": "z.py"},
-                    {"file": "a.py"}, {"file": "b.py"},
-                ]
+        signals = _signals_with_impact(
+            {
+                target: {
+                    "found": True,
+                    "blast_radius": 12,
+                    "affected": [
+                        {"file": "x.py"},
+                        {"file": "y.py"},
+                        {"file": "z.py"},
+                        {"file": "a.py"},
+                        {"file": "b.py"},
+                    ],
+                }
             }
-        })
+        )
         diff = (
             "--- before\n"
             "def auth_token(user_id):\n"
@@ -190,22 +203,21 @@ class TestAcceptanceScenarios:
         assert verdict.metadata["blast_radius"] == 12
         assert verdict.metadata["mode"] == "block"
 
-    def test_6_adding_new_function_to_high_radius_file_blocks(self):
-        """Adding a brand-new def to a high-radius file: the symmetric-
-        difference rule treats new signature lines as a signature
-        change, so this BLOCKS. Documented in spec edge-case matrix
-        ("adds a new function") — heroes can't tell rename from
-        legitimate-add without semantic info, so we err safe.
+    def test_6_adding_new_function_to_high_radius_file_allowed(self):
+        """v3.3.0 Phase 7 BEHAVIOR CHANGE: purely-ADDED signatures allow.
 
-        (Week-4 R1 caught that the original test asserted on a fuzzy
-        OR allow/block — which would have hidden a real implementation
-        regression. Now explicit.)
+        A function that didn't exist cannot have callers, so adding one
+        can't break the blast radius. (The old block-on-add rule vetoed
+        two legitimate edits while dogfooding on 2026-06-12.) The old
+        "can't tell rename from add" concern doesn't apply: a rename
+        always REMOVES the old signature too, and removals still block —
+        see test_6b.
         """
         policy = BlastRadiusVeto()
         target = Path("/p/foo.py")
-        signals = _signals_with_impact({
-            target: {"found": True, "blast_radius": 20, "affected": []}
-        })
+        signals = _signals_with_impact(
+            {target: {"found": True, "blast_radius": 20, "affected": []}}
+        )
         diff = (
             "--- before\n"
             "def existing(x):\n"
@@ -219,25 +231,44 @@ class TestAcceptanceScenarios:
         )
         event = _make_event(target=target, proposed_diff=diff)
         verdict = policy.evaluate(event, signals)
-        assert verdict.is_blocking(), (
-            f"new def should trigger block (sig SETS differ); got {verdict.action}"
+        assert (
+            verdict.is_allowing()
+        ), f"purely-added def must allow (cannot break callers); got {verdict.action}"
+        assert verdict.metadata.get("reason") == "signature_changes_purely_additive"
+
+    def test_6b_rename_still_blocks(self):
+        """A rename is removed(old) + added(new) — the removal keeps it
+        blocking, so the purely-additive allowance can't mask renames."""
+        policy = BlastRadiusVeto()
+        target = Path("/p/foo.py")
+        signals = _signals_with_impact(
+            {target: {"found": True, "blast_radius": 20, "affected": []}}
         )
-        sig_changes = verdict.metadata.get("signature_changes", {})
-        added = sig_changes.get("added", [])
-        assert any("brand_new" in s for s in added), (
-            f"expected 'brand_new' in added; got {added}"
+        diff = (
+            "--- before\n"
+            "def old_name(x):\n"
+            "    return x\n"
+            "--- after\n"
+            "def new_name(x):\n"
+            "    return x\n"
         )
+        event = _make_event(target=target, proposed_diff=diff)
+        verdict = policy.evaluate(event, signals)
+        assert verdict.is_blocking()
 
     def test_7_deleting_function_with_callers_blocked(self):
         """Removing a high-impact function should block."""
         policy = BlastRadiusVeto()
         target = Path("/p/foo.py")
-        signals = _signals_with_impact({
-            target: {
-                "found": True, "blast_radius": 8,
-                "affected": [{"file": "consumer.py"}]
+        signals = _signals_with_impact(
+            {
+                target: {
+                    "found": True,
+                    "blast_radius": 8,
+                    "affected": [{"file": "consumer.py"}],
+                }
             }
-        })
+        )
         diff = (
             "--- before\n"
             "def about_to_die():\n"
@@ -258,16 +289,14 @@ class TestAcceptanceScenarios:
             "about_to_die" in line for line in sig_changes.get("removed", [])
         ), f"removed function not in metadata: {sig_changes}"
 
-    def test_8_warn_mode_produces_warn_not_block(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
+    def test_8_warn_mode_produces_warn_not_block(self, monkeypatch: pytest.MonkeyPatch):
         """Same scenario as test_5 but with mode=warn yields warn."""
         monkeypatch.setenv("CODEVIRA_BLAST_RADIUS_MODE", "warn")
         policy = BlastRadiusVeto()
         target = Path("/p/auth.py")
-        signals = _signals_with_impact({
-            target: {"found": True, "blast_radius": 12, "affected": []}
-        })
+        signals = _signals_with_impact(
+            {target: {"found": True, "blast_radius": 12, "affected": []}}
+        )
         diff = (
             "--- before\n"
             "def auth_token(user_id):\n"
@@ -282,19 +311,15 @@ class TestAcceptanceScenarios:
         assert not verdict.is_blocking()
         assert verdict.metadata["mode"] == "warn"
 
-    def test_9_off_mode_disables_policy(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
+    def test_9_off_mode_disables_policy(self, monkeypatch: pytest.MonkeyPatch):
         """mode=off short-circuits to allow."""
         monkeypatch.setenv("CODEVIRA_BLAST_RADIUS_MODE", "off")
         policy = BlastRadiusVeto()
         target = Path("/p/auth.py")
-        signals = _signals_with_impact({
-            target: {"found": True, "blast_radius": 100, "affected": []}
-        })
-        diff = (
-            "--- before\ndef f(): pass\n--- after\ndef g(): pass\n"
+        signals = _signals_with_impact(
+            {target: {"found": True, "blast_radius": 100, "affected": []}}
         )
+        diff = "--- before\ndef f(): pass\n--- after\ndef g(): pass\n"
         event = _make_event(target=target, proposed_diff=diff)
         verdict = policy.evaluate(event, signals)
         assert verdict.is_allowing()
@@ -302,11 +327,12 @@ class TestAcceptanceScenarios:
     def test_10_evaluation_under_50ms_p95(self):
         """Cold-impact evaluation budget — 100 trials, p95 < 50 ms."""
         import time
+
         policy = BlastRadiusVeto()
         target = Path("/p/auth.py")
-        signals = _signals_with_impact({
-            target: {"found": True, "blast_radius": 12, "affected": []}
-        })
+        signals = _signals_with_impact(
+            {target: {"found": True, "blast_radius": 12, "affected": []}}
+        )
         diff = (
             "--- before\n"
             "def auth_token(user_id):\n"
@@ -332,10 +358,7 @@ class TestAcceptanceScenarios:
 
 
 class TestConfiguration:
-
-    def test_invalid_mode_falls_back_to_default(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
+    def test_invalid_mode_falls_back_to_default(self, monkeypatch: pytest.MonkeyPatch):
         """Garbage env var doesn't crash; falls back to 'block'."""
         monkeypatch.setenv("CODEVIRA_BLAST_RADIUS_MODE", "totally-fake")
         policy = BlastRadiusVeto()
@@ -348,21 +371,17 @@ class TestConfiguration:
         for bad in ("not-a-number", "-5", "0", "abc", ""):
             monkeypatch.setenv("CODEVIRA_BLAST_RADIUS_THRESHOLD", bad)
             policy = BlastRadiusVeto()
-            assert policy._config()["block_threshold"] == 5, (
-                f"bad threshold {bad!r} not handled"
-            )
+            assert (
+                policy._config()["block_threshold"] == 5
+            ), f"bad threshold {bad!r} not handled"
 
-    def test_threshold_clamped_to_max(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
+    def test_threshold_clamped_to_max(self, monkeypatch: pytest.MonkeyPatch):
         """Even a valid huge threshold is clamped."""
         monkeypatch.setenv("CODEVIRA_BLAST_RADIUS_THRESHOLD", str(10**9))
         policy = BlastRadiusVeto()
         assert policy._config()["block_threshold"] == 10_000
 
-    def test_warn_threshold_cannot_exceed_block(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
+    def test_warn_threshold_cannot_exceed_block(self, monkeypatch: pytest.MonkeyPatch):
         """warn=10 + block=5 is nonsense; clamp warn down."""
         monkeypatch.setenv("CODEVIRA_BLAST_RADIUS_THRESHOLD", "5")
         monkeypatch.setenv("CODEVIRA_BLAST_RADIUS_WARN_THRESHOLD", "10")
@@ -377,7 +396,6 @@ class TestConfiguration:
 
 
 class TestSignatureDetection:
-
     def test_python_def_signature_change(self):
         diff = (
             "--- before\n"
@@ -459,12 +477,7 @@ class TestSignatureDetection:
 
     def test_unknown_language_uses_union_regex(self):
         """Unknown language → union of all patterns; still catches Python."""
-        diff = (
-            "--- before\n"
-            "def foo(): pass\n"
-            "--- after\n"
-            "def foo(x): pass\n"
-        )
+        diff = "--- before\ndef foo(): pass\n--- after\ndef foo(x): pass\n"
         assert change_touches_signature(diff, language=None)
         assert change_touches_signature(diff, language="cobol")  # fallback
 
@@ -480,6 +493,7 @@ class TestSignatureDetection:
         """
         import time
         from mcp_server.engine.policies._signature_detect import _MAX_DIFF_BYTES
+
         # Build a diff bigger than the cap. Content must be MANY lines
         # so a removed cap actually pays the per-line regex cost.
         line = "  some_identifier_with_paren_lookalike(\n"
@@ -505,7 +519,9 @@ class TestSignatureDetection:
             return result, best
 
         result, elapsed_ms = _measure(
-            change_touches_signature, huge_diff, language="python",
+            change_touches_signature,
+            huge_diff,
+            language="python",
         )
         assert not result, "huge diff should bail to False"
         assert elapsed_ms < 10, (
@@ -516,12 +532,14 @@ class TestSignatureDetection:
 
         # Same for the summary helper.
         summary, elapsed_ms_2 = _measure(
-            signature_change_summary, huge_diff, language="python",
+            signature_change_summary,
+            huge_diff,
+            language="python",
         )
         assert summary == {"added": [], "removed": [], "modified": []}
-        assert elapsed_ms_2 < 10, (
-            f"summary on huge diff took {elapsed_ms_2:.1f} ms — cap missing"
-        )
+        assert (
+            elapsed_ms_2 < 10
+        ), f"summary on huge diff took {elapsed_ms_2:.1f} ms — cap missing"
 
     def test_malformed_diff_returns_false(self):
         """Malformed diff: no envelope. Conservative — return False."""
@@ -561,14 +579,7 @@ class TestSignatureDetection:
         assert "auth_token" in summary["modified"][0]
 
     def test_signature_change_summary_separates_unrelated_changes(self):
-        diff = (
-            "--- before\n"
-            "def alpha():\n"
-            "    pass\n"
-            "--- after\n"
-            "def beta():\n"
-            "    pass\n"
-        )
+        diff = "--- before\ndef alpha():\n    pass\n--- after\ndef beta():\n    pass\n"
         summary = signature_change_summary(diff, language="python")
         # alpha → beta: different names, not paired
         assert summary["added"]
@@ -618,9 +629,9 @@ class TestBehavioralGates:
         )
         verdict = policy.evaluate(event, spy)
         assert verdict.is_allowing()
-        assert spy.impact_calls == [], (
-            f"target_file None gate degraded: {spy.impact_calls}"
-        )
+        assert (
+            spy.impact_calls == []
+        ), f"target_file None gate degraded: {spy.impact_calls}"
 
     def test_signals_none_does_not_crash(self):
         """signals=None gate: if the runner ever fails to build
@@ -643,6 +654,7 @@ class TestBehavioralGates:
         invariant. (Original M5 mutation passed because no test
         asserted on the value.)"""
         from mcp_server.engine.policies.decision_lock import DecisionLock
+
         assert BlastRadiusVeto.priority < DecisionLock.priority, (
             f"BlastRadiusVeto.priority ({BlastRadiusVeto.priority}) "
             f"must remain below DecisionLock.priority ({DecisionLock.priority}); "
@@ -658,17 +670,15 @@ class TestBehavioralGates:
         policy = BlastRadiusVeto()
         target = Path("/p/x.py")
         # impact dict has explicit found=False
-        signals = _signals_with_impact({
-            target: {"found": False, "blast_radius": 999, "affected": []}
-        })
-        diff = (
-            "--- before\ndef f(x): pass\n--- after\ndef f(x, y): pass\n"
+        signals = _signals_with_impact(
+            {target: {"found": False, "blast_radius": 999, "affected": []}}
         )
+        diff = "--- before\ndef f(x): pass\n--- after\ndef f(x, y): pass\n"
         event = _make_event(target=target, proposed_diff=diff)
         verdict = policy.evaluate(event, signals)
-        assert verdict.is_allowing(), (
-            f"impact.found=False must short-circuit to allow; got {verdict.action}"
-        )
+        assert (
+            verdict.is_allowing()
+        ), f"impact.found=False must short-circuit to allow; got {verdict.action}"
 
     def test_impact_missing_blast_radius_defaults_safe(self):
         """If impact dict is found=True but missing 'blast_radius'
@@ -679,18 +689,18 @@ class TestBehavioralGates:
         policy = BlastRadiusVeto()
         target = Path("/p/x.py")
         # found=True but no blast_radius key
-        signals = _signals_with_impact({
-            target: {"found": True, "affected": []}  # no blast_radius
-        })
-        diff = (
-            "--- before\ndef f(x): pass\n--- after\ndef f(x, y): pass\n"
+        signals = _signals_with_impact(
+            {
+                target: {"found": True, "affected": []}  # no blast_radius
+            }
         )
+        diff = "--- before\ndef f(x): pass\n--- after\ndef f(x, y): pass\n"
         event = _make_event(target=target, proposed_diff=diff)
         verdict = policy.evaluate(event, signals)
         # blast_radius defaults to 0 → 0 < threshold → allow
-        assert verdict.is_allowing(), (
-            f"missing blast_radius must default to 0 (allow); got {verdict.action}"
-        )
+        assert (
+            verdict.is_allowing()
+        ), f"missing blast_radius must default to 0 (allow); got {verdict.action}"
 
     def test_full_write_with_high_radius_blocks(self):
         """Edit-class tools always have proposed_diff. But Write tool
@@ -700,10 +710,15 @@ class TestBehavioralGates:
         """
         policy = BlastRadiusVeto()
         target = Path("/p/x.py")
-        signals = _signals_with_impact({
-            target: {"found": True, "blast_radius": 12,
-                     "affected": [{"file": "a.py"}, {"file": "b.py"}]}
-        })
+        signals = _signals_with_impact(
+            {
+                target: {
+                    "found": True,
+                    "blast_radius": 12,
+                    "affected": [{"file": "a.py"}, {"file": "b.py"}],
+                }
+            }
+        )
         # proposed_diff=None simulates a Write tool replacement
         event = _make_event(target=target, tool_name="Write", proposed_diff=None)
         verdict = policy.evaluate(event, signals)
@@ -717,19 +732,21 @@ class TestBehavioralGates:
 
 
 class TestRegistration:
-
     def test_register_default_policies_idempotent(self):
         from mcp_server.engine import (
-            register_default_policies, registered_policies, reset_policies,
+            register_default_policies,
+            registered_policies,
+            reset_policies,
         )
+
         reset_policies()
         register_default_policies()
         names1 = sorted(p.name for p in registered_policies())
         register_default_policies()
         names2 = sorted(p.name for p in registered_policies())
-        assert names1 == names2, (
-            f"register_default_policies created duplicates: {names1} vs {names2}"
-        )
+        assert (
+            names1 == names2
+        ), f"register_default_policies created duplicates: {names1} vs {names2}"
         assert "blast_radius_veto" in names1
 
     def test_cli_engine_handler_calls_register_default_policies(self):
@@ -743,13 +760,14 @@ class TestRegistration:
         the cli entry forks subprocesses; static check is sufficient.
         """
         from pathlib import Path
+
         cli_src = (
             Path(__file__).resolve().parents[2] / "mcp_server" / "cli.py"
         ).read_text()
         # Both the import AND the call must be present in the engine handler.
-        assert "register_default_policies" in cli_src, (
-            "cli.py must call register_default_policies in `engine handle`"
-        )
+        assert (
+            "register_default_policies" in cli_src
+        ), "cli.py must call register_default_policies in `engine handle`"
 
     def test_hero_4_fires_through_engine_dispatch(self, tmp_path):
         """Week-5 R5-redo found a runner-vs-policy signature mismatch:
@@ -778,6 +796,7 @@ class TestRegistration:
         paths_mod.invalidate_data_dir_cache()
 
         from mcp_server.paths import get_data_dir
+
         db_path = get_data_dir() / "graph" / "graph.db"
         db_path.parent.mkdir(parents=True, exist_ok=True)
         g = SQLiteGraph(db_path)
@@ -803,8 +822,10 @@ class TestRegistration:
                 "--- after\ndef auth_token(user):\n    return user\n"
             )
             event = HookEvent(
-                event_type=EventType.PRE_TOOL_USE, project_root=project,
-                tool_name="Edit", target_file=project / "auth.py",
+                event_type=EventType.PRE_TOOL_USE,
+                project_root=project,
+                tool_name="Edit",
+                target_file=project / "auth.py",
                 proposed_diff=diff,
             )
             verdict = dispatch(event)
@@ -825,9 +846,10 @@ class TestRegistration:
         block path is unreachable from tools like Edit / Write.
         """
         from pathlib import Path
+
         srv_src = (
             Path(__file__).resolve().parents[2] / "mcp_server" / "server.py"
         ).read_text()
-        assert "register_default_policies" in srv_src, (
-            "server.py call_tool must register policies before pre_call"
-        )
+        assert (
+            "register_default_policies" in srv_src
+        ), "server.py call_tool must register policies before pre_call"

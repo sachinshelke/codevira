@@ -775,3 +775,76 @@ class TestSignalFailures:
         # No decisions for the absolute path → allow
         verdict = policy.evaluate(event, _FakeSignals())
         assert verdict.is_allowing()
+
+
+# =====================================================================
+# v3.3.0 Phase 7 — pure-insertion downgrade
+# =====================================================================
+
+
+class TestPureInsertionDowngrade:
+    _DECISION = {"id": "D1", "decision": "Locked thing", "timestamp": None}
+
+    def _signals(self):
+        return _FakeSignals(decisions_for={"foo.py": [self._DECISION]})
+
+    def test_pure_insertion_warns_instead_of_blocks(self) -> None:
+        policy = DecisionLock()
+        diff = (
+            "--- before\n"
+            "def existing(x):\n"
+            "    return x\n"
+            "--- after\n"
+            "def existing(x):\n"
+            "    return x\n"
+            "\n"
+            "def added(y):\n"
+            "    return y\n"
+        )
+        verdict = policy.evaluate(_make_event(proposed_diff=diff), self._signals())
+        assert verdict.action == "warn"
+        assert verdict.metadata["pure_insertion"] is True
+        assert "ADDS lines" in (verdict.message or "")
+        assert "D1" in (verdict.message or "")  # decisions still surfaced
+
+    def test_modifying_edit_still_blocks(self) -> None:
+        policy = DecisionLock()
+        diff = (
+            "--- before\n"
+            "def existing(x):\n"
+            "    return x\n"
+            "--- after\n"
+            "def existing(x):\n"
+            "    return x + 1\n"
+        )
+        verdict = policy.evaluate(_make_event(proposed_diff=diff), self._signals())
+        assert verdict.is_blocking()
+        assert verdict.metadata["pure_insertion"] is False
+
+    def test_deleting_edit_still_blocks(self) -> None:
+        policy = DecisionLock()
+        diff = (
+            "--- before\n"
+            "def keep(x):\n"
+            "    return x\n"
+            "def gone(y):\n"
+            "    return y\n"
+            "--- after\n"
+            "def keep(x):\n"
+            "    return x\n"
+        )
+        verdict = policy.evaluate(_make_event(proposed_diff=diff), self._signals())
+        assert verdict.is_blocking()
+
+    def test_no_diff_full_write_still_blocks(self) -> None:
+        policy = DecisionLock()
+        verdict = policy.evaluate(_make_event(proposed_diff=None), self._signals())
+        assert verdict.is_blocking()
+        assert verdict.metadata["pure_insertion"] is False
+
+    def test_reordered_lines_not_pure_insertion(self) -> None:
+        """Reordering existing lines changes behavior — must block."""
+        policy = DecisionLock()
+        diff = "--- before\nstep_one()\nstep_two()\n--- after\nstep_two()\nstep_one()\n"
+        verdict = policy.evaluate(_make_event(proposed_diff=diff), self._signals())
+        assert verdict.is_blocking()

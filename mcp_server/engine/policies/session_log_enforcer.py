@@ -32,11 +32,19 @@ Failure modes:
     doctor`` to surface.
 
 Ship plan:
-  - v3.2.0: ``warn`` only — non-blocking, instruments how often the gap
-    exists in real sessions.
-  - v3.2.1 (planned): once data confirms the warn isn't noisy, upgrade
-    to ``block`` so Claude Code's Stop hook re-engages the AI until the
-    log lands.
+  - v3.2.0: ``warn`` only — non-blocking. (Claimed to instrument firing
+    frequency, but nothing persisted — warns went to stdout and vanished.)
+  - v3.3.0: STOP evaluations are appended to
+    ``<project>/.codevira-cache/enforcer_outcomes.jsonl`` (per-machine,
+    gitignored, size-capped with one-file rotation) so the noise rate is
+    measurable from real sessions. Default stays ``warn``.
+  - next minor (planned): once the outcomes data confirms low noise,
+    upgrade the default to ``block`` so Claude Code's Stop hook
+    re-engages the AI until the log lands.
+
+Degradation: if the outcomes append fails (disk full, permissions), the
+policy still returns the correct verdict — instrumentation never changes
+enforcement behavior.
 """
 
 from __future__ import annotations
@@ -54,10 +62,16 @@ from mcp_server.engine.signals import SignalContext
 
 _CACHE_REL = ".codevira-cache"
 _ACTIVE_FILENAME = "active_sessions.jsonl"
+_OUTCOMES_FILENAME = "enforcer_outcomes.jsonl"
 _SESSIONS_REL = ".codevira/sessions.jsonl"
 
 _DEFAULT_MODE = "warn"
 _MODES = ("off", "warn", "block")
+
+# P5 bound for the outcomes instrumentation file: rotate to a single
+# ``.1`` sibling at this size (~2k records) so the cache can never grow
+# unbounded on a long-lived machine.
+_OUTCOMES_MAX_BYTES = 256 * 1024
 
 
 class SessionLogEnforcer(Policy):
@@ -88,9 +102,10 @@ class SessionLogEnforcer(Policy):
                 "default": _DEFAULT_MODE,
                 "env": "CODEVIRA_SESSION_LOG_ENFORCER_MODE",
                 "description": (
-                    "off (disabled) | warn (v3.2.0 default — non-blocking "
-                    "nudge) | block (planned for v3.2.1 once warn-mode "
-                    "instrumentation confirms low noise)"
+                    "off (disabled) | warn (default — non-blocking nudge; "
+                    "v3.3.0 records STOP outcomes to .codevira-cache/"
+                    "enforcer_outcomes.jsonl) | block (planned default once "
+                    "the recorded outcomes confirm low noise)"
                 ),
             },
         }
@@ -187,6 +202,13 @@ class SessionLogEnforcer(Policy):
         commit_count = _count_commits_since(event.project_root, started_at)
         if commit_count == 0:
             # No commits this session — nothing meaningful to log.
+            _record_outcome(
+                event.project_root,
+                session_id=event.session_id,
+                outcome="skip_no_commits",
+                commit_count=0,
+                mode=mode,
+            )
             return PolicyVerdict.allow(
                 metadata={
                     "policy": self.name,
@@ -197,6 +219,13 @@ class SessionLogEnforcer(Policy):
 
         if _session_log_written(event.project_root, started_at):
             # The AI already called write_session_log — honor it.
+            _record_outcome(
+                event.project_root,
+                session_id=event.session_id,
+                outcome="compliant",
+                commit_count=commit_count,
+                mode=mode,
+            )
             return PolicyVerdict.allow(
                 metadata={
                     "policy": self.name,
@@ -206,7 +235,14 @@ class SessionLogEnforcer(Policy):
                 }
             )
 
-        # GAP DETECTED — emit warn (or block once v3.2.1 lands).
+        # GAP DETECTED — emit warn (or block once the data-gated flip lands).
+        _record_outcome(
+            event.project_root,
+            session_id=event.session_id,
+            outcome="gap_blocked" if mode == "block" else "gap_warned",
+            commit_count=commit_count,
+            mode=mode,
+        )
         message = _format_message(
             commit_count=commit_count,
             session_id=event.session_id,
@@ -230,6 +266,49 @@ class SessionLogEnforcer(Policy):
 
 def _active_path(project_root: Path) -> Path:
     return project_root / _CACHE_REL / _ACTIVE_FILENAME
+
+
+def _outcomes_path(project_root: Path) -> Path:
+    return project_root / _CACHE_REL / _OUTCOMES_FILENAME
+
+
+def _record_outcome(
+    project_root: Path,
+    *,
+    session_id: str,
+    outcome: str,
+    commit_count: int,
+    mode: str,
+) -> None:
+    """Append one STOP-evaluation outcome to the instrumentation file.
+
+    v3.3.0: this is the data source for the warn→block default flip —
+    noise rate = gap_warned / (gap_warned + compliant + skip_no_commits).
+    Best-effort by design: any failure is swallowed (OSError) because
+    instrumentation must never change the verdict the policy returns.
+    Size-capped via single-file rotation (P5): at _OUTCOMES_MAX_BYTES the
+    current file becomes ``.1`` (replacing any previous ``.1``).
+    """
+    try:
+        path = _outcomes_path(project_root)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            if path.stat().st_size >= _OUTCOMES_MAX_BYTES:
+                path.replace(path.with_suffix(path.suffix + ".1"))
+        except FileNotFoundError:
+            pass
+        record = {
+            "ts": time.time(),
+            "session_id": session_id,
+            "outcome": outcome,
+            "commit_count": commit_count,
+            "mode": mode,
+        }
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record) + "\n")
+    except OSError:
+        # Disk full / permissions / read-only FS — enforcement still works.
+        return
 
 
 def _lookup_active(project_root: Path, session_id: str) -> dict[str, Any] | None:

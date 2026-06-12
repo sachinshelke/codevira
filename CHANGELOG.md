@@ -9,6 +9,19 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added
+
+- **`session_log_enforcer` STOP-outcome instrumentation.** v3.2.0 claimed
+  warn-mode "instruments how often the gap exists" but persisted nothing —
+  warns went to stdout and vanished, so the planned data-gated `warn`→`block`
+  default flip had no data to gate on. STOP evaluations are now appended to
+  `.codevira-cache/enforcer_outcomes.jsonl` (per-machine, gitignored,
+  256KB size-cap with single-file rotation) with outcome codes
+  `skip_no_commits` / `compliant` / `gap_warned` / `gap_blocked`.
+  Instrumentation is best-effort: a failed write never changes the verdict.
+  Default mode stays `warn`; the `block` default flip is deferred until the
+  recorded outcomes confirm low noise.
+
 ### Fixed
 
 - **`codevira export` now reads the v3.x canonical JSONL store.**

@@ -111,6 +111,7 @@ class TestL1_TenHeroes:
             "anti_regression",  # Hero 2
             "post_edit_graph_refresh",  # v2.1.2 Item 4
             "session_log_enforcer",  # v3.2.0 — hook-layer write_session_log enforcement
+            "prompt_capture",  # v3.3.0 Phase 4 — preference capture (D0000LU)
             # Hero 8 (Decision Replay) is a browse surface, not a policy.
         }
         assert names == expected, (

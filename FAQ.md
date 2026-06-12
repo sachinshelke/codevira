@@ -117,6 +117,30 @@ When you use Codevira on multiple projects, learned preferences and rules are sy
 
 This happens automatically. No configuration needed.
 
+### How do I back up Codevira's memory or move it to a new machine?
+
+Codevira's state splits into three tiers, and only one of them needs deliberate care:
+
+**1. `.codevira/` — the canonical project memory** (decisions, sessions, outcomes, skills, reflections, archived working memory, config). By default this is committed to your repo — `codevira init` only gitignores the cache and warns if your `.gitignore` blocks `.codevira/`. If it's committed, `git clone` on the new machine carries the memory automatically.
+
+If your project gitignores `.codevira/` (some teams prefer per-developer memory), git won't carry it. Copy the `.codevira/` directory across — the JSONL files in it ARE the canonical store, so a plain directory copy (or tarball) is a complete backup:
+
+```bash
+tar -czf codevira-backup.tar.gz .codevira/
+```
+
+> Note: on codevira **< 3.3.0**, `codevira export decisions` dumped only the legacy pre-v3 SQLite store and exported 0 rows on v3.x projects. From 3.3.0 it reads the canonical JSONL store (with per-table legacy fallback), so either the directory copy or `codevira export` works.
+
+**2. `.codevira-cache/` — per-machine, rebuildable.** Live working memory, activity heatmap, FTS index. Don't copy it. If you have uncommitted working-memory entries you want to keep, archive them into the canonical store first:
+
+```bash
+codevira working commit <session_id>
+```
+
+**3. `~/.codevira/global.db` — cross-project intelligence.** Lives in your home directory, not the repo. Copy `~/.codevira/` to the new machine if you want learned preferences and rules from your other projects to carry over; otherwise it rebuilds gradually as you use Codevira on each project.
+
+On the new machine: install Codevira, run `codevira init` (or the setup wizard) in each project to re-register the MCP server and IDE hooks, and pull/copy the memory as above. The SQLite graph index rebuilds from source — it doesn't need to be copied.
+
 ---
 
 ## Usage

@@ -942,20 +942,28 @@ class TestG_FinalDeepReAudit:
         from mcp_server.engine.policies import (
             AntiRegression,
             BlastRadiusVeto,
-            RelevanceInject,
             DecisionLock,
+            PromptCapture,
+            RelevanceInject,
+            SessionLogEnforcer,
             TokenBudgetPersist,
         )
         from mcp_server.engine.policies.post_edit_refresh import PostEditGraphRefresh
 
         # Save originals
         originals = {}
-        # v2.2.0+ default policy set after 2026-05-22 surface-cut audit.
+        # Full default policy set. STALE-LIST WARNING: this tuple silently
+        # rotted when v3.2.0 added session_log_enforcer (the test failed
+        # for a full release cycle before the 2026-06-12 triage caught
+        # it). When adding a policy, update THIS tuple and the pinned
+        # roster in tests/engine/test_qa_round_week13.py together.
         all_heroes = (
             AntiRegression,
             BlastRadiusVeto,
-            RelevanceInject,
             DecisionLock,
+            PromptCapture,
+            RelevanceInject,
+            SessionLogEnforcer,
             TokenBudgetPersist,
             PostEditGraphRefresh,
         )

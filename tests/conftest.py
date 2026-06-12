@@ -2,11 +2,20 @@
 Shared pytest fixtures for the Codevira MCP test suite.
 """
 
+import os
 import sys
 import types
 from unittest.mock import MagicMock
 
 import pytest
+
+# ---------------------------------------------------------------------------
+# Disable the v3.3.0 update-available check suite-wide. Any test that drives
+# cli.main() (e2e/CLI tests) would otherwise spawn a real detached refresh
+# subprocess hitting PyPI and write to the developer's ~/.codevira/.
+# tests/test_update_check.py re-enables it per-test via monkeypatch.delenv.
+# ---------------------------------------------------------------------------
+os.environ.setdefault("CODEVIRA_NO_UPDATE_CHECK", "1")
 
 # ---------------------------------------------------------------------------
 # Pre-import numpy at conftest load time.

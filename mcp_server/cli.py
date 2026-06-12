@@ -1093,8 +1093,12 @@ def main() -> None:
         "target",
         nargs="?",
         default="decisions",
-        choices=["decisions", "all"],
-        help="What to export (default: decisions)",
+        choices=["decisions", "all", "setup"],
+        help=(
+            "What to export (default: decisions). 'setup' bundles "
+            ".codevira/ + global learning into one tar.gz for machine "
+            "transfer — restore with `codevira import <archive>`."
+        ),
     )
     export_parser.add_argument(
         "--format",
@@ -1112,6 +1116,30 @@ def main() -> None:
         "--dry-run",
         action="store_true",
         help="Show what would be done without writing",
+    )
+
+    # v3.3.0 (Phase 6): `codevira import` — restore a setup archive made
+    # by `codevira export setup` on another machine.
+    import_parser = subparsers.add_parser(
+        "import",
+        help="Import a codevira setup archive (machine transfer)",
+        description=(
+            "Restore a tar.gz produced by `codevira export setup`: unpacks "
+            ".codevira/ into this project and merges global learning into "
+            "~/.codevira/global.db. Refuses to overwrite an existing "
+            "non-empty .codevira/ unless --force (which backs it up first)."
+        ),
+    )
+    import_parser.add_argument("archive", help="Path to the setup .tar.gz")
+    import_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite existing .codevira/ (backed up to .codevira.pre-import-<ts>/)",
+    )
+    import_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show archive contents and what would happen without writing",
     )
 
     # v3.0.0 (D000016): `codevira graph` — self-contained interactive HTML
@@ -1563,6 +1591,16 @@ def main() -> None:
         )
         sys.exit(rc)
     elif args.command == "export":
+        if getattr(args, "target", "decisions") == "setup":
+            # v3.3.0 Phase 6: machine-transfer bundle.
+            from mcp_server.cli_transfer import cmd_export_setup
+
+            sys.exit(
+                cmd_export_setup(
+                    out=getattr(args, "out", None),
+                    dry_run=getattr(args, "dry_run", False),
+                )
+            )
         # 2026-05-18 v2.1.2 Item 3e: standalone export command.
         from mcp_server.cli_export import cmd_export
 
@@ -1573,6 +1611,16 @@ def main() -> None:
             dry_run=getattr(args, "dry_run", False),
         )
         sys.exit(rc)
+    elif args.command == "import":
+        from mcp_server.cli_transfer import cmd_import_setup
+
+        sys.exit(
+            cmd_import_setup(
+                args.archive,
+                force=getattr(args, "force", False),
+                dry_run=getattr(args, "dry_run", False),
+            )
+        )
     elif args.command == "graph":
         # v3.0.0 (D000016): self-contained interactive memory viewer.
         from mcp_server.cli_graph import cmd_graph

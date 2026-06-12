@@ -11,6 +11,19 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Added
 
+- **`codevira export setup` + `codevira import` — one-command machine
+  transfer.** Bundles the project's `.codevira/` canonical memory plus
+  your `~/.codevira/global.db` learning (preferences + rules, exported
+  as JSONL) into a single tar.gz; `codevira import <archive>` restores
+  the project memory and MERGES global learning through the existing
+  upsert semantics, so the destination machine's own learning survives.
+  The global `projects` registry and per-project indexes are deliberately
+  excluded (machine-specific / rebuildable — no path-remap needed).
+  Import refuses to overwrite a non-empty `.codevira/` without `--force`
+  (which snapshots it to `.codevira.pre-import-<ts>/` first), validates
+  archives against path traversal, and degrades gracefully when no
+  global.db exists.
+
 - **`session_log_enforcer` STOP-outcome instrumentation.** v3.2.0 claimed
   warn-mode "instruments how often the gap exists" but persisted nothing —
   warns went to stdout and vanished, so the planned data-gated `warn`→`block`

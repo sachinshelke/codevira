@@ -245,7 +245,8 @@ The v3.0.0 CLI surface is 15 commands:
 | `codevira replay` | Browse the decisions timeline (terminal / markdown / HTML) |
 | `codevira clean` | Remove orphaned project data |
 | `codevira reset` | Destructive cleanup (auto-exports decisions first) |
-| `codevira export` | Standalone decision backup (JSON / SQL) |
+| `codevira export` | Standalone decision backup (JSON / SQL); `export setup` bundles project memory + global learning for machine transfer |
+| `codevira import` | Restore a `codevira export setup` archive on a new machine (merges global learning) |
 | `codevira graph` | Render an interactive, self-contained HTML viewer of decision memory (offline, queryable) |
 | `codevira uninstall` | Reverse every system write codevira made (see ["Uninstall"](#uninstall)) |
 | `codevira serve` | Start MCP HTTP server (single-project; stdio is the daily mode) |

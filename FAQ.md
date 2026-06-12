@@ -119,7 +119,20 @@ This happens automatically. No configuration needed.
 
 ### How do I back up Codevira's memory or move it to a new machine?
 
-Codevira's state splits into three tiers, and only one of them needs deliberate care:
+From v3.3.0 there's a one-command path:
+
+```bash
+# old machine — bundles .codevira/ + your global learning into one tar.gz
+codevira export setup
+
+# new machine — restores the project memory and merges global learning
+codevira import codevira-setup-<timestamp>.tar.gz
+codevira init   # re-register IDE hooks, rebuild the index
+```
+
+`import` refuses to overwrite an existing non-empty `.codevira/` unless you pass `--force` (which backs it up to `.codevira.pre-import-<ts>/` first). Don't commit the archive — it may contain learning from your other projects.
+
+If you prefer the manual route (or are on < 3.3.0), Codevira's state splits into three tiers, and only one of them needs deliberate care:
 
 **1. `.codevira/` — the canonical project memory** (decisions, sessions, outcomes, skills, reflections, archived working memory, config). By default this is committed to your repo — `codevira init` only gitignores the cache and warns if your `.gitignore` blocks `.codevira/`. If it's committed, `git clone` on the new machine carries the memory automatically.
 

@@ -55,6 +55,19 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Fixed
 
+- **Enforcement precision: additive edits no longer false-veto.** Both
+  hard-block policies vetoed legitimate edits while codevira was
+  dogfooded on its own repo:
+  - `blast_radius_veto` treated any ADDED `def`/`class` as a public
+    signature change. A function that didn't exist cannot have callers —
+    now only removed/modified signatures veto. Renames still block
+    (a rename always removes the old signature).
+  - `decision_lock` blocked ANY edit to a do_not_revert file, even
+    pure insertions that cannot revert anything. Pure-insertion edits
+    (every existing line survives, order preserved) now downgrade to a
+    warn that still surfaces the locked decisions for self-checking;
+    removals, modifications, reorders, and full Writes still block.
+
 - **`codevira export` now reads the v3.x canonical JSONL store.**
   Since the v3.0 storage migration, `codevira export decisions` (and the
   automatic pre-`reset` safety backup that shares its code path) dumped

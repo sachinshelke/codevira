@@ -8,6 +8,7 @@ with a clear diagnostic.
 See ``docs/heroes/04-blast-radius.md`` for the spec, including the
 decision tree, configuration knobs, and acceptance scenarios.
 """
+
 from __future__ import annotations
 
 import os
@@ -57,14 +58,18 @@ class BlastRadiusVeto(Policy):
         Returns a dict with ``mode``, ``block_threshold``, ``warn_threshold``.
         Invalid values fall back to defaults; we never crash on bad config.
         """
-        mode_raw = os.environ.get("CODEVIRA_BLAST_RADIUS_MODE", _DEFAULT_MODE).strip().lower()
+        mode_raw = (
+            os.environ.get("CODEVIRA_BLAST_RADIUS_MODE", _DEFAULT_MODE).strip().lower()
+        )
         mode = mode_raw if mode_raw in _MODES else _DEFAULT_MODE
 
         block_threshold = self._safe_int_env(
-            "CODEVIRA_BLAST_RADIUS_THRESHOLD", _DEFAULT_BLOCK_THRESHOLD,
+            "CODEVIRA_BLAST_RADIUS_THRESHOLD",
+            _DEFAULT_BLOCK_THRESHOLD,
         )
         warn_threshold = self._safe_int_env(
-            "CODEVIRA_BLAST_RADIUS_WARN_THRESHOLD", _DEFAULT_WARN_THRESHOLD,
+            "CODEVIRA_BLAST_RADIUS_WARN_THRESHOLD",
+            _DEFAULT_WARN_THRESHOLD,
         )
 
         # Defensive: keep warn ≤ block. If the user sets warn=10 and
@@ -127,7 +132,9 @@ class BlastRadiusVeto(Policy):
     # ------------------------------------------------------------------
 
     def evaluate(
-        self, event: HookEvent, signals: SignalContext | None = None,
+        self,
+        event: HookEvent,
+        signals: SignalContext | None = None,
     ) -> PolicyVerdict:
         """The decision tree from docs/heroes/04-blast-radius.md.
 
@@ -183,9 +190,27 @@ class BlastRadiusVeto(Policy):
             return PolicyVerdict.allow()
 
         summary = signature_change_summary(diff, language=language)
+        # v3.3.0 Phase 7: purely-ADDED signatures cannot break existing
+        # callers — nothing depends on a function that didn't exist yet.
+        # Only removed/modified signatures are caller-breaking. (Found by
+        # dogfooding 2026-06-12: the veto blocked two legitimate edits
+        # that added private helpers to high-fan-in files.)
+        if not summary.get("removed") and not summary.get("modified"):
+            return PolicyVerdict.allow(
+                metadata={
+                    "policy": self.name,
+                    "target_file": str(event.target_file),
+                    "blast_radius": radius,
+                    "reason": "signature_changes_purely_additive",
+                    "signature_changes": summary,
+                }
+            )
         return self._make_verdict(
-            event=event, config=config, radius=radius,
-            summary=summary, impact=impact,
+            event=event,
+            config=config,
+            radius=radius,
+            summary=summary,
+            impact=impact,
         )
 
     # ------------------------------------------------------------------
@@ -202,9 +227,7 @@ class BlastRadiusVeto(Policy):
         impact: dict[str, Any],
     ) -> PolicyVerdict:
         """Build the warn-or-block verdict with a useful diagnostic."""
-        target_name = (
-            event.target_file.name if event.target_file else "<unknown>"
-        )
+        target_name = event.target_file.name if event.target_file else "<unknown>"
 
         # Top-3 signature changes (added + removed + modified) for the
         # message — the user wants to see WHICH change is high-risk,
@@ -215,8 +238,7 @@ class BlastRadiusVeto(Policy):
                 change_lines.append(f"  {kind}: {line.strip()}")
         sample = "\n".join(change_lines[:3])
         more = (
-            f"\n  ... and {len(change_lines) - 3} more"
-            if len(change_lines) > 3 else ""
+            f"\n  ... and {len(change_lines) - 3} more" if len(change_lines) > 3 else ""
         )
 
         # Top-3 affected files for context. We compute "more" against

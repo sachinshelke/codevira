@@ -8,6 +8,7 @@ locked decisions so the user can re-engage.
 See ``docs/heroes/01-decision-lock.md`` for the spec — decision tree,
 configuration knobs, and acceptance scenarios.
 """
+
 from __future__ import annotations
 
 import os
@@ -48,7 +49,9 @@ class DecisionLock(Policy):
 
         Invalid values fall back to defaults; we never crash on bad config.
         """
-        mode_raw = os.environ.get("CODEVIRA_DECISION_LOCK_MODE", _DEFAULT_MODE).strip().lower()
+        mode_raw = (
+            os.environ.get("CODEVIRA_DECISION_LOCK_MODE", _DEFAULT_MODE).strip().lower()
+        )
         mode = mode_raw if mode_raw in _MODES else _DEFAULT_MODE
         return {"mode": mode}
 
@@ -68,7 +71,9 @@ class DecisionLock(Policy):
     # ------------------------------------------------------------------
 
     def evaluate(
-        self, event: HookEvent, signals: SignalContext | None = None,
+        self,
+        event: HookEvent,
+        signals: SignalContext | None = None,
     ) -> PolicyVerdict:
         # Stage 1: structural filters
         if not event.is_edit():
@@ -94,12 +99,26 @@ class DecisionLock(Policy):
         # locked_only=True). Empty result = either unlocked OR no decisions.
         # We need to distinguish those for edge case #5.
         locked_decisions = signals.decisions(
-            file=target_rel, locked_only=True, limit=20,
+            file=target_rel,
+            locked_only=True,
+            limit=20,
         )
         if locked_decisions:
+            # v3.3.0 Phase 7 precision: a pure-INSERTION edit (every
+            # existing line survives, order preserved) cannot REVERT a
+            # decision — reverting requires removing or changing existing
+            # behavior. Added code could still contradict a decision's
+            # spirit, so downgrade to warn (decisions surfaced for the AI
+            # to self-check) instead of hard-blocking. Found by dogfooding
+            # 2026-06-12: file-granular block stopped tool registrations
+            # being ADDED to server.py over unrelated locked decisions.
+            pure_insertion = self._is_pure_insertion(event)
             return self._make_verdict(
-                event=event, config=config, decisions=locked_decisions,
+                event=event,
+                config=config,
+                decisions=locked_decisions,
                 target_rel=target_rel,
+                pure_insertion=pure_insertion,
             )
 
         # No locked decisions — but is the file marked do_not_revert
@@ -107,13 +126,39 @@ class DecisionLock(Policy):
         # gentler warn so the user understands what's happening.)
         if self._file_is_locked_without_decisions(signals, target_rel):
             return self._make_verdict_no_rationale(
-                event=event, config=config, target_rel=target_rel,
+                event=event,
+                config=config,
+                target_rel=target_rel,
             )
 
         return PolicyVerdict.allow()
 
+    @staticmethod
+    def _is_pure_insertion(event: HookEvent) -> bool:
+        """True if the proposed diff only ADDS lines — every line of
+        ``before`` appears in ``after`` in the same order (subsequence
+        test, trailing whitespace ignored).
+
+        False on missing/oversized/malformed diffs and on full Writes
+        (no diff envelope) — conservative: unknown edits keep the full
+        block semantics.
+        """
+        from mcp_server.engine.policies._signature_detect import parse_diff
+
+        diff = event.proposed_diff
+        if not diff or len(diff) > 1_000_000:
+            return False
+        before, after = parse_diff(diff)
+        if before is None or after is None:
+            return False
+        before_lines = [ln.rstrip() for ln in before.splitlines() if ln.strip()]
+        after_iter = iter(ln.rstrip() for ln in after.splitlines())
+        return all(any(b == a for a in after_iter) for b in before_lines)
+
     def _file_is_locked_without_decisions(
-        self, signals: SignalContext, target_rel: str,
+        self,
+        signals: SignalContext,
+        target_rel: str,
     ) -> bool:
         """True if the file's graph node has do_not_revert=1 but no
         decisions are attached. Used for edge case #5 (surface a warn
@@ -144,11 +189,15 @@ class DecisionLock(Policy):
         config: dict[str, Any],
         decisions: list[dict[str, Any]],
         target_rel: str,
+        pure_insertion: bool = False,
     ) -> PolicyVerdict:
-        """Build the warn-or-block verdict for the locked-with-decisions case."""
-        target_name = (
-            event.target_file.name if event.target_file else target_rel
-        )
+        """Build the warn-or-block verdict for the locked-with-decisions case.
+
+        ``pure_insertion=True`` downgrades block → warn (v3.3.0 Phase 7):
+        the decisions are still surfaced, but an edit that only adds
+        lines can't have reverted anything.
+        """
+        target_name = event.target_file.name if event.target_file else target_rel
 
         # Top-3 decisions for the message
         sample_lines: list[str] = []
@@ -160,25 +209,32 @@ class DecisionLock(Policy):
             ts = self._format_timestamp(d.get("timestamp"))
             did = d.get("id", "?")
             sample_lines.append(f"  • #{did}: {decision_text!r}{ts}")
-        more = (
-            f"\n  ... and {len(decisions) - 3} more"
-            if len(decisions) > 3 else ""
-        )
+        more = f"\n  ... and {len(decisions) - 3} more" if len(decisions) > 3 else ""
 
-        message = (
-            f"🔒 Decision-lock veto on {target_name}: this file is marked "
-            f"do_not_revert with {len(decisions)} locked decision(s).\n\n"
-            f"Locked decisions:\n"
-            f"{chr(10).join(sample_lines)}{more}\n\n"
-            f"To proceed safely:\n"
-            f"  1. Surface the decision(s) to the user. The decision was\n"
-            f"     locked for a reason — they may have context the AI lacks.\n"
-            f"  2. If the user confirms the decision should be revisited,\n"
-            f"     unlock the file first via codevira's CLI / API, OR\n"
-            f"     override this policy session with\n"
-            f"     CODEVIRA_DECISION_LOCK_MODE=warn (warns instead of blocks)\n"
-            f"     or =off (disables this policy)."
-        )
+        if pure_insertion:
+            message = (
+                f"⚠️  Decision-lock notice on {target_name}: this file has "
+                f"{len(decisions)} locked decision(s), but your edit only "
+                f"ADDS lines, so nothing is being reverted.\n\n"
+                f"Locked decisions (self-check that your addition doesn't "
+                f"contradict them):\n"
+                f"{chr(10).join(sample_lines)}{more}"
+            )
+        else:
+            message = (
+                f"🔒 Decision-lock veto on {target_name}: this file is marked "
+                f"do_not_revert with {len(decisions)} locked decision(s).\n\n"
+                f"Locked decisions:\n"
+                f"{chr(10).join(sample_lines)}{more}\n\n"
+                f"To proceed safely:\n"
+                f"  1. Surface the decision(s) to the user. The decision was\n"
+                f"     locked for a reason — they may have context the AI lacks.\n"
+                f"  2. If the user confirms the decision should be revisited,\n"
+                f"     unlock the file first via codevira's CLI / API, OR\n"
+                f"     override this policy session with\n"
+                f"     CODEVIRA_DECISION_LOCK_MODE=warn (warns instead of blocks)\n"
+                f"     or =off (disables this policy)."
+            )
 
         metadata = {
             "policy": self.name,
@@ -187,9 +243,10 @@ class DecisionLock(Policy):
             "mode": config["mode"],
             "locked_decision_count": len(decisions),
             "locked_decision_ids": [d.get("id") for d in decisions[:20]],
+            "pure_insertion": pure_insertion,
         }
 
-        if config["mode"] == "block":
+        if config["mode"] == "block" and not pure_insertion:
             return PolicyVerdict.block(message=message, metadata=metadata)
         return PolicyVerdict.warn(message=message, metadata=metadata)
 
@@ -207,9 +264,7 @@ class DecisionLock(Policy):
         warning so they know the file IS locked, with a note that they
         should record their reasoning.
         """
-        target_name = (
-            event.target_file.name if event.target_file else target_rel
-        )
+        target_name = event.target_file.name if event.target_file else target_rel
         message = (
             f"⚠️  Decision-lock warn on {target_name}: this file is marked "
             f"do_not_revert but has no recorded decisions.\n\n"
@@ -245,6 +300,7 @@ class DecisionLock(Policy):
             # could be epoch seconds OR ISO string depending on how
             # the decision was recorded. Try both.
             from datetime import datetime, timezone
+
             if isinstance(ts, (int, float)):
                 dt = datetime.fromtimestamp(float(ts), tz=timezone.utc)
             else:

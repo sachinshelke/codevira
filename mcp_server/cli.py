@@ -726,7 +726,7 @@ def main() -> None:
     # serve (P2-1 rc.5: added description)
     serve_parser = subparsers.add_parser(
         "serve",
-        help="[Preview, v1.7] Start MCP HTTP server — single-project; multi-project HTTPS is v1.8",
+        help="Start the MCP HTTP server (single-project; stdio via your IDE's MCP config is the daily mode)",
         description=(
             "Run the codevira MCP server over HTTP/HTTPS instead of stdio. PREVIEW "
             "in v1.7+: the server binds to one project at startup; multi-project "
@@ -910,7 +910,7 @@ def main() -> None:
     # replay (v2.0 hero 8 — Decision Replay)
     replay_parser = subparsers.add_parser(
         "replay",
-        help="Browse the decisions timeline (Hero 8)",
+        help="Browse the decisions timeline (terminal, markdown, or HTML)",
         description=(
             "Browse this project's decision history with outcomes + session "
             "context. Three output formats: terminal (default), markdown, html. "
@@ -1028,7 +1028,7 @@ def main() -> None:
     # retains only the non-destructive `--decisions` backfill.
     reset_parser = subparsers.add_parser(
         "reset",
-        help="DESTRUCTIVE: wipe + rebuild this project's vector store / graph (auto-backs-up decisions first)",
+        help="DESTRUCTIVE: wipe + rebuild parts of this project's local state (auto-exports decisions first)",
         description=(
             "Destructive recovery operations. Each flag wipes a specific "
             "part of this project's local state and rebuilds it. Decisions, "
@@ -1043,7 +1043,7 @@ def main() -> None:
     reset_parser.add_argument(
         "--vectors",
         action="store_true",
-        help="Wipe + rebuild this project's Chroma vector store (fixes HNSW corruption)",
+        help="Remove a leftover v2.x vector store directory, if present (v3.x has no vector store)",
     )
     reset_parser.add_argument(
         "--graph",
@@ -1053,7 +1053,7 @@ def main() -> None:
     reset_parser.add_argument(
         "--all",
         action="store_true",
-        help="Wipe ALL of this project's local state (vectors + graph + sessions)",
+        help="Wipe ALL of this project's local state (index, graph cache, sessions)",
     )
     reset_parser.add_argument(
         "--no-backup",
@@ -1286,10 +1286,10 @@ def main() -> None:
     # LLM response and writes a proposal (or commits with --apply).
     reflect_parser = subparsers.add_parser(
         "reflect",
-        help="Build a reflection over recent decisions + sessions "
-        "(v3.1.0 M8). MCP sampling/createMessage integration ships "
-        "in v3.2; meanwhile this CLI renders the prompt and accepts "
-        "an LLM response via --from-file.",
+        help="Build a reflection over recent decisions + sessions. "
+        "Inside an MCP client with sampling support, the `reflect` "
+        "tool runs the LLM call directly; this CLI renders the "
+        "prompt and accepts an LLM response via --from-file.",
     )
     reflect_parser.add_argument(
         "--period",
@@ -1320,11 +1320,11 @@ def main() -> None:
     # MCP surface (consensus_check / consensus_status) is also exposed.
     consensus_parser = subparsers.add_parser(
         "consensus",
-        help="Cross-IDE consensus operations (v3.1.0 M6). `check` "
-        "materializes conflicts between decisions written by this IDE "
-        "vs other IDEs into .codevira/pending_conflicts.jsonl for "
-        "human review. No automatic resolution; the handshake "
-        "protocol is M7 (opt-in).",
+        help="Cross-IDE consensus operations. `check` materializes "
+        "conflicts between decisions written by this IDE vs other "
+        "IDEs into .codevira/pending_conflicts.jsonl for human "
+        "review. Nothing is resolved automatically; the supersession "
+        "handshake is opt-in via config.",
     )
     consensus_sub = consensus_parser.add_subparsers(dest="consensus_action")
     consensus_sub.add_parser(
@@ -1337,8 +1337,8 @@ def main() -> None:
     # surface for skills is record_skill / get_skill / list_skills.
     induce_parser = subparsers.add_parser(
         "induce-skills",
-        help="Cluster productive sessions and propose induced skills "
-        "(v3.1.0 M5). Without --apply: writes proposals to "
+        help="Cluster productive sessions and propose reusable skills. "
+        "Without --apply: writes proposals to "
         ".codevira/induction_proposals.jsonl for human review. With "
         "--apply: interactively confirms each proposal (use --yes to "
         "skip prompts in CI).",
@@ -1362,10 +1362,10 @@ def main() -> None:
     # a human user operating on the per-machine cache outside an IDE.
     working_parser = subparsers.add_parser(
         "working",
-        help="Operate on working memory (v3.1.0 M2). `commit <session_id>` "
-        "copies a session's live scratchpad entries from the per-machine "
-        "cache (.codevira-cache/working.jsonl) to the canonical archive "
-        "(.codevira/working_archived/<session_id>.jsonl).",
+        help="Operate on the session scratchpad (working memory). "
+        "`commit <session_id>` copies a session's live entries from "
+        "the per-machine cache (.codevira-cache/working.jsonl) to the "
+        "canonical archive (.codevira/working_archived/).",
     )
     working_sub = working_parser.add_subparsers(dest="working_action")
     working_commit_parser = working_sub.add_parser(
@@ -1866,9 +1866,9 @@ def cmd_reset(
     if not (vectors or graph or reset_all):
         print(
             "Error: nothing to reset. Pass one of:\n"
-            "  --vectors   wipe Chroma vector store (fixes HNSW corruption)\n"
+            "  --vectors   remove a leftover v2.x vector store, if present\n"
             "  --graph     wipe graph.db (DESTROYS decisions unless --no-backup is omitted)\n"
-            "  --all       wipe ALL local state (vectors + graph + sessions)\n"
+            "  --all       wipe ALL local state (index + graph cache + sessions)\n"
             "\n"
             "Add --no-backup to skip auto-export (use with caution).\n"
             "Add --dry-run to preview, --yes to skip typed confirmation.",

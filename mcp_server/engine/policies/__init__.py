@@ -33,6 +33,7 @@ from __future__ import annotations
 from mcp_server.engine.policies.anti_regression import AntiRegression
 from mcp_server.engine.policies.blast_radius import BlastRadiusVeto
 from mcp_server.engine.policies.decision_lock import DecisionLock
+from mcp_server.engine.policies.prompt_capture import PromptCapture
 from mcp_server.engine.policies.relevance_inject import RelevanceInject
 from mcp_server.engine.policies.session_log_enforcer import SessionLogEnforcer
 from mcp_server.engine.policies.token_budget import TokenBudgetPersist
@@ -41,6 +42,7 @@ __all__ = [
     "AntiRegression",
     "BlastRadiusVeto",
     "DecisionLock",
+    "PromptCapture",
     "RelevanceInject",
     "SessionLogEnforcer",
     "TokenBudgetPersist",

@@ -11,6 +11,24 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Added
 
+- **Preference capture (Phase 4, D0000LU)** — codevira now learns how you
+  like your AI to work, with zero rules and near-zero token cost:
+  - `prompt_capture` engine policy records every user prompt (sanitized,
+    size-capped) to `.codevira-cache/prompts.jsonl` — no keyword/regex
+    guessing about what "looks like" an instruction.
+  - New `distill_preferences` MCP tool: at session end (a throttled
+    Stop-hook nudge asks for it — ≥10 pending prompts, 24h cooldown),
+    one host-LLM call via MCP sampling extracts durable preferences
+    ("keep answers short", "tests first") into
+    `~/.codevira/global.db` `global_preferences` — user-scoped,
+    cross-project, and already covered by `codevira export setup`.
+    Degrades to a `rendered_prompt` stub without sampling support.
+  - New `search_preferences(category)` MCP tool — documented in
+    CLAUDE.md/AGENTS.md guidance for several versions but never
+    actually implemented until now.
+  - `get_session_context` gains an optional one-line `style` panel
+    (top-3 communication preferences, ~30 tokens, omitted when empty).
+
 - **`codevira export setup` + `codevira import` — one-command machine
   transfer.** Bundles the project's `.codevira/` canonical memory plus
   your `~/.codevira/global.db` learning (preferences + rules, exported

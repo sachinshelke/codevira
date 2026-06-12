@@ -698,9 +698,26 @@ def get_session_context(since: str | None = None) -> dict:
         except Exception:
             pass
 
+        # v3.3.0 Phase 4 (D0000LU): one budgeted style line from LLM-
+        # distilled preferences (~30 tokens). Omitted entirely when no
+        # communication preferences exist — token-frugal per D000018.
+        style_line: str | None = None
+        try:
+            from mcp_server.tools.preferences import search_preferences
+
+            _prefs = search_preferences(category="communication", top_k=3)
+            _signals = [
+                p["signal"] for p in _prefs.get("preferences", []) if p.get("signal")
+            ]
+            if _signals:
+                style_line = "; ".join(_signals)[:160]
+        except Exception:  # noqa: BLE001 — the brief must never fail on this
+            style_line = None
+
         return {
             "current_phase": current_phase,
             "drift_warning": drift_warning,
+            **({"style": style_line} if style_line else {}),
             "working": working_panel,
             "consensus": consensus_panel,
             "recent_sessions": [

@@ -1426,6 +1426,16 @@ def main() -> None:
 
     args = parser.parse_args(raw_args)
 
+    # v3.3.0: homebrew-style "update available" notice. Cache-read only
+    # on this path (zero network / zero latency); skips serve + engine
+    # (hook hot path). Opt-out: CODEVIRA_NO_UPDATE_CHECK=1.
+    try:
+        from mcp_server.update_check import maybe_notify
+
+        maybe_notify(args.command)
+    except Exception:
+        pass  # advisory feature — must never break a CLI invocation
+
     # P0-6 (rc.5): self-heal ghost dirs from CLI invocations too. Before this
     # rc, only MCP tool dispatch fired the Bug-21a repair. So a CLI-only user
     # who got a ghost dir from a stale Claude Code session could never recover

@@ -11,6 +11,16 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Added
 
+- **Update-available notice** — codevira CLI commands now print a short
+  stderr notice when a newer release is on PyPI (homebrew/gh/npm style):
+  `✦ Update available: codevira 3.2.0 → 3.3.0`. Zero latency by design:
+  the command path only reads a 24h-TTL cache
+  (`~/.codevira/update_check.json`); a detached fire-and-forget
+  subprocess refreshes it, so the notice appears on the next run.
+  Never fires for `codevira serve` (MCP stdio) or `codevira engine`
+  (hook hot path); pre-releases never notify; offline degrades to
+  silence. Opt out with `CODEVIRA_NO_UPDATE_CHECK=1`.
+
 - **Preference capture (Phase 4, D0000LU)** — codevira now learns how you
   like your AI to work, with zero rules and near-zero token cost:
   - `prompt_capture` engine policy records every user prompt (sanitized,

@@ -7,6 +7,29 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **`codevira export` now reads the v3.x canonical JSONL store.**
+  Since the v3.0 storage migration, `codevira export decisions` (and the
+  automatic pre-`reset` safety backup that shares its code path) dumped
+  only the legacy `graph.db` SQLite tables — on a v3.x project it silently
+  exported 0 rows while `.codevira/decisions.jsonl` held the real memory.
+  JSON exports now source decisions/sessions/outcomes from
+  `.codevira/*.jsonl` with a per-table fallback to `graph.db` for pre-v3
+  projects, report per-table provenance (`jsonl` / `sqlite-legacy` /
+  `missing`), and no longer require `graph.db` to exist. SQL format is
+  unchanged (legacy graph.db dump) and still requires `graph.db`.
+  Export payload `schema_version` bumped 1 → 2 (adds `table_sources`,
+  `source_jsonl_dir`; `source_db` may now be `null`).
+
+### Docs
+
+- New FAQ entry: how to back up Codevira memory / move it to a new
+  machine (canonical `.codevira/` vs rebuildable cache vs
+  `~/.codevira/global.db`), verified against a simulated machine switch.
+
 ## [3.2.0] — 2026-06-01 — Engine enforcement, sampling, soft-expire
 
 ### Added

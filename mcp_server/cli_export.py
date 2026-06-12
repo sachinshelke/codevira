@@ -13,8 +13,12 @@ Two entry points share one implementation:
 Format choices:
   - **json** (default): list of decision dicts. Human-readable, jq-friendly.
     Includes decisions + sessions + outcomes + preferences + learned_rules.
+    v3.3.0: sourced from the canonical ``.codevira/*.jsonl`` store, with a
+    per-table fallback to the legacy graph.db for pre-v3 projects. graph.db
+    is no longer required for a JSON export.
   - **sql**: full SQL dump via SQLite's `iterdump()`. Replay against an
     empty graph.db to fully reconstruct (preserves FK relationships).
+    Legacy-only: dumps graph.db, NOT the v3.x JSONL store.
 
 Per-target tables exported:
   - `decisions` → always
@@ -135,38 +139,79 @@ def export_decisions_to_path(
     if target not in ("decisions", "all"):
         raise ValueError(f"target must be 'decisions' or 'all', got {target!r}")
 
-    graph_db_path = _resolve_graph_db_path()
+    # v3.3.0: the canonical store is .codevira/*.jsonl; graph.db is a
+    # derived index. JSON exports prefer JSONL per-table and only fall
+    # back to graph.db (legacy pre-v3 projects, or tables with no JSONL
+    # equivalent like `phases`). SQL format remains a graph.db dump, and
+    # graph-tier tables (target=all) only exist in graph.db — so graph.db
+    # is required for those paths, optional for plain JSON exports.
+    from mcp_server.storage import paths as storage_paths
+    from mcp_server.storage.jsonl_store import read_all as _jsonl_read_all
+
+    jsonl_sources: dict[str, Path] = {
+        "decisions": storage_paths.decisions_path(),
+        "sessions": storage_paths.sessions_path(),
+        "outcomes": storage_paths.outcomes_path(),
+        "preferences": storage_paths.preferences_path(),
+        "learned_rules": storage_paths.learned_rules_path(),
+    }
+
+    graph_db_path: Path | None
+    try:
+        graph_db_path = _resolve_graph_db_path()
+    except FileNotFoundError:
+        if format == "sql" or target == "all":
+            raise
+        graph_db_path = None  # JSON + decisions tier: JSONL alone is fine.
+
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Open in read-only mode so a concurrent indexer write can't be blocked.
-    # SQLite URI form is required for read-only.
-    uri = f"file:{graph_db_path}?mode=ro"
-    conn = sqlite3.connect(uri, uri=True)
-    conn.row_factory = sqlite3.Row
+    conn: sqlite3.Connection | None = None
+    if graph_db_path is not None:
+        # Open in read-only mode so a concurrent indexer write can't be
+        # blocked. SQLite URI form is required for read-only.
+        uri = f"file:{graph_db_path}?mode=ro"
+        conn = sqlite3.connect(uri, uri=True)
+        conn.row_factory = sqlite3.Row
 
     tables_to_dump = _DECISION_TABLES if target == "decisions" else _FULL_STATE_TABLES
     summary: dict[str, Any] = {
         "exported_at": datetime.now(timezone.utc).isoformat(),
-        "source_db": str(graph_db_path),
+        "source_db": str(graph_db_path) if graph_db_path else None,
+        "source_jsonl_dir": str(storage_paths.codevira_dir()),
         "format": format,
         "target": target,
         "tables": {},
+        "table_sources": {},
     }
 
     try:
         if format == "json":
             payload = {
-                "schema_version": 1,
+                "schema_version": 2,
                 "exported_at": summary["exported_at"],
-                "source_db": str(graph_db_path),
+                "source_db": summary["source_db"],
+                "source_jsonl_dir": summary["source_jsonl_dir"],
                 "target": target,
                 "tables": {},
+                "table_sources": {},
             }
             for table in tables_to_dump:
-                rows = _dump_table_as_json(conn, table)
+                jsonl_path = jsonl_sources.get(table)
+                if jsonl_path is not None and jsonl_path.is_file():
+                    rows = _jsonl_read_all(jsonl_path)
+                    source = "jsonl"
+                elif conn is not None:
+                    rows = _dump_table_as_json(conn, table)
+                    source = "sqlite-legacy"
+                else:
+                    rows = []
+                    source = "missing"
                 payload["tables"][table] = rows
+                payload["table_sources"][table] = source
                 summary["tables"][table] = len(rows)
+                summary["table_sources"][table] = source
             # v3.0.0 round-3: shared atomic-write helper (was a fixed
             # ``.tmp`` suffix — same race shape as the manifest bug).
             from mcp_server.storage.atomic import atomic_write_text
@@ -177,6 +222,7 @@ def export_decisions_to_path(
             )
 
         elif format == "sql":
+            assert conn is not None  # sql format re-raised on missing graph.db
             # SQL dump preserves schema + FK relationships. iterdump
             # yields every CREATE / INSERT in one stream — we stream
             # to a unique tmp file (mkstemp) and rename into place so
@@ -236,7 +282,8 @@ def export_decisions_to_path(
                     except Exception:
                         summary["tables"][table] = 0
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
     try:
         summary["bytes"] = out_path.stat().st_size
@@ -304,16 +351,33 @@ def cmd_export(
         )
         return 1
 
+    # v3.3.0: graph.db is only mandatory for sql format / target=all
+    # (graph-tier tables live nowhere else). JSON decision exports read
+    # the canonical .codevira/*.jsonl store and need neither.
+    graph_db_path: Path | None
     try:
         graph_db_path = _resolve_graph_db_path()
     except FileNotFoundError as e:
-        print(f"Error: {e}", file=sys.stderr)
-        return 1
+        if fmt == "sql" or target == "all":
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+        graph_db_path = None
     except ValueError as e:
         # v3.0 hardening: get_data_dir refuses invalid project roots
         # ($HOME, system top-levels). Run from a real project directory.
         print(f"Error: {e}", file=sys.stderr)
         return 1
+
+    if graph_db_path is None:
+        from mcp_server.storage.paths import codevira_dir
+
+        if not codevira_dir().is_dir():
+            print(
+                "Error: nothing to export — no .codevira/ store and no "
+                "graph.db. Run `codevira init` first.",
+                file=sys.stderr,
+            )
+            return 2
 
     if out is None:
         from mcp_server.paths import get_data_dir
@@ -325,8 +389,11 @@ def cmd_export(
         out_path = Path(out).expanduser().resolve()
 
     if dry_run:
+        from mcp_server.storage.paths import codevira_dir
+
         print(f"  [dry-run] Would export {target} as {fmt} → {out_path}")
-        print(f"  Source: {graph_db_path}")
+        print(f"  Source: {codevira_dir()} (canonical JSONL)")
+        print(f"  Legacy fallback: {graph_db_path or 'none (no graph.db)'}")
         return 0
 
     try:
@@ -340,5 +407,7 @@ def cmd_export(
     print(f"  Size: {summary['bytes']:,} bytes")
     print("  Tables:")
     for name, count in summary["tables"].items():
-        print(f"    {name:<16} {count:>6} rows")
+        source = summary.get("table_sources", {}).get(name, "")
+        suffix = f"  ({source})" if source else ""
+        print(f"    {name:<16} {count:>6} rows{suffix}")
     return 0

@@ -32,6 +32,7 @@ from typing import Any
 from mcp_server.engine.events import EventType, HookEvent
 from mcp_server.engine.policy import PolicyVerdict
 from mcp_server.engine.runner import dispatch
+from mcp_server.engine.wiring._diff_envelope import synthesize_proposed_diff
 
 
 def pre_call(tool_name: str, arguments: dict[str, Any]) -> PolicyVerdict:
@@ -152,6 +153,13 @@ def _build_pre_event(tool_name: str, arguments: dict[str, Any]) -> HookEvent:
         except OSError:
             target_file = None
 
+    # Phase 9: populate proposed_diff via the same shared helper the
+    # Claude Code hook uses, so an edit-shaped tool routed through MCP
+    # gets the same additive-edit analysis instead of a None diff (which
+    # made blast_radius hard-block high-fan-in files). Inert (returns
+    # None) for codevira's own non-edit tools.
+    proposed_diff = synthesize_proposed_diff(tool_name, dict(arguments), target_file)
+
     return HookEvent(
         event_type=EventType.PRE_TOOL_USE,
         project_root=project_root,
@@ -160,6 +168,7 @@ def _build_pre_event(tool_name: str, arguments: dict[str, Any]) -> HookEvent:
         tool_name=tool_name,
         tool_input=dict(arguments),
         target_file=target_file,
+        proposed_diff=proposed_diff,
         timestamp=time.time(),
         raw={"source": "mcp_dispatch"},
     )

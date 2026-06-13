@@ -7,6 +7,25 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **Engine false-positive: additive `Write` no longer hard-blocked.** The
+  `decision_lock`, `blast_radius`, and `anti_regression` policies key on
+  the `--- before / --- after` diff envelope. `Edit`/`MultiEdit` always
+  produced it, but `Write` passed raw file content, so the additive-edit
+  guards were silently bypassed and a purely-additive full-file `Write`
+  to a locked or high-fan-in file was blocked as if it were destructive
+  (forcing users to disable enforcement). The wiring layer now
+  synthesizes an honest envelope for `Write` by reading the current
+  on-disk content as the `before` block, via a shared
+  `_diff_envelope.synthesize_proposed_diff` helper used by both the
+  Claude Code hook and the MCP dispatch path. A `Write` that removes or
+  changes existing lines still blocks — the moat is unchanged. (D0000PW)
+
+---
+
 ## [3.3.0] — 2026-06-13
 
 ### Added

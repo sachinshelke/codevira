@@ -30,6 +30,7 @@ Other exit codes are treated as errors by Claude Code; we never use them.
 
 Reference: https://code.claude.com/docs/en/hooks
 """
+
 from __future__ import annotations
 
 import json
@@ -41,6 +42,7 @@ from typing import Any
 from mcp_server.engine.events import EventType, HookEvent
 from mcp_server.engine.policy import PolicyVerdict
 from mcp_server.engine.runner import dispatch
+from mcp_server.engine.wiring._diff_envelope import synthesize_proposed_diff
 
 
 # Map Claude Code's hook event names to our EventType enum.
@@ -56,9 +58,7 @@ _CC_EVENT_MAP: dict[str, EventType] = {
 # Reverse map: our EventType → Claude Code's CamelCase name. Claude Code
 # requires `hookSpecificOutput.hookEventName` to match the event being
 # handled. (R5 QA finding: this is required, not optional.)
-_CC_EVENT_NAME: dict[EventType, str] = {
-    v: k for k, v in _CC_EVENT_MAP.items()
-}
+_CC_EVENT_NAME: dict[EventType, str] = {v: k for k, v in _CC_EVENT_MAP.items()}
 
 
 def handle(event_type_str: str) -> int:
@@ -113,6 +113,7 @@ def handle(event_type_str: str) -> int:
 # ----------------------------------------------------------------------
 # Helpers
 # ----------------------------------------------------------------------
+
 
 def _build_event(cc_event: EventType, raw: dict[str, Any]) -> HookEvent:
     """Translate Claude Code's raw hook input into a HookEvent.
@@ -170,15 +171,17 @@ def _build_event(cc_event: EventType, raw: dict[str, Any]) -> HookEvent:
     # Modern Claude Code uses `tool_result`; older `tool_response`
     # tolerated for backward compat. R5 QA finding: docs say tool_result.
     tool_output = (
-        raw.get("tool_result")
-        or raw.get("tool_response")
-        or raw.get("tool_output")
+        raw.get("tool_result") or raw.get("tool_response") or raw.get("tool_output")
     )
 
     # Extract a target_file from tool_input when the tool name suggests one.
     target_file: Path | None = None
     if tool_name in {"Edit", "Write", "MultiEdit", "NotebookEdit", "Read"}:
-        candidate = tool_input.get("file_path") or tool_input.get("path") or tool_input.get("notebook_path")
+        candidate = (
+            tool_input.get("file_path")
+            or tool_input.get("path")
+            or tool_input.get("notebook_path")
+        )
         if candidate:
             try:
                 resolved = Path(candidate).resolve()
@@ -188,7 +191,10 @@ def _build_event(cc_event: EventType, raw: dict[str, Any]) -> HookEvent:
                 # would false-match e.g. /tmp/proj vs /tmp/proj-other).
                 try:
                     import os
-                    common = Path(os.path.commonpath([str(project_root), str(resolved)]))
+
+                    common = Path(
+                        os.path.commonpath([str(project_root), str(resolved)])
+                    )
                     if common == project_root:
                         target_file = resolved
                     # else: target_file stays None (path traversal rejected)
@@ -199,64 +205,20 @@ def _build_event(cc_event: EventType, raw: dict[str, Any]) -> HookEvent:
             except OSError:
                 target_file = None
 
-    # Best-effort proposed_diff for Write/Edit/MultiEdit/NotebookEdit.
-    # Each tool exposes its content differently:
-    #   - Edit:         tool_input.{old_string, new_string}
-    #   - Write:        tool_input.content (raw)
-    #   - MultiEdit:    tool_input.edits[i].{old_string, new_string}
-    #   - NotebookEdit: tool_input.new_source (raw, like Write)
+    # Synthesize the ``--- before / --- after`` envelope all the
+    # additive-edit guards key on. Delegated to the shared
+    # ``_diff_envelope`` helper so this entry point and ``mcp_dispatch``
+    # produce an identical, parseable shape.
     #
-    # Bug 7 (Week-11 deep re-audit): originally only Edit + Write were
-    # handled. MultiEdit and NotebookEdit fell through with
-    # ``proposed_diff=None``, so Hero 7 silently no-op'd on them even
-    # though its ``_EDIT_TOOLS`` set declared support. Same shape as
-    # Bug 4 (Hero 7 silent on Write was the same kind of declared-but-
-    # not-integrated gap).
-    #
-    # We don't synthesize unified diffs — policies that need them can
-    # do so. We just pass enough text for heuristic detectors.
-    proposed_diff: str | None = None
-    if tool_name == "Edit":
-        old = tool_input.get("old_string", "")
-        new = tool_input.get("new_string", "")
-        if old or new:
-            proposed_diff = f"--- before\n{old}\n--- after\n{new}\n"
-    elif tool_name == "Write":
-        content = tool_input.get("content")
-        if isinstance(content, str):
-            proposed_diff = content
-    elif tool_name == "MultiEdit":
-        edits = tool_input.get("edits") or []
-        if isinstance(edits, list) and edits:
-            # Concatenate each edit's old/new into one before/after pair.
-            # Hero 7 (and any future Edit-format detector) only reads the
-            # AFTER block; the BEFORE block is informational. Joining with
-            # newline preserves line-anchored regex behavior.
-            old_parts: list[str] = []
-            new_parts: list[str] = []
-            for e in edits:
-                if not isinstance(e, dict):
-                    continue
-                old_parts.append(str(e.get("old_string", "")))
-                new_parts.append(str(e.get("new_string", "")))
-            joined_old = "\n".join(old_parts)
-            joined_new = "\n".join(new_parts)
-            if joined_old or joined_new:
-                proposed_diff = (
-                    f"--- before\n{joined_old}\n--- after\n{joined_new}\n"
-                )
-    elif tool_name == "NotebookEdit":
-        # Notebook cell content lives at ``new_source`` (modern Claude
-        # Code) or sometimes ``cell_source`` (older versions). Treat as
-        # raw content like Write — Hero 7's _extract_after_block handles
-        # both raw + marker formats since the Bug-4 fix.
-        content = (
-            tool_input.get("new_source")
-            or tool_input.get("cell_source")
-            or tool_input.get("source")
-        )
-        if isinstance(content, str):
-            proposed_diff = content
+    # Phase 9 false-positive fix: ``Write`` previously passed raw file
+    # content (no envelope), so ``parse_diff`` returned ``(None, None)``,
+    # the additive guards in decision_lock / blast_radius / anti_regression
+    # were silently bypassed, and a purely-additive full-file Write to a
+    # locked or high-fan-in file was hard-blocked as if destructive. The
+    # helper now reads the current on-disk content as the ``before`` block
+    # so ``Write`` carries an honest diff. (Bug 7 / Week-11: MultiEdit +
+    # NotebookEdit support also lives in the helper now.)
+    proposed_diff = synthesize_proposed_diff(tool_name, tool_input, target_file)
 
     prompt_text: str | None = None
     if cc_event == EventType.USER_PROMPT_SUBMIT:

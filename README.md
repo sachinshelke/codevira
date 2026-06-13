@@ -1,8 +1,9 @@
 # Codevira
 
-> **Cross-IDE decision enforcement for AI coding agents.** One in-repo
-> memory layer that every AI tool you use can read; PreToolUse hooks
-> that physically block edits violating prior decisions. Local-first,
+> **Cross-IDE decision memory for AI coding agents.** One in-repo memory
+> layer that every AI tool you use can read — plus PreToolUse hooks that
+> physically block violating edits **in Claude Code** (other IDEs get the
+> same decisions as AGENTS.md guidance, not a hard block). Local-first,
 > MIT-licensed, ~83 MB pipx install.
 
 [![PyPI version](https://img.shields.io/pypi/v/codevira?color=orange)](https://pypi.org/project/codevira/)

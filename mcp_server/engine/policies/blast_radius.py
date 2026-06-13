@@ -246,7 +246,11 @@ class BlastRadiusVeto(Policy):
         # consistent even if signals.impact() ever returns a partial
         # affected list — the user sees what we ACTUALLY have, not what
         # the count claims (Week-4 R1 #1 defensive nit).
-        affected_full = impact.get("affected", [])
+        # NOTE: signals.impact() / get_impact return the list under
+        # "affected_files" (each item keyed "file") — NOT "affected". The
+        # old key silently rendered the "Affected files" list empty while
+        # the block itself stayed correct.
+        affected_full = impact.get("affected_files", [])
         affected = affected_full[:3]
         affected_lines = "\n".join(f"  • {a.get('file')}" for a in affected)
         n_more = max(0, len(affected_full) - 3)

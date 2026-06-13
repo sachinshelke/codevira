@@ -58,6 +58,16 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   over a whole file, so Writes are skipped there (Edit/MultiEdit revert
   detection is unaffected).
 
+- **Blast-radius veto: "Affected files" list was always empty.** The
+  policy read `impact["affected"]`, but `get_impact` / `signals.impact`
+  return the list under `affected_files`. The block fired correctly but
+  the diagnostic never showed *which* files were impacted; now it does.
+
+- **Docs accuracy.** The README tagline implied hard edit-blocking works
+  everywhere — it's Claude Code only (other IDEs get the same decisions
+  as AGENTS.md guidance). Tagline corrected to match the body, which was
+  already scoped correctly.
+
 ### Changed
 
 - **CI: opt into Node.js 24 for GitHub Actions.** GitHub forces Node.js

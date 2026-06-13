@@ -231,9 +231,9 @@ class TestAcceptanceScenarios:
         )
         event = _make_event(target=target, proposed_diff=diff)
         verdict = policy.evaluate(event, signals)
-        assert (
-            verdict.is_allowing()
-        ), f"purely-added def must allow (cannot break callers); got {verdict.action}"
+        assert verdict.is_allowing(), (
+            f"purely-added def must allow (cannot break callers); got {verdict.action}"
+        )
         assert verdict.metadata.get("reason") == "signature_changes_purely_additive"
 
     def test_6b_rename_still_blocks(self):
@@ -285,9 +285,9 @@ class TestAcceptanceScenarios:
         assert verdict.is_blocking()
         # The diagnostic should call out the removed signature
         sig_changes = verdict.metadata.get("signature_changes", {})
-        assert any(
-            "about_to_die" in line for line in sig_changes.get("removed", [])
-        ), f"removed function not in metadata: {sig_changes}"
+        assert any("about_to_die" in line for line in sig_changes.get("removed", [])), (
+            f"removed function not in metadata: {sig_changes}"
+        )
 
     def test_8_warn_mode_produces_warn_not_block(self, monkeypatch: pytest.MonkeyPatch):
         """Same scenario as test_5 but with mode=warn yields warn."""
@@ -371,9 +371,9 @@ class TestConfiguration:
         for bad in ("not-a-number", "-5", "0", "abc", ""):
             monkeypatch.setenv("CODEVIRA_BLAST_RADIUS_THRESHOLD", bad)
             policy = BlastRadiusVeto()
-            assert (
-                policy._config()["block_threshold"] == 5
-            ), f"bad threshold {bad!r} not handled"
+            assert policy._config()["block_threshold"] == 5, (
+                f"bad threshold {bad!r} not handled"
+            )
 
     def test_threshold_clamped_to_max(self, monkeypatch: pytest.MonkeyPatch):
         """Even a valid huge threshold is clamped."""
@@ -537,9 +537,9 @@ class TestSignatureDetection:
             language="python",
         )
         assert summary == {"added": [], "removed": [], "modified": []}
-        assert (
-            elapsed_ms_2 < 10
-        ), f"summary on huge diff took {elapsed_ms_2:.1f} ms — cap missing"
+        assert elapsed_ms_2 < 10, (
+            f"summary on huge diff took {elapsed_ms_2:.1f} ms — cap missing"
+        )
 
     def test_malformed_diff_returns_false(self):
         """Malformed diff: no envelope. Conservative — return False."""
@@ -629,9 +629,9 @@ class TestBehavioralGates:
         )
         verdict = policy.evaluate(event, spy)
         assert verdict.is_allowing()
-        assert (
-            spy.impact_calls == []
-        ), f"target_file None gate degraded: {spy.impact_calls}"
+        assert spy.impact_calls == [], (
+            f"target_file None gate degraded: {spy.impact_calls}"
+        )
 
     def test_signals_none_does_not_crash(self):
         """signals=None gate: if the runner ever fails to build
@@ -676,9 +676,9 @@ class TestBehavioralGates:
         diff = "--- before\ndef f(x): pass\n--- after\ndef f(x, y): pass\n"
         event = _make_event(target=target, proposed_diff=diff)
         verdict = policy.evaluate(event, signals)
-        assert (
-            verdict.is_allowing()
-        ), f"impact.found=False must short-circuit to allow; got {verdict.action}"
+        assert verdict.is_allowing(), (
+            f"impact.found=False must short-circuit to allow; got {verdict.action}"
+        )
 
     def test_impact_missing_blast_radius_defaults_safe(self):
         """If impact dict is found=True but missing 'blast_radius'
@@ -698,9 +698,9 @@ class TestBehavioralGates:
         event = _make_event(target=target, proposed_diff=diff)
         verdict = policy.evaluate(event, signals)
         # blast_radius defaults to 0 → 0 < threshold → allow
-        assert (
-            verdict.is_allowing()
-        ), f"missing blast_radius must default to 0 (allow); got {verdict.action}"
+        assert verdict.is_allowing(), (
+            f"missing blast_radius must default to 0 (allow); got {verdict.action}"
+        )
 
     def test_full_write_with_high_radius_blocks(self):
         """Edit-class tools always have proposed_diff. But Write tool
@@ -744,9 +744,9 @@ class TestRegistration:
         names1 = sorted(p.name for p in registered_policies())
         register_default_policies()
         names2 = sorted(p.name for p in registered_policies())
-        assert (
-            names1 == names2
-        ), f"register_default_policies created duplicates: {names1} vs {names2}"
+        assert names1 == names2, (
+            f"register_default_policies created duplicates: {names1} vs {names2}"
+        )
         assert "blast_radius_veto" in names1
 
     def test_cli_engine_handler_calls_register_default_policies(self):
@@ -765,9 +765,9 @@ class TestRegistration:
             Path(__file__).resolve().parents[2] / "mcp_server" / "cli.py"
         ).read_text()
         # Both the import AND the call must be present in the engine handler.
-        assert (
-            "register_default_policies" in cli_src
-        ), "cli.py must call register_default_policies in `engine handle`"
+        assert "register_default_policies" in cli_src, (
+            "cli.py must call register_default_policies in `engine handle`"
+        )
 
     def test_hero_4_fires_through_engine_dispatch(self, tmp_path):
         """Week-5 R5-redo found a runner-vs-policy signature mismatch:
@@ -850,6 +850,43 @@ class TestRegistration:
         srv_src = (
             Path(__file__).resolve().parents[2] / "mcp_server" / "server.py"
         ).read_text()
-        assert (
-            "register_default_policies" in srv_src
-        ), "server.py call_tool must register policies before pre_call"
+        assert "register_default_policies" in srv_src, (
+            "server.py call_tool must register policies before pre_call"
+        )
+
+
+class TestAffectedFilesListRegression:
+    """v3.4.0: blast_radius read impact['affected'] but get_impact /
+    signals.impact return the list under 'affected_files' (each item keyed
+    'file'). The veto's 'Affected files' list therefore always rendered
+    empty. This pins the corrected key."""
+
+    def test_affected_files_appear_in_message(self):
+        from pathlib import Path
+
+        target = Path("/tmp/proj/hot.py")
+        impact = {
+            target: {
+                "found": True,
+                "blast_radius": 20,
+                "affected_files": [
+                    {"file": "caller_a.py"},
+                    {"file": "caller_b.py"},
+                ],
+            }
+        }
+        # Removing a public function → caller-breaking → block, with the
+        # affected-files context attached.
+        diff = (
+            "--- before\n"
+            "def public_api(x):\n    return x\n"
+            "--- after\n"
+            "def other(z):\n    return z\n"
+        )
+        verdict = BlastRadiusVeto().evaluate(
+            _make_event(target=target, proposed_diff=diff),
+            _signals_with_impact(impact),
+        )
+        assert verdict.is_blocking()
+        assert "caller_a.py" in (verdict.message or "")
+        assert "caller_b.py" in (verdict.message or "")

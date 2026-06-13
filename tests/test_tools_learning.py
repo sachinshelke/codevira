@@ -535,10 +535,9 @@ class TestGetSessionContext:
 
         if result["recent_decisions"]:
             for d in result["recent_decisions"]:
-                assert d.get("source") == "session", (
-                    f"recent_decisions entries must be tagged source='session'; "
-                    f"got {d}"
-                )
+                assert (
+                    d.get("source") == "session"
+                ), f"recent_decisions entries must be tagged source='session'; got {d}"
 
     def test_session_context_recent_decisions_preserve_file_path(
         self, tmp_path, monkeypatch
@@ -689,11 +688,15 @@ class TestSessionContextFocus:
     def test_focus_source_field_always_present(self, tmp_path, monkeypatch):
         _, _, db = _setup_project(tmp_path, monkeypatch)
         db.close()
-        with patch(
-            "mcp_server.tools.roadmap.get_roadmap", return_value={"current_phase": {}}
-        ), patch(
-            "mcp_server.tools.changesets.list_open_changesets",
-            return_value={"open_changesets": [], "count": 0, "warning": None},
+        with (
+            patch(
+                "mcp_server.tools.roadmap.get_roadmap",
+                return_value={"current_phase": {}},
+            ),
+            patch(
+                "mcp_server.tools.changesets.list_open_changesets",
+                return_value={"open_changesets": [], "count": 0, "warning": None},
+            ),
         ):
             result = learning.get_session_context()
         assert "focus_source" in result
@@ -715,9 +718,12 @@ class TestSessionContextFocus:
                 "next_action": "Add validation layer to api endpoints",
             }
         }
-        with patch("mcp_server.tools.roadmap.get_roadmap", return_value=roadmap), patch(
-            "mcp_server.tools.changesets.list_open_changesets",
-            return_value={"open_changesets": [], "count": 0, "warning": None},
+        with (
+            patch("mcp_server.tools.roadmap.get_roadmap", return_value=roadmap),
+            patch(
+                "mcp_server.tools.changesets.list_open_changesets",
+                return_value={"open_changesets": [], "count": 0, "warning": None},
+            ),
         ):
             result = learning.get_session_context()
 
@@ -728,14 +734,138 @@ class TestSessionContextFocus:
         _seed_full_project(db)
         db.close()
 
-        with patch(
-            "mcp_server.tools.roadmap.get_roadmap", return_value={"current_phase": {}}
-        ), patch(
-            "mcp_server.tools.changesets.list_open_changesets",
-            return_value={"open_changesets": [], "count": 0, "warning": None},
+        with (
+            patch(
+                "mcp_server.tools.roadmap.get_roadmap",
+                return_value={"current_phase": {}},
+            ),
+            patch(
+                "mcp_server.tools.changesets.list_open_changesets",
+                return_value={"open_changesets": [], "count": 0, "warning": None},
+            ),
         ):
             result = learning.get_session_context()
 
         assert result["focus_source"] is None
         # 3 decisions seeded → should get all 3, newest first
         assert len(result["recent_decisions"]) == 3
+
+
+# =====================================================================
+# get_session_context — communication `style` panel
+#
+# v3.3.0 (D0000LU) wired LLM-distilled communication preferences into
+# get_session_context as a budgeted one-line `style` panel, but it shipped
+# WITHOUT end-to-end coverage. These tests pin that contract (v3.4.0):
+# present when communication prefs exist, omitted when not, truncated to
+# the 160-char budget, and never able to break the brief.
+#
+# Per D0000NJ, per-prompt injection into relevance_inject stays deferred —
+# the session-start panel is the shipped read surface.
+# =====================================================================
+
+
+def _seed_communication_prefs(db_path, signals: list[str]) -> None:
+    """Create an isolated global.db and seed communication preferences.
+
+    Passing an empty list still creates the schema (so the file exists with
+    no communication rows) — used for the omitted-panel cases.
+    """
+    from indexer.global_db import GlobalDB
+
+    db = GlobalDB(db_path)
+    try:
+        for sig in signals:
+            db.upsert_preference("communication", sig, None, "proj-a")
+    finally:
+        db.close()
+
+
+class TestSessionContextStylePanel:
+    def _run(self, monkeypatch, db_path):
+        """Call get_session_context with roadmap + changesets mocked and the
+        global DB pointed at db_path."""
+        monkeypatch.setattr(paths, "get_global_db_path", lambda: db_path)
+        mock_roadmap = {
+            "current_phase": {
+                "name": "Phase 5",
+                "next_action": "Do stuff",
+                "status": "in_progress",
+            },
+        }
+        with patch("mcp_server.tools.roadmap.get_roadmap", return_value=mock_roadmap):
+            with patch(
+                "mcp_server.tools.changesets.list_open_changesets",
+                return_value={"open_changesets": [], "count": 0, "warning": None},
+            ):
+                return learning.get_session_context()
+
+    def test_style_present_when_communication_prefs_exist(self, tmp_path, monkeypatch):
+        _setup_project(tmp_path, monkeypatch)
+        db_path = tmp_path / "global.db"
+        _seed_communication_prefs(db_path, ["keep answers short", "tests first"])
+
+        result = self._run(monkeypatch, db_path)
+
+        assert "style" in result
+        assert "keep answers short" in result["style"]
+        assert "tests first" in result["style"]
+
+    def test_style_omitted_when_no_communication_prefs(self, tmp_path, monkeypatch):
+        _setup_project(tmp_path, monkeypatch)
+        db_path = tmp_path / "global.db"
+        _seed_communication_prefs(db_path, [])  # schema only, no rows
+
+        result = self._run(monkeypatch, db_path)
+        assert "style" not in result
+
+    def test_style_omitted_when_global_db_missing(self, tmp_path, monkeypatch):
+        _setup_project(tmp_path, monkeypatch)
+        db_path = tmp_path / "never-created.db"
+
+        result = self._run(monkeypatch, db_path)
+        assert "style" not in result
+
+    def test_style_truncated_to_budget(self, tmp_path, monkeypatch):
+        _setup_project(tmp_path, monkeypatch)
+        db_path = tmp_path / "global.db"
+        _seed_communication_prefs(db_path, ["x" * 300])
+
+        result = self._run(monkeypatch, db_path)
+        assert "style" in result
+        assert len(result["style"]) <= 160
+
+    def test_style_survives_preferences_error(self, tmp_path, monkeypatch):
+        """If preference lookup raises, the brief still returns — minus the
+        style key. The panel must never break get_session_context."""
+        _setup_project(tmp_path, monkeypatch)
+        db_path = tmp_path / "global.db"
+        _seed_communication_prefs(db_path, ["keep answers short"])
+        monkeypatch.setattr(paths, "get_global_db_path", lambda: db_path)
+
+        def boom(*a, **k):
+            raise RuntimeError("preferences exploded")
+
+        mock_roadmap = {
+            "current_phase": {
+                "name": "P",
+                "next_action": "x",
+                "status": "in_progress",
+            },
+        }
+        with patch("mcp_server.tools.preferences.search_preferences", side_effect=boom):
+            with patch(
+                "mcp_server.tools.roadmap.get_roadmap", return_value=mock_roadmap
+            ):
+                with patch(
+                    "mcp_server.tools.changesets.list_open_changesets",
+                    return_value={
+                        "open_changesets": [],
+                        "count": 0,
+                        "warning": None,
+                    },
+                ):
+                    result = learning.get_session_context()
+
+        assert "style" not in result
+        assert "current_phase" in result  # brief still returned

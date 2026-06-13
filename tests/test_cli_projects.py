@@ -18,13 +18,24 @@ These tests pin the contract:
 * Missing ``~/.codevira/projects/`` is handled gracefully (no crash).
 * Corrupt global.db doesn't crash the inventory.
 """
+
 from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
 import pytest
 
-from mcp_server.cli_projects import cmd_projects
+from mcp_server.cli_projects import (
+    _delete_project_row,
+    _relative_age,
+    _resolve_archive_targets,
+    cmd_projects,
+    cmd_projects_archive,
+)
+from mcp_server.paths import is_ephemeral_project_path
 
 
 @pytest.fixture
@@ -34,8 +45,9 @@ def home_with_projects(tmp_path, monkeypatch):
     projects_dir = home / "projects"
     projects_dir.mkdir(parents=True)
     monkeypatch.setattr("mcp_server.paths.get_global_home", lambda: home)
-    monkeypatch.setattr("mcp_server.paths.get_global_db_path",
-                        lambda: home / "global.db")
+    monkeypatch.setattr(
+        "mcp_server.paths.get_global_db_path", lambda: home / "global.db"
+    )
 
     # (A) Complete project — config + metadata + global.db row.
     a_dir = projects_dir / "Users_alice_proj_a_aaaa"
@@ -44,12 +56,16 @@ def home_with_projects(tmp_path, monkeypatch):
     (a_dir / "graph" / "graph.db").write_bytes(b"\x00")
     (a_dir / "codeindex" / "chunk").write_bytes(b"\x00")
     (a_dir / "config.yaml").write_text("project:\n  name: a\n")
-    (a_dir / "metadata.json").write_text(json.dumps({
-        "original_path": "/Users/alice/proj-a",
-        "git_remote": "git@host:a.git",
-        "auto_initialized": True,
-        "version": "2.0.0rc4",
-    }))
+    (a_dir / "metadata.json").write_text(
+        json.dumps(
+            {
+                "original_path": "/Users/alice/proj-a",
+                "git_remote": "git@host:a.git",
+                "auto_initialized": True,
+                "version": "2.0.0rc4",
+            }
+        )
+    )
 
     # (B) Ghost project — graph + roadmap only (the Bug 21 shape).
     b_dir = projects_dir / "Users_bob_proj_b_bbbb"
@@ -94,8 +110,9 @@ class TestCmdProjects:
     def test_handles_missing_projects_dir(self, tmp_path, monkeypatch, capsys):
         home = tmp_path / ".codevira_empty"
         monkeypatch.setattr("mcp_server.paths.get_global_home", lambda: home)
-        monkeypatch.setattr("mcp_server.paths.get_global_db_path",
-                            lambda: home / "global.db")
+        monkeypatch.setattr(
+            "mcp_server.paths.get_global_db_path", lambda: home / "global.db"
+        )
         rc = cmd_projects()
         assert rc == 0
         out = capsys.readouterr().out
@@ -119,8 +136,14 @@ class TestJsonOutput:
         assert len(data["projects"]) >= 3
         # Each row has the documented canonical fields.
         for row in data["projects"]:
-            assert {"slug", "status", "has_config", "has_metadata",
-                    "in_global_db", "size_bytes"} <= set(row)
+            assert {
+                "slug",
+                "status",
+                "has_config",
+                "has_metadata",
+                "in_global_db",
+                "size_bytes",
+            } <= set(row)
 
     def test_json_identifies_status_per_entry(self, home_with_projects, capsys):
         """rc.5 (P0-3): status names are tracked / ghost / orphan / stale."""
@@ -138,8 +161,9 @@ class TestJsonOutput:
     def test_json_handles_missing_projects_dir(self, tmp_path, monkeypatch, capsys):
         home = tmp_path / ".codevira_empty"
         monkeypatch.setattr("mcp_server.paths.get_global_home", lambda: home)
-        monkeypatch.setattr("mcp_server.paths.get_global_db_path",
-                            lambda: home / "global.db")
+        monkeypatch.setattr(
+            "mcp_server.paths.get_global_db_path", lambda: home / "global.db"
+        )
         cmd_projects(output_json=True)
         out = json.loads(capsys.readouterr().out)
         # rc.5: JSON shape is now {summary, projects}.
@@ -175,17 +199,22 @@ class TestGhostsOnly:
         projects_dir = home / "projects"
         projects_dir.mkdir(parents=True)
         monkeypatch.setattr("mcp_server.paths.get_global_home", lambda: home)
-        monkeypatch.setattr("mcp_server.paths.get_global_db_path",
-                            lambda: home / "global.db")
+        monkeypatch.setattr(
+            "mcp_server.paths.get_global_db_path", lambda: home / "global.db"
+        )
         # Make a single complete project.
         d = projects_dir / "Users_alice_proj_aaaa"
         (d / "graph").mkdir(parents=True)
         (d / "graph" / "graph.db").write_bytes(b"\x00")
         (d / "config.yaml").write_text("project:\n  name: a\n")
-        (d / "metadata.json").write_text(json.dumps({
-            "original_path": "/Users/alice/proj",
-            "git_remote": "git@host:a.git",
-        }))
+        (d / "metadata.json").write_text(
+            json.dumps(
+                {
+                    "original_path": "/Users/alice/proj",
+                    "git_remote": "git@host:a.git",
+                }
+            )
+        )
         conn = sqlite3.connect(str(home / "global.db"))
         conn.execute(
             "CREATE TABLE projects (path TEXT PRIMARY KEY, name TEXT NOT NULL, "
@@ -214,11 +243,175 @@ class TestResilience:
         # Write a corrupt global.db.
         (home / "global.db").write_bytes(b"this is not a SQLite database")
         monkeypatch.setattr("mcp_server.paths.get_global_home", lambda: home)
-        monkeypatch.setattr("mcp_server.paths.get_global_db_path",
-                            lambda: home / "global.db")
+        monkeypatch.setattr(
+            "mcp_server.paths.get_global_db_path", lambda: home / "global.db"
+        )
         rc = cmd_projects(output_json=True)
         assert rc == 0
         # Empty registration is fine; we still list the dir.
         data = json.loads(capsys.readouterr().out)
         assert len(data["projects"]) == 1
         assert data["projects"][0]["in_global_db"] is False
+
+
+# =====================================================================
+# v3.4.0 Phase 8 additions
+# =====================================================================
+
+
+class TestEphemeralDetection:
+    def test_pytest_tmp_dir_is_ephemeral(self) -> None:
+        assert is_ephemeral_project_path(
+            Path("/private/var/folders/xx/pytest-of-sachin/pytest-3/proj")
+        )
+
+    def test_tmp_scratch_is_ephemeral(self) -> None:
+        assert is_ephemeral_project_path(Path("/tmp/cv-dev-abc123/proj"))
+
+    def test_pytest_marker_anywhere_in_path(self) -> None:
+        assert is_ephemeral_project_path(Path("/anywhere/pytest-of-x/p"))
+
+    def test_real_project_path_is_not_ephemeral(self) -> None:
+        assert not is_ephemeral_project_path(
+            Path("/Users/sachin/Documents/Projects/codevira")
+        )
+
+    def test_classification_never_raises(self) -> None:
+        assert is_ephemeral_project_path(Path("")) in (True, False)
+
+
+class TestRelativeAge:
+    def test_none_is_dash(self) -> None:
+        assert _relative_age(None) == "—"
+
+    def test_today(self) -> None:
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        assert _relative_age(now) == "today"
+
+    def test_n_days_ago(self) -> None:
+        five = (datetime.now(timezone.utc) - timedelta(days=5)).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+        assert _relative_age(five) == "5d ago"
+
+    def test_stale_over_30_days(self) -> None:
+        old = (datetime.now(timezone.utc) - timedelta(days=45)).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+        assert _relative_age(old) == "stale 45d"
+
+    def test_unparseable_falls_back_to_date(self) -> None:
+        assert _relative_age("2026-06-01") == "2026-06-01"
+
+
+@pytest.fixture
+def fake_global(tmp_path, monkeypatch):
+    """Isolated ~/.codevira/global.db with one registered project."""
+    import mcp_server.paths as paths_mod
+    from indexer.global_db import GlobalDB
+
+    home = tmp_path / "home" / ".codevira"
+    home.mkdir(parents=True)
+    db_path = home / "global.db"
+    monkeypatch.setattr(paths_mod, "get_global_home", lambda: home)
+    monkeypatch.setattr(paths_mod, "get_global_db_path", lambda: db_path)
+
+    real = tmp_path / "realproj"
+    real.mkdir()
+    db = GlobalDB(db_path)
+    db.register_project(str(real), "realproj", "python")
+    db.close()
+    return {"db_path": db_path, "real": real, "tmp": tmp_path}
+
+
+def _row_count(db_path: Path) -> int:
+    conn = sqlite3.connect(str(db_path))
+    try:
+        return conn.execute("SELECT COUNT(*) FROM projects").fetchone()[0]
+    finally:
+        conn.close()
+
+
+class TestArchive:
+    def test_archive_by_name_removes_row(self, fake_global) -> None:
+        assert _row_count(fake_global["db_path"]) == 1
+        assert cmd_projects_archive("realproj") == 0
+        assert _row_count(fake_global["db_path"]) == 0
+
+    def test_archive_by_full_path_removes_row(self, fake_global) -> None:
+        assert cmd_projects_archive(str(fake_global["real"])) == 0
+        assert _row_count(fake_global["db_path"]) == 0
+
+    def test_archive_missing_name_is_usage_error(self, fake_global) -> None:
+        assert cmd_projects_archive(None) == 2
+        assert cmd_projects_archive("   ") == 2
+        assert _row_count(fake_global["db_path"]) == 1
+
+    def test_archive_unknown_name_returns_not_found(self, fake_global) -> None:
+        assert cmd_projects_archive("does-not-exist") == 1
+        assert _row_count(fake_global["db_path"]) == 1
+
+    def test_archive_ambiguous_name_refuses(self, fake_global, tmp_path) -> None:
+        """Two projects sharing a basename → refuse, don't guess."""
+        from indexer.global_db import GlobalDB
+
+        other = tmp_path / "nested" / "realproj"
+        other.mkdir(parents=True)
+        db = GlobalDB(fake_global["db_path"])
+        db.register_project(str(other), "realproj", "python")
+        db.close()
+
+        assert cmd_projects_archive("realproj") == 2  # ambiguous
+        assert _row_count(fake_global["db_path"]) == 2  # nothing removed
+
+    def test_resolve_prefers_exact_path_over_basename(self, fake_global) -> None:
+        from mcp_server._project_inventory import enumerate_projects
+
+        entries = [e for e in enumerate_projects() if e.canonical_path]
+        targets = _resolve_archive_targets(entries, str(fake_global["real"]))
+        assert targets == [str(fake_global["real"])]
+
+    def test_delete_missing_db_returns_false(self, tmp_path, monkeypatch) -> None:
+        import mcp_server.paths as paths_mod
+
+        monkeypatch.setattr(
+            paths_mod, "get_global_db_path", lambda: tmp_path / "nope.db"
+        )
+        assert _delete_project_row("/whatever") is False
+
+
+class TestRegistrationGuard:
+    def test_ephemeral_root_is_not_registered(self, tmp_path, monkeypatch) -> None:
+        """A pytest-tmp project root must be skipped (no override)."""
+        import mcp_server.paths as paths_mod
+
+        eph = tmp_path / "proj"  # under the pytest temp dir → ephemeral
+        eph.mkdir()
+        monkeypatch.setattr(paths_mod, "get_project_root", lambda: eph)
+        monkeypatch.delenv("CODEVIRA_ALLOW_EPHEMERAL_PROJECT", raising=False)
+
+        from mcp_server.global_sync import register_current_project
+
+        result = register_current_project()
+        assert result["registered"] is False
+        assert result["reason"] == "ephemeral project path"
+
+    def test_override_env_allows_ephemeral_registration(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """With the opt-in env, an ephemeral root registers normally."""
+        import mcp_server.paths as paths_mod
+
+        home = tmp_path / "home" / ".codevira"
+        home.mkdir(parents=True)
+        eph = tmp_path / "proj"
+        eph.mkdir()
+        monkeypatch.setattr(paths_mod, "get_project_root", lambda: eph)
+        monkeypatch.setattr(paths_mod, "get_global_db_path", lambda: home / "global.db")
+        monkeypatch.setattr(paths_mod, "get_data_dir", lambda: eph / ".codevira")
+        monkeypatch.setenv("CODEVIRA_ALLOW_EPHEMERAL_PROJECT", "1")
+
+        from mcp_server.global_sync import register_current_project
+
+        result = register_current_project()
+        assert result["registered"] is True

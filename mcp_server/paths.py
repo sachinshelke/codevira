@@ -270,6 +270,77 @@ def is_invalid_project_root(p: Path) -> str | None:
     return None
 
 
+#: Substrings that mark a path as ephemeral test / scratch space. macOS
+#: hands pytest temp dirs out under
+#: ``/private/var/folders/.../pytest-of-<user>/...``; Linux uses
+#: ``/tmp/pytest-of-...``. ``cv-dev-`` is codevira's own smoke-test
+#: scratch prefix.
+_EPHEMERAL_PATH_MARKERS: tuple[str, ...] = (
+    "/pytest-of-",
+    "/pytest-",
+    "/.pytest_cache",
+    "cv-dev-",
+)
+
+
+def is_ephemeral_project_path(p: Path) -> bool:
+    """Return True if ``p`` looks like ephemeral test / scratch space.
+
+    Catches pytest temp dirs and OS temp roots so transient projects
+    created during test runs don't pollute the cross-machine registry
+    that ``codevira projects`` lists. Best-effort — never raises.
+
+    Detection (any match wins):
+      - the path string contains a pytest / scratch marker
+        (``/pytest-of-``, ``/pytest-``, ``cv-dev-`` …), checked on both
+        the raw and resolved forms;
+      - ``p`` resolves under the OS temp dir
+        (``tempfile.gettempdir()`` — e.g. ``/tmp`` or macOS
+        ``/var/folders/...``);
+      - ``p`` is under a known temp top-level (``/tmp``, ``/private/tmp``,
+        ``/var/folders``, ``/private/var/folders``).
+
+    Args:
+        p: The candidate project root.
+
+    Returns:
+        True if the path is ephemeral and should be kept out of the
+        cross-machine registry; False otherwise.
+    """
+    import tempfile
+
+    try:
+        raw = str(p)
+        try:
+            resolved = p.resolve()
+        except (OSError, RuntimeError):
+            resolved = p
+
+        for s in (raw, str(resolved)):
+            if any(marker in s for marker in _EPHEMERAL_PATH_MARKERS):
+                return True
+
+        try:
+            tmp_root = Path(tempfile.gettempdir()).resolve()
+            if resolved == tmp_root or tmp_root in resolved.parents:
+                return True
+        except (OSError, RuntimeError):
+            pass
+
+        temp_tops = (
+            Path("/tmp"),
+            Path("/private/tmp"),
+            Path("/var/folders"),
+            Path("/private/var/folders"),
+        )
+        for top in temp_tops:
+            if resolved == top or top in resolved.parents:
+                return True
+    except Exception:  # noqa: BLE001 — classification must never raise
+        return False
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Data directory resolution (v1.6 centralized + legacy fallback)
 # ---------------------------------------------------------------------------

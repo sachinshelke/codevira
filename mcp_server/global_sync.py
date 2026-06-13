@@ -33,12 +33,28 @@ def register_current_project() -> dict:
     so the caller can swallow it without breaking server startup.
     """
     try:
+        import os
+
         from indexer.global_db import GlobalDB
-        from mcp_server.paths import get_global_db_path, get_project_root
+        from mcp_server.paths import (
+            get_global_db_path,
+            get_project_root,
+            is_ephemeral_project_path,
+        )
 
         project_root = get_project_root()
         if project_root is None:
             return {"registered": False, "reason": "no project root"}
+
+        # Keep pytest tmp dirs / scratch projects out of the cross-machine
+        # registry — these are the /private/var/folders/.../pytest-... and
+        # /tmp/cv-dev-... rows that leaked into `codevira projects`. Tests
+        # that specifically exercise registration opt back in via
+        # CODEVIRA_ALLOW_EPHEMERAL_PROJECT=1.
+        if is_ephemeral_project_path(project_root) and not os.environ.get(
+            "CODEVIRA_ALLOW_EPHEMERAL_PROJECT"
+        ):
+            return {"registered": False, "reason": "ephemeral project path"}
 
         global_db_path = get_global_db_path()
         global_db = GlobalDB(global_db_path)

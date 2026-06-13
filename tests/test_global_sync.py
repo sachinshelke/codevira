@@ -45,6 +45,9 @@ def isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     fake_home.mkdir()
     monkeypatch.setenv("HOME", str(fake_home))
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
+    # These tests intentionally register a tmp_path project (which the
+    # v3.4.0 ephemeral-path guard would otherwise skip). Opt back in.
+    monkeypatch.setenv("CODEVIRA_ALLOW_EPHEMERAL_PROJECT", "1")
 
     project = tmp_path / "myproject"
     project.mkdir()

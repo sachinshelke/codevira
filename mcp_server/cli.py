@@ -894,6 +894,24 @@ def main() -> None:
         action="store_true",
         help="Show each project's source path + data dir path (pairs project basename with the ~/.codevira/projects/<key>/ dir)",
     )
+    projects_parser.add_argument(
+        "--all",
+        action="store_true",
+        dest="show_all",
+        help="Include ephemeral test/scratch paths (pytest tmp dirs, /tmp), hidden by default",
+    )
+    # v3.4.0: `projects archive <name>` removes a project from the registry.
+    projects_parser.add_argument(
+        "action",
+        nargs="?",
+        choices=["archive"],
+        help="Sub-action. 'archive <name>' removes a project from the registry (files untouched).",
+    )
+    projects_parser.add_argument(
+        "name",
+        nargs="?",
+        help="Project name / basename / path to archive (used with `archive`).",
+    )
 
     # v2.2.0+: `agents` deleted per 2026-05-22 surface-cut audit.
     # The 6 per-IDE nudge files (CLAUDE.md, GEMINI.md, .cursor/rules/...,
@@ -1554,12 +1572,19 @@ def main() -> None:
         sys.exit(rc)
     elif args.command == "projects":
         # Bug 21b (rc.4) — project inventory
+        if getattr(args, "action", None) == "archive":
+            # v3.4.0: remove a project from the registry by name / path.
+            from mcp_server.cli_projects import cmd_projects_archive
+
+            sys.exit(cmd_projects_archive(getattr(args, "name", None)))
+
         from mcp_server.cli_projects import cmd_projects
 
         rc = cmd_projects(
             output_json=getattr(args, "output_json", False),
             ghosts_only=getattr(args, "ghosts_only", False),
             show_paths=getattr(args, "paths", False),  # 2026-05-17 Bug G
+            show_all=getattr(args, "show_all", False),  # v3.4.0
         )
         sys.exit(rc)
     # v2.2.0+: `agents` / `hooks` dispatch deleted (commands removed).

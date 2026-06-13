@@ -9,6 +9,19 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added
+
+- **`codevira projects` cleanup + staleness.** The project inventory now
+  shows a relative-age column (`today` / `5d ago` / `stale 45d`) so you
+  can see at a glance which registered projects have gone cold. Pytest
+  tmp dirs and `/tmp` scratch projects are kept out of the registry at
+  the source (a registration guard on ephemeral paths; tests opt back in
+  with `CODEVIRA_ALLOW_EPHEMERAL_PROJECT=1`) and hidden from the human
+  listing by default (shown with `--all`, always present in `--json`
+  tagged `ephemeral: true`). New `codevira projects archive <name>`
+  removes a project from the registry by name or path — files and data
+  dir untouched. (D0000PT)
+
 ### Fixed
 
 - **Engine false-positive: additive `Write` no longer hard-blocked.** The

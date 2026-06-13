@@ -133,13 +133,13 @@ async def reflect_async(
                 # so we don't need a working TextContent class at runtime —
                 # matters under test environments that swap mcp.types
                 # attributes for lightweight stubs.
-                from mcp.types import SamplingMessage
+                from mcp.types import SamplingMessage, TextContent
 
                 result = await server_session.create_message(
                     messages=[
                         SamplingMessage(
                             role="user",
-                            content={"type": "text", "text": prompt},
+                            content=TextContent(type="text", text=prompt),
                         )
                     ],
                     max_tokens=2000,

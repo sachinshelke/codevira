@@ -152,13 +152,13 @@ async def distill_preferences_async(
             if getattr(caps, "sampling", None) is None:
                 sampling_error = "client_did_not_advertise_sampling"
             else:
-                from mcp.types import SamplingMessage
+                from mcp.types import SamplingMessage, TextContent
 
                 result = await server_session.create_message(
                     messages=[
                         SamplingMessage(
                             role="user",
-                            content={"type": "text", "text": prompt},
+                            content=TextContent(type="text", text=prompt),
                         )
                     ],
                     max_tokens=1000,

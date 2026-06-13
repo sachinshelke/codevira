@@ -270,71 +270,50 @@ def is_invalid_project_root(p: Path) -> str | None:
     return None
 
 
-#: Substrings that mark a path as ephemeral test / scratch space. macOS
-#: hands pytest temp dirs out under
-#: ``/private/var/folders/.../pytest-of-<user>/...``; Linux uses
-#: ``/tmp/pytest-of-...``. ``cv-dev-`` is codevira's own smoke-test
-#: scratch prefix.
-_EPHEMERAL_PATH_MARKERS: tuple[str, ...] = (
-    "/pytest-of-",
-    "/pytest-",
-    "/.pytest_cache",
-    "cv-dev-",
-)
-
-
 def is_ephemeral_project_path(p: Path) -> bool:
-    """Return True if ``p`` looks like ephemeral test / scratch space.
+    """Return True if ``p`` lives under an OS temp directory.
 
-    Catches pytest temp dirs and OS temp roots so transient projects
-    created during test runs don't pollute the cross-machine registry
-    that ``codevira projects`` lists. Best-effort — never raises.
+    Used to keep transient pytest / scratch projects out of the
+    cross-machine registry that ``codevira projects`` lists. Best-effort —
+    never raises.
 
-    Detection (any match wins):
-      - the path string contains a pytest / scratch marker
-        (``/pytest-of-``, ``/pytest-``, ``cv-dev-`` …), checked on both
-        the raw and resolved forms;
-      - ``p`` resolves under the OS temp dir
-        (``tempfile.gettempdir()`` — e.g. ``/tmp`` or macOS
-        ``/var/folders/...``);
-      - ``p`` is under a known temp top-level (``/tmp``, ``/private/tmp``,
-        ``/var/folders``, ``/private/var/folders``).
+    Detection is by **temp-directory ancestry ONLY** — deliberately NOT
+    by substring markers like ``pytest-``. A real project named
+    ``pytest-django`` (or any path that merely *contains* such a token)
+    must never be classified ephemeral, or codevira would silently hide a
+    user's real project. The genuine pytest / scratch dirs always live
+    under the system temp root
+    (``/private/var/folders/.../pytest-of-<user>/...`` on macOS,
+    ``/tmp/pytest-of-...`` on Linux), so ancestry is both sufficient and
+    safe.
 
     Args:
         p: The candidate project root.
 
     Returns:
-        True if the path is ephemeral and should be kept out of the
-        cross-machine registry; False otherwise.
+        True only when ``p`` resolves under a temp root; False otherwise.
     """
     import tempfile
 
     try:
-        raw = str(p)
         try:
             resolved = p.resolve()
         except (OSError, RuntimeError):
             resolved = p
 
-        for s in (raw, str(resolved)):
-            if any(marker in s for marker in _EPHEMERAL_PATH_MARKERS):
-                return True
-
+        temp_roots: list[Path] = []
         try:
-            tmp_root = Path(tempfile.gettempdir()).resolve()
-            if resolved == tmp_root or tmp_root in resolved.parents:
-                return True
+            temp_roots.append(Path(tempfile.gettempdir()).resolve())
         except (OSError, RuntimeError):
             pass
-
-        temp_tops = (
+        temp_roots += [
             Path("/tmp"),
             Path("/private/tmp"),
             Path("/var/folders"),
             Path("/private/var/folders"),
-        )
-        for top in temp_tops:
-            if resolved == top or top in resolved.parents:
+        ]
+        for root in temp_roots:
+            if resolved == root or root in resolved.parents:
                 return True
     except Exception:  # noqa: BLE001 — classification must never raise
         return False

@@ -12,6 +12,7 @@ that calls it.
 
 See ``docs/heroes/02-anti-regression.md`` for the spec.
 """
+
 from __future__ import annotations
 
 import os
@@ -47,9 +48,14 @@ class AntiRegression(Policy):
     # ---- Configuration ----
 
     def _config(self) -> dict[str, Any]:
-        mode_raw = os.environ.get(
-            "CODEVIRA_ANTI_REGRESSION_MODE", _DEFAULT_MODE,
-        ).strip().lower()
+        mode_raw = (
+            os.environ.get(
+                "CODEVIRA_ANTI_REGRESSION_MODE",
+                _DEFAULT_MODE,
+            )
+            .strip()
+            .lower()
+        )
         mode = mode_raw if mode_raw in _MODES else _DEFAULT_MODE
         return {"mode": mode}
 
@@ -67,7 +73,9 @@ class AntiRegression(Policy):
     # ---- Evaluation ----
 
     def evaluate(
-        self, event: HookEvent, signals: SignalContext | None = None,
+        self,
+        event: HookEvent,
+        signals: SignalContext | None = None,
     ) -> PolicyVerdict:
         # Stage 1: structural filters
         if not event.is_edit():
@@ -101,8 +109,25 @@ class AntiRegression(Policy):
             # Anti-regression with no diff has nothing to compare.
             return PolicyVerdict.allow()
 
+        # v3.4.0: a full-file Write now carries a whole-file
+        # ``--- before / --- after`` envelope (so decision_lock and
+        # blast_radius can recognize purely-additive writes). The
+        # keyword-overlap revert heuristic below is calibrated for small
+        # Edit hunks; applied to an entire file it is both INEFFECTIVE at
+        # catching real reverts (a real revert REMOVES fix code, lowering
+        # after_hits — which the ``after > before`` test never flags) AND
+        # prone to false positives (any additive overwrite that merely
+        # mentions a fix's keywords more often would block). Pre-v3.4.0
+        # Write carried raw content and this policy no-op'd on it; preserve
+        # that. Edit / MultiEdit (precise hunks) are unaffected. Precise
+        # Write-revert detection is future work (needs line-level fix
+        # comparison, not whole-file keyword counting).
+        if event.tool_name == "Write":
+            return PolicyVerdict.allow()
+
         # Stage 4: check each (top-N) fix for revert match
         from indexer.fix_history import is_revert
+
         # Newest fixes first (signals.fixes already returns newest-first
         # per Week-2 SQL ORDER BY).
         candidates = fixes[:_MAX_FIXES_PER_FILE]
@@ -120,8 +145,10 @@ class AntiRegression(Policy):
             return PolicyVerdict.allow()
 
         return self._make_verdict(
-            event=event, config=config,
-            reverting=reverting, total_fixes_count=len(fixes),
+            event=event,
+            config=config,
+            reverting=reverting,
+            total_fixes_count=len(fixes),
         )
 
     # ---- Verdict construction ----
@@ -134,9 +161,7 @@ class AntiRegression(Policy):
         reverting: list[dict[str, Any]],
         total_fixes_count: int,
     ) -> PolicyVerdict:
-        target_name = (
-            event.target_file.name if event.target_file else "<unknown>"
-        )
+        target_name = event.target_file.name if event.target_file else "<unknown>"
 
         # Top-3 reverting fixes for the message
         sample_lines: list[str] = []
@@ -151,13 +176,8 @@ class AntiRegression(Policy):
             line_end = fix.get("line_end", 0)
             if line_start or line_end:
                 line_range = f" (lines {line_start}-{line_end})"
-            sample_lines.append(
-                f"  • {sha_short}: {description!r}{line_range}"
-            )
-        more = (
-            f"\n  ... and {len(reverting) - 3} more"
-            if len(reverting) > 3 else ""
-        )
+            sample_lines.append(f"  • {sha_short}: {description!r}{line_range}")
+        more = f"\n  ... and {len(reverting) - 3} more" if len(reverting) > 3 else ""
 
         message = (
             f"🛑 Anti-regression veto on {target_name}: this edit "

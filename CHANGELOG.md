@@ -36,6 +36,11 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `_diff_envelope.synthesize_proposed_diff` helper used by both the
   Claude Code hook and the MCP dispatch path. A `Write` that removes or
   changes existing lines still blocks — the moat is unchanged. (D0000PW)
+  `anti_regression` deliberately keeps its pre-v3.4.0 no-op behavior on
+  full-file `Write`s: its keyword-overlap revert heuristic is calibrated
+  for small Edit hunks and would false-block additive overwrites if run
+  over a whole file, so Writes are skipped there (Edit/MultiEdit revert
+  detection is unaffected).
 
 ### Changed
 

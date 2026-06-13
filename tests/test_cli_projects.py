@@ -268,13 +268,31 @@ class TestEphemeralDetection:
     def test_tmp_scratch_is_ephemeral(self) -> None:
         assert is_ephemeral_project_path(Path("/tmp/cv-dev-abc123/proj"))
 
-    def test_pytest_marker_anywhere_in_path(self) -> None:
-        assert is_ephemeral_project_path(Path("/anywhere/pytest-of-x/p"))
-
     def test_real_project_path_is_not_ephemeral(self) -> None:
         assert not is_ephemeral_project_path(
             Path("/Users/sachin/Documents/Projects/codevira")
         )
+
+    def test_real_project_named_like_a_temp_marker_is_not_ephemeral(self) -> None:
+        """Regression: detection is by temp-dir ANCESTRY, not substring.
+        A real project whose name merely contains 'pytest-' / 'cv-dev-'
+        must NOT be hidden or skipped from registration — that would
+        silently lose a user's real project."""
+        for safe in (
+            "/Users/sachin/Projects/pytest-django",
+            "/home/dev/repos/pytest-mock-resources",
+            "/Users/alice/cv-dev-dashboard",
+            "/Users/bob/work/tmp-utils",
+        ):
+            assert not is_ephemeral_project_path(Path(safe)), safe
+
+    def test_pytest_tmp_under_temp_root_is_ephemeral(self) -> None:
+        """The genuine pytest temp dir (under the system temp root) IS
+        ephemeral — ancestry catches it without the dangerous substring."""
+        import tempfile
+
+        real_tmp = Path(tempfile.gettempdir()) / "pytest-of-x" / "pytest-3" / "proj"
+        assert is_ephemeral_project_path(real_tmp)
 
     def test_classification_never_raises(self) -> None:
         assert is_ephemeral_project_path(Path("")) in (True, False)

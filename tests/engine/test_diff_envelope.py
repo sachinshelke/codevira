@@ -262,6 +262,106 @@ class TestWriteAdditiveFixBlastRadius:
         verdict = BlastRadiusVeto().evaluate(
             _write_event(target, tmp_path, new), _ImpactSignals(radius=20)
         )
-        assert (
-            verdict.is_blocking()
-        ), "removing a public signature from a hot file must block"
+        assert verdict.is_blocking(), (
+            "removing a public signature from a hot file must block"
+        )
+
+
+class TestEndToEndHookWiring:
+    """Prove the FULL Claude Code hook path builds the envelope — not just
+    the synthesizer in isolation. Closes the gap where synthesizer + policy
+    were each tested but never the real _build_event glue."""
+
+    def test_build_event_write_reads_disk_for_before(self, tmp_path: Path) -> None:
+        from mcp_server.engine.wiring import claude_code_hooks
+
+        project = tmp_path / "proj"
+        project.mkdir()
+        target = project / "auth.py"
+        target.write_text("def login():\n    return 1\n")
+
+        raw = {
+            "cwd": str(project),
+            "tool_name": "Write",
+            "tool_input": {
+                "file_path": str(target),
+                "content": (
+                    "def login():\n    return 1\n\ndef logout():\n    return 0\n"
+                ),
+            },
+        }
+        event = claude_code_hooks._build_event(EventType.PRE_TOOL_USE, raw)
+        before, after = parse_diff(event.proposed_diff or "")
+        assert "def login()" in (before or ""), "disk content must become `before`"
+        assert "def logout()" in (after or ""), "new content must become `after`"
+
+    def test_build_event_new_file_write_has_empty_before(self, tmp_path: Path) -> None:
+        from mcp_server.engine.wiring import claude_code_hooks
+
+        project = tmp_path / "proj"
+        project.mkdir()
+        target = project / "brand_new.py"  # not on disk
+        raw = {
+            "cwd": str(project),
+            "tool_name": "Write",
+            "tool_input": {"file_path": str(target), "content": "x = 1\n"},
+        }
+        event = claude_code_hooks._build_event(EventType.PRE_TOOL_USE, raw)
+        before, after = parse_diff(event.proposed_diff or "")
+        assert before == ""
+        assert "x = 1" in (after or "")
+
+
+class _FixSignals:
+    """SignalContext stand-in: the target file has one recorded bug-fix."""
+
+    def fixes(self, target):
+        return [
+            {
+                "description": "fix null user race condition",
+                "line_start": 1,
+                "line_end": 5,
+                "commit_sha": "abc12345",
+            }
+        ]
+
+
+class TestAntiRegressionWriteGuard:
+    """v3.4.0 regression guard: giving Write an envelope must NOT activate
+    anti_regression's whole-file keyword heuristic (block mode) and start
+    false-blocking additive overwrites that merely mention a fix's
+    keywords. Pre-v3.4.0 Write no-op'd here; that's preserved."""
+
+    # before mentions no fix keywords; after ADDS a comment that mentions
+    # several → after_hits > before_hits → the heuristic WOULD flag a revert.
+    _ENVELOPE = (
+        "--- before\n"
+        "def f():\n    pass\n"
+        "--- after\n"
+        "def f():\n    pass\n# handle null user race condition cleanly\n"
+    )
+
+    def _event(self, tool_name: str):
+        return HookEvent(
+            event_type=EventType.PRE_TOOL_USE,
+            project_root=Path("/p"),
+            tool_name=tool_name,
+            target_file=Path("/p/svc.py"),
+            proposed_diff=self._ENVELOPE,
+        )
+
+    def test_full_file_write_is_not_falsely_blocked(self, monkeypatch) -> None:
+        from mcp_server.engine.policies.anti_regression import AntiRegression
+
+        monkeypatch.delenv("CODEVIRA_ANTI_REGRESSION_MODE", raising=False)  # block
+        verdict = AntiRegression().evaluate(self._event("Write"), _FixSignals())
+        assert verdict.action == "allow", "additive Write must not be revert-blocked"
+
+    def test_edit_still_detects_revert(self, monkeypatch) -> None:
+        """Proof the guard is Write-specific, not a blanket disable: the
+        same envelope as an Edit still runs the revert heuristic."""
+        from mcp_server.engine.policies.anti_regression import AntiRegression
+
+        monkeypatch.delenv("CODEVIRA_ANTI_REGRESSION_MODE", raising=False)
+        verdict = AntiRegression().evaluate(self._event("Edit"), _FixSignals())
+        assert verdict.action in ("block", "warn"), "Edit revert detection intact"

@@ -24,6 +24,22 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Fixed
 
+- **Project binding: the MCP server could resolve the WRONG project.** A
+  user-scope codevira server (one shared entry, launched with no `cwd` /
+  `--project-dir` / `CODEVIRA_PROJECT_DIR`) had no project binding and
+  fell through to cwd discovery — frequently resolving to a *different*
+  project than the one open in the editor (cross-project memory
+  contamination: decisions/graph/sessions read from project A while you
+  work in project B). The server now resolves the active project from the
+  MCP client's workspace **roots** (Claude Code, Cursor, Windsurf all
+  expose these) on the first tool call, when not explicitly pinned. It
+  re-binds **only** to an already-initialized codevira project (`.codevira`
+  present), so a monorepo workspace root or a fresh repo can't hijack a
+  working setup; explicit `--project-dir` / `CODEVIRA_PROJECT_DIR` pins are
+  always respected; and the lookup is bounded by a timeout so it can never
+  hang dispatch. Upgrade + restart your MCP server to pick this up.
+  (D0000RO)
+
 - **Engine false-positive: additive `Write` no longer hard-blocked.** The
   `decision_lock`, `blast_radius`, and `anti_regression` policies key on
   the `--- before / --- after` diff envelope. `Edit`/`MultiEdit` always

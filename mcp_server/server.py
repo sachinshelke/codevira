@@ -1124,8 +1124,7 @@ async def list_tools() -> list[Tool]:
                         "type": "boolean",
                         "default": False,
                         "description": (
-                            "Exempt from auto-archive sweep; flag canonical "
-                            "doctrine."
+                            "Exempt from auto-archive sweep; flag canonical doctrine."
                         ),
                     },
                     "force": {
@@ -1268,8 +1267,7 @@ async def list_tools() -> list[Tool]:
                     "name": {
                         "type": "string",
                         "description": (
-                            "Optional filename slug; defaults to "
-                            "slugified(skill.name)"
+                            "Optional filename slug; defaults to slugified(skill.name)"
                         ),
                     },
                     "force": {"type": "boolean", "default": False},
@@ -1602,8 +1600,53 @@ async def list_tools() -> list[Tool]:
     return tools
 
 
+# Run the client-roots project binding once per process (the first tool
+# call). Subsequent calls skip it — roots don't change within a session.
+_roots_bind_attempted = False
+
+
+async def _bind_project_from_client_roots() -> None:
+    """Bind to the active project from the MCP client's workspace roots.
+
+    Fixes the user-scope-server misbinding: a shared codevira server with
+    no ``cwd`` / ``--project-dir`` / ``CODEVIRA_PROJECT_DIR`` would resolve
+    to whatever directory the process inherited (the wrong project). When
+    no explicit pin is set, we ask the client for its roots and pin the
+    real project instead. Runs once, best-effort, never raises, never
+    blocks dispatch (bounded by a timeout in the resolver).
+    """
+    global _roots_bind_attempted
+    if _roots_bind_attempted:
+        return
+    _roots_bind_attempted = True
+
+    import os
+
+    from mcp_server import paths
+
+    # Respect an explicit pin — never override --project-dir / the env var.
+    if paths._project_dir_override is not None or os.environ.get(
+        "CODEVIRA_PROJECT_DIR"
+    ):
+        return
+    try:
+        from mcp_server.project_binding import resolve_project_root_from_roots
+
+        session = server.request_context.session
+        chosen = await resolve_project_root_from_roots(session)
+        if chosen is not None:
+            paths.set_project_dir(chosen)
+            paths.invalidate_data_dir_cache()
+    except Exception:
+        pass  # best-effort: fall back to cwd discovery
+
+
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
+    # Bind to the correct project from the client's workspace roots before
+    # any path resolution happens (fixes user-scope-server misbinding).
+    await _bind_project_from_client_roots()
+
     # v1.6: Auto-init check — triggers background init on first call if needed.
     # This is a no-op (<1ms) on every subsequent call after initialization.
     try:

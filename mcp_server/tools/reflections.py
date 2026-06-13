@@ -133,13 +133,19 @@ async def reflect_async(
                 # so we don't need a working TextContent class at runtime —
                 # matters under test environments that swap mcp.types
                 # attributes for lightweight stubs.
-                from mcp.types import SamplingMessage, TextContent
+                from mcp.types import SamplingMessage
 
                 result = await server_session.create_message(
                     messages=[
                         SamplingMessage(
                             role="user",
-                            content=TextContent(type="text", text=prompt),
+                            # Pass content as a plain dict — pydantic coerces
+                            # it to TextContent at runtime (verified). We do
+                            # NOT import/construct TextContent here: that makes
+                            # this path fragile to test suites that stub
+                            # mcp.types with a SamplingMessage but no matching
+                            # TextContent, and a dict is always valid content.
+                            content={"type": "text", "text": prompt},  # type: ignore[arg-type]
                         )
                     ],
                     max_tokens=2000,

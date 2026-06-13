@@ -36,9 +36,11 @@ _modules_to_mock = [
     "tree_sitter",
 ]
 
+_mock_mods_installed: set[str] = set()
 for _mod_name in _modules_to_mock:
     if _mod_name not in sys.modules:
         sys.modules[_mod_name] = types.ModuleType(_mod_name)
+        _mock_mods_installed.add(_mod_name)
 
 # Provide symbols expected by server.py
 _mock_text_content = type(
@@ -70,12 +72,19 @@ _mock_server_instance.get_prompt.return_value = lambda fn: fn
 _mock_server_instance.list_resources.return_value = lambda fn: fn
 _mock_server_instance.read_resource.return_value = lambda fn: fn
 
-sys.modules["mcp.server"].Server = _mock_server_cls
-sys.modules["mcp.types"].Tool = _mock_tool
-sys.modules["mcp.types"].TextContent = _mock_text_content
-sys.modules[
-    "mcp.server.streamable_http_manager"
-].StreamableHTTPSessionManager = MagicMock()
+# Only override symbols on modules we actually stubbed above. NEVER mutate
+# a real mcp package that's already installed — doing so corrupts mcp.types
+# for the rest of the test session and breaks tests that exercise the real
+# MCP protocol (tests/test_binding_e2e.py). Same guard as test_server.py.
+if "mcp.server" in _mock_mods_installed:
+    sys.modules["mcp.server"].Server = _mock_server_cls
+if "mcp.types" in _mock_mods_installed:
+    sys.modules["mcp.types"].Tool = _mock_tool
+    sys.modules["mcp.types"].TextContent = _mock_text_content
+if "mcp.server.streamable_http_manager" in _mock_mods_installed:
+    sys.modules[
+        "mcp.server.streamable_http_manager"
+    ].StreamableHTTPSessionManager = MagicMock()
 
 # tree-sitter stubs — only when the real module isn't already loaded.
 # Overwriting real attributes here would corrupt test_treesitter_parser.py
@@ -265,9 +274,10 @@ class TestGenerateMkcertCerts:
     def test_calls_mkcert_subprocess(self, tmp_path, monkeypatch):
         """generate_mkcert_certs calls mkcert with correct arguments."""
         monkeypatch.setattr(paths, "get_global_home", lambda: tmp_path)
-        with patch("shutil.which", return_value="/usr/local/bin/mkcert"), patch(
-            "subprocess.run"
-        ) as mock_run:
+        with (
+            patch("shutil.which", return_value="/usr/local/bin/mkcert"),
+            patch("subprocess.run") as mock_run,
+        ):
             cert, key = generate_mkcert_certs()
         mock_run.assert_called_once()
         call_args = mock_run.call_args[0][0]
@@ -288,8 +298,9 @@ class TestGenerateMkcertCerts:
         monkeypatch.setattr(paths, "get_global_home", lambda: tmp_path)
         certs_dir = tmp_path / "certs"
         assert not certs_dir.exists()
-        with patch("shutil.which", return_value="/usr/local/bin/mkcert"), patch(
-            "subprocess.run"
+        with (
+            patch("shutil.which", return_value="/usr/local/bin/mkcert"),
+            patch("subprocess.run"),
         ):
             generate_mkcert_certs()
         assert certs_dir.exists()
@@ -297,8 +308,9 @@ class TestGenerateMkcertCerts:
     def test_returns_cert_and_key_paths(self, tmp_path, monkeypatch):
         """generate_mkcert_certs returns (cert_path, key_path) tuple."""
         monkeypatch.setattr(paths, "get_global_home", lambda: tmp_path)
-        with patch("shutil.which", return_value="/usr/local/bin/mkcert"), patch(
-            "subprocess.run"
+        with (
+            patch("shutil.which", return_value="/usr/local/bin/mkcert"),
+            patch("subprocess.run"),
         ):
             cert, key = generate_mkcert_certs()
         assert str(cert).endswith("localhost.pem")
@@ -406,11 +418,17 @@ class TestRunHttpServerBearerToken:
         monkeypatch.setattr(paths, "get_global_home", lambda: tmp_path)
         mock_uvicorn = self._make_mock_uvicorn()
 
-        with patch.dict("sys.modules", {"uvicorn": mock_uvicorn}), patch(
-            "mcp_server.http_server._get_or_create_token", return_value="test-token-xyz"
-        ) as mock_token, patch(
-            "mcp_server.http_server.create_app", return_value=MagicMock()
-        ) as mock_create_app, patch("builtins.print"):
+        with (
+            patch.dict("sys.modules", {"uvicorn": mock_uvicorn}),
+            patch(
+                "mcp_server.http_server._get_or_create_token",
+                return_value="test-token-xyz",
+            ) as mock_token,
+            patch(
+                "mcp_server.http_server.create_app", return_value=MagicMock()
+            ) as mock_create_app,
+            patch("builtins.print"),
+        ):
             run_http_server(host="0.0.0.0", port=7007)
 
         mock_token.assert_called_once()
@@ -421,11 +439,14 @@ class TestRunHttpServerBearerToken:
         monkeypatch.setattr(paths, "get_global_home", lambda: tmp_path)
         mock_uvicorn = self._make_mock_uvicorn()
 
-        with patch.dict("sys.modules", {"uvicorn": mock_uvicorn}), patch(
-            "mcp_server.http_server._get_or_create_token"
-        ) as mock_token, patch(
-            "mcp_server.http_server.create_app", return_value=MagicMock()
-        ) as mock_create_app, patch("builtins.print"):
+        with (
+            patch.dict("sys.modules", {"uvicorn": mock_uvicorn}),
+            patch("mcp_server.http_server._get_or_create_token") as mock_token,
+            patch(
+                "mcp_server.http_server.create_app", return_value=MagicMock()
+            ) as mock_create_app,
+            patch("builtins.print"),
+        ):
             run_http_server(host="127.0.0.1", port=7007)
 
         mock_token.assert_not_called()
@@ -436,11 +457,14 @@ class TestRunHttpServerBearerToken:
         monkeypatch.setattr(paths, "get_global_home", lambda: tmp_path)
         mock_uvicorn = self._make_mock_uvicorn()
 
-        with patch.dict("sys.modules", {"uvicorn": mock_uvicorn}), patch(
-            "mcp_server.http_server._get_or_create_token"
-        ) as mock_token, patch(
-            "mcp_server.http_server.create_app", return_value=MagicMock()
-        ) as mock_create_app, patch("builtins.print"):
+        with (
+            patch.dict("sys.modules", {"uvicorn": mock_uvicorn}),
+            patch("mcp_server.http_server._get_or_create_token") as mock_token,
+            patch(
+                "mcp_server.http_server.create_app", return_value=MagicMock()
+            ) as mock_create_app,
+            patch("builtins.print"),
+        ):
             run_http_server(host="localhost", port=7007)
 
         mock_token.assert_not_called()
@@ -451,10 +475,14 @@ class TestRunHttpServerBearerToken:
         monkeypatch.setattr(paths, "get_global_home", lambda: tmp_path)
         mock_uvicorn = self._make_mock_uvicorn()
 
-        with patch.dict("sys.modules", {"uvicorn": mock_uvicorn}), patch(
-            "mcp_server.http_server._get_or_create_token",
-            return_value="visible-token-123",
-        ), patch("mcp_server.http_server.create_app", return_value=MagicMock()):
+        with (
+            patch.dict("sys.modules", {"uvicorn": mock_uvicorn}),
+            patch(
+                "mcp_server.http_server._get_or_create_token",
+                return_value="visible-token-123",
+            ),
+            patch("mcp_server.http_server.create_app", return_value=MagicMock()),
+        ):
             run_http_server(host="0.0.0.0", port=7007)
 
         captured = capsys.readouterr()
@@ -469,77 +497,109 @@ class TestRunHttpServerBearerToken:
 class TestRunHttpServer:
     def test_crash_handler_exception_does_not_crash(self):
         """If crash handler install fails, run_http_server continues."""
-        with patch(
-            "mcp_server.crash_logger.install_global_handler",
-            side_effect=RuntimeError("boom"),
-        ), patch(
-            "mcp_server.migrate.detect_migration_needed", return_value=False
-        ), patch(
-            "indexer.index_codebase.start_background_watcher", return_value=MagicMock()
-        ), patch("indexer.outcome_tracker.analyze_session_outcomes"), patch(
-            "mcp_server.global_sync.import_global_to_project", return_value=None
-        ), patch("uvicorn.run"):
+        with (
+            patch(
+                "mcp_server.crash_logger.install_global_handler",
+                side_effect=RuntimeError("boom"),
+            ),
+            patch("mcp_server.migrate.detect_migration_needed", return_value=False),
+            patch(
+                "indexer.index_codebase.start_background_watcher",
+                return_value=MagicMock(),
+            ),
+            patch("indexer.outcome_tracker.analyze_session_outcomes"),
+            patch("mcp_server.global_sync.import_global_to_project", return_value=None),
+            patch("uvicorn.run"),
+        ):
             run_http_server()  # Must not raise
 
     def test_migration_triggered_on_startup(self):
         """run_http_server triggers migration if legacy .codevira/ detected."""
-        with patch("mcp_server.crash_logger.install_global_handler"), patch(
-            "mcp_server.migrate.detect_migration_needed", return_value=True
-        ), patch(
-            "mcp_server.migrate.migrate_to_centralized",
-            return_value={"migrated": True, "files_copied": 3, "new_path": "/tmp/x"},
-        ) as mock_migrate, patch(
-            "indexer.index_codebase.start_background_watcher", return_value=MagicMock()
-        ), patch("indexer.outcome_tracker.analyze_session_outcomes"), patch(
-            "mcp_server.global_sync.import_global_to_project", return_value=None
-        ), patch("uvicorn.run"):
+        with (
+            patch("mcp_server.crash_logger.install_global_handler"),
+            patch("mcp_server.migrate.detect_migration_needed", return_value=True),
+            patch(
+                "mcp_server.migrate.migrate_to_centralized",
+                return_value={
+                    "migrated": True,
+                    "files_copied": 3,
+                    "new_path": "/tmp/x",
+                },
+            ) as mock_migrate,
+            patch(
+                "indexer.index_codebase.start_background_watcher",
+                return_value=MagicMock(),
+            ),
+            patch("indexer.outcome_tracker.analyze_session_outcomes"),
+            patch("mcp_server.global_sync.import_global_to_project", return_value=None),
+            patch("uvicorn.run"),
+        ):
             run_http_server()
         mock_migrate.assert_called_once()
 
     def test_migration_exception_does_not_crash(self):
-        with patch("mcp_server.crash_logger.install_global_handler"), patch(
-            "mcp_server.migrate.detect_migration_needed",
-            side_effect=RuntimeError("migrate fail"),
-        ), patch(
-            "indexer.index_codebase.start_background_watcher", return_value=MagicMock()
-        ), patch("indexer.outcome_tracker.analyze_session_outcomes"), patch(
-            "mcp_server.global_sync.import_global_to_project", return_value=None
-        ), patch("uvicorn.run"):
+        with (
+            patch("mcp_server.crash_logger.install_global_handler"),
+            patch(
+                "mcp_server.migrate.detect_migration_needed",
+                side_effect=RuntimeError("migrate fail"),
+            ),
+            patch(
+                "indexer.index_codebase.start_background_watcher",
+                return_value=MagicMock(),
+            ),
+            patch("indexer.outcome_tracker.analyze_session_outcomes"),
+            patch("mcp_server.global_sync.import_global_to_project", return_value=None),
+            patch("uvicorn.run"),
+        ):
             run_http_server()  # Must not raise
 
     def test_watcher_exception_does_not_crash(self):
-        with patch("mcp_server.crash_logger.install_global_handler"), patch(
-            "mcp_server.migrate.detect_migration_needed", return_value=False
-        ), patch(
-            "indexer.index_codebase.start_background_watcher",
-            side_effect=ImportError("watchdog missing"),
-        ), patch("indexer.outcome_tracker.analyze_session_outcomes"), patch(
-            "mcp_server.global_sync.import_global_to_project", return_value=None
-        ), patch("uvicorn.run"):
+        with (
+            patch("mcp_server.crash_logger.install_global_handler"),
+            patch("mcp_server.migrate.detect_migration_needed", return_value=False),
+            patch(
+                "indexer.index_codebase.start_background_watcher",
+                side_effect=ImportError("watchdog missing"),
+            ),
+            patch("indexer.outcome_tracker.analyze_session_outcomes"),
+            patch("mcp_server.global_sync.import_global_to_project", return_value=None),
+            patch("uvicorn.run"),
+        ):
             run_http_server()  # Must not raise
 
     def test_learning_exception_does_not_crash(self):
-        with patch("mcp_server.crash_logger.install_global_handler"), patch(
-            "mcp_server.migrate.detect_migration_needed", return_value=False
-        ), patch(
-            "indexer.index_codebase.start_background_watcher", return_value=MagicMock()
-        ), patch(
-            "indexer.outcome_tracker.analyze_session_outcomes",
-            side_effect=RuntimeError("learning fail"),
-        ), patch(
-            "mcp_server.global_sync.import_global_to_project", return_value=None
-        ), patch("uvicorn.run"):
+        with (
+            patch("mcp_server.crash_logger.install_global_handler"),
+            patch("mcp_server.migrate.detect_migration_needed", return_value=False),
+            patch(
+                "indexer.index_codebase.start_background_watcher",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "indexer.outcome_tracker.analyze_session_outcomes",
+                side_effect=RuntimeError("learning fail"),
+            ),
+            patch("mcp_server.global_sync.import_global_to_project", return_value=None),
+            patch("uvicorn.run"),
+        ):
             run_http_server()  # Must not raise
 
     def test_global_sync_exception_does_not_crash(self):
-        with patch("mcp_server.crash_logger.install_global_handler"), patch(
-            "mcp_server.migrate.detect_migration_needed", return_value=False
-        ), patch(
-            "indexer.index_codebase.start_background_watcher", return_value=MagicMock()
-        ), patch("indexer.outcome_tracker.analyze_session_outcomes"), patch(
-            "mcp_server.global_sync.import_global_to_project",
-            side_effect=RuntimeError("sync fail"),
-        ), patch("uvicorn.run"):
+        with (
+            patch("mcp_server.crash_logger.install_global_handler"),
+            patch("mcp_server.migrate.detect_migration_needed", return_value=False),
+            patch(
+                "indexer.index_codebase.start_background_watcher",
+                return_value=MagicMock(),
+            ),
+            patch("indexer.outcome_tracker.analyze_session_outcomes"),
+            patch(
+                "mcp_server.global_sync.import_global_to_project",
+                side_effect=RuntimeError("sync fail"),
+            ),
+            patch("uvicorn.run"),
+        ):
             run_http_server()  # Must not raise
 
     def test_https_mode_generates_certs_when_missing(self, tmp_path, monkeypatch):
@@ -550,34 +610,42 @@ class TestRunHttpServer:
         cert_file.parent.mkdir(parents=True, exist_ok=True)
         cert_file.write_text("CERT")
         key_file.write_text("KEY")
-        with patch("mcp_server.crash_logger.install_global_handler"), patch(
-            "mcp_server.migrate.detect_migration_needed", return_value=False
-        ), patch(
-            "indexer.index_codebase.start_background_watcher", return_value=MagicMock()
-        ), patch("indexer.outcome_tracker.analyze_session_outcomes"), patch(
-            "mcp_server.global_sync.import_global_to_project", return_value=None
-        ), patch("mcp_server.http_server._certs_exist", return_value=False), patch(
-            "mcp_server.http_server.generate_mkcert_certs"
-        ) as mock_gen, patch(
-            "mcp_server.http_server._cert_file", return_value=cert_file
-        ), patch("mcp_server.http_server._key_file", return_value=key_file), patch(
-            "uvicorn.run"
+        with (
+            patch("mcp_server.crash_logger.install_global_handler"),
+            patch("mcp_server.migrate.detect_migration_needed", return_value=False),
+            patch(
+                "indexer.index_codebase.start_background_watcher",
+                return_value=MagicMock(),
+            ),
+            patch("indexer.outcome_tracker.analyze_session_outcomes"),
+            patch("mcp_server.global_sync.import_global_to_project", return_value=None),
+            patch("mcp_server.http_server._certs_exist", return_value=False),
+            patch("mcp_server.http_server.generate_mkcert_certs") as mock_gen,
+            patch("mcp_server.http_server._cert_file", return_value=cert_file),
+            patch("mcp_server.http_server._key_file", return_value=key_file),
+            patch("uvicorn.run"),
         ):
             run_http_server(use_https=True)
         mock_gen.assert_called_once()
 
     def test_https_mode_cert_generation_failure_returns_early(self):
         """When cert generation fails, run_http_server returns without starting uvicorn."""
-        with patch("mcp_server.crash_logger.install_global_handler"), patch(
-            "mcp_server.migrate.detect_migration_needed", return_value=False
-        ), patch(
-            "indexer.index_codebase.start_background_watcher", return_value=MagicMock()
-        ), patch("indexer.outcome_tracker.analyze_session_outcomes"), patch(
-            "mcp_server.global_sync.import_global_to_project", return_value=None
-        ), patch("mcp_server.http_server._certs_exist", return_value=False), patch(
-            "mcp_server.http_server.generate_mkcert_certs",
-            side_effect=RuntimeError("mkcert not found"),
-        ), patch("uvicorn.run") as mock_uvicorn:
+        with (
+            patch("mcp_server.crash_logger.install_global_handler"),
+            patch("mcp_server.migrate.detect_migration_needed", return_value=False),
+            patch(
+                "indexer.index_codebase.start_background_watcher",
+                return_value=MagicMock(),
+            ),
+            patch("indexer.outcome_tracker.analyze_session_outcomes"),
+            patch("mcp_server.global_sync.import_global_to_project", return_value=None),
+            patch("mcp_server.http_server._certs_exist", return_value=False),
+            patch(
+                "mcp_server.http_server.generate_mkcert_certs",
+                side_effect=RuntimeError("mkcert not found"),
+            ),
+            patch("uvicorn.run") as mock_uvicorn,
+        ):
             run_http_server(use_https=True)
         # uvicorn.run should NOT be called when cert generation fails
         mock_uvicorn.assert_not_called()
@@ -590,46 +658,54 @@ class TestRunHttpServer:
         cert_file.parent.mkdir(parents=True, exist_ok=True)
         cert_file.write_text("CERT")
         key_file.write_text("KEY")
-        with patch("mcp_server.crash_logger.install_global_handler"), patch(
-            "mcp_server.migrate.detect_migration_needed", return_value=False
-        ), patch(
-            "indexer.index_codebase.start_background_watcher", return_value=MagicMock()
-        ), patch("indexer.outcome_tracker.analyze_session_outcomes"), patch(
-            "mcp_server.global_sync.import_global_to_project", return_value=None
-        ), patch("mcp_server.http_server._certs_exist", return_value=True), patch(
-            "mcp_server.http_server.generate_mkcert_certs"
-        ) as mock_gen, patch(
-            "mcp_server.http_server._cert_file", return_value=cert_file
-        ), patch("mcp_server.http_server._key_file", return_value=key_file), patch(
-            "uvicorn.run"
+        with (
+            patch("mcp_server.crash_logger.install_global_handler"),
+            patch("mcp_server.migrate.detect_migration_needed", return_value=False),
+            patch(
+                "indexer.index_codebase.start_background_watcher",
+                return_value=MagicMock(),
+            ),
+            patch("indexer.outcome_tracker.analyze_session_outcomes"),
+            patch("mcp_server.global_sync.import_global_to_project", return_value=None),
+            patch("mcp_server.http_server._certs_exist", return_value=True),
+            patch("mcp_server.http_server.generate_mkcert_certs") as mock_gen,
+            patch("mcp_server.http_server._cert_file", return_value=cert_file),
+            patch("mcp_server.http_server._key_file", return_value=key_file),
+            patch("uvicorn.run"),
         ):
             run_http_server(use_https=True)
         mock_gen.assert_not_called()
 
     def test_project_dir_calls_set_project_dir(self, tmp_path):
         """When project_dir is passed, run_http_server calls set_project_dir."""
-        with patch("mcp_server.paths.set_project_dir") as mock_set, patch(
-            "mcp_server.crash_logger.install_global_handler"
-        ), patch(
-            "mcp_server.migrate.detect_migration_needed", return_value=False
-        ), patch(
-            "indexer.index_codebase.start_background_watcher", return_value=MagicMock()
-        ), patch("indexer.outcome_tracker.analyze_session_outcomes"), patch(
-            "mcp_server.global_sync.import_global_to_project", return_value=None
-        ), patch("uvicorn.run"):
+        with (
+            patch("mcp_server.paths.set_project_dir") as mock_set,
+            patch("mcp_server.crash_logger.install_global_handler"),
+            patch("mcp_server.migrate.detect_migration_needed", return_value=False),
+            patch(
+                "indexer.index_codebase.start_background_watcher",
+                return_value=MagicMock(),
+            ),
+            patch("indexer.outcome_tracker.analyze_session_outcomes"),
+            patch("mcp_server.global_sync.import_global_to_project", return_value=None),
+            patch("uvicorn.run"),
+        ):
             run_http_server(project_dir=tmp_path)
         mock_set.assert_called_once_with(tmp_path)
 
     def test_no_project_dir_skips_set_project_dir(self):
         """When project_dir is None (default), set_project_dir is not called."""
-        with patch("mcp_server.paths.set_project_dir") as mock_set, patch(
-            "mcp_server.crash_logger.install_global_handler"
-        ), patch(
-            "mcp_server.migrate.detect_migration_needed", return_value=False
-        ), patch(
-            "indexer.index_codebase.start_background_watcher", return_value=MagicMock()
-        ), patch("indexer.outcome_tracker.analyze_session_outcomes"), patch(
-            "mcp_server.global_sync.import_global_to_project", return_value=None
-        ), patch("uvicorn.run"):
+        with (
+            patch("mcp_server.paths.set_project_dir") as mock_set,
+            patch("mcp_server.crash_logger.install_global_handler"),
+            patch("mcp_server.migrate.detect_migration_needed", return_value=False),
+            patch(
+                "indexer.index_codebase.start_background_watcher",
+                return_value=MagicMock(),
+            ),
+            patch("indexer.outcome_tracker.analyze_session_outcomes"),
+            patch("mcp_server.global_sync.import_global_to_project", return_value=None),
+            patch("uvicorn.run"),
+        ):
             run_http_server()
         mock_set.assert_not_called()

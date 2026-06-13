@@ -152,13 +152,18 @@ async def distill_preferences_async(
             if getattr(caps, "sampling", None) is None:
                 sampling_error = "client_did_not_advertise_sampling"
             else:
-                from mcp.types import SamplingMessage, TextContent
+                from mcp.types import SamplingMessage
 
                 result = await server_session.create_message(
                     messages=[
                         SamplingMessage(
                             role="user",
-                            content=TextContent(type="text", text=prompt),
+                            # Plain dict — pydantic coerces to TextContent at
+                            # runtime. Intentionally not TextContent(...): that
+                            # makes this fragile to test suites that stub
+                            # mcp.types (SamplingMessage stub, no TextContent),
+                            # and a dict is always valid content.
+                            content={"type": "text", "text": prompt},  # type: ignore[arg-type]
                         )
                     ],
                     max_tokens=1000,

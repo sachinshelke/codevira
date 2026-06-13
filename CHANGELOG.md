@@ -7,7 +7,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [Unreleased]
+## [3.4.0] — 2026-06-13
 
 ### Added
 
@@ -36,6 +36,13 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `_diff_envelope.synthesize_proposed_diff` helper used by both the
   Claude Code hook and the MCP dispatch path. A `Write` that removes or
   changes existing lines still blocks — the moat is unchanged. (D0000PW)
+
+### Changed
+
+- **CI: opt into Node.js 24 for GitHub Actions.** GitHub forces Node.js
+  24 on runners from 2026-06-16; the CI and Pages workflows now set
+  `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true` to adopt it ahead of the
+  deadline and silence the deprecation warnings.
 
 ---
 

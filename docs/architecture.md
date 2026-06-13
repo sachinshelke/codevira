@@ -1,4 +1,4 @@
-# Codevira — Architecture (v3.3.0)
+# Codevira — Architecture (v3.4.0)
 
 > Codevira is a lean cross-IDE decision-enforcement layer.
 > ~1-2 MB per project. In your repo. No cloud. No vectors. MIT.
@@ -11,6 +11,11 @@
 > subsystems (working memory, skills, spatial, consensus, reflections;
 > +24 tools). v3.3.0 added preference capture (`distill_preferences` /
 > `search_preferences`) — the tool surface is now 49 AI-facing tools.
+> v3.4.0 is a precision + hygiene release (no tool-surface change):
+> the engine wiring now hands `Write` an honest `--- before/--- after`
+> diff (read from disk) so the additive-edit guards stop false-blocking
+> purely-additive full-file writes, and `codevira projects` gained
+> staleness labels + an `archive` subcommand + an ephemeral-path guard.
 
 ## The three layers (top to bottom)
 

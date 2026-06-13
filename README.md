@@ -238,7 +238,7 @@ The v3.0.0 CLI surface is 15 commands:
 | `codevira setup` | Detect installed AI tools + write MCP configs + Claude Code hooks |
 | `codevira doctor` | Health check (read-only; ✓/⚠/✗ + fix commands) |
 | `codevira status` | Show index health + project state |
-| `codevira projects` | List every project codevira tracks on this machine |
+| `codevira projects` | List tracked projects with staleness (`today` / `5d ago` / `stale 45d`); `projects archive <name>` drops one from the registry |
 | `codevira index` | Build / refresh the code graph cache |
 | `codevira sync` | Regenerate AGENTS.md + manifest + digest from `decisions.jsonl` |
 | `codevira observe-git` | Classify past decisions as kept/modified/reverted from git history |

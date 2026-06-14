@@ -101,8 +101,39 @@ def test_server_does_not_bind_to_git_only_root(tmp_path, monkeypatch):
 
     import mcp_server.paths as paths
 
+    # H3: a fresh project (workspace root is a git repo, no .codevira yet)
+    # SHOULD bind when cwd is uninitialized — otherwise auto-init lands in
+    # the wrong inherited cwd. The neutral cwd here is uninitialized.
+    assert paths._project_dir_override == project.resolve(), (
+        "a fresh git workspace must bind when cwd is uninitialized (H3)"
+    )
+
+
+def test_server_keeps_cwd_when_cwd_is_a_codevira_project(tmp_path, monkeypatch):
+    """H3 monorepo protection: if cwd already resolves to a real .codevira
+    project (e.g. a subproject), a git-only workspace root must NOT hijack
+    it."""
+    workspace = tmp_path / "monorepo"
+    (workspace / ".git").mkdir(parents=True)  # git, no .codevira
+
+    home = tmp_path / "home" / ".codevira"
+    home.mkdir(parents=True)
+    monkeypatch.setattr("mcp_server.paths.get_global_home", lambda: home)
+    monkeypatch.setattr(
+        "mcp_server.paths.get_global_db_path", lambda: home / "global.db"
+    )
+    # cwd IS an initialized codevira project.
+    cwd_proj = tmp_path / "subproject"
+    (cwd_proj / ".codevira").mkdir(parents=True)
+    monkeypatch.chdir(cwd_proj)
+    _reset_binding_globals(monkeypatch)
+
+    asyncio.run(_call_one_tool_with_roots(workspace))
+
+    import mcp_server.paths as paths
+
     assert paths._project_dir_override is None, (
-        "a git-only root must not hijack the binding"
+        "a git-only root must not override a cwd that is a real project"
     )
 
 

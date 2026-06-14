@@ -13,6 +13,7 @@ import types
 from pathlib import Path
 
 from mcp_server.project_binding import (
+    choose_binding,
     is_initialized_codevira_project,
     pick_project_root,
     resolve_project_root_from_roots,
@@ -139,14 +140,57 @@ class TestResolveFromRoots:
         result = asyncio.run(resolve_project_root_from_roots(session, timeout=0.01))
         assert result is None
 
-    def test_git_only_root_is_not_bound(self, tmp_path: Path) -> None:
-        """Conservative gate: a workspace root that's a git repo but NOT an
-        initialized codevira project must not hijack the binding (monorepo
-        / fresh-repo safety)."""
+    def test_resolve_returns_raw_workspace_root(self, tmp_path: Path) -> None:
+        """resolve returns the RAW best workspace root (even a .git-only
+        repo); the bind/no-bind gating is choose_binding's job now."""
         repo = tmp_path / "monorepo"
         (repo / ".git").mkdir(parents=True)
         session = _session([_root(f"file://{repo}")])
-        assert asyncio.run(resolve_project_root_from_roots(session)) is None
+        assert asyncio.run(resolve_project_root_from_roots(session)) == repo
+
+
+class TestChooseBinding:
+    """H3: the bind decision weighs the client's workspace root against
+    what cwd discovery resolves to."""
+
+    def test_codevira_workspace_binds(self, tmp_path: Path) -> None:
+        ws = tmp_path / "ws"
+        (ws / ".codevira").mkdir(parents=True)
+        cwd = tmp_path / "cwd"
+        cwd.mkdir()
+        assert choose_binding(ws, cwd) == ws
+
+    def test_fresh_git_workspace_binds_when_cwd_uninitialized(
+        self, tmp_path: Path
+    ) -> None:
+        # Brand-new project: bind to the workspace so auto-init doesn't land
+        # in the wrong inherited cwd.
+        ws = tmp_path / "fresh"
+        (ws / ".git").mkdir(parents=True)
+        cwd = tmp_path / "cwd"
+        cwd.mkdir()  # not a codevira project
+        assert choose_binding(ws, cwd) == ws
+
+    def test_git_workspace_does_not_override_initialized_cwd(
+        self, tmp_path: Path
+    ) -> None:
+        # Monorepo protection: cwd already points at a real .codevira
+        # subproject — never hijack it with the (uninitialized) repo root.
+        ws = tmp_path / "monorepo"
+        (ws / ".git").mkdir(parents=True)
+        cwd = tmp_path / "sub"
+        (cwd / ".codevira").mkdir(parents=True)
+        assert choose_binding(ws, cwd) is None
+
+    def test_non_repo_workspace_keeps_cwd(self, tmp_path: Path) -> None:
+        ws = tmp_path / "plain"
+        ws.mkdir()  # neither .git nor .codevira
+        cwd = tmp_path / "cwd"
+        cwd.mkdir()
+        assert choose_binding(ws, cwd) is None
+
+    def test_none_workspace_keeps_cwd(self, tmp_path: Path) -> None:
+        assert choose_binding(None, tmp_path) is None
 
 
 class TestIsInitialized:

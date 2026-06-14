@@ -237,6 +237,13 @@ def create_app(bearer_token: str | None = None) -> Starlette:
       GET  /mcp       → MCP SSE stream (some clients open a GET first)
       DELETE /mcp     → session teardown
     """
+    # H1: this server object is shared across all HTTP requests/sessions.
+    # The roots-binding hook pins a single process-global project, which
+    # would cross-contaminate sessions, so disable it under HTTP transport.
+    import mcp_server.server as _server_mod
+
+    _server_mod._is_http_transport = True
+
     session_manager = StreamableHTTPSessionManager(
         app=server,
         stateless=True,  # no resumability — simpler for local single-user use

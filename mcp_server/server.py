@@ -461,9 +461,11 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="search_decisions",
             description=(
-                "Search past decisions across sessions and roadmap phases "
-                "(hybrid BM25 + semantic; a self-calibrating threshold returns "
-                "zero results for gibberish rather than 'least bad' matches). "
+                "Search past decisions across sessions and roadmap phases. "
+                "Keyword search over an FTS5/BM25 index (Porter-stemmed) — "
+                "NO semantic/vector matching, so recall depends on sharing "
+                "keywords with the stored decision; for a concept with no "
+                "shared words, browse list_decisions or list_tags instead. "
                 "Default: 5 truncated matches (~500 tokens). Pass full=true for "
                 "untruncated text, or summary_only=true for a ~70%-smaller "
                 "{id, summary, score} payload. Answers 'has anyone decided this before?'"
@@ -1603,6 +1605,11 @@ async def list_tools() -> list[Tool]:
 # Run the client-roots project binding once per process (the first tool
 # call). Subsequent calls skip it — roots don't change within a session.
 _roots_bind_attempted = False
+# Set True by http_server before serving. Roots-binding pins ONE
+# process-global project — correct for stdio (one server per workspace),
+# but would cross-contaminate the shared HTTP server (one process, many
+# requests/sessions), so it is skipped under HTTP (H1).
+_is_http_transport = False
 
 
 async def _bind_project_from_client_roots() -> None:
@@ -1611,14 +1618,21 @@ async def _bind_project_from_client_roots() -> None:
     Fixes the user-scope-server misbinding: a shared codevira server with
     no ``cwd`` / ``--project-dir`` / ``CODEVIRA_PROJECT_DIR`` would resolve
     to whatever directory the process inherited (the wrong project). When
-    no explicit pin is set, we ask the client for its roots and pin the
-    real project instead. Runs once, best-effort, never raises, never
-    blocks dispatch (bounded by a timeout in the resolver).
+    no explicit pin is set, we ask the client for its workspace roots and
+    choose a binding via :func:`project_binding.choose_binding` (re-binds
+    to an established project, or to a fresh ``.git`` workspace root when
+    cwd isn't already a codevira project — so a brand-new project doesn't
+    auto-init in the wrong inherited cwd). Runs once, best-effort, never
+    raises, never blocks dispatch (bounded by a timeout). Skipped under
+    HTTP transport (shared process — see ``_is_http_transport``).
     """
     global _roots_bind_attempted
     if _roots_bind_attempted:
         return
     _roots_bind_attempted = True
+
+    if _is_http_transport:
+        return
 
     import os
 
@@ -1630,12 +1644,17 @@ async def _bind_project_from_client_roots() -> None:
     ):
         return
     try:
-        from mcp_server.project_binding import resolve_project_root_from_roots
+        from mcp_server.project_binding import (
+            choose_binding,
+            resolve_project_root_from_roots,
+        )
 
         session = server.request_context.session
-        chosen = await resolve_project_root_from_roots(session)
-        if chosen is not None:
-            paths.set_project_dir(chosen)
+        workspace = await resolve_project_root_from_roots(session)
+        cwd_root = paths.get_project_root()
+        target = choose_binding(workspace, cwd_root)
+        if target is not None and target != cwd_root:
+            paths.set_project_dir(target)
             paths.invalidate_data_dir_cache()
     except Exception:
         pass  # best-effort: fall back to cwd discovery

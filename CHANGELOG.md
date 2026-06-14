@@ -39,6 +39,26 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   always respected; and the lookup is bounded by a timeout so it can never
   hang dispatch. Upgrade + restart your MCP server to pick this up.
   (D0000RO)
+  - **Windows / UNC** workspace roots are now parsed correctly
+    (`file:///C:/...` and `file://host/share/...`) — the binding worked on
+    POSIX but silently failed / mis-bound on Cursor & Windsurf (Windows).
+  - **HTTP transport** skips the roots-binding hook entirely: the HTTP
+    server shares one process across sessions, so a process-global binding
+    would cross-contaminate; stdio is unaffected.
+  - **Brand-new projects** bind correctly: a fresh `.git` workspace root
+    is now bound when the inherited cwd isn't a codevira project, so
+    `.codevira` no longer gets auto-created in the wrong directory (a
+    monorepo cwd that already holds a real project is never overridden).
+  - **`codevira doctor`** gains a `project_binding` check that shows how
+    the project resolved (explicit pin vs. workspace) so you can verify
+    you're bound to the right project.
+
+- **Honest `search_decisions` tool description.** It claimed "hybrid BM25
+  + semantic; self-calibrating threshold" while the implementation is
+  pure FTS5 keyword/BM25 — the wording misled calling agents into
+  expecting semantic recall and gibberish-rejection that don't exist. Now
+  it accurately says keyword-only and points to `list_decisions` /
+  `list_tags` for zero-keyword-overlap concepts.
 
 - **Engine false-positive: additive `Write` no longer hard-blocked.** The
   `decision_lock`, `blast_radius`, and `anti_regression` policies key on

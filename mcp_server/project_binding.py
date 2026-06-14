@@ -157,11 +157,53 @@ async def resolve_project_root_from_roots(
     except Exception:  # noqa: BLE001 — best-effort (timeout, no-roots, transport)
         return None
     roots = getattr(result, "roots", None) or []
-    chosen = pick_project_root(
-        [root_uri_to_path(getattr(r, "uri", None)) for r in roots]
-    )
-    # Conservative re-bind: only an already-initialized codevira project is
-    # a safe target. A monorepo workspace root (.git, no .codevira) or a
-    # fresh repo must not hijack whatever the server already resolved — for
-    # those, return None and let cwd discovery stand.
-    return chosen if is_initialized_codevira_project(chosen) else None
+    # Return the RAW best workspace root. The bind/no-bind decision — incl.
+    # the conservative monorepo / fresh-project gating — lives in
+    # ``choose_binding`` so the caller can weigh it against cwd resolution.
+    return pick_project_root([root_uri_to_path(getattr(r, "uri", None)) for r in roots])
+
+
+def choose_binding(
+    workspace_root: Path | None,
+    cwd_root: Path | None,
+) -> Path | None:
+    """Decide which project a running server should bind to.
+
+    Given the client's chosen workspace root (from
+    :func:`resolve_project_root_from_roots`) and what cwd discovery
+    currently resolves to, return the root to bind to, or None to keep the
+    existing cwd binding.
+
+    Rules:
+      1. ``workspace_root`` has ``.codevira`` -> bind (an established
+         codevira project; the client's workspace IS the project).
+      2. ``workspace_root`` is a ``.git`` repo AND ``cwd_root`` is NOT an
+         initialized codevira project -> bind (a brand-new project; this
+         prevents auto-initing ``.codevira`` in the wrong inherited cwd).
+         The cwd guard protects the monorepo-subdir case: if cwd already
+         points at a real ``.codevira`` project, we never override it.
+      3. otherwise -> None (keep cwd).
+
+    Known limitation (documented; ``codevira doctor`` surfaces the binding):
+    if cwd already resolves to a DIFFERENT initialized codevira project and
+    the fresh workspace has no ``.codevira`` yet, rule 3 keeps cwd to avoid
+    hijacking — pin ``--project-dir`` for that case.
+
+    Args:
+        workspace_root: The client's workspace root, or None.
+        cwd_root: The project root cwd discovery resolves to, or None.
+
+    Returns:
+        The root to bind to, or None to keep the cwd binding.
+    """
+    if workspace_root is None:
+        return None
+    if is_initialized_codevira_project(workspace_root):
+        return workspace_root
+    try:
+        is_repo = (workspace_root / ".git").is_dir()
+    except OSError:
+        is_repo = False
+    if is_repo and not is_initialized_codevira_project(cwd_root):
+        return workspace_root
+    return None

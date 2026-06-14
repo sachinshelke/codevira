@@ -93,9 +93,9 @@ class TestScrubSensitive:
         assert len(token) >= 40
         out = reflections_store.scrub_sensitive(f"saw {token} in logs")
         # The pattern's KIND label is "long-b64" per _SECRET_PATTERNS.
-        assert (
-            "<redacted:long-b64>" in out
-        ), f"long-b64 pattern did NOT redact a 48-char token: {out!r}"
+        assert "<redacted:long-b64>" in out, (
+            f"long-b64 pattern did NOT redact a 48-char token: {out!r}"
+        )
         assert token not in out
 
     def test_long_b64_with_trailing_padding(self) -> None:
@@ -202,9 +202,9 @@ class TestBuildSourceContext:
             None,
         )
         assert sess is not None
-        assert (
-            "<redacted:bearer>" in sess["summary"]
-        ), f"session.summary NOT sanitized: {sess['summary']!r}"
+        assert "<redacted:bearer>" in sess["summary"], (
+            f"session.summary NOT sanitized: {sess['summary']!r}"
+        )
         assert "abc123XYZ" not in sess["summary"]
 
 
@@ -899,6 +899,47 @@ class TestReflectAsyncSampling:
 
         after = len(reflections_store.list_recent(limit=999))
         assert after == before, "dry_run must not write"
+
+    def test_sampling_content_passed_as_dict_not_textcontent(
+        self,
+        project: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """M2: reflect_async MUST pass SamplingMessage content as a plain
+        dict (pydantic coerces it to TextContent at runtime — verified).
+        Constructing TextContent(...) instead makes this path import-fragile
+        to test suites that stub mcp.types — the exact regression that broke
+        the full suite earlier. We capture the RAW content arg before any
+        coercion, so a silent revert to TextContent(...) fails CI."""
+        import sys
+
+        from mcp_server.tools.reflections import reflect_async
+
+        captured: dict = {}
+        mt = sys.modules.get("mcp.types")
+        assert mt is not None
+
+        class _CaptureSamplingMessage:
+            def __init__(self, **kw):
+                captured.update(kw)
+
+        monkeypatch.setattr(mt, "SamplingMessage", _CaptureSamplingMessage)
+
+        decisions_store.record(decision="X", tags=["t1"])
+        sessions_store.write("s1", task="x", task_type="bug")
+        sess = _FakeSession(canned_response="ok")
+        self._run(reflect_async(server_session=sess, dry_run=True))
+
+        assert sess.create_message_called == 1, (
+            "sampling path must have run (a TextContent revert would ImportError "
+            "under stubbed mcp.types and skip create_message)"
+        )
+        content = captured.get("content")
+        assert isinstance(content, dict), (
+            f"SamplingMessage content must be a plain dict, got {type(content)} "
+            "(a TextContent object means the fragile revert is back)"
+        )
+        assert content.get("type") == "text" and "text" in content
 
     def test_sampling_success_persists_when_dry_run_false(
         self,

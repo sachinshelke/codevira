@@ -104,3 +104,37 @@ def test_server_does_not_bind_to_git_only_root(tmp_path, monkeypatch):
     assert paths._project_dir_override is None, (
         "a git-only root must not hijack the binding"
     )
+
+
+def test_explicit_pin_wins_over_client_roots(tmp_path, monkeypatch):
+    """M1: an explicit CODEVIRA_PROJECT_DIR pin must NEVER be overridden by
+    the client's workspace roots. This is the core safety guarantee — if it
+    regressed, client roots could silently hijack a deliberately pinned
+    project. The whole suite would otherwise pass with the guarantee
+    inverted."""
+    pinned = tmp_path / "pinned"
+    (pinned / ".codevira").mkdir(parents=True)
+    other_root = tmp_path / "other"
+    (other_root / ".codevira").mkdir(parents=True)
+
+    home = tmp_path / "home" / ".codevira"
+    home.mkdir(parents=True)
+    monkeypatch.setattr("mcp_server.paths.get_global_home", lambda: home)
+    monkeypatch.setattr(
+        "mcp_server.paths.get_global_db_path", lambda: home / "global.db"
+    )
+    neutral = tmp_path / "neutral"
+    neutral.mkdir()
+    monkeypatch.chdir(neutral)
+    _reset_binding_globals(monkeypatch)
+    # Explicit pin to `pinned`; the client advertises a DIFFERENT root.
+    monkeypatch.setenv("CODEVIRA_PROJECT_DIR", str(pinned))
+
+    asyncio.run(_call_one_tool_with_roots(other_root))
+
+    import mcp_server.paths as paths
+
+    # The roots-binding path must have been skipped entirely (pin respected),
+    # and project resolution must land on the pinned dir, not the client root.
+    assert paths._project_dir_override is None
+    assert paths.get_project_root() == pinned.resolve()

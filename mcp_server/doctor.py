@@ -179,6 +179,58 @@ def check_project_root() -> CheckResult:
     )
 
 
+def check_project_binding() -> CheckResult:
+    """C3b — HOW the active project resolved (explicit pin vs workspace).
+
+    Lets a user confirm codevira is bound to the RIGHT project. An MCP
+    server with no explicit pin resolves the project from the editor's
+    workspace roots at runtime (stdio) or the current directory (CLI). If
+    memory ever shows the wrong project, pinning makes it deterministic.
+    This is observability for the user-scope-server binding issue.
+    """
+    import os
+
+    try:
+        from mcp_server import paths as _paths
+        from mcp_server.paths import get_project_root
+
+        root = get_project_root()
+    except Exception as e:  # noqa: BLE001 — never let a check crash the report
+        return CheckResult(
+            "project_binding",
+            _WARN,
+            f"could not determine binding: {e}",
+        )
+
+    if _paths._project_dir_override is not None:
+        return CheckResult(
+            "project_binding",
+            _PASS,
+            f"pinned via --project-dir -> {root}",
+        )
+    if os.environ.get("CODEVIRA_PROJECT_DIR"):
+        return CheckResult(
+            "project_binding",
+            _PASS,
+            f"pinned via CODEVIRA_PROJECT_DIR -> {root}",
+        )
+    return CheckResult(
+        "project_binding",
+        _PASS,
+        f"resolved from workspace -> {root}",
+        details=(
+            "No explicit pin. The MCP server binds to your editor's workspace "
+            "(client roots) at runtime; the CLI uses the current directory. "
+            "Confirm the path above is the project you intend. If memory ever "
+            "shows the WRONG project, pin it deterministically."
+        ),
+        fix_command=(
+            "codevira serve --project-dir <your-project>  "
+            "# or export CODEVIRA_PROJECT_DIR=<your-project>"
+        ),
+    )
+
+
 def check_graph_db() -> CheckResult:
     """C4 — graph.db opens + has the expected tables."""
     try:
@@ -853,6 +905,7 @@ _CHECKS: tuple[Callable[[], CheckResult], ...] = (
     check_python_version,
     check_codevira_data_dir,
     check_project_root,
+    check_project_binding,  # v3.4.0 — surface pin vs workspace resolution
     check_codevira_dir,  # v2.2.0 — replaces check_codeindex_freshness
     check_agents_md_size,  # v2.2.0 — new
     check_graph_db,

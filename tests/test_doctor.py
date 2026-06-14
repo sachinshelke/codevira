@@ -89,6 +89,45 @@ class TestProjectRoot:
         assert "rejected" in r.message
 
 
+class TestProjectBinding:
+    """v3.4.0 — surface HOW the project resolved so users can self-verify."""
+
+    def test_reports_explicit_pin(self, isolated_project, monkeypatch):
+        # isolated_project calls set_project_dir -> _project_dir_override set
+        monkeypatch.delenv("CODEVIRA_PROJECT_DIR", raising=False)
+        r = doctor.check_project_binding()
+        assert r.state == doctor._PASS
+        assert "pinned via --project-dir" in r.message
+
+    def test_reports_env_pin(self, tmp_path, monkeypatch):
+        import mcp_server.paths as paths_mod
+
+        proj = tmp_path / "p"
+        (proj / ".codevira").mkdir(parents=True)
+        monkeypatch.setattr(paths_mod, "_project_dir_override", None)
+        monkeypatch.setenv("CODEVIRA_PROJECT_DIR", str(proj))
+        r = doctor.check_project_binding()
+        assert r.state == doctor._PASS
+        assert "CODEVIRA_PROJECT_DIR" in r.message
+
+    def test_reports_workspace_when_no_pin(self, tmp_path, monkeypatch):
+        import mcp_server.paths as paths_mod
+
+        proj = tmp_path / "p"
+        (proj / ".codevira").mkdir(parents=True)
+        monkeypatch.setattr(paths_mod, "_project_dir_override", None)
+        monkeypatch.delenv("CODEVIRA_PROJECT_DIR", raising=False)
+        monkeypatch.chdir(proj)
+        r = doctor.check_project_binding()
+        assert r.state == doctor._PASS
+        assert "resolved from workspace" in r.message
+        assert r.fix_command  # offers the deterministic-pin command
+
+    def test_registered_in_run_all_checks(self):
+        names = [c.name for c in doctor.run_all_checks().results]
+        assert "project_binding" in names
+
+
 class TestGraphDB:
     def test_warn_when_missing(self, isolated_project: Path):
         r = doctor.check_graph_db()

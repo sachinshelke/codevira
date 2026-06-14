@@ -24,10 +24,18 @@ from urllib.parse import unquote, urlparse
 
 
 def root_uri_to_path(uri: str | None) -> Path | None:
-    """Convert an MCP root URI (``file:///abs/path``) to a Path.
+    """Convert an MCP root URI to a Path, cross-platform.
 
-    Returns None for empty input or a non-``file://`` scheme (e.g. a
-    remote root we can't map to a local project).
+    Handles the three real-world ``file://`` shapes (Cursor / Windsurf run
+    on Windows, so these matter):
+      - POSIX:           ``file:///Users/x/proj``     -> ``/Users/x/proj``
+      - Windows drive:   ``file:///C:/Users/x/proj``  -> ``C:/Users/x/proj``
+        (urlparse leaves a spurious leading slash before the drive letter)
+      - Windows UNC:     ``file://host/share/proj``   -> ``//host/share/proj``
+        (the authority lands in ``netloc``; dropping it would mis-bind)
+
+    ``localhost`` / empty authority is treated as local. Returns None for
+    empty input or a non-``file://`` scheme (a remote root we can't map).
 
     Args:
         uri: The root's URI string, or None.
@@ -40,9 +48,17 @@ def root_uri_to_path(uri: str | None) -> Path | None:
     s = str(uri)
     if s.startswith("file://"):
         parsed = urlparse(s)
-        s = unquote(parsed.path)
-        if not s:
+        netloc = parsed.netloc
+        path = unquote(parsed.path)
+        if netloc and netloc.lower() != "localhost":
+            # UNC: file://host/share/... -> //host/share/... (keep the host).
+            path = f"//{netloc}{path}"
+        elif len(path) >= 3 and path[0] == "/" and path[1].isalpha() and path[2] == ":":
+            # Windows drive: /C:/Users/... -> C:/Users/...
+            path = path[1:]
+        if not path:
             return None
+        s = path
     elif "://" in s:
         # Some non-local scheme — not a local project root.
         return None

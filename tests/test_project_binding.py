@@ -37,6 +37,24 @@ class TestRootUriToPath:
     def test_bare_path(self) -> None:
         assert root_uri_to_path("/Users/x/proj") == Path("/Users/x/proj")
 
+    # H2: Windows / UNC — Cursor & Windsurf run on Windows. Assert on the
+    # path STRING so the cases are meaningful on any host OS.
+    def test_windows_drive_letter(self) -> None:
+        # urlparse leaves '/C:/...'; the spurious leading slash must go.
+        assert str(root_uri_to_path("file:///C:/Users/x/proj")) == "C:/Users/x/proj"
+
+    def test_windows_drive_letter_with_encoded_space(self) -> None:
+        assert str(root_uri_to_path("file:///C:/My%20Code/app")) == "C:/My Code/app"
+
+    def test_unc_path_keeps_host(self) -> None:
+        # The authority (host) must NOT be dropped, or we mis-bind.
+        assert str(root_uri_to_path("file://host/share/proj")) == "//host/share/proj"
+
+    def test_localhost_authority_is_local(self) -> None:
+        assert root_uri_to_path("file://localhost/Users/x/proj") == Path(
+            "/Users/x/proj"
+        )
+
 
 class TestPickProjectRoot:
     def test_prefers_codevira_over_git(self, tmp_path: Path) -> None:

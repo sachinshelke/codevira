@@ -397,6 +397,25 @@ class TestArchive:
         )
         assert _delete_project_row("/whatever") is False
 
+    def test_archive_leaves_files_and_data_dir_untouched(self, fake_global) -> None:
+        """M4: archive deletes ONLY the registry row — NEVER the project's
+        source files or its ~/.codevira data dir. This command sounds
+        destructive; the no-data-loss invariant must be pinned so a future
+        regression that rmtree'd the data dir can't pass CI."""
+        real = fake_global["real"]
+        (real / "main.py").write_text("print('hi')\n")
+        data_dir = fake_global["db_path"].parent / "projects" / "slug123"
+        data_dir.mkdir(parents=True)
+        (data_dir / "decisions.jsonl").write_text("{}\n")
+
+        assert cmd_projects_archive("realproj") == 0
+        assert _row_count(fake_global["db_path"]) == 0  # registry row gone
+
+        # The project's files and its data dir MUST survive untouched.
+        assert (real / "main.py").read_text() == "print('hi')\n"
+        assert real.is_dir()
+        assert (data_dir / "decisions.jsonl").read_text() == "{}\n"
+
 
 class TestRegistrationGuard:
     def test_ephemeral_root_is_not_registered(self, tmp_path, monkeypatch) -> None:

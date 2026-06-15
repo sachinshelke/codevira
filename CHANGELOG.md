@@ -117,6 +117,14 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   the same "Next up" list inline. The on-device-model track is marked
   deferred (folded into E5's opt-in path).
 
+- **README "What's new" + counts refreshed to v3.4.0.** The README's
+  "What's new" section was still headlined v3.1.1; it now leads with
+  v3.4.0 (binding, honest docs, `projects`, per-call resolution, engine
+  fix) and bridges 3.1–3.3 with a pointer to the CHANGELOG. Stale
+  surface counts corrected to the verified current numbers: **49**
+  surfaced MCP tools (was "24"), **21** CLI commands (was "15"), **8**
+  engine policies (was "6").
+
 ---
 
 ## [3.3.0] — 2026-06-13

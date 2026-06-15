@@ -93,25 +93,28 @@ every AI tool, on every project, on your local machine.**
 
 ---
 
-## What's new in v3.1.1 — hardening + interrogable memory
+## What's new in v3.4.0 — reliable project binding + honest docs
 
-> 3.1.1 supersedes the briefly-published 3.1.0 (which shipped
-> without this README/CHANGELOG entry). Same code shape; this
-> release is the documented one. Brings five memory subsystems
-> (M1–M9 from 3.1.0) plus the v3.1.1 hardening + viewer overhaul.
+> The headline fix: **one user-scope codevira server now binds the
+> right project** instead of silently contaminating memory across
+> projects. Upgrade and restart your MCP server to pick this up.
 
 | Area | What you get |
 |---|---|
-| **Five memory subsystems** | Origin tagging (M1), working memory (M2), skill library with FTS5 ranking (M3), spatial memory + activity heatmap (M4), skill induction wired to outcomes (M5), cross-IDE consensus check + handshake (M6/M7), reflections (M8). 22 new MCP tools. |
-| **Secret scrubbing everywhere** | Decisions, sessions, working memory, skills, reflections — every store scrubs api-key / Bearer / password / AWS AKIA / long hex / long base64 at the write boundary. One shared `mcp_server/storage/sanitize.py`. |
-| **Counter-decision discipline** | `record_decision` now accepts `alternatives_considered: list[str]` and `would_re_examine_if: str` — losing options + invalidation trigger surface in the viewer's rich-detail panel. Optional + back-compat. |
-| **Interrogable graph viewer** | `codevira graph` is no longer a passive force-layout. Free-text search → top-K ranked panel with score + outcome badge. Q&A intent detection ("what did we decide about X", "what got reverted", "what's protected"). Outcome lens (kept/modified/reverted). Lineage trace mode for supersession chains. |
-| **Auto outcome classification** | `codevira sync` now runs `observe-git` as a best-effort tail step — outcomes flow into the viewer's outcome lens automatically. |
-| **G3 real-IDE smoke** | The last permanently-skipped gauntlet gate now ships as a real check. Verifies codevira is registered in each detected IDE config + MCP `tools/list` round-trips in <1s. |
-| **AGENTS.md no more churn** | `regenerate()` is now idempotent — no rewrite when content unchanged, no perpetual uncommitted-drift loop. |
-| **4 silent bugs fixed** | `commit_session("../escape")` rejected; `triggers.tags="git"` rejected; `list_all(limit=0)` returns `[]`; spatial BFS catches query-time sqlite errors. |
+| **Project binding fixed** | A shared, user-scope server (launched with no `cwd` / `--project-dir`) used to fall through to cwd discovery and resolve the *wrong* project — reading decisions from project A while you worked in project B. It now resolves the active project from the MCP client's workspace **roots** (Claude Code, Cursor, Windsurf all expose these), re-binding only to an already-initialized `.codevira` project; explicit pins always win; bounded by a timeout so dispatch can't hang. |
+| **Windows / UNC + HTTP isolation** | `file:///C:/...` and `file://host/share/...` roots now parse correctly (was POSIX-only — Cursor/Windsurf on Windows). The HTTP transport is isolated from the process-global binding. Brand-new projects bind without creating `.codevira` in the wrong directory. |
+| **Claude Desktop: memory follows the file** | The single global server resolves the active project per tool call from the call's `file_path`, so memory tracks whichever project you're working in. |
+| **Honest `search_decisions` docs** | The tool description claimed "hybrid BM25 + semantic"; the implementation is pure FTS5 keyword/BM25. Corrected so calling agents aren't misled into expecting semantic recall. |
+| **`codevira projects` + `doctor`** | `projects` gains a staleness column (`today` / `5d ago` / `stale 45d`), an ephemeral-path guard, and `projects archive <name>`. `doctor` gains a `project_binding` check showing how the project resolved. |
+| **Engine false-positive fixed** | A purely-additive full-file `Write` is no longer hard-blocked by `decision_lock` / `blast_radius` (the `--- before / --- after` diff envelope is now synthesized for `Write` too). A `Write` that removes or changes existing lines still blocks. |
 
-Full v3.1.1 release notes: [CHANGELOG.md](CHANGELOG.md#311--2026-05-30--hardening-viewer-overhaul-g3-sync-observe-git).
+Since the v3.0.0 lean reset: **3.1** added five memory subsystems
+(working memory, skills, spatial, consensus, reflections), **3.3** added
+LLM-distilled preferences. Full history is in the
+[CHANGELOG](CHANGELOG.md); what's coming next is in the
+[Roadmap](ROADMAP.md).
+
+Full v3.4.0 release notes: [CHANGELOG.md](CHANGELOG.md#340--2026-06-15).
 
 ---
 
@@ -231,7 +234,7 @@ summary: 13 pass · 0 warn · 0 fail
 
 ### Daily-use commands
 
-The v3.0.0 CLI surface is 15 commands:
+The CLI surface is 21 commands (the daily-use ones below):
 
 | Command | What it does |
 |---|---|
@@ -466,7 +469,7 @@ The opt-in extra `pip install 'codevira[all-languages]'` re-adds the
 | `do_not_revert` enforcement at Claude Code PreToolUse | Multi-language code graph for languages outside Python / TS / JS / Go / Rust — use the `[all-languages]` extra |
 | FTS5 decision search with BM25 ranking | Real-time multi-machine sync — by design, codevira is local-first; for team sharing, commit `.codevira/` to git |
 | Per-project + cross-machine project inventory (`global.db`) | Web UI for browsing decisions — use the `codevira://decisions` MCP resource in Claude Desktop, or `codevira replay --format html` for a static file |
-| All 24 MCP tools (23 AI-facing + 1 admin) + 15 CLI commands + 6 engine policies | The HTTP server (`codevira serve`) is single-project per launch — for daily use, stick with stdio via `codevira setup` |
+| All 49 surfaced MCP tools + 21 CLI commands + 8 engine policies | The HTTP server (`codevira serve`) is single-project per launch — for daily use, stick with stdio via `codevira setup` |
 | Concurrent-safe storage layer (Posix `fcntl.flock` + Windows sentinel fallback). Proven against 50-thread + 20-subprocess stress + 29-attack chaos harness | The cross-process file-lock contract has been exercised on macOS + Linux CI; the Windows sentinel-file fallback is verified via unit-test simulation but hasn't been load-tested on real Windows yet |
 | Code graph data store is functional but the v3.0.0 spec target (`<project>/.codevira-cache/graph.sqlite`) and the actual location (`<data_dir>/graph/graph.db`) drifted during the surface-cut audit. Tracked for v3.1 reconciliation | n/a (functional today; spec-truthfulness gap only) |
 

@@ -16,6 +16,7 @@ from mcp_server.project_binding import (
     choose_binding,
     is_initialized_codevira_project,
     pick_project_root,
+    resolve_project_from_file_path,
     resolve_project_root_from_roots,
     root_uri_to_path,
 )
@@ -147,6 +148,41 @@ class TestResolveFromRoots:
         (repo / ".git").mkdir(parents=True)
         session = _session([_root(f"file://{repo}")])
         assert asyncio.run(resolve_project_root_from_roots(session)) == repo
+
+
+class TestResolveProjectFromFilePath:
+    """Per-call resolution: the file in a tool call points at its project."""
+
+    def test_finds_enclosing_codevira_project(self, tmp_path: Path) -> None:
+        proj = tmp_path / "projA"
+        (proj / ".codevira").mkdir(parents=True)
+        (proj / "src").mkdir()
+        f = proj / "src" / "main.py"
+        f.write_text("x=1\n")
+        assert resolve_project_from_file_path(str(f)) == proj
+
+    def test_finds_project_for_nonexistent_file(self, tmp_path: Path) -> None:
+        # A new file that doesn't exist yet still resolves via its ancestors.
+        proj = tmp_path / "projB"
+        (proj / ".codevira").mkdir(parents=True)
+        ghost = proj / "src" / "newmodule" / "thing.py"  # not created
+        assert resolve_project_from_file_path(str(ghost)) == proj
+
+    def test_directory_path_resolves(self, tmp_path: Path) -> None:
+        proj = tmp_path / "projC"
+        (proj / ".codevira").mkdir(parents=True)
+        sub = proj / "pkg"
+        sub.mkdir()
+        assert resolve_project_from_file_path(str(sub)) == proj
+
+    def test_no_codevira_ancestor_returns_none(self, tmp_path: Path) -> None:
+        plain = tmp_path / "plain"
+        (plain / "src").mkdir(parents=True)
+        assert resolve_project_from_file_path(str(plain / "src" / "f.py")) is None
+
+    def test_none_and_empty(self) -> None:
+        assert resolve_project_from_file_path(None) is None
+        assert resolve_project_from_file_path("") is None
 
 
 class TestChooseBinding:

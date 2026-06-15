@@ -137,6 +137,46 @@ def test_server_keeps_cwd_when_cwd_is_a_codevira_project(tmp_path, monkeypatch):
     )
 
 
+def test_tool_path_switches_project_for_claude_desktop(tmp_path, monkeypatch):
+    """Per-call resolution: a Claude Desktop tool call whose file_path is in
+    project B switches the active project to B (memory follows the file)."""
+    import mcp_server.paths as paths
+    import mcp_server.server as srv
+
+    proj_a = tmp_path / "A"
+    (proj_a / ".codevira").mkdir(parents=True)
+    proj_b = tmp_path / "B"
+    (proj_b / ".codevira").mkdir(parents=True)
+
+    monkeypatch.setattr(paths, "_project_dir_override", None)
+    paths.set_project_dir(proj_a)  # start bound to A
+    monkeypatch.setenv("CODEVIRA_IDE", "claude_desktop")
+
+    srv._maybe_bind_from_tool_path({"file_path": str(proj_b / "src" / "x.py")})
+
+    assert paths.get_project_root() == proj_b.resolve()
+
+
+def test_tool_path_ignored_for_non_claude_desktop(tmp_path, monkeypatch):
+    """Strict-binding IDEs are untouched: per-call switching is gated to
+    Claude Desktop only."""
+    import mcp_server.paths as paths
+    import mcp_server.server as srv
+
+    proj_a = tmp_path / "A"
+    (proj_a / ".codevira").mkdir(parents=True)
+    proj_b = tmp_path / "B"
+    (proj_b / ".codevira").mkdir(parents=True)
+
+    monkeypatch.setattr(paths, "_project_dir_override", None)
+    paths.set_project_dir(proj_a)
+    monkeypatch.setenv("CODEVIRA_IDE", "claude-code")  # an IDE, not desktop
+
+    srv._maybe_bind_from_tool_path({"file_path": str(proj_b / "x.py")})
+
+    assert paths.get_project_root() == proj_a.resolve()  # unchanged
+
+
 def test_explicit_pin_wins_over_client_roots(tmp_path, monkeypatch):
     """M1: an explicit CODEVIRA_PROJECT_DIR pin must NEVER be overridden by
     the client's workspace roots. This is the core safety guarantee — if it

@@ -1660,11 +1660,43 @@ async def _bind_project_from_client_roots() -> None:
         pass  # best-effort: fall back to cwd discovery
 
 
+def _maybe_bind_from_tool_path(arguments: dict) -> None:
+    """Per-call project resolution for GLOBAL clients (Claude Desktop).
+
+    Claude Desktop is one shared, project-less server — it gives no
+    per-conversation workspace signal, so the ``file_path`` in a tool call
+    is the only project signal available. Resolve the enclosing codevira
+    project from it and switch the active binding (``set_project_dir``
+    invalidates the per-root data-dir cache, so subsequent reads come from
+    the right project's ``.codevira/``). Sticky: a path-less follow-up tool
+    keeps the last resolved project. Gated to ``CODEVIRA_IDE=claude_desktop``
+    so strictly workspace-bound IDEs (Claude Code / Cursor / Windsurf) are
+    untouched. Best-effort, never raises, never blocks dispatch.
+    """
+    import os
+
+    if os.environ.get("CODEVIRA_IDE") != "claude_desktop":
+        return
+    try:
+        from mcp_server import paths
+        from mcp_server.project_binding import resolve_project_from_file_path
+
+        fp = arguments.get("file_path") or arguments.get("path")
+        target = resolve_project_from_file_path(fp)
+        if target is not None and target != paths.get_project_root():
+            paths.set_project_dir(target)
+    except Exception:
+        pass
+
+
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     # Bind to the correct project from the client's workspace roots before
     # any path resolution happens (fixes user-scope-server misbinding).
     await _bind_project_from_client_roots()
+    # Global clients (Claude Desktop) have no workspace signal — let the
+    # tool call's file_path drive which project's memory we use.
+    _maybe_bind_from_tool_path(arguments)
 
     # v1.6: Auto-init check — triggers background init on first call if needed.
     # This is a no-op (<1ms) on every subsequent call after initialization.

@@ -22,6 +22,16 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   removes a project from the registry by name or path — files and data
   dir untouched. (D0000PT)
 
+- **Per-call project resolution for Claude Desktop.** Claude Desktop is a
+  single global server with no per-conversation workspace signal, so it
+  could only ever bind to one project. Now, for `CODEVIRA_IDE=claude_desktop`,
+  the active project is resolved per tool call from the call's `file_path`
+  (walking up to the enclosing `.codevira/`), and is sticky for path-less
+  follow-ups — so codevira's memory follows whichever project you're
+  working in, across all of them. Strictly workspace-bound IDEs (Claude
+  Code / Cursor / Windsurf) are unaffected (gated). Best-effort and
+  read-safe (the per-root data-dir cache re-resolves on switch).
+
 ### Fixed
 
 - **Project binding: the MCP server could resolve the WRONG project.** A

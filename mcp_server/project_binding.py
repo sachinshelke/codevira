@@ -207,3 +207,44 @@ def choose_binding(
     if is_repo and not is_initialized_codevira_project(cwd_root):
         return workspace_root
     return None
+
+
+def resolve_project_from_file_path(file_path: str | None) -> Path | None:
+    """Find the initialized codevira project that contains ``file_path``.
+
+    Walks up from the file's directory to the first ancestor that has a
+    ``.codevira/`` dir (and is not a refused system root). Used by GLOBAL
+    clients with no per-conversation workspace signal (Claude Desktop) to
+    drive memory by the project the user is actually working in — the tool
+    call's path is the only project signal available there.
+
+    Works on a path string even if the file doesn't exist yet (new file):
+    only the ancestor directories are stat'd. Returns None for empty input
+    or when no enclosing codevira project is found.
+
+    Args:
+        file_path: A file or directory path from a tool call, or None.
+
+    Returns:
+        The enclosing initialized codevira project root, or None.
+    """
+    if not file_path:
+        return None
+    from mcp_server.paths import is_invalid_project_root
+
+    try:
+        p = Path(file_path)
+    except (OSError, ValueError):
+        return None
+    try:
+        is_dir = p.is_dir()
+    except OSError:
+        is_dir = False
+    start = p if is_dir else p.parent
+    for cand in [start, *start.parents]:
+        try:
+            if (cand / ".codevira").is_dir() and is_invalid_project_root(cand) is None:
+                return cand
+        except OSError:
+            continue
+    return None

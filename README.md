@@ -502,8 +502,24 @@ Common questions about setup, usage, architecture, and troubleshooting
 
 ## Roadmap
 
-See what's built, what's next, and the long-term vision — see
-[ROADMAP.md](ROADMAP.md).
+**Current release:** **v3.4.0** — one user-scope server now binds the
+right project per call (no more cross-project memory contamination),
+Windows/UNC workspace roots, and a `codevira doctor` binding check.
+
+**Next up** (directional, not dated):
+
+- **Summary-first payloads** + **session-transcript ingest** — leaner
+  responses, and memory that learns from how sessions actually went
+- **Eval harness** — measurable recall + enforcement quality in CI
+- **Managed memory files beyond `AGENTS.md`** — `CLAUDE.md`,
+  `.cursor/rules`, `GEMINI.md`
+- **Optional `[semantic]` recall** — off by default; the base install
+  stays pure-keyword, no vectors, no model download
+- **TypeScript `get_signature`**, finer-grained decision locking,
+  learned hot-path tuning
+
+What's built, the full upcoming list, and the long-term vision —
+**[ROADMAP.md](ROADMAP.md)**.
 
 ## Star History
 

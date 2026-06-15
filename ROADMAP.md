@@ -12,6 +12,41 @@ Have a suggestion? [Open a feature request](https://github.com/sachinshelke/code
 
 ---
 
+## 🚀 Current release — v3.4.0 (2026-06-15)
+
+One user-scope server now serves **every** project correctly:
+
+- **Per-call project binding** — a single shared MCP entry resolves the right project on each tool call (from the client's workspace roots, or the file path the call touches), instead of contaminating memory across projects.
+- **Windows / UNC workspace roots** — `file:///C:/...` and `file://host/share/...` paths bind correctly (Cursor / Windsurf on Windows).
+- **HTTP-transport isolation** — the shared HTTPS server no longer mis-binds from client roots.
+- **`codevira doctor` binding check** — surfaces exactly which project the server is bound to and why.
+- **Honest `search_decisions` docs** — the tool now states plainly it is keyword (FTS5/BM25) search, not semantic.
+- **`codevira projects`** — list/inspect/archive registered projects, with staleness labels.
+
+---
+
+## 🔜 What's next (after v3.4.0)
+
+> **Directional, not dated.** These are the next phases on deck, priority-ordered — *not* committed release dates. The non-negotiables stay: local-first, MIT, and **no vectors in the default install**. Want one sooner? [Open a feature request](https://github.com/sachinshelke/codevira/issues/new?template=feature_request.md).
+
+| Next | What you'll get | Priority |
+|------|-----------------|----------|
+| **E1 — Summary-first payloads** | Even leaner default tool responses; opt-in `full=true` when you want the detail | High |
+| **E2 — Session-transcript ingest** | Memory learns from how sessions *actually* went — candidate reflections/skills mined from transcripts, not just explicit `record_decision` calls | High |
+| **E3 — Eval harness** | Measurable recall@k + `do_not_revert` block-correctness, wired into CI as a report so memory quality can't silently regress | Medium |
+| **E4 — Managed files beyond `AGENTS.md`** | Auto-maintain `CLAUDE.md`, `.cursor/rules`, `GEMINI.md` too (marker-delimited; your own content preserved byte-for-byte) | Medium |
+| **E5 — Optional `[semantic]` recall** | `pip install codevira[semantic]` adds a ~30 MB CPU embedding as a *fallback* re-rank on top of FTS5. **Off by default** — the base install stays pure-keyword, no vectors, no model download | Medium |
+| **TypeScript `get_signature`** | Multi-language symbol extraction beyond Python (TS/Go/Rust via the tree-sitter parsers already used for the graph) | Medium |
+| **Finer-grained decision locking** | Lock at the symbol/region level, not just whole-file | Medium |
+| **Learned hot-path tuning** | Spatial heat self-tunes which files surface first (git-optional) | Medium |
+| **Single outcome store** | Reconcile the two kept/modified/reverted stores into one source of truth | Medium |
+
+**On hold:** a tiny on-device model for memory abstraction (former Phase 14) is **deferred** — its goal is folded into **E5**'s opt-in semantic path, which delivers the same recall win without bundling a model into the default install.
+
+The shipped history below is preserved as-built; sections still marked 🔜 from older versions (v1.8–v2.3) have since shipped or been folded into the v3.x line — the table above is the current source of truth for what's next.
+
+---
+
 ## ✅ v1.0 — Foundation (March 2026)
 
 Everything needed to give AI agents persistent memory on a single project.

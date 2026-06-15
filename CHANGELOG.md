@@ -105,6 +105,18 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true` to adopt it ahead of the
   deadline and silence the deprecation warnings.
 
+### Docs
+
+- **Public "What's next" roadmap.** `ROADMAP.md` gains a current-release
+  summary and a priority-ordered, *directional (not dated)* "What's next"
+  table — summary-first payloads (E1), session-transcript ingest (E2),
+  eval harness (E3), managed memory files beyond `AGENTS.md` (E4), and an
+  opt-in `[semantic]` recall extra that stays **off by default** (E5),
+  plus TypeScript `get_signature`, finer-grained decision locking, and
+  learned hot-path tuning. The README `## Roadmap` section now surfaces
+  the same "Next up" list inline. The on-device-model track is marked
+  deferred (folded into E5's opt-in path).
+
 ---
 
 ## [3.3.0] — 2026-06-13

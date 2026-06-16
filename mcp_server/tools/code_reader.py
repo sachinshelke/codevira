@@ -8,7 +8,8 @@ Always reads from disk. No index, no ChromaDB, no staleness risk.
 
 Language support:
   - Python: stdlib ast module (full support)
-  - TypeScript, Go, Rust: tree-sitter grammars via treesitter_parser
+  - TypeScript, TSX, JavaScript, JSX, Go, Rust: tree-sitter grammars via
+    treesitter_parser
 """
 
 from __future__ import annotations
@@ -53,7 +54,7 @@ def get_signature(file_path: str) -> dict:
     Get the skeleton of a source file: all public function and class names,
     their signatures, docstrings, and line ranges.
 
-    Supports Python, TypeScript, Go, and Rust.
+    Supports Python, TypeScript, TSX, JavaScript, JSX, Go, and Rust.
 
     Args:
         file_path: Relative path from project root (e.g. 'src/services/generator.py')
@@ -83,7 +84,7 @@ def get_signature(file_path: str) -> dict:
     return {
         "found": False,
         "file_path": file_path,
-        "error": f"Unsupported file type: {ext}. Supported: .py, .ts, .tsx, .go, .rs",
+        "error": f"Unsupported file type: {ext}. Supported: .py, .ts, .tsx, .js, .jsx, .go, .rs",
     }
 
 
@@ -229,7 +230,7 @@ def get_code(file_path: str, symbol: str | None = None) -> dict:
         "found": False,
         "file_path": file_path,
         "symbol": symbol,
-        "error": f"Unsupported file type: {ext}. Supported: .py, .ts, .tsx, .go, .rs",
+        "error": f"Unsupported file type: {ext}. Supported: .py, .ts, .tsx, .js, .jsx, .go, .rs",
     }
 
 

@@ -69,6 +69,7 @@ from mcp_server.tools.search import (
     write_session_log,
     list_decisions,
     list_tags,  # v2.1.2 Items 11 + 27
+    expand,  # E1 (Phase 19): summary-first expand path
 )
 # v2.2.0+ (2026-05-22 surface-cut audit batch 6) — dropped imports:
 #   - get_full_roadmap (rarely needed by agents; `get_roadmap` is the
@@ -466,9 +467,12 @@ async def list_tools() -> list[Tool]:
                 "NO semantic/vector matching, so recall depends on sharing "
                 "keywords with the stored decision; for a concept with no "
                 "shared words, browse list_decisions or list_tags instead. "
-                "Default: 5 truncated matches (~500 tokens). Pass full=true for "
-                "untruncated text, or summary_only=true for a ~70%-smaller "
-                "{id, summary, score} payload. Answers 'has anyone decided this before?'"
+                "Default (E1): summary-first rows — {id, decision (one-line ≤140), "
+                "file_path, do_not_revert, tags, score}, dropping per-row "
+                "snippet/origin. Pass full=true for untruncated rows, "
+                "expand(ids=[...]) to fetch specific decisions in full, or "
+                "summary_only=true for a ~70%-smaller {id, summary, score} "
+                "payload. Answers 'has anyone decided this before?'"
             ),
             inputSchema={
                 "type": "object",
@@ -504,7 +508,10 @@ async def list_tools() -> list[Tool]:
                 "v2.1.2 Item 11: enumerate decisions with filters (since_date, "
                 "file_pattern, protected_only, session_id, tags). Closes the gap "
                 "that 'codevira can remember things across sessions, but can't "
-                "list what it remembers.' Returns ~50 tokens per row by default."
+                "list what it remembers.' Default (E1): compact rows — one-line "
+                "decision summary + key fields; full=true (or "
+                "CODEVIRA_DECISION_DETAIL=full) for untruncated records, "
+                "expand(ids=[...]) to fetch specific decisions in full."
             ),
             inputSchema={
                 "type": "object",
@@ -561,6 +568,28 @@ async def list_tools() -> list[Tool]:
                 "we track?'"
             ),
             inputSchema={"type": "object", "properties": {}},
+        ),
+        Tool(
+            name="expand",
+            description=(
+                "E1 (Phase 19): fetch FULL decision records by ID — the expand "
+                "path for the summary-first search_decisions / list_decisions "
+                "defaults. Scan the cheap compact rows, then pass the IDs you "
+                "care about here for complete text + context + origin. "
+                "Returns {requested, count, decisions, not_found}; never raises "
+                "on unknown IDs."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Decision IDs to fetch in full (e.g. ['D0000Z4']).",
+                    },
+                },
+                "required": ["ids"],
+            },
         ),
         # v2.2.0+ (2026-05-22 surface-cut audit batch 6): the batch
         # endpoints `record_decisions` and `write_session_logs` were
@@ -1591,6 +1620,7 @@ async def list_tools() -> list[Tool]:
             "get_roadmap",
             "search_decisions",
             "list_decisions",
+            "expand",  # E1 (Phase 19): essential complement to summary-first search
             "record_decision",
             "update_phase_status",
             "complete_phase",
@@ -1824,6 +1854,9 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             )
         elif name == "list_tags":
             result = list_tags()
+        elif name == "expand":
+            # E1 (Phase 19): expand path for the summary-first defaults.
+            result = expand(arguments.get("ids") or [])
         # v2.2.0+ batch 6: record_decisions (batch) and write_session_logs
         # (batch) dispatchers deleted along with the tools.
         elif name == "supersede_decision":

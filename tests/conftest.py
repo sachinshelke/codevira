@@ -134,18 +134,42 @@ from indexer.sqlite_graph import SQLiteGraph  # noqa: E402 — must follow stub 
 
 
 @pytest.fixture(autouse=True)
-def _isolate_global_home(tmp_path, monkeypatch):
-    """Prevent ALL tests from writing to the real ~/.codevira/.
+def _isolate_global_home(tmp_path_factory, monkeypatch):
+    """Prevent ALL tests from writing to real codevira storage — BOTH the
+    global ``~/.codevira/`` AND the per-project ``./.codevira/``.
 
-    This autouse fixture ensures no test pollutes the real centralized
-    storage directory. Each test gets its own fake global home.
+    2026-06-16 fix: pre-fix this only redirected ``get_global_home``, leaving
+    the PER-PROJECT data dir resolving from the cwd (= the repo root under
+    pytest). Any test that called ``decisions_store.record()`` without its own
+    project fixture therefore wrote to the REAL repo's
+    ``.codevira/decisions.jsonl`` — 1240 ``"Use bcrypt for password hashing"``
+    fixtures leaked into real memory over three weeks, found by the E3
+    relevance eval.
+
+    We now also chdir off the repo root into a throwaway project so cwd-based
+    resolution lands in disposable storage. Two deliberate choices:
+
+    * **chdir, not _project_dir_override** — composes with test-local fixtures
+      that chdir into their own project, and lets resolution logic still run
+      for the tests that exercise it (setup wizard, project binding).
+    * **isolated dirs live OUTSIDE the per-test ``tmp_path``** (via
+      ``tmp_path_factory``) — otherwise a test doing ``tmp_path.rglob('*')``
+      would pick up our injected ``.codevira/config.yaml`` (caught by
+      test_gitignore's language inference).
     """
-    fake_home = tmp_path / "isolated-global-home"
-    fake_home.mkdir(exist_ok=True)
+    base = tmp_path_factory.mktemp("cv-isolated")
+    fake_home = base / "global-home"
+    fake_home.mkdir()
     monkeypatch.setattr(paths, "get_global_home", lambda: fake_home)
     # Clear module-level caches that carry state between tests:
     paths._data_dir_cache.clear()
     monkeypatch.setattr(paths, "_project_dir_override", None)
+    iso_project = base / "project"
+    (iso_project / ".codevira").mkdir(parents=True)
+    (iso_project / ".codevira" / "config.yaml").write_text(
+        "project:\n  name: isolated-test\n"
+    )
+    monkeypatch.chdir(iso_project)
 
 
 @pytest.fixture

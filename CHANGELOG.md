@@ -39,6 +39,12 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Cursor `.mdc` is a dedicated codevira-owned file with valid frontmatter.
   Re-runs are idempotent, and the session-transcript scanner skips the injected
   block so it can't re-ingest its own output. (D000110)
+- **Opt-in synonym recall widening (E5).** A no-dependency, curated dev-domain
+  synonym map widens FTS5 queries so a search in one vocabulary recalls a
+  decision recorded in a synonymous one (e.g. `database` → `postgres`). Enable
+  with `CODEVIRA_SYNONYM_WIDENING=1`; default off (the E3 eval showed it trades
+  a little ranking precision for recall, so it's opt-in). The `[semantic]`
+  embedding extra remains deferred (on-device model on hold). (D000113)
 
 ### Changed
 

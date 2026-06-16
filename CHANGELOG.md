@@ -31,6 +31,14 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   its objective, persisting only a meaningful win. Opt-in at the hot path via
   `CODEVIRA_LEARNED_WEIGHTS` (default off, fallback to shipped defaults),
   cached per process for prompt-cache stability. (D00010Z)
+- **Multiple managed memory files (E4).** The marker-block writer can now
+  maintain `CLAUDE.md`, `GEMINI.md`, and `.cursor/rules/codevira.mdc` in
+  addition to `AGENTS.md`, configured via `.codevira/config.yaml:
+  managed_files`. Default stays `AGENTS.md`-only (the rest are opt-in). Shared
+  markdown files preserve everything outside the markers byte-for-byte; the
+  Cursor `.mdc` is a dedicated codevira-owned file with valid frontmatter.
+  Re-runs are idempotent, and the session-transcript scanner skips the injected
+  block so it can't re-ingest its own output. (D000110)
 
 ### Changed
 

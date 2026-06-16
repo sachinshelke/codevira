@@ -71,12 +71,25 @@ def excerpt(text: str | None) -> str:
     return cleaned[: EXCERPT_CHARS - 1] + "…"
 
 
+# E4 (Phase 22) echo-safety: codevira's own managed marker-block, injected
+# into CLAUDE.md / AGENTS.md / .cursor rules, can echo back into a transcript.
+# It must never be mistaken for a user correction (that would let codevira
+# re-ingest its own output). Marker substring is enough to recognize it.
+_MANAGED_MARKER = "codevira:begin"
+
+
+def is_managed_block(text: str | None) -> bool:
+    """True if ``text`` contains codevira's injected managed-block marker."""
+    return bool(text) and _MANAGED_MARKER in str(text)
+
+
 def looks_like_correction(text: str | None) -> bool:
     """True if a user turn reads like a correction of the assistant.
 
     Only the leading window is scanned (corrections lead; long pastes that
-    merely contain "wrong" deep inside don't count)."""
-    if not text:
+    merely contain "wrong" deep inside don't count). E4 echo-safety: codevira's
+    own injected managed-block is never a correction."""
+    if not text or is_managed_block(text):
         return False
     return bool(_CORRECTION_RE.search(str(text)[:200]))
 

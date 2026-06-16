@@ -91,6 +91,8 @@ def build_source_context(
     *,
     period_days: int = 7,
     now: datetime | None = None,
+    include_transcripts: bool = False,
+    project_root: Any | None = None,
 ) -> dict[str, Any]:
     """Aggregate recent sessions + decisions for the reflection prompt.
 
@@ -99,6 +101,12 @@ def build_source_context(
     field that could carry a secret. Returns ``{period_start,
     period_end, sessions, decisions, source_session_ids,
     source_decision_ids, envelope_bytes}``.
+
+    E2 (Phase 20): when ``include_transcripts`` is True, a READ-ONLY scan of
+    local AI-IDE session logs (Claude Code / Codex / Gemini) is folded in as
+    ``transcript_signals`` — sanitized, capped failure/correction signals.
+    Best-effort: a scan failure leaves the field empty and never breaks the
+    reflect call. This feeds CANDIDATES only — nothing is auto-committed.
     """
     now_dt = now or datetime.now(timezone.utc)
     from datetime import timedelta
@@ -185,11 +193,31 @@ def build_source_context(
         else:
             sanitized_sessions.pop()
 
+    # E2: optional READ-ONLY transcript scan. Excerpts are already scrubbed
+    # at parse time; capped per-session + per-scan. Best-effort by design.
+    transcript_signals: list[dict[str, Any]] = []
+    if include_transcripts:
+        try:
+            from mcp_server.ingest import scan_sessions, to_reflection_signals
+
+            root = project_root
+            if root is None:
+                from mcp_server.paths import get_project_root
+
+                root = get_project_root()
+            digests = scan_sessions(
+                root, since_days=max(period_days, 1), max_sessions=12
+            )
+            transcript_signals = to_reflection_signals(digests)
+        except Exception:  # noqa: BLE001 — scan must never break reflect
+            transcript_signals = []
+
     return {
         "period_start": period_start.isoformat(),
         "period_end": now_dt.isoformat(),
         "sessions": sanitized_sessions,
         "decisions": sanitized_decisions,
+        "transcript_signals": transcript_signals,
         "source_session_ids": [
             str(s.get("session_id") or "")
             for s in sanitized_sessions
@@ -252,10 +280,27 @@ def _render_context_block(ctx: dict[str, Any]) -> str:
     for d in ctx.get("decisions") or []:
         tags = ", ".join(d.get("tags") or [])
         lines.append(
-            f"  - id: {d.get('id')!r}  tags: [{tags}]  " f"file: {d.get('file_path')!r}"
+            f"  - id: {d.get('id')!r}  tags: [{tags}]  file: {d.get('file_path')!r}"
         )
         if d.get("decision"):
             lines.append(f"    decision: {d['decision']}")
+
+    # E2 (Phase 20): heuristic signals mined from recent IDE session
+    # transcripts — tool FAILURES and user CORRECTIONS worth reflecting on.
+    signals = ctx.get("transcript_signals") or []
+    if signals:
+        lines.append("")
+        lines.append("session_transcript_signals:")
+        for sig in signals:
+            lines.append(
+                f"  - source: {sig.get('source')!r}  tool_calls: {sig.get('tool_calls')}"
+            )
+            for f in sig.get("failures") or []:
+                lines.append(f"    failed[{f.get('tool')}]: {f.get('error')}")
+            for c in sig.get("corrections") or []:
+                lines.append(
+                    f"    user_correction (after {c.get('after_tool')!r}): {c.get('said')}"
+                )
     return "\n".join(lines)
 
 

@@ -1333,6 +1333,61 @@ def main() -> None:
         action="store_true",
         help="With --apply: skip the interactive confirm prompt.",
     )
+    reflect_parser.add_argument(
+        "--from-sessions",
+        action="store_true",
+        help="E2: fold a READ-ONLY scan of local IDE session transcripts "
+        "(tool failures + user corrections) into the reflect prompt as "
+        "extra signal. Candidates only — nothing is committed.",
+    )
+
+    # v3.5.0 E3: read-side relevance eval — codevira eval [--k N]
+    # [--max-cases N] [--min-recall F]. Self-derived cases from real memory;
+    # non-gating quality signal.
+    eval_parser = subparsers.add_parser(
+        "eval",
+        help="Measure read-side relevance (recall@k / MRR / precision) of "
+        "search_decisions on self-derived cases. Non-gating.",
+    )
+    eval_parser.add_argument(
+        "--k",
+        type=int,
+        default=5,
+        help="top-k cutoff for recall/precision (default 5).",
+    )
+    eval_parser.add_argument(
+        "--max-cases", type=int, default=200, help="cap on eval cases (default 200)."
+    )
+    eval_parser.add_argument(
+        "--no-trend",
+        action="store_true",
+        help="Don't append metrics to .codevira-cache/eval/relevance.jsonl.",
+    )
+    eval_parser.add_argument(
+        "--min-recall",
+        type=float,
+        default=None,
+        help="Opt-in CI gate: exit 1 if recall@k falls below this (0-1).",
+    )
+
+    # v3.5.0 Phase 13: learn relevance_inject ranking weights from real memory
+    # (E3 objective) — codevira tune-weights [--k N] [--dry-run].
+    tune_parser = subparsers.add_parser(
+        "tune-weights",
+        help="Learn relevance_inject ranking weights from real memory via the "
+        "E3 objective; persists only a meaningful win. Cold-path, non-gating.",
+    )
+    tune_parser.add_argument(
+        "--k", type=int, default=5, help="top-k cutoff (default 5)."
+    )
+    tune_parser.add_argument(
+        "--max-cases", type=int, default=200, help="cap on eval cases (default 200)."
+    )
+    tune_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Compute + report but do NOT persist learned_weights.json.",
+    )
 
     # v3.1.0 M6 Phase B: cross-IDE consensus check (read-only). The
     # MCP surface (consensus_check / consensus_status) is also exposed.
@@ -1704,6 +1759,30 @@ def main() -> None:
                 from_file=getattr(args, "from_file", None),
                 apply=getattr(args, "apply", False),
                 yes=getattr(args, "yes", False),
+                from_sessions=getattr(args, "from_sessions", False),
+            )
+        )
+    elif args.command == "eval":
+        # v3.5.0 E3: read-side relevance eval.
+        from mcp_server.cli_eval import cmd_eval
+
+        sys.exit(
+            cmd_eval(
+                k=getattr(args, "k", 5),
+                max_cases=getattr(args, "max_cases", 200),
+                trend=not getattr(args, "no_trend", False),
+                min_recall=getattr(args, "min_recall", None),
+            )
+        )
+    elif args.command == "tune-weights":
+        # v3.5.0 Phase 13: learned hot-path weight tuning.
+        from mcp_server.cli_eval import cmd_tune_weights
+
+        sys.exit(
+            cmd_tune_weights(
+                k=getattr(args, "k", 5),
+                max_cases=getattr(args, "max_cases", 200),
+                apply=not getattr(args, "dry_run", False),
             )
         )
     elif args.command == "consensus":

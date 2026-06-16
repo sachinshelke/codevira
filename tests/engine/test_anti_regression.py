@@ -147,10 +147,9 @@ class TestAcceptanceScenarios:
         )
         event = _make_event(target=target, proposed_diff=diff)
         verdict = policy.evaluate(event, signals)
-        assert verdict.is_allowing(), (
-            f"unrelated diff shouldn't trigger anti-regression; "
-            f"got {verdict.action}"
-        )
+        assert (
+            verdict.is_allowing()
+        ), f"unrelated diff shouldn't trigger anti-regression; got {verdict.action}"
 
     def test_4_revert_match_blocks_with_diagnostic(self):
         """The diff matches is_revert's heuristic → block.
@@ -290,10 +289,14 @@ class TestAcceptanceScenarios:
         )
 
         store_paths.ensure_dirs()
+        # v3.5.0 content-aware lock: the locked decision must be ABOUT the
+        # code the diff changes (self._lock / attempt) for decision_lock to
+        # fire — otherwise it correctly downgrades to a warn and this test's
+        # premise (BOTH heroes block, priority decides primary) won't hold.
         decisions_store.record(
-            decision="Use bcrypt",
+            decision="attempt() must run inside self._lock — no lock-free retry path",
             file_path="auth.py",
-            context="perf",
+            context="race condition guard",
             do_not_revert=True,
         )
 
@@ -356,9 +359,7 @@ class TestAcceptanceScenarios:
                 ],
             }
         )
-        diff = (
-            "--- before\ndef f():\n    return 1\n" "--- after\ndef f():\n    return 2\n"
-        )
+        diff = "--- before\ndef f():\n    return 1\n--- after\ndef f():\n    return 2\n"
         event = _make_event(target=target, proposed_diff=diff)
         durations = []
         for _ in range(100):

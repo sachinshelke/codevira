@@ -216,17 +216,45 @@ class TestWriteAdditiveFixDecisionLock:
         assert verdict.metadata["pure_insertion"] is True
         assert "D1" in (verdict.message or "")  # decision still surfaced
 
-    def test_destructive_write_to_locked_file_blocks(self, tmp_path: Path) -> None:
-        """Moat preserved: a Write that CHANGES an existing line blocks."""
+    def test_destructive_write_touching_decision_blocks(self, tmp_path: Path) -> None:
+        """Moat preserved: a Write that CHANGES a line the locked decision is
+        ABOUT still hard-blocks (v3.5.0 content-aware)."""
         target = tmp_path / "auth.py"
         target.write_text("def login(user):\n    return user\n")
         # Destructive: the `return user` line is gone (changed).
         new = "def login(user):\n    return user + '!'\n"
+
+        class _Sig:
+            graph = None
+
+            def decisions(self, **kw):
+                return [
+                    {
+                        "id": "D1",
+                        "decision": "login(user) must return the user unchanged",
+                        "timestamp": None,
+                    }
+                ]
+
+        verdict = DecisionLock().evaluate(_write_event(target, tmp_path, new), _Sig())
+        assert (
+            verdict.is_blocking()
+        ), "destructive Write touching the decision must block"
+        assert verdict.metadata["pure_insertion"] is False
+        assert verdict.metadata["content_orthogonal"] is False
+
+    def test_orthogonal_destructive_write_warns(self, tmp_path: Path) -> None:
+        """v3.5.0: a destructive Write that does NOT touch the locked
+        decision's subject downgrades to warn (content-aware). The generic
+        'Locked thing' decision is orthogonal to a login/user change."""
+        target = tmp_path / "auth.py"
+        target.write_text("def login(user):\n    return user\n")
+        new = "def login(user):\n    return user + '!'\n"
         verdict = DecisionLock().evaluate(
             _write_event(target, tmp_path, new), _LockedSignals()
         )
-        assert verdict.is_blocking(), "destructive Write to a locked file must block"
-        assert verdict.metadata["pure_insertion"] is False
+        assert verdict.action == "warn"
+        assert verdict.metadata["content_orthogonal"] is True
 
     def test_new_file_write_is_pure_insertion(self, tmp_path: Path) -> None:
         """A brand-new file (empty before) is a pure insertion."""
@@ -262,9 +290,9 @@ class TestWriteAdditiveFixBlastRadius:
         verdict = BlastRadiusVeto().evaluate(
             _write_event(target, tmp_path, new), _ImpactSignals(radius=20)
         )
-        assert verdict.is_blocking(), (
-            "removing a public signature from a hot file must block"
-        )
+        assert (
+            verdict.is_blocking()
+        ), "removing a public signature from a hot file must block"
 
 
 class TestEndToEndHookWiring:

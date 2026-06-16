@@ -60,6 +60,15 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   so tests calling `record()` without their own project fixture wrote to the
   real `.codevira/decisions.jsonl`. It now chdir's into a throwaway project,
   so no test can reach real memory. (D00010X)
+- **Reconciled the two outcome stores (Phase 17).** The confidence surface
+  (SQLite) and the digest/replay/skills surface (JSONL) each ran an independent
+  git analysis and could label the same decision differently. Both now delegate
+  to one shared `indexer.outcome_classifier.classify_outcome`, so they agree by
+  construction. A git failure now means "can't classify" rather than the old
+  optimistic "kept". (D000112)
+- **`get_signature` JS/JSX accuracy (Phase 16).** Documented + regression-tested
+  the existing TS/TSX/JS/JSX support (the docstrings + unsupported-extension
+  error message had omitted JavaScript). (D000111)
 
 ## [3.4.0] — 2026-06-15
 

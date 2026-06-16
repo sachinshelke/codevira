@@ -128,30 +128,15 @@ def _file_changed_since(project_root: Path, file_path: str, since_commit: str) -
 def _classify_decision(project_root: Path, decision: dict[str, Any]) -> str | None:
     """Return outcome type (kept / modified / reverted) for a decision.
 
-    Returns None if the decision has no file_path or we can't classify
-    confidently (leaves the decision's outcome at its prior state).
+    Phase 17: delegates to the shared :func:`indexer.outcome_classifier.
+    classify_outcome` so this (JSONL → digest/replay/skills) surface and the
+    SQLite → confidence surface (``outcome_tracker``) label every decision
+    IDENTICALLY. Returns None when the decision has no file_path or can't be
+    classified confidently (leaves the prior outcome untouched).
     """
-    file_path = decision.get("file_path")
-    if not file_path:
-        return None
+    from indexer.outcome_classifier import classify_outcome
 
-    # File deleted entirely → reverted.
-    if not _file_exists_at_head(project_root, str(file_path)):
-        return "reverted"
-
-    ts = decision.get("ts")
-    if not ts:
-        return None
-
-    anchor = _commit_at_or_before(project_root, str(file_path), str(ts))
-    if anchor is None:
-        # File hasn't been committed at all (untracked / new) → can't
-        # classify yet. Don't overwrite existing outcome.
-        return None
-
-    if not _file_changed_since(project_root, str(file_path), anchor):
-        return "kept"
-    return "modified"
+    return classify_outcome(project_root, decision.get("file_path"), decision.get("ts"))
 
 
 def observe_all(*, project_root: Path | None = None) -> dict[str, Any]:

@@ -197,7 +197,7 @@ class TestL3_KillSwitchDoesNotBreakBrowse:
 
         from mcp_server.server import handle_read_resource
 
-        out = asyncio.run(handle_read_resource("codevira://decisions"))
+        out = asyncio.run(handle_read_resource("codevira://decisions"))[0].content
         # Even with engine off, the data layer reads the decision
         assert "use bcrypt over argon2" in out
 
@@ -346,7 +346,7 @@ class TestL5_XSSThroughWiring:
 
         from mcp_server.server import handle_read_resource
 
-        out = asyncio.run(handle_read_resource("codevira://decisions"))
+        out = asyncio.run(handle_read_resource("codevira://decisions"))[0].content
         # Critical: no UNESCAPED <script> in the body
         body_start = out.find("<body>")
         assert body_start > 0
@@ -380,7 +380,7 @@ class TestL6_HandlerRobustness:
 
         from mcp_server.server import handle_read_resource
 
-        out = asyncio.run(handle_read_resource("codevira://decisions"))
+        out = asyncio.run(handle_read_resource("codevira://decisions"))[0].content
         # Either the SDK's "wrap" returns empty timeline, OR the
         # try/except in the handler returned an error HTML. Either way:
         # - rc must succeed (handler returned a string)

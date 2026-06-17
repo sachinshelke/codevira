@@ -38,6 +38,11 @@ try:
     import mcp.server.stdio
     from mcp.server import Server
     from mcp.types import Tool, TextContent
+
+    try:
+        from mcp.types import ToolAnnotations
+    except ImportError:  # older mcp (<1.3): tool annotations are skipped
+        ToolAnnotations = None  # type: ignore[assignment,misc]
 except ImportError:
     # Use stderr — stdout is the MCP protocol channel in stdio mode.
     # Printing to stdout here would corrupt the MCP handshake.
@@ -187,6 +192,7 @@ async def handle_read_resource(uri):
     yield a degraded result, not a broken client experience.
     """
     from mcp_server.decision_replay import build_timeline, render_html
+    from mcp.server.lowlevel.helper_types import ReadResourceContents
 
     uri_str = str(uri)
     query: str | None = None
@@ -211,18 +217,25 @@ async def handle_read_resource(uri):
         # returns an empty list and the renderer shows the friendly
         # placeholder.
         timeline = build_timeline(query=query, since_days=30, limit=20)
-        return render_html(timeline, title=title)
+        html_doc = render_html(timeline, title=title)
     except Exception as e:  # noqa: BLE001
         # Bug-X-shape defense: never let resource-read crash the MCP
         # client. Return an HTML page with the error so the user knows.
         import html as _html
 
-        return (
+        html_doc = (
             f"<!DOCTYPE html><html><body>"
             f"<h1>{_html.escape(title)}</h1>"
             f"<p style='color:red'>Codevira couldn't load decisions: "
             f"{_html.escape(str(e))}</p></body></html>"
         )
+
+    # Return ReadResourceContents (the modern SDK API). Returning a bare str
+    # is deprecated AND defaults the content mimeType to text/plain, so the
+    # text/html declared in list_resources never reached the client renderer
+    # (Claude Desktop showed escaped HTML instead of the timeline). This fixes
+    # the DeprecationWarning and the declared-vs-served mimeType mismatch.
+    return [ReadResourceContents(content=html_doc, mime_type="text/html")]
 
 
 @server.list_tools()
@@ -1628,6 +1641,34 @@ async def list_tools() -> list[Tool]:
             "write_session_log",
         }
         tools = [t for t in tools if t.name in _lean_surface]
+
+    # MCP tool annotations (spec 2025-03-26): tell the client which tools are
+    # safe reads vs state mutations, so a host can run read tools without a
+    # confirmation prompt and reason about side effects. Codevira's reads
+    # (search / get / list / query / spatial / status) never mutate; everything
+    # else appends to the JSONL stores. Nothing here is destructive — the
+    # destructive ops (reset / uninstall) are CLI-only, not MCP tools.
+    _READ_ONLY = {
+        "get_session_context", "get_roadmap", "get_phase", "get_playbook",
+        "search_decisions", "list_decisions", "expand", "get_history",
+        "list_tags", "check_conflict", "get_node", "get_impact", "get_code",
+        "get_signature", "query_graph", "get_reflections", "list_reflections",
+        "get_skill", "list_skills", "get_working_context", "working_get",
+        "spatial_nearby", "spatial_heat", "spatial_neighborhood",
+        "spatial_affordances", "consensus_status", "origin_of",
+        "search_preferences",
+    }  # fmt: skip
+    if ToolAnnotations is not None:
+        for t in tools:
+            if t.annotations is None:
+                _is_read = t.name in _READ_ONLY
+                t.annotations = ToolAnnotations(
+                    readOnlyHint=_is_read,
+                    destructiveHint=False,
+                    # Reads are idempotent (repeat call → same result); writes
+                    # vary (record_decision appends), so leave theirs unset.
+                    idempotentHint=True if _is_read else None,
+                )
 
     return tools
 

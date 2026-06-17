@@ -60,6 +60,9 @@ _mock_tool = type(
     "Tool",
     (),
     {
+        # Class default so server.py's `t.annotations is None` check works on
+        # mock Tools constructed without an annotations= kwarg (v3.5.0).
+        "annotations": None,
         "__init__": lambda self, **kw: self.__dict__.update(kw),
     },
 )
@@ -93,6 +96,15 @@ _mock_resource = type(
         "__init__": lambda self, **kw: self.__dict__.update(kw),
     },
 )
+# v3.5.0: server.py's list_tools imports ToolAnnotations and tags each Tool
+# with readOnlyHint / destructiveHint. Stub it for parity with Tool/Resource.
+_mock_tool_annotations = type(
+    "ToolAnnotations",
+    (),
+    {
+        "__init__": lambda self, **kw: self.__dict__.update(kw),
+    },
+)
 # CRITICAL: only override symbols on modules we actually stubbed above.
 # NEVER mutate a real mcp package that's already installed — doing so
 # corrupts mcp.types for the rest of the test session (mocked Tool /
@@ -105,6 +117,7 @@ if "mcp.types" in _mock_mods_installed:
     sys.modules["mcp.types"].Tool = _mock_tool
     sys.modules["mcp.types"].TextContent = _mock_text_content
     sys.modules["mcp.types"].Resource = _mock_resource
+    sys.modules["mcp.types"].ToolAnnotations = _mock_tool_annotations
 
 # tree_sitter_language_pack stub: needs get_language, get_parser.
 #

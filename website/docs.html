@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Codevira — Docs &amp; usage</title>
+<meta name="description" content="Install codevira, connect your AI tools, and use the CLI + MCP tool surface. Local-first persistent memory for AI coding agents.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --blue:#0a84ff; --violet:#7c8cff; --red:#ff6b6b; --amber:#ffb340;
+    --bg:#f3f5f9; --text:#1b1f27; --dim:#5b6472;
+    --glass:rgba(255,255,255,.58); --glass-strong:rgba(255,255,255,.78);
+    --glass-line:rgba(255,255,255,.85); --glass-edge:rgba(27,31,39,.08);
+    --shadow:0 8px 32px rgba(31,38,68,.10);
+    --term-bg:rgba(18,20,28,.92); --term-text:#e8eaf2;
+    --code-inline:rgba(10,132,255,.10);
+    --mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+    --sans:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+    --display:"Space Grotesk","IBM Plex Sans",-apple-system,sans-serif;
+  }
+  [data-theme="dark"]{
+    --blue:#6db1ff; --violet:#8d9bff; --red:#ff7b7b; --amber:#ffc466;
+    --bg:#0b0d12; --text:#e9ecf4; --dim:#98a1b3;
+    --glass:rgba(26,30,42,.52); --glass-strong:rgba(30,34,48,.72);
+    --glass-line:rgba(255,255,255,.10); --glass-edge:rgba(255,255,255,.06);
+    --shadow:0 8px 32px rgba(0,0,0,.45);
+    --term-bg:rgba(10,12,18,.88); --term-text:#e8eaf2;
+    --code-inline:rgba(109,177,255,.12);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{background:var(--bg);color:var(--text);font-family:var(--sans);line-height:1.65;
+       transition:background .35s ease,color .35s ease;-webkit-font-smoothing:antialiased}
+  a{color:var(--blue);text-decoration:none}
+  a:hover{text-decoration:underline}
+  code{font-family:var(--mono);font-size:.86em;color:var(--blue);background:var(--code-inline);
+       padding:1.5px 6px;border-radius:6px;white-space:nowrap}
+  .glass{background:var(--glass);backdrop-filter:blur(22px) saturate(1.7);-webkit-backdrop-filter:blur(22px) saturate(1.7);
+      border:1px solid var(--glass-line);box-shadow:var(--shadow);border-radius:18px}
+
+  /* nav */
+  nav{position:sticky;top:14px;z-index:50;margin:14px auto 0;max-width:1180px;padding:0 24px}
+  nav .inner{display:flex;align-items:center;justify-content:space-between;height:60px;padding:0 12px 0 20px;
+      border-radius:99px;background:var(--glass-strong);backdrop-filter:blur(24px) saturate(1.8);
+      -webkit-backdrop-filter:blur(24px) saturate(1.8);border:1px solid var(--glass-line);box-shadow:var(--shadow)}
+  .logo{display:flex;align-items:center;gap:10px;font-weight:600;font-size:18px;color:var(--text)}
+  .logo .mark{width:29px;height:29px;border-radius:9px;background:linear-gradient(135deg,var(--blue),var(--violet));
+      display:grid;place-items:center;color:#fff;font-family:var(--mono);font-size:13px}
+  .version{font-family:var(--mono);font-size:11.5px;font-weight:500;color:var(--blue);border:1px solid var(--glass-edge);
+      border-radius:99px;padding:2px 9px;margin-left:2px}
+  .links{display:flex;align-items:center;gap:20px;font-size:14.5px;font-weight:500;color:var(--dim)}
+  .links a{color:var(--dim)} .links a:hover{color:var(--text);text-decoration:none}
+  #theme-toggle{cursor:pointer;border:1px solid var(--glass-edge);background:transparent;color:var(--text);
+      width:36px;height:36px;border-radius:50%;font-size:15px;display:grid;place-items:center;transition:transform .4s ease}
+  #theme-toggle:hover{transform:rotate(40deg)}
+
+  /* layout */
+  .shell{max-width:1180px;margin:30px auto 0;padding:0 24px;display:grid;grid-template-columns:228px 1fr;gap:40px;align-items:start}
+  aside{position:sticky;top:96px;font-size:14px}
+  aside .group{font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:var(--dim);
+      margin:18px 0 8px}
+  aside a{display:block;color:var(--dim);padding:5px 0;border-left:2px solid transparent;padding-left:12px;margin-left:-2px}
+  aside a:hover,aside a.active{color:var(--text);border-left-color:var(--blue);text-decoration:none}
+  main{min-width:0;padding-bottom:80px}
+  .lead{font-size:17px;color:var(--dim);max-width:680px;margin:6px 0 8px}
+  h1{font-family:var(--display);font-size:clamp(32px,5vw,46px);font-weight:600;letter-spacing:-.02em;line-height:1.1}
+  h2{font-family:var(--display);font-size:26px;font-weight:600;letter-spacing:-.015em;margin:46px 0 14px;
+      padding-top:16px;scroll-margin-top:90px}
+  h3{font-family:var(--display);font-size:17px;font-weight:600;margin:26px 0 8px}
+  p{margin:12px 0;max-width:720px}
+  ul{margin:12px 0 12px 22px;max-width:720px} li{margin:6px 0}
+  .kbd{font-family:var(--mono);font-size:.85em;background:var(--code-inline);padding:1.5px 6px;border-radius:6px;color:var(--blue)}
+
+  pre{background:var(--term-bg);color:var(--term-text);font-family:var(--mono);font-size:13.5px;line-height:1.7;
+      padding:18px 20px;border-radius:14px;overflow-x:auto;margin:14px 0;max-width:760px;box-shadow:var(--shadow)}
+  pre .c{color:#8a93a8} pre .k{color:#6db1ff} pre .s{color:#ffc466}
+
+  table{border-collapse:collapse;width:100%;max-width:760px;margin:16px 0;font-size:14px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--glass-edge);vertical-align:top}
+  th{font-family:var(--mono);font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);font-weight:500}
+  td code{white-space:nowrap}
+
+  .note{border-left:3px solid var(--blue);background:var(--code-inline);border-radius:0 12px 12px 0;
+      padding:12px 16px;margin:16px 0;max-width:760px;font-size:14.5px}
+  .pill{display:inline-block;font-family:var(--mono);font-size:10.5px;color:#fff;border-radius:99px;padding:2px 9px;
+      background:linear-gradient(135deg,var(--blue),var(--violet));margin-left:6px;vertical-align:2px}
+
+  footer{max-width:1180px;margin:40px auto 0;padding:26px 24px 50px;border-top:1px solid var(--glass-edge);
+      display:flex;justify-content:space-between;flex-wrap:wrap;gap:14px;font-size:13.5px;color:var(--dim)}
+
+  @media(max-width:860px){
+    .shell{grid-template-columns:1fr;gap:0} aside{display:none}
+    .links a:not(.home){display:none}
+  }
+</style>
+</head>
+<body>
+<nav>
+  <div class="inner">
+    <a class="logo" href="index.html" style="text-decoration:none">
+      <span class="mark">cv</span> codevira
+      <span class="version">v3.5.0</span>
+    </a>
+    <div class="links">
+      <a class="home" href="index.html">← Home</a>
+      <a href="https://github.com/sachinshelke/codevira">GitHub</a>
+      <a href="https://pypi.org/project/codevira/">PyPI</a>
+      <button id="theme-toggle" title="Toggle light / dark" aria-label="Toggle theme">◐</button>
+    </div>
+  </div>
+</nav>
+
+<div class="shell">
+  <aside>
+    <div class="group">Start</div>
+    <a href="#install">Install</a>
+    <a href="#connect">Connect your AI tools</a>
+    <div class="group">Use</div>
+    <a href="#commands">CLI commands</a>
+    <a href="#tools">MCP tool surface</a>
+    <a href="#config">Configuration</a>
+    <div class="group">Help</div>
+    <a href="#troubleshooting">Troubleshooting</a>
+    <a href="https://github.com/sachinshelke/codevira/blob/main/FAQ.md">FAQ ↗</a>
+    <a href="https://github.com/sachinshelke/codevira/blob/main/CHANGELOG.md">Changelog ↗</a>
+  </aside>
+
+  <main>
+    <h1>Docs &amp; usage</h1>
+    <p class="lead">Everything a developer needs to install Codevira, wire it into every
+    AI tool, and use the CLI + MCP surface. Local-first, MIT, ~83&nbsp;MB — no cloud,
+    no vectors, no account.</p>
+
+    <h2 id="install">Install</h2>
+    <p><code>pipx</code> is recommended (isolated). Plain <code>pip</code> works too.</p>
+    <pre><span class="c"># 1 — install (isolated, recommended)</span>
+pipx install codevira          <span class="c"># or: pip install codevira</span>
+
+<span class="c"># 2 — bootstrap a project (writes .codevira/, AGENTS.md, .gitignore)</span>
+cd ~/Projects/my-project
+codevira init
+
+<span class="c"># 3 — wire codevira into every AI tool detected on this machine</span>
+codevira setup</pre>
+    <p>That's it. Decisions live in <code>&lt;repo&gt;/.codevira/decisions.jsonl</code> —
+    git-committed and team-shareable. The code graph lives in a rebuildable, gitignored
+    cache. The MCP server starts in under 100&nbsp;ms.</p>
+    <div class="note">Requires Python ≥ 3.10. After <code>codevira setup</code>,
+    restart your AI tool so it picks up the new MCP server and (for Claude Code)
+    lifecycle hooks.</div>
+
+    <h2 id="connect">Connect your AI tools</h2>
+    <p><code>codevira setup</code> auto-detects installed tools (strong signals: binary on
+    PATH + valid config) and configures each one. Pass <span class="kbd">--force</span>
+    if the detector misses an install, or <span class="kbd">--dry-run</span> to preview.</p>
+    <table>
+      <tr><th>Tool</th><th>What codevira writes</th></tr>
+      <tr><td>Claude Code</td><td>MCP server entry + PreToolUse / SessionStart lifecycle hooks (the only client with <strong>hard</strong> enforcement)</td></tr>
+      <tr><td>Cursor · Windsurf</td><td>MCP server entry (stdio) + reads <code>AGENTS.md</code></td></tr>
+      <tr><td>Claude Desktop</td><td>stdio MCP entry (per-project <code>--project-dir</code>)</td></tr>
+      <tr><td>Antigravity · Codex · Copilot</td><td>read <code>AGENTS.md</code> natively — the decisions are portable, no MCP entry required</td></tr>
+    </table>
+    <p>Prefer manual config? Add this stdio entry to your tool's MCP config — codevira
+    resolves the active project from the client's workspace roots:</p>
+    <pre><span class="c">// e.g. project .mcp.json, .cursor/mcp.json, windsurf mcp_config.json</span>
+{
+  <span class="k">"mcpServers"</span>: {
+    <span class="k">"codevira"</span>: { <span class="k">"command"</span>: <span class="s">"codevira"</span>, <span class="k">"args"</span>: [] }
+  }
+}</pre>
+    <div class="note">Verify a connection any time with <code>codevira doctor</code> — it
+    reports which project the server bound to and why, plus an MCP-visibility check for
+    Claude Code.</div>
+
+    <h2 id="commands">CLI commands</h2>
+    <p>23 commands total; <code>codevira &lt;cmd&gt; --help</code> shows flags for any one.
+    The daily drivers:</p>
+    <table>
+      <tr><th>Command</th><th>What it does</th></tr>
+      <tr><td><code>codevira setup</code></td><td>Detect AI tools + write MCP configs + Claude Code hooks</td></tr>
+      <tr><td><code>codevira doctor</code></td><td>Read-only health check (✓ / ⚠ / ✗ with exact fix commands)</td></tr>
+      <tr><td><code>codevira status</code></td><td>Index health + project state</td></tr>
+      <tr><td><code>codevira projects</code></td><td>List tracked projects with staleness; <code>projects archive &lt;name&gt;</code></td></tr>
+      <tr><td><code>codevira index</code></td><td>Build / refresh the code graph cache</td></tr>
+      <tr><td><code>codevira sync</code></td><td>Regenerate AGENTS.md + manifest from <code>decisions.jsonl</code></td></tr>
+      <tr><td><code>codevira replay</code></td><td>Browse the decision timeline (terminal / markdown / HTML)</td></tr>
+      <tr><td><code>codevira eval</code> <span class="pill">3.5</span></td><td>Score read-side relevance (recall@k / MRR) on self-derived cases</td></tr>
+      <tr><td><code>codevira tune-weights</code> <span class="pill">3.5</span></td><td>Learn ranking weights from your memory; persist only a proven win</td></tr>
+      <tr><td><code>codevira reflect --from-sessions</code> <span class="pill">3.5</span></td><td>Mine local Claude Code / Codex / Gemini transcripts for lessons</td></tr>
+      <tr><td><code>codevira uninstall</code></td><td>Reverse every system write codevira made (<code>--keep-data</code> to keep memory)</td></tr>
+    </table>
+
+    <h2 id="tools">MCP tool surface</h2>
+    <p><strong>50 tools</strong> are surfaced to AI clients via <code>tools/list</code>
+    (one admin tool, <code>refresh_graph</code>, is hidden). They're summary-first by
+    default — pass <code>full=true</code> or <code>expand(ids=[…])</code> for detail.
+    Set <code>CODEVIRA_TOOL_PROFILE=lean</code> to advertise only the 12 daily-driver
+    tools (~71% smaller <code>tools/list</code>).</p>
+    <table>
+      <tr><th>Group</th><th>Representative tools</th></tr>
+      <tr><td>Orientation</td><td><code>get_session_context</code>, <code>get_roadmap</code></td></tr>
+      <tr><td>Decisions</td><td><code>search_decisions</code>, <code>list_decisions</code>, <code>expand</code>, <code>record_decision</code>, <code>supersede_decision</code>, <code>set_decision_flag</code>, <code>get_history</code></td></tr>
+      <tr><td>Code graph</td><td><code>get_node</code>, <code>get_impact</code>, <code>get_signature</code>, <code>get_code</code>, <code>query_graph</code></td></tr>
+      <tr><td>Roadmap / phases</td><td><code>get_phase</code>, <code>add_phase</code>, <code>update_phase_status</code>, <code>complete_phase</code>, <code>update_next_action</code>, <code>write_session_log</code></td></tr>
+      <tr><td>Memory subsystems</td><td>working memory, skills, spatial, consensus, reflections (<code>working_add</code>, <code>record_skill</code>, <code>spatial_nearby</code>, <code>consensus_status</code>, <code>reflect</code>, …)</td></tr>
+      <tr><td>Preferences</td><td><code>distill_preferences</code>, <code>search_preferences</code></td></tr>
+    </table>
+    <div class="note">Code-reading tools (<code>get_signature</code> / <code>get_code</code>)
+    cover Python, TypeScript, JS/JSX, Go, and Rust. For other languages the agent reads
+    the file directly.</div>
+
+    <h2 id="config">Configuration</h2>
+    <p>Codevira works with zero config. These environment variables (set them in your
+    MCP server's <code>env</code> block) tune the surface — all default to the
+    conservative behavior.</p>
+    <h3>Surface &amp; tokens</h3>
+    <table>
+      <tr><th>Variable</th><th>Effect</th></tr>
+      <tr><td><code>CODEVIRA_TOOL_PROFILE=lean</code></td><td>Advertise only the 12 daily-driver tools (~71% smaller <code>tools/list</code>)</td></tr>
+      <tr><td><code>CODEVIRA_DECISION_DETAIL=full</code></td><td>Restore verbose (pre-v3.5) decision payloads instead of summary-first</td></tr>
+    </table>
+    <h3>Enforcement engine</h3>
+    <table>
+      <tr><th>Variable</th><th>Effect</th></tr>
+      <tr><td><code>CODEVIRA_ENGINE=0</code></td><td>Kill switch — disable all hooks/policies for this session</td></tr>
+      <tr><td><code>CODEVIRA_DECISION_LOCK_MODE</code></td><td><code>off</code> / <code>warn</code> / <code>block</code> (default <code>block</code>)</td></tr>
+      <tr><td><code>CODEVIRA_DECISION_LOCK_CONTENT_AWARE=0</code></td><td>Restore strict file-level locking (default is content-aware)</td></tr>
+      <tr><td><code>CODEVIRA_BLAST_RADIUS_MODE</code> / <code>_THRESHOLD</code></td><td>Tune the blast-radius veto (default <code>block</code>, threshold 5)</td></tr>
+    </table>
+    <h3>Opt-in read-side smarts <span class="pill">3.5</span></h3>
+    <table>
+      <tr><th>Variable</th><th>Effect</th></tr>
+      <tr><td><code>CODEVIRA_LEARNED_WEIGHTS=1</code></td><td>Use tuner-learned ranking weights at the hot path (from <code>tune-weights</code>)</td></tr>
+      <tr><td><code>CODEVIRA_SYNONYM_WIDENING=1</code></td><td>Widen queries via a curated synonym map (e.g. <code>database</code> → <code>postgres</code>)</td></tr>
+    </table>
+
+    <h2 id="troubleshooting">Troubleshooting</h2>
+    <p>Start with <code>codevira doctor</code> — every ⚠ / ✗ ships the exact fix command.</p>
+    <table>
+      <tr><th>Symptom</th><th>Fix</th></tr>
+      <tr><td>Codevira tools don't show up in the AI tool</td><td>Re-run <code>codevira setup</code>, then fully restart the IDE. <code>codevira doctor</code> includes a Claude Code MCP-visibility check.</td></tr>
+      <tr><td>Agent reads memory from the wrong project</td><td><code>codevira doctor</code> shows which project the server bound to and why. A shared, user-scope server resolves per-call from the client's workspace roots (v3.4+).</td></tr>
+      <tr><td>“0 decisions” / empty results</td><td>Decisions are keyword-searched (FTS5/BM25). Query the rarest distinct keyword; <code>search_decisions</code> is not semantic by default.</td></tr>
+      <tr><td>Stale code graph after edits</td><td>The live watcher + git post-commit hook normally keep it fresh; run <code>codevira index</code> to force a rebuild.</td></tr>
+      <tr><td>Starting fresh</td><td><code>codevira reset</code> (auto-exports decisions first) or <code>codevira uninstall</code> to reverse every system write.</td></tr>
+    </table>
+    <p>Still stuck? See the <a href="https://github.com/sachinshelke/codevira/blob/main/FAQ.md">FAQ</a>
+    or open an <a href="https://github.com/sachinshelke/codevira/issues">issue</a>.</p>
+  </main>
+</div>
+
+<footer>
+  <span>© 2026 Codevira · MIT License · <span style="font-family:var(--mono)">v3.5.0</span></span>
+  <span><a href="index.html">Home</a> · <a href="https://github.com/sachinshelke/codevira">GitHub</a> · <a href="https://pypi.org/project/codevira/">PyPI</a> · <a href="https://github.com/sachinshelke/codevira/blob/main/CHANGELOG.md">Changelog</a></span>
+</footer>
+
+<script>
+/* ---------- theme (shared key with the landing page) ---------- */
+const root = document.documentElement;
+const stored = localStorage.getItem("cv-theme");
+const prefersDark = window.matchMedia("(prefers-color-scheme: dark)");
+root.setAttribute("data-theme", stored || (prefersDark.matches ? "dark" : "light"));
+prefersDark.addEventListener("change", e => { if (!localStorage.getItem("cv-theme")) root.setAttribute("data-theme", e.matches ? "dark" : "light"); });
+document.getElementById("theme-toggle").addEventListener("click", () => {
+  const next = root.getAttribute("data-theme") === "dark" ? "light" : "dark";
+  root.setAttribute("data-theme", next); localStorage.setItem("cv-theme", next);
+});
+
+/* ---------- active section highlight in the sidebar ---------- */
+const links = [...document.querySelectorAll('aside a[href^="#"]')];
+const byId = Object.fromEntries(links.map(a => [a.getAttribute("href").slice(1), a]));
+const obs = new IntersectionObserver(entries => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      links.forEach(a => a.classList.remove("active"));
+      byId[e.target.id]?.classList.add("active");
+    }
+  });
+}, { rootMargin: "-80px 0px -70% 0px" });
+document.querySelectorAll("main h2[id]").forEach(h => obs.observe(h));
+</script>
+</body>
+</html>

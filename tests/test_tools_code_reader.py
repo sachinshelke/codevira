@@ -42,6 +42,7 @@ if "tree_sitter" not in sys.modules:
 from mcp_server.tools.code_reader import (  # noqa: E402
     _is_private,
     _resolve,
+    _within_root,
     get_code,
     get_signature,
 )
@@ -211,6 +212,28 @@ class TestResolve:
         abs_path = "/tmp/absolute/file.py"
         result = _resolve(abs_path)
         assert result == Path(abs_path)
+
+
+class TestPathContainment:
+    """The reader tools refuse paths outside the project root — defense in
+    depth against a prompt-injected read of an arbitrary file."""
+
+    def test_within_root_true_for_inside(self, mock_project_root):
+        assert _within_root(mock_project_root / "pkg" / "mod.py") is True
+
+    def test_within_root_false_for_outside(self, mock_project_root):
+        assert _within_root(Path("/etc/passwd")) is False
+
+    def test_get_signature_refuses_outside_root(self, mock_project_root):
+        for bad in ("/etc/passwd", "../../../../etc/passwd"):
+            res = get_signature(bad)
+            assert res["found"] is False
+            assert "outside the project root" in res["error"]
+
+    def test_get_code_refuses_outside_root(self, mock_project_root):
+        res = get_code("/etc/hosts", "anything")
+        assert res["found"] is False
+        assert "outside the project root" in res["error"]
 
 
 # ===========================================================================

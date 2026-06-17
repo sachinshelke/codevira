@@ -93,79 +93,6 @@ every AI tool, on every project, on your local machine.**
 
 ---
 
-## What's new in v3.5.0 — the read side gets intelligent
-
-> Codevira's leverage is the **read** side: does it surface the *right*
-> memory at the right moment, with low noise? v3.5.0 makes that side
-> measurable, leaner, and self-tuning — and grew the smarts without
-> bundling a model or adding a single runtime dependency.
-
-| Area | What you get |
-|---|---|
-| **Summary-first decisions + `expand`** | `search_decisions` / `list_decisions` now default to compact one-line rows; a new `expand(ids=[…])` tool fetches full records only for the few you care about. `full=true` still works; `CODEVIRA_DECISION_DETAIL=full` restores the old verbose default. |
-| **Content-aware decision lock** | A `do_not_revert` file no longer hard-blocks *every* edit. An edit blocks only when its diff actually touches the locked decision's subject; a provably-orthogonal edit downgrades to a warn (the decision is still surfaced). Restore strict file-level locking with `CODEVIRA_DECISION_LOCK_CONTENT_AWARE=0`. |
-| **It learns from real sessions** | `codevira reflect --from-sessions` reads your local Claude Code / Codex / Gemini transcripts (read-only), flags failures + user corrections with no LLM, and folds a sanitized digest into reflection candidates — never auto-creating decisions. |
-| **Measured + self-tuning recall** | `codevira eval` scores read-side relevance (recall@k / MRR) on cases self-derived from your own memory — no fixtures to rot. `codevira tune-weights` learns the ranking weights against that eval and persists only a proven win (opt in at the hot path via `CODEVIRA_LEARNED_WEIGHTS`). |
-| **More managed memory files** | Beyond `AGENTS.md`, codevira can maintain `CLAUDE.md`, `GEMINI.md`, and `.cursor/rules/codevira.mdc` from one canonical block — opt in via `.codevira/config.yaml: managed_files`. Content outside the markers is preserved byte-for-byte. |
-| **Opt-in synonym recall** | A no-dependency synonym map widens a query so `database` can recall a decision recorded about `postgres`. Off by default (`CODEVIRA_SYNONYM_WIDENING=1`) — it trades a little ranking precision for recall. |
-| **Polish** | `get_signature` JS/JSX accuracy fixed; the two git outcome stores (confidence + replay) reconciled into one classifier; the `doctor` `ghost_projects` false positive fixed (empty leftover dirs are *stale*, not ghosts). |
-
-Full v3.5.0 release notes: [CHANGELOG.md](CHANGELOG.md#350--2026-06-17).
-
----
-
-## What's new in v3.4.0 — reliable project binding + honest docs
-
-> The headline fix: **one user-scope codevira server now binds the
-> right project** instead of silently contaminating memory across
-> projects. Upgrade and restart your MCP server to pick this up.
-
-| Area | What you get |
-|---|---|
-| **Project binding fixed** | A shared, user-scope server (launched with no `cwd` / `--project-dir`) used to fall through to cwd discovery and resolve the *wrong* project — reading decisions from project A while you worked in project B. It now resolves the active project from the MCP client's workspace **roots** (Claude Code, Cursor, Windsurf all expose these), re-binding only to an already-initialized `.codevira` project; explicit pins always win; bounded by a timeout so dispatch can't hang. |
-| **Windows / UNC + HTTP isolation** | `file:///C:/...` and `file://host/share/...` roots now parse correctly (was POSIX-only — Cursor/Windsurf on Windows). The HTTP transport is isolated from the process-global binding. Brand-new projects bind without creating `.codevira` in the wrong directory. |
-| **Claude Desktop: memory follows the file** | The single global server resolves the active project per tool call from the call's `file_path`, so memory tracks whichever project you're working in. |
-| **Honest `search_decisions` docs** | The tool description claimed "hybrid BM25 + semantic"; the implementation is pure FTS5 keyword/BM25. Corrected so calling agents aren't misled into expecting semantic recall. |
-| **`codevira projects` + `doctor`** | `projects` gains a staleness column (`today` / `5d ago` / `stale 45d`), an ephemeral-path guard, and `projects archive <name>`. `doctor` gains a `project_binding` check showing how the project resolved. |
-| **Engine false-positive fixed** | A purely-additive full-file `Write` is no longer hard-blocked by `decision_lock` / `blast_radius` (the `--- before / --- after` diff envelope is now synthesized for `Write` too). A `Write` that removes or changes existing lines still blocks. |
-
-Since the v3.0.0 lean reset: **3.1** added five memory subsystems
-(working memory, skills, spatial, consensus, reflections), **3.3** added
-LLM-distilled preferences. Full history is in the
-[CHANGELOG](CHANGELOG.md); what's coming next is in the
-[Roadmap](ROADMAP.md).
-
-Full v3.4.0 release notes: [CHANGELOG.md](CHANGELOG.md#340--2026-06-15).
-
----
-
-## What's new in v3.0.0 — audited, lean, opinionated
-
-> Major version. v3.0.0 is the biggest API contraction since v2.0
-> shipped: 21 MCP tools deleted, 8 CLI subcommands deleted, per-IDE
-> nudge file matrix collapsed to AGENTS.md only, IDE detection
-> hardened from "directory exists" to "binary on PATH + valid config
-> file." Full plan + rationale in
-> [`docs/audit-2026-05-22.md`](docs/audit-2026-05-22.md);
-> per-item kill list in
-> [`docs/surface-cuts-2026-05-22.md`](docs/surface-cuts-2026-05-22.md).
-
-| Area | What changed |
-|---|---|
-| **Decision storage** | Moved into `<repo>/.codevira/decisions.jsonl` (git-tracked, one decision per line). v2.x stored decisions in `~/.codevira/projects/<key>/graph/graph.db` (a SQLite blob nobody could read). |
-| **AGENTS.md is the nudge file** | Per-IDE nudges (CLAUDE.md / GEMINI.md / .windsurfrules / .cursor/rules/codevira.mdc / .github/copilot-instructions.md) all deleted. Every modern AI tool reads AGENTS.md natively. Slim 5 KB cap; auto-regenerated from decisions; user content outside the `<!-- codevira:begin -->...<!-- codevira:end -->` markers preserved byte-for-byte. |
-| **MCP tool surface** | 46 → 24 tools (-48%; 23 surfaced to AI clients, 1 admin-only). The audit found 22 tools that nobody called in real usage (preferences, learned_rules, changesets, project_maturity, list_nodes / add_node / update_node / export_graph, etc.). All deleted. (v3.1.0 later added 24 memory-subsystem tools, and v3.3.0 brought preferences back redesigned — `distill_preferences` / `search_preferences`, LLM-distilled from real prompts instead of the unused v2.x CRUD.) |
-| **CLI surface** | 23 → 15 commands (-35%). Deleted: `heal` (use `reset`), `budget`, `agents`, `hooks`, `register`, `configure`, `report` (folded into `doctor`), `calibrate`, `insights`. |
-| **IDE detection hardened** | No more false-positives from stale `~/.cursor/` dirs. Each IDE needs a STRONG signal (binary on PATH, or verified config file). Pass `--ide X --force` to override when the detector misses an install. |
-| **`codevira uninstall`** | New command. Reverses every system write made by `init`/`setup`: drops the MCP entry from `~/.claude.json`, deletes `~/.claude/hooks/codevira-*.sh`, strips codevira-tagged registrations from `~/.claude/settings.json`, removes per-project `.codevira/` + `.codevira-cache/`, strips the codevira block from AGENTS.md. Optional `--keep-data`. |
-| **Install size** | ~83 MB pipx venv (was ~450 MB in v2.1.2 with ChromaDB + sentence-transformers + torch). MCP server starts in <100 ms (was 1-3 s). |
-
-Full v3.0.0 release notes: [CHANGELOG.md](CHANGELOG.md).
-
-Upgrading from v2.x? See the [Migration notes](CHANGELOG.md#migration-notes) section.
-
----
-
 ## Quick Start — three commands
 
 ```bash
@@ -300,6 +227,34 @@ Uninstall also strips legacy v2.1.x per-IDE nudge files (CLAUDE.md /
 GEMINI.md / .windsurfrules / .cursor/rules/codevira.mdc /
 .github/copilot-instructions.md) for users upgrading from older
 versions. User content outside the codevira markers stays.
+
+---
+
+## What's new in v3.5.0 — the read side gets intelligent
+
+> Codevira's leverage is the **read** side: does it surface the *right*
+> memory at the right moment, with low noise? v3.5.0 makes that side
+> measurable, leaner, and self-tuning — and grew the smarts without
+> bundling a model or adding a single runtime dependency.
+
+| Area | What you get |
+|---|---|
+| **Summary-first decisions + `expand`** | `search_decisions` / `list_decisions` now default to compact one-line rows; a new `expand(ids=[…])` tool fetches full records only for the few you care about. `full=true` still works; `CODEVIRA_DECISION_DETAIL=full` restores the old verbose default. |
+| **Content-aware decision lock** | A `do_not_revert` file no longer hard-blocks *every* edit. An edit blocks only when its diff actually touches the locked decision's subject; a provably-orthogonal edit downgrades to a warn (the decision is still surfaced). Restore strict file-level locking with `CODEVIRA_DECISION_LOCK_CONTENT_AWARE=0`. |
+| **It learns from real sessions** | `codevira reflect --from-sessions` reads your local Claude Code / Codex / Gemini transcripts (read-only), flags failures + user corrections with no LLM, and folds a sanitized digest into reflection candidates — never auto-creating decisions. |
+| **Measured + self-tuning recall** | `codevira eval` scores read-side relevance (recall@k / MRR) on cases self-derived from your own memory — no fixtures to rot. `codevira tune-weights` learns the ranking weights against that eval and persists only a proven win (opt in at the hot path via `CODEVIRA_LEARNED_WEIGHTS`). |
+| **More managed memory files** | Beyond `AGENTS.md`, codevira can maintain `CLAUDE.md`, `GEMINI.md`, and `.cursor/rules/codevira.mdc` from one canonical block — opt in via `.codevira/config.yaml: managed_files`. Content outside the markers is preserved byte-for-byte. |
+| **Opt-in synonym recall** | A no-dependency synonym map widens a query so `database` can recall a decision recorded about `postgres`. Off by default (`CODEVIRA_SYNONYM_WIDENING=1`) — it trades a little ranking precision for recall. |
+| **Polish** | `get_signature` JS/JSX accuracy fixed; the two git outcome stores (confidence + replay) reconciled into one classifier; the `doctor` `ghost_projects` false positive fixed (empty leftover dirs are *stale*, not ghosts). |
+
+Full v3.5.0 release notes: [CHANGELOG.md](CHANGELOG.md#350--2026-06-17).
+
+**Earlier releases** — full history in the [CHANGELOG](CHANGELOG.md):
+**v3.4** reliable per-call project binding (one user-scope server, no
+cross-project contamination) · **v3.1** five memory subsystems (working
+memory, skills, spatial, consensus, reflections) · **v3.0** the lean
+audit (46 → 24 tools, AGENTS.md-only nudge, ~83 MB install down from
+~450 MB) · **v2.2** dropped ChromaDB/vectors for SQLite FTS5.
 
 ---
 

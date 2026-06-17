@@ -14,24 +14,24 @@ With it: ~1,400 tokens overhead, full context, zero re-discovery.
 
 ## SESSION START (mandatory, every session)
 
-### Step 1 — Check for unfinished work
+### Step 1 — Catch up on project state
 ```
-list_open_changesets()
+get_session_context()
 ```
-If open changesets exist -> pick up unfinished work BEFORE starting anything new.
+The ~500-token "catch me up" orientation call. Returns current focus, recent decisions, top open items, and working-memory scratchpad. Call this FIRST — without it you're blind to the project's history.
 
-### Step 2 — Orient to project state
+### Step 2 — Orient to the roadmap
 ```
 get_roadmap()
 ```
-Read: current phase, next_action, open_changesets.
+Read: current phase, next_action.
 Confirm the task aligns with the current phase. If not, flag it.
 
 ### Step 3 — Check institutional memory (for non-trivial tasks)
 ```
 search_decisions(query)
 ```
-Search past decisions before making a choice. Prevents re-litigating settled issues.
+FTS5 keyword search of past decisions before making a choice. Prevents re-litigating settled issues.
 
 ### Step 4 — Classify the task
 Determine task type:
@@ -49,16 +49,18 @@ Read rules and `do_not_revert` flags BEFORE writing a line.
 
 ### Step 6 — Find patterns
 ```
-search_codebase(task_description)
+get_signature(file_path)         # all public symbols in a candidate file
+get_code(file_path, symbol)      # full body of a function or class
+query_graph(file_path, symbol, "callers")    # who already uses this?
 ```
 Find existing implementations. Never rewrite what exists.
-(Requires `[search]` extras. If not installed, use `get_signature` and `get_code` instead.)
 
-### Step 7 — Start changeset (if multi-file)
+### Step 7 — Ensure the roadmap phase is current (if multi-file)
 ```
-start_changeset(id, description, files)
+get_phase(phase_number)                       # read the phase you're working in
+update_phase_status(status)                   # mark it in_progress if not already
 ```
-Required for any change touching 2+ files.
+Multi-file work is tracked via roadmap phases + working memory, not a separate changeset. If your change is a phase of work, make sure that phase reflects reality before you start.
 
 ---
 
@@ -75,55 +77,44 @@ Never read a full source file when a targeted tool works. Use in order:
 | 3 | `get_code(file_path, symbol)` | Full body of one function or class | ~200-500 tokens |
 | 4 | Read full file | Everything | 3,000-8,000 tokens — **LAST RESORT** |
 
-`get_signature` works for Python, TypeScript, Go, and Rust files.
+`get_signature` works for Python, TypeScript, JavaScript, JSX, Go, and Rust files.
 
 Read the full file only when:
 - The file is a config, YAML, SQL, Markdown, or other non-code file
 - You need broad structural understanding of a file with no graph node
 - `get_signature()` shows many symbols you all need to understand together
 
-### Function-level intelligence (v1.5)
+### Function-level intelligence
 ```
 query_graph(file_path, symbol, "callers")    # who calls this function?
 query_graph(file_path, symbol, "callees")    # what does it call?
 query_graph(file_path, symbol, "tests")      # what tests cover it?
-analyze_changes()                            # risk score for current changes
 ```
 
 ### During coding
 - Invoke Reviewer if the file has `stability: high` or `do_not_revert: true`
 - Run tests after each file change
 - If blast radius grows beyond expected -> re-check with `get_impact()`
-- If index reports stale files -> call `refresh_index()` before `search_codebase`
 
 ---
 
 ## SESSION END (mandatory, every session)
 
-### Step 1 — Update changeset
-```
-# If all files done:
-complete_changeset(id, decisions=["key decision 1", "key decision 2"])
-
-# If ending early (session limit or blocker):
-update_changeset_progress(id, last_file, blocker="reason")
-```
-
-### Step 2 — Update graph nodes
-```
-update_node(file_path, {
-  "last_changed_by": "Phase N - brief description",
-  "new_rules": ["any new invariant discovered"],
-})
-```
-Do this for EVERY file modified.
-
-### Step 3 — Update roadmap
+### Step 1 — Update roadmap
 ```
 update_next_action("Exact description of what needs to happen next")
 ```
 
-### Step 4 — Write session log
+### Step 2 — Close or advance the phase
+```
+# If you finished a phase:
+complete_phase(phase_number, key_decisions=["key decision 1", "key decision 2"])
+
+# If ending mid-phase (session limit or blocker):
+update_phase_status(status="in_progress")    # or "blocked", with the reason
+```
+
+### Step 3 — Write session log
 ```
 write_session_log(
   session_id="<8-char slug>",
@@ -141,9 +132,9 @@ write_session_log(
 
 ## MULTI-FILE FIX RULES
 
-1. NEVER start modifying files without calling `start_changeset` first
-2. NEVER end a session with a changeset `in_progress` without documenting the blocker
-3. If picking up an existing changeset: read it to see what's pending
+1. If the work is a phase, ensure its roadmap phase is current before you start (`get_phase` / `update_phase_status`)
+2. NEVER end a session with a phase left `in_progress` without documenting the blocker via `update_phase_status`
+3. If picking up an existing phase: read it with `get_phase` to see what's pending
 
 ---
 
@@ -153,7 +144,6 @@ write_session_log(
 |---|---|
 | `do_not_revert: true` files require explicit justification to change | graph nodes |
 | `stability: high` files require Reviewer approval before merge | graph nodes |
-| All multi-file changes require an open changeset | `PROTOCOL.md` |
 | Session log must be written at session end | protocol |
 
 ---
@@ -175,7 +165,7 @@ Restart your AI tool after init. Verify: ask your agent to call `get_roadmap()`.
 
 Codevira supports two MCP transports:
 - **stdio (default + recommended)** — the IDE spawns `codevira` per project. Multi-project out of the box.
-- **HTTP/HTTPS (preview, v1.7)** — single-project only; multi-project routing via MCP `rootUri` is planned for v1.8. Use stdio for multi-project work.
+- **HTTP/HTTPS (preview)** — single-project only. Use stdio for multi-project work.
 
 **Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`) — stdio only:
 ```json

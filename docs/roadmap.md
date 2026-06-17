@@ -39,7 +39,6 @@ The roadmap is a YAML file at `~/.codevira/projects/<project-key>/roadmap.yaml` 
 
 - **What phase of development you're in** (e.g., "Phase 2 — Auth System")
 - **What the agent should do next** (`next_action` field — updated at session end)
-- **Active multi-file changes** (`open_changesets` — prevents agents from losing context across sessions)
 - **Past phases** (so the agent understands project history)
 
 The AI agent reads the roadmap at the start of every session via `get_roadmap()`. It's the first thing it calls.

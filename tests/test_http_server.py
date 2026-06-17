@@ -70,6 +70,7 @@ _mock_server_instance.get_prompt.return_value = lambda fn: fn
 # pick up MagicMocks for handle_list_resources / handle_read_resource
 # (the Hero 8 MCP resource handlers).
 _mock_server_instance.list_resources.return_value = lambda fn: fn
+_mock_server_instance.list_resource_templates.return_value = lambda fn: fn
 _mock_server_instance.read_resource.return_value = lambda fn: fn
 
 # Only override symbols on modules we actually stubbed above. NEVER mutate

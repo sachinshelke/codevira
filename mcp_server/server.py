@@ -183,6 +183,29 @@ async def handle_list_resources():
     ]
 
 
+@server.list_resource_templates()
+async def handle_list_resource_templates():
+    """Declare the parameterized decisions resource so MCP clients can
+    *discover* that the timeline is query-able. ``read_resource`` already
+    serves ``codevira://decisions/{query}`` (substring filter), but
+    ``resources/list`` only advertises the static URI — without a template,
+    a client has no way to learn it can append a query. SDK-supported since
+    the resource-templates capability landed."""
+    from mcp.types import ResourceTemplate
+
+    return [
+        ResourceTemplate(
+            uriTemplate="codevira://decisions/{query}",
+            name="Codevira decisions — filtered",
+            description=(
+                "The decision timeline filtered to decisions matching {query} "
+                "(URL-encoded substring). Example: codevira://decisions/retry."
+            ),
+            mimeType="text/html",
+        ),
+    ]
+
+
 @server.read_resource()
 async def handle_read_resource(uri):
     """Render a decision-replay timeline at the requested URI.

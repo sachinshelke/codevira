@@ -165,6 +165,15 @@ class TestL2_MCPHandlers:
         uris = [str(r.uri) for r in out]
         assert "codevira://decisions" in uris
 
+    def test_list_resource_templates_declares_query_form(self):
+        """The query-able resource (codevira://decisions/{query}) is declared
+        as a template so clients can discover it — resources/list only shows
+        the static URI."""
+        from mcp_server.server import handle_list_resource_templates
+
+        out = asyncio.run(handle_list_resource_templates())
+        assert "codevira://decisions/{query}" in [t.uriTemplate for t in out]
+
 
 # =====================================================================
 # L3 — Engine kill switch doesn't break browse surfaces

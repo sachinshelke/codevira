@@ -82,6 +82,7 @@ _mock_server_instance.list_tools.return_value = lambda fn: fn
 _mock_server_instance.list_prompts.return_value = lambda fn: fn
 _mock_server_instance.get_prompt.return_value = lambda fn: fn
 _mock_server_instance.list_resources.return_value = lambda fn: fn
+_mock_server_instance.list_resource_templates.return_value = lambda fn: fn
 _mock_server_instance.read_resource.return_value = lambda fn: fn
 
 # Hero 8 added @server.list_resources() / @server.read_resource() handlers

@@ -54,8 +54,9 @@ dependencies = [
   # individual grammar packages for the 4 most-used non-Python languages
   # (Python parsing uses stdlib `ast`). Total grammar footprint ~10-15 MB
   # instead of 351 MB — the v2.2.0 ≤55 MB pipx budget (G1) depends on it.
-  # Long-tail languages (Java/C/C++/Ruby/PHP/Kotlin/Swift/Solidity) are
-  # available as an opt-in extra: `pip install codevira[all-languages]`.
+  # Long-tail languages (Java/C/C++/Ruby/PHP/Kotlin/Swift/Solidity) are NOT
+  # bundled — the legacy [all-languages] grammar pack was removed in v2.2.0;
+  # AI agents Read those files directly. v2.3.0 may add specific grammars.
   "tree-sitter-typescript>=0.23.0",
   "tree-sitter-javascript>=0.23.0",
   "tree-sitter-go>=0.23.0",

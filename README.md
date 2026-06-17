@@ -476,9 +476,10 @@ kill list.
 | `get_signature` / `get_code`  | ✓      | ✓     | ✓  | ✓    | —      |
 
 Decisions / AGENTS.md / roadmap are language-agnostic. Code-graph
-features require a tree-sitter grammar; v3.0.0 ships TS, JS, Go, Rust.
-The opt-in extra `pip install 'codevira[all-languages]'` re-adds the
-17-grammar pack for Java, Ruby, PHP, C, C++, Kotlin, Swift, etc.
+features require a tree-sitter grammar; codevira ships Python, TS, JS,
+Go, Rust. For other languages the AI `Read`s the file directly — the
+legacy 17-grammar `[all-languages]` pack was removed in v2.2.0 to keep
+the install lean (v2.3.0 may re-add specific grammars on demand).
 
 ---
 
@@ -487,10 +488,10 @@ The opt-in extra `pip install 'codevira[all-languages]'` re-adds the
 | Production-stable | Known-limited |
 |---|---|
 | Cross-IDE decision memory via in-repo JSONL | The PreToolUse hook enforcement is Claude Code only today. Other IDEs read AGENTS.md (soft signal), but don't have hard blocks |
-| `do_not_revert` enforcement at Claude Code PreToolUse | Multi-language code graph for languages outside Python / TS / JS / Go / Rust — use the `[all-languages]` extra |
+| `do_not_revert` enforcement at Claude Code PreToolUse | Symbol tools (`get_signature` / `get_code`) cover Python / TS / JS / Go / Rust; for other languages the AI `Read`s the file directly (the legacy `[all-languages]` grammar pack was removed in v2.2.0) |
 | FTS5 decision search with BM25 ranking | Real-time multi-machine sync — by design, codevira is local-first; for team sharing, commit `.codevira/` to git |
 | Per-project + cross-machine project inventory (`global.db`) | Web UI for browsing decisions — use the `codevira://decisions` MCP resource in Claude Desktop, or `codevira replay --format html` for a static file |
-| All 49 surfaced MCP tools + 21 CLI commands + 8 engine policies | The HTTP server (`codevira serve`) is single-project per launch — for daily use, stick with stdio via `codevira setup` |
+| All 50 surfaced MCP tools + 23 CLI commands + 8 engine policies | The HTTP server (`codevira serve`) is single-project per launch — for daily use, stick with stdio via `codevira setup` |
 | Concurrent-safe storage layer (Posix `fcntl.flock` + Windows sentinel fallback). Proven against 50-thread + 20-subprocess stress + 29-attack chaos harness | The cross-process file-lock contract has been exercised on macOS + Linux CI; the Windows sentinel-file fallback is verified via unit-test simulation but hasn't been load-tested on real Windows yet |
 | Code graph data store is functional but the v3.0.0 spec target (`<project>/.codevira-cache/graph.sqlite`) and the actual location (`<data_dir>/graph/graph.db`) drifted during the surface-cut audit. Tracked for v3.1 reconciliation | n/a (functional today; spec-truthfulness gap only) |
 
@@ -526,21 +527,20 @@ Common questions about setup, usage, architecture, and troubleshooting
 
 ## Roadmap
 
-**Current release:** **v3.4.0** — one user-scope server now binds the
-right project per call (no more cross-project memory contamination),
-Windows/UNC workspace roots, and a `codevira doctor` binding check.
+**Current release:** **v3.5.0** — the read side gets intelligent:
+summary-first decisions + `expand`, a content-aware decision lock,
+read-only session-transcript ingest, a self-derived relevance eval +
+learned weight tuning, multi-file managed memory, and opt-in synonym
+recall — all with no new runtime dependencies.
 
 **Next up** (directional, not dated):
 
-- **Summary-first payloads** + **session-transcript ingest** — leaner
-  responses, and memory that learns from how sessions actually went
-- **Eval harness** — measurable recall + enforcement quality in CI
-- **Managed memory files beyond `AGENTS.md`** — `CLAUDE.md`,
-  `.cursor/rules`, `GEMINI.md`
-- **Optional `[semantic]` recall** — off by default; the base install
+- **Opt-in `[semantic]` recall** — off by default; the base install
   stays pure-keyword, no vectors, no model download
-- **TypeScript `get_signature`**, finer-grained decision locking,
-  learned hot-path tuning
+- **Symbol / region-level decision locking** — lock a function or
+  block, not just the whole file
+- **Cross-project decision search** — `search_decisions` across all
+  your local projects, not just the current one
 
 What's built, the full upcoming list, and the long-term vision —
 **[ROADMAP.md](ROADMAP.md)**.

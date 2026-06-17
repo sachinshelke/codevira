@@ -259,7 +259,7 @@ These survived the v2.2.0 surgery untouched:
 | Per-project disk (active project) | 40-80 MB | **~1-2 MB** |
 | Worst-case disk explosion (v2.1.2 HNSW) | up to 64 GB | **structurally impossible** |
 | ChromaDB / sentence-transformers / torch | required | **gone** |
-| Tree-sitter grammars | 17 langs, 351 MB | **4 langs, ~5 MB** (TS/JS/Go/Rust). Long-tail via opt-in `[all-languages]` |
+| Tree-sitter grammars | 17 langs, 351 MB | **4 langs, ~5 MB** (TS/JS/Go/Rust; Python uses stdlib `ast`). Long-tail grammars dropped — agents Read those files directly |
 
 ## Comparison with alternative tools (2026)
 

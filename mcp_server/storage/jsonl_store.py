@@ -356,9 +356,9 @@ def _compute_next_id_locked(
         with open(path, encoding="utf-8") as fh:
             lines = fh.readlines()
     else:
-        with open(path, "rb") as fh:
-            fh.seek(-4096, io.SEEK_END)
-            tail = fh.read()
+        with open(path, "rb") as fb:
+            fb.seek(-4096, io.SEEK_END)
+            tail = fb.read()
         lines = [
             line + "\n" for line in tail.decode("utf-8", errors="ignore").splitlines()
         ]
@@ -370,24 +370,36 @@ def _compute_next_id_locked(
     # already-issued sequential id. Bug exposed by set_decision_flag
     # writes followed by a fresh record_decision call: the new decision
     # got the old D000004's id and silently overwrote it in the merged
-    # view. Tail-read is preserved; we just keep walking back until we
-    # find a non-amendment record.
-    last_val: str | None = None
-    for raw in reversed(lines):
-        raw = raw.strip()
-        if not raw:
-            continue
-        try:
-            rec = json.loads(raw)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(rec, dict):
-            if rec.get("_amendment_to_id") is not None:
-                continue  # amendment — id is borrowed from an earlier record
-            val = rec.get(id_field)
-            if val is not None:
-                last_val = str(val)
-                break
+    # view. We walk back until we find a non-amendment record.
+    def _last_real_id(scan_lines: list[str]) -> str | None:
+        for raw in reversed(scan_lines):
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                rec = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(rec, dict):
+                if rec.get("_amendment_to_id") is not None:
+                    continue  # amendment — id is borrowed from an earlier record
+                val = rec.get(id_field)
+                if val is not None:
+                    return str(val)
+        return None
+
+    last_val = _last_real_id(lines)
+
+    # v3.5.0 fix: the 4096-byte tail window can contain ONLY amendment
+    # records — e.g. right after `observe-git` appends a burst of outcome
+    # amendments (each a small ~100-byte amendment line). The reversed scan
+    # then finds no real id, and the old code fell through to "D000001",
+    # silently COLLIDING with the existing D000001 and clobbering it (incl.
+    # do_not_revert decisions) in the merged view. If the tail came up empty
+    # but we only read a 4 KB window, re-scan the FULL file before giving up.
+    if last_val is None and size >= 100_000:
+        with open(path, encoding="utf-8") as fh:
+            last_val = _last_real_id(fh.readlines())
 
     if last_val is None or not last_val.startswith(prefix):
         return f"{prefix}{'0' * (width - 1)}1"

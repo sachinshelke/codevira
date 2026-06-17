@@ -310,7 +310,7 @@
   <div class="inner">
     <div class="logo">
       <span class="mark">cv</span> codevira
-      <a class="version" href="https://github.com/sachinshelke/codevira/blob/main/CHANGELOG.md" title="Changelog">v3.3.0</a>
+      <a class="version" href="https://github.com/sachinshelke/codevira/blob/main/CHANGELOG.md" title="Changelog">v3.5.0</a>
     </div>
     <div class="links">
       <a href="#story">Why</a>
@@ -359,7 +359,7 @@
 
 <div class="strip reveal">
   <div class="inner glass">
-    <div class="stat"><b data-count="49">49</b><span>MCP tools</span><small>the full agent surface</small></div>
+    <div class="stat"><b data-count="50">50</b><span>MCP tools</span><small>the full agent surface</small></div>
     <div class="stat"><b data-count="8">8</b><span>hook policies</span><small>enforcing memory live</small></div>
     <div class="stat"><b>&lt;100&hairsp;ms</b><span>cold start</span><small>never blocks your IDE</small></div>
     <div class="stat"><b data-count="0">0</b><span>cloud dependencies</span><small>your code stays home</small></div>
@@ -482,9 +482,10 @@
     <div class="grid">
       <div class="card glass reveal">
         <div class="icon">🔒</div>
-        <h3>Decision lock</h3>
+        <h3>Decision lock <span class="tag">3.5</span></h3>
         <p>Mark a decision <code>do_not_revert</code> and the lifecycle hook vetoes any AI
-        edit that would undo it. Additive edits pass — precision, not paranoia.</p>
+        edit that would undo it. Now content-aware: an edit blocks only when it actually
+        touches the decision's subject — orthogonal changes pass. Precision, not paranoia.</p>
       </div>
       <div class="card glass reveal">
         <div class="icon">🛡️</div>
@@ -753,7 +754,7 @@ params = StdioServerParameters(command=<span class="yy">"codevira-python"</span>
     <span class="vv">async with</span> ClientSession(r, w) <span class="vv">as</span> s:
         <span class="vv">await</span> s.initialize()
         ctx = <span class="vv">await</span> s.call_tool(<span class="yy">"get_session_context"</span>, {})</pre></div>
-        <p class="tabnote">49 tools: decisions, roadmap, code graph, working memory, skills, spatial, consensus, reflections, preferences. TypeScript, Go, Rust, Java MCP SDKs all work the same way.</p>
+        <p class="tabnote">50 tools: decisions, roadmap, code graph, working memory, skills, spatial, consensus, reflections, preferences. TypeScript, Go, Rust, Java MCP SDKs all work the same way.</p>
       </div>
       <div class="tabpane" id="p-data">
         <div class="codecard"><pre><span class="cm"># No SDK at all? The memory is just files in your repo.</span>
@@ -795,7 +796,7 @@ params = StdioServerParameters(command=<span class="yy">"codevira-python"</span>
 
 <footer>
   <div class="wrap">
-    <span>© 2026 Codevira · MIT License · <span style="font-family:var(--mono)">v3.3.0</span></span>
+    <span>© 2026 Codevira · MIT License · <span style="font-family:var(--mono)">v3.5.0</span></span>
     <span><a href="https://github.com/sachinshelke/codevira">GitHub</a> · <a href="https://pypi.org/project/codevira/">PyPI</a> · <a href="https://github.com/sachinshelke/codevira/blob/main/CHANGELOG.md">Changelog</a> · <a href="https://github.com/sachinshelke/codevira/blob/main/FAQ.md">FAQ</a></span>
   </div>
 </footer>

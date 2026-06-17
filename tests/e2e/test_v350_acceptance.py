@@ -608,15 +608,17 @@ class TestSynonymWidening:
 
 
 class TestReleaseCoherence:
-    def _unreleased_section(self) -> str:
+    def _changelog_v350_section(self) -> str:
+        # After release-prep, the v3.5.0 notes live under ## [3.5.0]
+        # (promoted from [Unreleased]); slice that section out.
         text = (_REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-        start = text.index("## [Unreleased]")
-        rest = text[start + len("## [Unreleased]") :]
+        start = text.index("## [3.5.0]")
+        rest = text[start + len("## [3.5.0]") :]
         nxt = rest.find("\n## [")
         return rest if nxt == -1 else rest[:nxt]
 
     def test_changelog_documents_every_shipped_feature(self):
-        section = self._unreleased_section()
+        section = self._changelog_v350_section()
         # Every v3.5.0 deliverable must carry a release note (open-source
         # changelog discipline). Keyed by the decision IDs they were logged as.
         for marker in (
@@ -630,7 +632,7 @@ class TestReleaseCoherence:
             "D0000Z4",  # doctor ghost fix
             "D000112",  # P17 outcome reconcile
         ):
-            assert marker in section, f"CHANGELOG [Unreleased] missing {marker}"
+            assert marker in section, f"CHANGELOG [3.5.0] missing {marker}"
         assert "get_signature" in section  # P16
 
     def test_env_flag_default_off_contract(self):

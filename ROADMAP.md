@@ -12,7 +12,23 @@ Have a suggestion? [Open a feature request](https://github.com/sachinshelke/code
 
 ---
 
-## 🚀 Current release — v3.4.0 (2026-06-15)
+## 🚀 Current release — v3.5.0 (2026-06-17)
+
+The **read** side gets intelligent — measurable, leaner, and self-tuning, with **no new runtime dependencies**:
+
+- **Summary-first decisions + `expand`** — `search_decisions` / `list_decisions` default to compact one-line rows; `expand(ids=[…])` fetches full records on demand. `CODEVIRA_DECISION_DETAIL=full` restores the verbose default.
+- **Content-aware decision lock** — a `do_not_revert` file blocks an edit only when the diff actually touches the locked decision's subject; provably-orthogonal edits downgrade to a warn. `CODEVIRA_DECISION_LOCK_CONTENT_AWARE=0` restores strict file-level locking.
+- **Learns from real sessions** — `codevira reflect --from-sessions` mines local Claude Code / Codex / Gemini transcripts (read-only) for failures + corrections, folded into reflection candidates — never auto-creating decisions.
+- **Measured + self-tuning recall** — `codevira eval` scores read-side relevance (recall@k / MRR) on cases self-derived from your own memory; `codevira tune-weights` learns the ranking weights against it (opt-in at the hot path via `CODEVIRA_LEARNED_WEIGHTS`).
+- **More managed memory files** — maintain `CLAUDE.md`, `GEMINI.md`, and `.cursor/rules/codevira.mdc` beyond `AGENTS.md`, via `.codevira/config.yaml: managed_files` (content outside the markers preserved byte-for-byte).
+- **Opt-in synonym recall** — a no-dependency synonym map widens queries (`database` → `postgres`); off by default (`CODEVIRA_SYNONYM_WIDENING=1`).
+- **Polish** — `get_signature` JS/JSX accuracy; the two git outcome stores reconciled into one classifier; the `doctor` `ghost_projects` false positive fixed (empty leftovers are *stale*, not ghosts).
+
+Full notes in [CHANGELOG.md](CHANGELOG.md#350--2026-06-17).
+
+---
+
+## ✅ v3.4.0 (2026-06-15) — reliable project binding + honest docs
 
 One user-scope server now serves **every** project correctly:
 
@@ -25,23 +41,19 @@ One user-scope server now serves **every** project correctly:
 
 ---
 
-## 🔜 What's next (after v3.4.0)
+## 🔜 What's next (after v3.5.0)
 
-> **Directional, not dated.** These are the next phases on deck, priority-ordered — *not* committed release dates. The non-negotiables stay: local-first, MIT, and **no vectors in the default install**. Want one sooner? [Open a feature request](https://github.com/sachinshelke/codevira/issues/new?template=feature_request.md).
+> **Directional, not dated.** Priority-ordered next phases — *not* committed release dates. The non-negotiables stay: local-first, MIT, and **no vectors in the default install**. Want one sooner? [Open a feature request](https://github.com/sachinshelke/codevira/issues/new?template=feature_request.md).
+
+v3.5.0 shipped the entire **E1–E5 read-side batch** (summary-first + `expand`, session-transcript ingest, the relevance eval, learned weight tuning, multi-file managed memory, opt-in synonym recall) plus the content-aware decision lock, the reconciled outcome store, and multi-language `get_signature`. What remains on deck:
 
 | Next | What you'll get | Priority |
 |------|-----------------|----------|
-| **E1 — Summary-first payloads** | Even leaner default tool responses; opt-in `full=true` when you want the detail | High |
-| **E2 — Session-transcript ingest** | Memory learns from how sessions *actually* went — candidate reflections/skills mined from transcripts, not just explicit `record_decision` calls | High |
-| **E3 — Eval harness** | Measurable recall@k + `do_not_revert` block-correctness, wired into CI as a report so memory quality can't silently regress | Medium |
-| **E4 — Managed files beyond `AGENTS.md`** | Auto-maintain `CLAUDE.md`, `.cursor/rules`, `GEMINI.md` too (marker-delimited; your own content preserved byte-for-byte) | Medium |
-| **E5 — Optional `[semantic]` recall** | `pip install codevira[semantic]` adds a ~30 MB CPU embedding as a *fallback* re-rank on top of FTS5. **Off by default** — the base install stays pure-keyword, no vectors, no model download | Medium |
-| **TypeScript `get_signature`** | Multi-language symbol extraction beyond Python (TS/Go/Rust via the tree-sitter parsers already used for the graph) | Medium |
-| **Finer-grained decision locking** | Lock at the symbol/region level, not just whole-file | Medium |
-| **Learned hot-path tuning** | Spatial heat self-tunes which files surface first (git-optional) | Medium |
-| **Single outcome store** | Reconcile the two kept/modified/reverted stores into one source of truth | Medium |
+| **Opt-in `[semantic]` recall** | `pip install codevira[semantic]` adds a ~30 MB CPU embedding as a *fallback* re-rank on top of FTS5. **Off by default** — the base install stays pure-keyword, no vectors, no model download. The model-free half (synonym widening) shipped in v3.5.0; the embedding half is deferred until the on-device-model question is settled. | Medium |
+| **Symbol / region-level decision locking** | v3.5.0's content-aware lock blocks only when an edit's diff touches a locked decision's subject. The next step is AST symbol/region granularity — lock a function or block, not the whole file. | Medium |
+| **Cross-project decision search** | `search_decisions("retry policy")` across **all** your local projects, not just the current one. | Low |
 
-**On hold:** a tiny on-device model for memory abstraction (former Phase 14) is **deferred** — its goal is folded into **E5**'s opt-in semantic path, which delivers the same recall win without bundling a model into the default install.
+**On hold:** a tiny on-device model for memory abstraction (former Phase 14) remains **deferred** — its goal is folded into the opt-in `[semantic]` path, which delivers the same recall win without bundling a model into the default install.
 
 The shipped history below is preserved as-built; sections still marked 🔜 from older versions (v1.8–v2.3) have since shipped or been folded into the v3.x line — the table above is the current source of truth for what's next.
 

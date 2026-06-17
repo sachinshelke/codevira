@@ -9,6 +9,8 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [3.5.0] — 2026-06-17
+
 ### Added
 
 - **Summary-first decision payloads + `expand` (E1).** `search_decisions` and

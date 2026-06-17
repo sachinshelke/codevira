@@ -93,6 +93,27 @@ every AI tool, on every project, on your local machine.**
 
 ---
 
+## What's new in v3.5.0 — the read side gets intelligent
+
+> Codevira's leverage is the **read** side: does it surface the *right*
+> memory at the right moment, with low noise? v3.5.0 makes that side
+> measurable, leaner, and self-tuning — and grew the smarts without
+> bundling a model or adding a single runtime dependency.
+
+| Area | What you get |
+|---|---|
+| **Summary-first decisions + `expand`** | `search_decisions` / `list_decisions` now default to compact one-line rows; a new `expand(ids=[…])` tool fetches full records only for the few you care about. `full=true` still works; `CODEVIRA_DECISION_DETAIL=full` restores the old verbose default. |
+| **Content-aware decision lock** | A `do_not_revert` file no longer hard-blocks *every* edit. An edit blocks only when its diff actually touches the locked decision's subject; a provably-orthogonal edit downgrades to a warn (the decision is still surfaced). Restore strict file-level locking with `CODEVIRA_DECISION_LOCK_CONTENT_AWARE=0`. |
+| **It learns from real sessions** | `codevira reflect --from-sessions` reads your local Claude Code / Codex / Gemini transcripts (read-only), flags failures + user corrections with no LLM, and folds a sanitized digest into reflection candidates — never auto-creating decisions. |
+| **Measured + self-tuning recall** | `codevira eval` scores read-side relevance (recall@k / MRR) on cases self-derived from your own memory — no fixtures to rot. `codevira tune-weights` learns the ranking weights against that eval and persists only a proven win (opt in at the hot path via `CODEVIRA_LEARNED_WEIGHTS`). |
+| **More managed memory files** | Beyond `AGENTS.md`, codevira can maintain `CLAUDE.md`, `GEMINI.md`, and `.cursor/rules/codevira.mdc` from one canonical block — opt in via `.codevira/config.yaml: managed_files`. Content outside the markers is preserved byte-for-byte. |
+| **Opt-in synonym recall** | A no-dependency synonym map widens a query so `database` can recall a decision recorded about `postgres`. Off by default (`CODEVIRA_SYNONYM_WIDENING=1`) — it trades a little ranking precision for recall. |
+| **Polish** | `get_signature` JS/JSX accuracy fixed; the two git outcome stores (confidence + replay) reconciled into one classifier; the `doctor` `ghost_projects` false positive fixed (empty leftover dirs are *stale*, not ghosts). |
+
+Full v3.5.0 release notes: [CHANGELOG.md](CHANGELOG.md#350--2026-06-17).
+
+---
+
 ## What's new in v3.4.0 — reliable project binding + honest docs
 
 > The headline fix: **one user-scope codevira server now binds the
@@ -234,7 +255,7 @@ summary: 13 pass · 0 warn · 0 fail
 
 ### Daily-use commands
 
-The CLI surface is 21 commands (the daily-use ones below):
+The CLI surface is 23 commands (the daily-use ones below):
 
 | Command | What it does |
 |---|---|
@@ -347,9 +368,9 @@ data:
 The agent always asks for what it needs, in the size it needs.
 
 **Shrink the tool surface itself.** The advertised MCP `tools/list` is a
-fixed per-session cost (~4K tokens for the full 24-tool surface). Set
+fixed per-session cost (~8K tokens for the full 50-tool surface). Set
 `CODEVIRA_TOOL_PROFILE=lean` in the MCP server's `env` block to advertise
-only the 11 daily-driver tools (~46% smaller); hidden tools still work
+only the 12 daily-driver tools (~71% smaller); hidden tools still work
 when called explicitly. Bigger wins usually come from disabling MCP
 servers you aren't actively using.
 
@@ -357,10 +378,10 @@ servers you aren't actively using.
 
 ## MCP Tools
 
-**49 tools** surfaced to AI clients via `tools/list` (token-optimized,
+**50 tools** surfaced to AI clients via `tools/list` (token-optimized,
 summary-first): the core decision/roadmap/graph surface plus the
 v3.1.0 memory subsystems (working memory, skills, spatial, consensus,
-reflections) and the v3.3.0 preference tools. One additional admin
+reflections), the v3.3.0 preference tools, and v3.5.0's `expand`. One additional admin
 tool (`refresh_graph`) is registered but hidden from `tools/list`
 because it runs automatically in the background — humans invoke it via
 `codevira sync`. Set `CODEVIRA_TOOL_PROFILE=lean` to advertise only

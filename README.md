@@ -247,7 +247,7 @@ versions. User content outside the codevira markers stays.
 | **Opt-in synonym recall** | A no-dependency synonym map widens a query so `database` can recall a decision recorded about `postgres`. Off by default (`CODEVIRA_SYNONYM_WIDENING=1`) — it trades a little ranking precision for recall. |
 | **Polish** | `get_signature` JS/JSX accuracy fixed; the two git outcome stores (confidence + replay) reconciled into one classifier; the `doctor` `ghost_projects` false positive fixed (empty leftover dirs are *stale*, not ghosts). |
 
-Full v3.5.0 release notes: [CHANGELOG.md](CHANGELOG.md#350--2026-06-17).
+Full v3.5.0 release notes: [CHANGELOG.md](CHANGELOG.md#350--2026-06-19).
 
 **Earlier releases** — full history in the [CHANGELOG](CHANGELOG.md):
 **v3.4** reliable per-call project binding (one user-scope server, no

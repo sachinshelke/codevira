@@ -12,7 +12,7 @@ Have a suggestion? [Open a feature request](https://github.com/sachinshelke/code
 
 ---
 
-## 🚀 Current release — v3.5.0 (2026-06-17)
+## 🚀 Current release — v3.5.0 (2026-06-19)
 
 The **read** side gets intelligent — measurable, leaner, and self-tuning, with **no new runtime dependencies**:
 
@@ -24,7 +24,7 @@ The **read** side gets intelligent — measurable, leaner, and self-tuning, with
 - **Opt-in synonym recall** — a no-dependency synonym map widens queries (`database` → `postgres`); off by default (`CODEVIRA_SYNONYM_WIDENING=1`).
 - **Polish** — `get_signature` JS/JSX accuracy; the two git outcome stores reconciled into one classifier; the `doctor` `ghost_projects` false positive fixed (empty leftovers are *stale*, not ghosts).
 
-Full notes in [CHANGELOG.md](CHANGELOG.md#350--2026-06-17).
+Full notes in [CHANGELOG.md](CHANGELOG.md#350--2026-06-19).
 
 ---
 

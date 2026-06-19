@@ -10,6 +10,7 @@ Covers:
   - install_global_handler(): sets sys.excepthook
   - Chaos: logger errors gracefully, concurrent writes, non-string exceptions
 """
+
 from __future__ import annotations
 
 import sys
@@ -33,6 +34,7 @@ from mcp_server.crash_logger import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(autouse=True)
 def _reset_logger():
     """Reset module-level _logger between tests so each test is isolated."""
@@ -53,6 +55,7 @@ def log_dir(tmp_path, monkeypatch):
 # ===========================================================================
 # _sanitize() — secret pattern coverage
 # ===========================================================================
+
 
 class TestSanitizePEM:
     def test_private_key_block(self):
@@ -180,6 +183,7 @@ class TestSanitizeEnvVariables:
 # log_crash()
 # ===========================================================================
 
+
 class TestLogCrash:
     def test_writes_log_file(self, log_dir):
         try:
@@ -274,6 +278,7 @@ class TestLogCrash:
 # read_recent_crashes()
 # ===========================================================================
 
+
 class TestReadRecentCrashes:
     def test_no_log_file(self, log_dir):
         result = read_recent_crashes()
@@ -344,6 +349,7 @@ class TestReadRecentCrashes:
 # get_crash_log_path()
 # ===========================================================================
 
+
 class TestGetCrashLogPath:
     def test_returns_path_object(self, log_dir):
         result = get_crash_log_path()
@@ -357,6 +363,7 @@ class TestGetCrashLogPath:
 # ===========================================================================
 # install_global_handler()
 # ===========================================================================
+
 
 class TestInstallGlobalHandler:
     def test_sets_excepthook(self, log_dir):
@@ -403,9 +410,11 @@ class TestInstallGlobalHandler:
 # Chaos / edge cases
 # ===========================================================================
 
+
 class TestChaos:
     def test_logger_error_does_not_crash(self, log_dir, monkeypatch):
         """If the logger itself throws, log_crash must not propagate."""
+
         def bad_get_logger():
             raise OSError("disk exploded")
 
@@ -430,7 +439,9 @@ class TestChaos:
             except Exception as exc:
                 errors.append(exc)
 
-        threads = [threading.Thread(target=crash_in_thread, args=(i,)) for i in range(10)]
+        threads = [
+            threading.Thread(target=crash_in_thread, args=(i,)) for i in range(10)
+        ]
         for t in threads:
             t.start()
         for t in threads:
@@ -447,6 +458,7 @@ class TestChaos:
 
     def test_non_string_exception_message(self, log_dir):
         """Exception with non-string args should not break the logger."""
+
         class WeirdError(Exception):
             def __str__(self):
                 return repr({"code": 42, "nested": [1, 2, 3]})
@@ -467,3 +479,72 @@ class TestChaos:
         content = (log_dir / "crashes.log").read_text()
         assert "RuntimeError" in content
         assert "no traceback" in content
+
+
+class TestFingerprintAndDigest:
+    """The stable cross-machine fingerprint + the doctor-facing digest."""
+
+    def _raise(self, msg="boom"):
+        raise ValueError(msg)
+
+    def test_fingerprint_stable_for_same_cause(self):
+        fps = []
+        for _ in range(2):
+            try:
+                self._raise()
+            except ValueError as e:
+                fps.append(crash_logger.crash_fingerprint(e, version="3.5.0"))
+        assert fps[0] == fps[1] and len(fps[0]) == 12
+
+    def test_fingerprint_differs_by_exception_type(self):
+        try:
+            raise ValueError("x")
+        except ValueError as e:
+            a = crash_logger.crash_fingerprint(e, version="3.5.0")
+        try:
+            raise KeyError("x")
+        except KeyError as e:
+            b = crash_logger.crash_fingerprint(e, version="3.5.0")
+        assert a != b
+
+    def test_fingerprint_ignores_message_values(self):
+        # Same code path, different message (e.g. a machine-specific path) →
+        # same fingerprint. The key is the stack + type, never the message.
+        try:
+            self._raise("/Users/a/secret/path")
+        except ValueError as e:
+            a = crash_logger.crash_fingerprint(e, version="3.5.0")
+        try:
+            self._raise("totally different text 98765")
+        except ValueError as e:
+            b = crash_logger.crash_fingerprint(e, version="3.5.0")
+        assert a == b
+
+    def test_log_entry_carries_fingerprint(self, log_dir):
+        try:
+            self._raise()
+        except ValueError as e:
+            log_crash(e, context="t")
+        assert "FINGERPRINT:" in get_crash_log_path().read_text()
+
+    def test_digest_counts_total_and_distinct(self, log_dir):
+        try:
+            self._raise()
+        except ValueError as e:
+            log_crash(e, context="t")
+        try:
+            raise KeyError("other")
+        except KeyError as e:
+            log_crash(e, context="t")
+        d = crash_logger.crash_digest()
+        assert d["total"] == 2
+        assert d["distinct"] == 2
+        assert d["recent_type"] == "KeyError"
+
+    def test_digest_empty_when_no_log(self, log_dir):
+        assert crash_logger.crash_digest() == {
+            "total": 0,
+            "distinct": 0,
+            "recent_type": None,
+            "size_kb": 0.0,
+        }

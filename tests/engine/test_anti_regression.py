@@ -81,7 +81,23 @@ def isolated_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 @pytest.fixture(autouse=True)
 def _clear_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("CODEVIRA_ANTI_REGRESSION_MODE", raising=False)
+    """Make every test in this module hermetic w.r.t. hero-policy mode env vars.
+
+    ``CODEVIRA_DECISION_LOCK_MODE=warn`` in particular is known to linger in a
+    developer's shell. Without clearing it, the simultaneous-fire scenario
+    (test 7) sees decision_lock downgraded to a *warn* — so anti_regression
+    becomes the sole blocker and the "decision_lock is primary" priority
+    assertion fails for a reason unrelated to the code under test. Clear the
+    decision-lock and anti-regression mode vars so each test asserts DEFAULT
+    (block) behavior regardless of ambient env. (Mirrors the v3.5.0 acceptance
+    suite's ``_clean_v350_env``.)
+    """
+    for env in (
+        "CODEVIRA_ANTI_REGRESSION_MODE",
+        "CODEVIRA_DECISION_LOCK_MODE",
+        "CODEVIRA_DECISION_LOCK_CONTENT_AWARE",
+    ):
+        monkeypatch.delenv(env, raising=False)
 
 
 # =====================================================================

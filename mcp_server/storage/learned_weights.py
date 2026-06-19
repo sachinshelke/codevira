@@ -1,15 +1,32 @@
 """Learned hot-path ranking weights — Phase 13.
 
-Persists the weight vector the cold-path tuner found (and proved better than
-the shipped defaults via the E3 objective) to ``.codevira/learned_weights.json``.
-Committed + team-shared like the rest of ``.codevira/`` canonical state, and —
-critically — STABLE: it changes only when the tuner re-runs (debounced at the
-Stop hook), so the hot path's injection stays cache-stable within a session.
+Persists the ``{tag, file, fts}`` vector the cold-path tuner
+(``codevira tune-weights``) found and proved better than the shipped defaults
+ON THE E3 OFFLINE PROXY, to ``.codevira/learned_weights.json``.
 
-The hot path reads this at most once per process and only when the user opts
-in (``CODEVIRA_LEARNED_WEIGHTS``); a missing/corrupt file transparently falls
-back to the shipped defaults — learned weights can never make the read surface
-worse than it ships.
+**Opt-in, and a heuristic — not a guarantee.** An adversarial review surfaced
+these caveats; keep them honest before relying on the file:
+
+* **Opt-in only.** The hot path applies this vector only when the user sets
+  ``CODEVIRA_LEARNED_WEIGHTS`` truthy; the default is the shipped defaults.
+  There is NO automatic Stop-hook re-tune — the file changes only when you
+  re-run ``codevira tune-weights`` by hand. (An auto-tune-on-Stop loop was
+  prototyped and reverted: Claude Code's Stop fires per-turn, so a re-tune
+  would rewrite this file mid-conversation and bust the prompt cache.)
+* **The "win" is on an offline PROXY.** The tuner maximizes the E3 objective
+  (recall@k + MRR) over cases self-derived from this project's own decisions.
+  That proxy does NOT model precision / noise — it is blind to codevira's
+  documented signal-to-noise failure mode (D00005N) — and it diverges from the
+  online ``relevance_inject._score_candidates`` scorer (token vs substring
+  matching; FTS-only pool vs the tag/file/FTS union; synthesized vs real
+  prompts). So a proxy-win can rank WORSE online: there is no hard
+  "never worse than defaults" guarantee, which is why apply is opt-in.
+* **The win is machine-LOCAL.** It is proven against the producing machine's
+  decision corpus + FTS index; a vector tuned elsewhere is not re-verified
+  here. Re-run the tuner on each machine rather than trusting a shared file.
+
+A missing or corrupt file transparently falls back to the shipped defaults,
+and keeping apply opt-in keeps the conservative default conservative.
 """
 
 from __future__ import annotations

@@ -7,6 +7,77 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [Unreleased]
+
+## [3.5.0] — 2026-06-19
+
+### Added
+
+- **Summary-first decision payloads + `expand` (E1).** `search_decisions` and
+  `list_decisions` now default to compact rows (one-line decision + key
+  fields), dropping the heavy per-row snippet/origin. A new `expand(ids=[…])`
+  tool fetches full records on demand. `full=true` still works;
+  `CODEVIRA_DECISION_DETAIL=full` restores the pre-E1 verbose default. (D0000ZQ)
+- **Read-only session-transcript ingest (E2).** `codevira reflect
+  --from-sessions` scans local Claude Code / Codex / Gemini logs, heuristically
+  flags tool failures + user corrections (no LLM), and folds a sanitized,
+  capped digest into the existing reflect pipeline. Candidates only — never
+  auto-creates decisions. (D00010W)
+- **Read-side relevance eval (E3).** `codevira eval` measures whether the read
+  surface surfaces the right memory (recall@k / MRR / precision) on cases
+  self-derived from real `.codevira/` memory — no hand-maintained fixtures.
+  Deterministic lexical scoring by default; LLM-as-judge offline. Non-gating.
+  (D00010Y)
+- **Learned hot-path weight tuning (Phase 13).** `codevira tune-weights` learns
+  `relevance_inject`'s ranking weights from real memory using the E3 eval as
+  its objective, persisting only a meaningful win. Opt-in at the hot path via
+  `CODEVIRA_LEARNED_WEIGHTS` (default off, fallback to shipped defaults),
+  cached per process for prompt-cache stability. (D00010Z)
+- **Multiple managed memory files (E4).** The marker-block writer can now
+  maintain `CLAUDE.md`, `GEMINI.md`, and `.cursor/rules/codevira.mdc` in
+  addition to `AGENTS.md`, configured via `.codevira/config.yaml:
+  managed_files`. Default stays `AGENTS.md`-only (the rest are opt-in). Shared
+  markdown files preserve everything outside the markers byte-for-byte; the
+  Cursor `.mdc` is a dedicated codevira-owned file with valid frontmatter.
+  Re-runs are idempotent, and the session-transcript scanner skips the injected
+  block so it can't re-ingest its own output. (D000110)
+- **Opt-in synonym recall widening (E5).** A no-dependency, curated dev-domain
+  synonym map widens FTS5 queries so a search in one vocabulary recalls a
+  decision recorded in a synonymous one (e.g. `database` → `postgres`). Enable
+  with `CODEVIRA_SYNONYM_WIDENING=1`; default off (the E3 eval showed it trades
+  a little ranking precision for recall, so it's opt-in). The `[semantic]`
+  embedding extra remains deferred (on-device model on hold). (D000113)
+
+### Changed
+
+- **Content-aware decision lock (Phase 18).** The lock no longer hard-blocks
+  every edit to a file that holds a `do_not_revert` decision. A non-additive
+  edit only blocks when its diff shares salient tokens with a locked decision's
+  subject; a provably-orthogonal edit downgrades to a warn (decisions still
+  surfaced). Restore strict file-level blocking with
+  `CODEVIRA_DECISION_LOCK_CONTENT_AWARE=0`. (D00010B)
+
+### Fixed
+
+- **`doctor` `ghost_projects` false positive.** The check now delegates to the
+  canonical project inventory (`_project_inventory`) instead of its own cruder
+  rule, so `doctor` and `codevira projects` agree — empty leftover dirs are
+  *stale*, not ghosts. (D0000Z4)
+- **Test isolation leak.** The autouse test fixture only isolated the global
+  `~/.codevira/`, leaving the per-project store resolving from the repo cwd —
+  so tests calling `record()` without their own project fixture wrote to the
+  real `.codevira/decisions.jsonl`. It now chdir's into a throwaway project,
+  so no test can reach real memory. (D00010X)
+- **Reconciled the two outcome stores (Phase 17).** The confidence surface
+  (SQLite) and the digest/replay/skills surface (JSONL) each ran an independent
+  git analysis and could label the same decision differently. Both now delegate
+  to one shared `indexer.outcome_classifier.classify_outcome`, so they agree by
+  construction. A git failure now means "can't classify" rather than the old
+  optimistic "kept". (D000112)
+- **`get_signature` JS/JSX accuracy (Phase 16).** Documented + regression-tested
+  the existing TS/TSX/JS/JSX support (the docstrings + unsupported-extension
+  error message had omitted JavaScript). (D000111)
+
 ## [3.4.0] — 2026-06-15
 
 ### Added

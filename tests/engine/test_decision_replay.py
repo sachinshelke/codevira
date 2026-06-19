@@ -476,9 +476,9 @@ class TestRenderersPopulated:
         body_start = out.find("<body>")
         assert body_start > 0, "HTML must have <body>"
         body = out[body_start:]
-        assert "<script>" not in body, (
-            f"XSS bug: unescaped <script> in body. Body excerpt:\n" f"{body[:500]}"
-        )
+        assert (
+            "<script>" not in body
+        ), f"XSS bug: unescaped <script> in body. Body excerpt:\n{body[:500]}"
         assert (
             "&lt;script&gt;" in body
         ), "Adversarial input should appear as ESCAPED text"
@@ -534,7 +534,7 @@ class TestMCPResourceHandler:
         from mcp_server.server import handle_read_resource
         import asyncio
 
-        out = asyncio.run(handle_read_resource("codevira://decisions"))
+        out = asyncio.run(handle_read_resource("codevira://decisions"))[0].content
         assert "use bcrypt over argon2" in out
         assert "auth.py" in out
         assert "<html" in out
@@ -563,7 +563,9 @@ class TestMCPResourceHandler:
         from mcp_server.server import handle_read_resource
         import asyncio
 
-        out = asyncio.run(handle_read_resource("codevira://decisions/bcrypt"))
+        out = asyncio.run(handle_read_resource("codevira://decisions/bcrypt"))[
+            0
+        ].content
         assert "use bcrypt" in out
         assert "use postgres" not in out
 
@@ -588,7 +590,7 @@ class TestMCPResourceHandler:
 
         out = asyncio.run(
             handle_read_resource("codevira://decisions/bcrypt%20over%20argon2")
-        )
+        )[0].content
         assert "use bcrypt over argon2" in out
 
     def test_read_resource_no_db_returns_empty_html(
@@ -607,7 +609,7 @@ class TestMCPResourceHandler:
         from mcp_server.server import handle_read_resource
         import asyncio
 
-        out = asyncio.run(handle_read_resource("codevira://decisions"))
+        out = asyncio.run(handle_read_resource("codevira://decisions"))[0].content
         assert _EMPTY_PLACEHOLDER in out
 
 

@@ -1,7 +1,7 @@
 """
 http_server.py — HTTP/Streamable transport for Codevira MCP server.
 
-Runs the same 36 MCP tools as stdio mode but over HTTP, enabling:
+Runs the same 50 MCP tools as stdio mode but over HTTP, enabling:
   - URL-based MCP registration in Claude Code, Cursor, Windsurf
   - HTTPS via mkcert for locally-trusted certificates (required by Claude.ai)
   - Parallel multi-client connections without spawning a process per client

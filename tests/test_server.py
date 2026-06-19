@@ -60,6 +60,9 @@ _mock_tool = type(
     "Tool",
     (),
     {
+        # Class default so server.py's `t.annotations is None` check works on
+        # mock Tools constructed without an annotations= kwarg (v3.5.0).
+        "annotations": None,
         "__init__": lambda self, **kw: self.__dict__.update(kw),
     },
 )
@@ -79,6 +82,7 @@ _mock_server_instance.list_tools.return_value = lambda fn: fn
 _mock_server_instance.list_prompts.return_value = lambda fn: fn
 _mock_server_instance.get_prompt.return_value = lambda fn: fn
 _mock_server_instance.list_resources.return_value = lambda fn: fn
+_mock_server_instance.list_resource_templates.return_value = lambda fn: fn
 _mock_server_instance.read_resource.return_value = lambda fn: fn
 
 # Hero 8 added @server.list_resources() / @server.read_resource() handlers
@@ -88,6 +92,15 @@ _mock_server_instance.read_resource.return_value = lambda fn: fn
 # X from mcp.types" during test_decision_replay collection.)
 _mock_resource = type(
     "Resource",
+    (),
+    {
+        "__init__": lambda self, **kw: self.__dict__.update(kw),
+    },
+)
+# v3.5.0: server.py's list_tools imports ToolAnnotations and tags each Tool
+# with readOnlyHint / destructiveHint. Stub it for parity with Tool/Resource.
+_mock_tool_annotations = type(
+    "ToolAnnotations",
     (),
     {
         "__init__": lambda self, **kw: self.__dict__.update(kw),
@@ -105,6 +118,7 @@ if "mcp.types" in _mock_mods_installed:
     sys.modules["mcp.types"].Tool = _mock_tool
     sys.modules["mcp.types"].TextContent = _mock_text_content
     sys.modules["mcp.types"].Resource = _mock_resource
+    sys.modules["mcp.types"].ToolAnnotations = _mock_tool_annotations
 
 # tree_sitter_language_pack stub: needs get_language, get_parser.
 #

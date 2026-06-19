@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "codevira"
-version = "3.4.0"
+version = "3.5.0"
 description = "Cross-IDE decision enforcement for AI coding agents. 1 MB per project, in your repo, no cloud, no vectors. Claude Code, Cursor, Windsurf, Antigravity, Codex all share the same in-repo memory; hooks block AI tool calls that violate prior decisions. MIT, local-first."
 readme = "README.md"
 license = { text = "MIT" }
@@ -44,7 +44,7 @@ classifiers = [
 ]
 dependencies = [
   "pyyaml>=6.0",
-  "mcp>=1.0.0",
+  "mcp>=1.0,<2",
   "watchdog>=3.0.0",
   # tomllib is stdlib on 3.11+; tomli is the backport for the declared
   # 3.10 support (used to read pyproject.toml project name).
@@ -54,8 +54,9 @@ dependencies = [
   # individual grammar packages for the 4 most-used non-Python languages
   # (Python parsing uses stdlib `ast`). Total grammar footprint ~10-15 MB
   # instead of 351 MB — the v2.2.0 ≤55 MB pipx budget (G1) depends on it.
-  # Long-tail languages (Java/C/C++/Ruby/PHP/Kotlin/Swift/Solidity) are
-  # available as an opt-in extra: `pip install codevira[all-languages]`.
+  # Long-tail languages (Java/C/C++/Ruby/PHP/Kotlin/Swift/Solidity) are NOT
+  # bundled — the legacy [all-languages] grammar pack was removed in v2.2.0;
+  # AI agents Read those files directly. v2.3.0 may add specific grammars.
   "tree-sitter-typescript>=0.23.0",
   "tree-sitter-javascript>=0.23.0",
   "tree-sitter-go>=0.23.0",

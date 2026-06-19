@@ -439,7 +439,7 @@ def check_watcher_circuit() -> CheckResult:
             _FAIL,
             f"watcher circuit OPEN ({status['consecutive_failures']} "
             f"failures; {status['seconds_until_retry']:.0f}s until retry)",
-            fix_command="codevira report  # check crash log for the underlying error",
+            fix_command="see ~/.codevira/logs/crashes.log for the underlying error",
             details=f"last error: {status['last_error']}",
         )
     if status["consecutive_failures"] > 0:
@@ -755,33 +755,41 @@ def check_semantic_search_health() -> CheckResult:
 
 
 def check_crash_log_size() -> CheckResult:
-    """C12 — crash log isn't pathologically large."""
-    try:
-        from mcp_server.paths import get_global_home
+    """C12 — surface recorded crashes (count + distinct fingerprints) and
+    guard the log size.
 
-        home = get_global_home()
-    except Exception:  # noqa: BLE001
-        return CheckResult("crash_log_size", _WARN, "could not resolve home")
-    log = home / "crash.log"
-    if not log.exists():
-        return CheckResult(
-            "crash_log_size",
-            _PASS,
-            "no crash log (clean state)",
-        )
-    size = log.stat().st_size
+    Pre-fix this read ``crash.log`` while the logger writes ``crashes.log``,
+    so it never saw a real crash and always passed vacuously. It now reads
+    the canonical path and reports what's actually failing — the point of
+    the check.
+    """
+    try:
+        from mcp_server import crash_logger
+
+        digest = crash_logger.crash_digest()
+        log = crash_logger.get_crash_log_path()
+    except Exception:  # noqa: BLE001 — never let the check itself crash
+        return CheckResult("crash_log_size", _WARN, "could not read crash log")
+
+    if digest["total"] == 0:
+        return CheckResult("crash_log_size", _PASS, "no crashes recorded (clean state)")
+
     LIMIT_MB = 5
-    if size > LIMIT_MB * 1024 * 1024:
+    if digest["size_kb"] > LIMIT_MB * 1024:
         return CheckResult(
             "crash_log_size",
             _WARN,
-            f"crash.log is {size // 1024 // 1024} MB (>{LIMIT_MB} MB)",
+            f"crash log is {digest['size_kb'] / 1024:.0f} MB (>{LIMIT_MB} MB) — rotate it",
             fix_command=f"mv '{log}' '{log}.archived'",
         )
+
+    recent = f"; most recent: {digest['recent_type']}" if digest["recent_type"] else ""
     return CheckResult(
         "crash_log_size",
-        _PASS,
-        f"crash.log is {size // 1024} KB (within budget)",
+        _WARN,
+        f"{digest['total']} crash(es) recorded, {digest['distinct']} distinct{recent}",
+        fix_command=f"cat '{log}'  # sanitized tracebacks; delete the file to clear",
+        details=f"crash log: {log}",
     )
 
 

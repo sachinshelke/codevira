@@ -682,17 +682,13 @@ class TestClassifyDecisionMatrix:
         )
         assert result is None
 
-    def test_missing_ts_returns_none(
-        self, project: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_missing_ts_returns_none(self, project: Path) -> None:
         from mcp_server.storage import outcomes_writer
 
-        # The classifier checks file-existence at HEAD BEFORE checking ts;
-        # patch _file_exists_at_head to return True so the test exercises
-        # the ts-missing branch specifically.
-        monkeypatch.setattr(
-            outcomes_writer, "_file_exists_at_head", lambda root, fp: True
-        )
+        # P17: the shared classifier checks file-existence at HEAD BEFORE ts.
+        # Create the file so the deletion check passes, exercising the
+        # ts-missing branch specifically (→ None).
+        (project / "x.py").write_text("x\n", encoding="utf-8")
         result = outcomes_writer._classify_decision(
             project, {"id": "D1", "file_path": "x.py"}
         )

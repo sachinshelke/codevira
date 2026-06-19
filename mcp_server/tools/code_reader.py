@@ -8,7 +8,8 @@ Always reads from disk. No index, no ChromaDB, no staleness risk.
 
 Language support:
   - Python: stdlib ast module (full support)
-  - TypeScript, Go, Rust: tree-sitter grammars via treesitter_parser
+  - TypeScript, TSX, JavaScript, JSX, Go, Rust: tree-sitter grammars via
+    treesitter_parser
 """
 
 from __future__ import annotations
@@ -32,6 +33,24 @@ def _resolve(file_path: str) -> Path:
     return get_project_root() / p
 
 
+def _within_root(abs_path: Path) -> bool:
+    """True if ``abs_path`` resolves to a location inside the project root.
+
+    These two reader tools are the one MCP surface that turns an arbitrary
+    path string into file contents, so they refuse paths outside the repo —
+    defense-in-depth against a prompt-injected ``get_code("/etc/passwd")`` or
+    ``"../../../../etc/shadow"``. The engine's edit-path containment doesn't
+    cover read tools, so it is enforced here. The check resolves symlinks +
+    ``..`` so neither can escape the root.
+    """
+    try:
+        real = abs_path.resolve()
+        root = get_project_root().resolve()
+    except OSError:
+        return False
+    return real == root or root in real.parents
+
+
 def _is_private(name: str) -> bool:
     return name.startswith("_")
 
@@ -53,7 +72,7 @@ def get_signature(file_path: str) -> dict:
     Get the skeleton of a source file: all public function and class names,
     their signatures, docstrings, and line ranges.
 
-    Supports Python, TypeScript, Go, and Rust.
+    Supports Python, TypeScript, TSX, JavaScript, JSX, Go, and Rust.
 
     Args:
         file_path: Relative path from project root (e.g. 'src/services/generator.py')
@@ -62,6 +81,13 @@ def get_signature(file_path: str) -> dict:
         dict with module_docstring, symbols list, and file metadata
     """
     abs_path = _resolve(file_path)
+
+    if not _within_root(abs_path):
+        return {
+            "found": False,
+            "file_path": file_path,
+            "error": f"Path is outside the project root: {file_path}",
+        }
 
     if not abs_path.exists():
         return {
@@ -83,7 +109,7 @@ def get_signature(file_path: str) -> dict:
     return {
         "found": False,
         "file_path": file_path,
-        "error": f"Unsupported file type: {ext}. Supported: .py, .ts, .tsx, .go, .rs",
+        "error": f"Unsupported file type: {ext}. Supported: .py, .ts, .tsx, .js, .jsx, .go, .rs",
     }
 
 
@@ -207,6 +233,14 @@ def get_code(file_path: str, symbol: str | None = None) -> dict:
     """
     abs_path = _resolve(file_path)
 
+    if not _within_root(abs_path):
+        return {
+            "found": False,
+            "file_path": file_path,
+            "symbol": symbol,
+            "error": f"Path is outside the project root: {file_path}",
+        }
+
     if not abs_path.exists():
         return {
             "found": False,
@@ -229,7 +263,7 @@ def get_code(file_path: str, symbol: str | None = None) -> dict:
         "found": False,
         "file_path": file_path,
         "symbol": symbol,
-        "error": f"Unsupported file type: {ext}. Supported: .py, .ts, .tsx, .go, .rs",
+        "error": f"Unsupported file type: {ext}. Supported: .py, .ts, .tsx, .js, .jsx, .go, .rs",
     }
 
 

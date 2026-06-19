@@ -42,7 +42,7 @@ of codevira works identically to v1.x.
 
 ### Does Codevira send my code anywhere?
 
-No. Everything runs locally. The context graph is a SQLite database in `~/.codevira/`. Embeddings (semantic search) are generated locally with `sentence-transformers`. Session logs, decisions, learned rules — all local. Your code never leaves your machine.
+No. Everything runs locally. The context graph is a SQLite database in `~/.codevira/`, and decisions live in `<repo>/.codevira/decisions.jsonl`. Decision search is pure keyword/BM25 (FTS5) — no embeddings, no model download, nothing to phone home about. Session logs, decisions, skills — all local. Your code never leaves your machine.
 
 ---
 
@@ -58,9 +58,7 @@ pipx install codevira
 pip install codevira
 ```
 
-The full toolkit installs out of the box. Adds ~500MB (includes the ML stack for semantic search). Downloads a ~90MB embedding model on first `search_codebase()` call.
-
-For a minimal install (no ML stack, no semantic search), see the README "Minimal install" section.
+The full toolkit installs out of the box — no ML stack, no embedding model, no download on first use. Codevira ships with no vectors and no machine-learning dependencies, so the install stays small and cold start is under 100 ms. A typical project's memory is ~1–2 MB on disk.
 
 ### Do I need to run `codevira init` for every project?
 
@@ -75,18 +73,18 @@ No. Run `codevira init` once when you first set up a project (or just let auto-i
 - The **git post-commit hook** (auto-installed by init) reindexes on every commit
 - You can manually run `codevira index` or `codevira index --full` if needed
 
-### What is ChromaDB and do I need it?
+### Does codevira use embeddings or semantic search?
 
-ChromaDB powers the `search_codebase()` semantic search tool. As of v1.7.0 it's included in the default install — all tools work out of the box. The `[search]` extra is kept as a no-op alias for backwards compatibility.
+No — not in the default install, and that's deliberate. Decision search is pure keyword/BM25 ranking via SQLite FTS5 (`search_decisions(query)`). There are no vectors, no `sentence-transformers`, no ChromaDB, and nothing to download on first use. That's why a project's memory is ~1–2 MB and cold start is under 100 ms.
 
-Without it (using the minimal install path), `search_codebase` is hidden from the AI agent's tool list. All other tools still work — context graph, roadmap, changesets, call graph, learning, code reader.
+An opt-in, off-by-default `[semantic]` path is on the roadmap for users who want vector recall on top of keyword search, but it does not ship in the default install — everything above works with zero ML dependencies.
 
 ### Does this work with non-Python projects?
 
 Yes. Codevira supports 15+ languages with zero-config auto-detection:
 
-- **Full support** (AST parsing, get_signature, get_code, call graph): Python, TypeScript, Go, Rust
-- **Standard support** (graph, search, roadmap, changesets, learning): Java, Kotlin, C#, Ruby, PHP, C, C++, Swift, Solidity, Vue, JavaScript
+- **Full support** (AST parsing, get_signature, get_code, call graph): Python, TypeScript, JavaScript/JSX, Go, Rust
+- **Standard support** (graph, search, roadmap, code reader): Java, Kotlin, C#, Ruby, PHP, C, C++, Swift, Solidity, Vue
 
 `codevira init` auto-detects the language from project markers (`Cargo.toml`, `go.mod`, `tsconfig.json`, `pyproject.toml`, `package.json`, etc.).
 
@@ -107,7 +105,7 @@ Or edit `.codevira/config.yaml` after init.
 
 ### Do I need a GitHub account or any external service?
 
-No. Codevira runs entirely locally. The context graph is a SQLite database, session logs are local files, and semantic search (if installed) uses an embedded database. Nothing is sent anywhere.
+No. Codevira runs entirely locally. The context graph is a SQLite database, session logs and decisions are local files, and decision search is keyword-only (FTS5 — no external service, no model). Nothing is sent anywhere.
 
 The only file outside your project is `~/.codevira/global.db` — a local SQLite database for cross-project intelligence.
 
@@ -163,10 +161,11 @@ On the new machine: install Codevira, run `codevira init` (or the setup wizard) 
 You start a session in Claude Code: "build the auth flow." You make decisions, write code, the AI calls `write_session_log()` at the end. Now you switch to Cursor for some autocomplete work — Cursor's AI calls `get_session_context()` and instantly sees:
 
 - Current phase: "Auth flow implementation"
+- Next action: "wire refresh-token rotation into `src/auth.py`"
 - Recent decisions: "Using JWT with 24h expiry (not session cookies — see decision log)"
-- Open changesets: "auth-flow-v2 — 3 of 5 files done"
+- Working memory (recent scratchpad): "verified the login handler rejects expired tokens"
 - Files touched recently: `src/auth.py`, `tests/test_auth.py`
-- Top learned preferences: pytest style, dataclasses over Pydantic
+- Style: keep answers short, tests first
 
 No need to re-explain. Switch to Antigravity to run tests — same memory. The AI tools are interchangeable; the project state is persistent.
 
@@ -253,11 +252,11 @@ Your agent will still work — the MCP tools are always available. But without f
 
 ### Can multiple developers share the same graph?
 
-The context graph lives in `.codevira/graph/graph.db` (SQLite). It's git-ignored by default because it contains local index data. If you want to share graph nodes and rules across a team, you can commit it — but the semantic index (`codeindex/`) should stay local.
+The context graph lives in `.codevira/graph/graph.db` (SQLite). It's git-ignored by default because it contains local index data and rebuilds from source. The canonical, team-shareable memory is the JSONL in `.codevira/` (decisions, skills, reflections) — commit that to share it across the team; the graph index stays local and per-machine.
 
 ### Can I use Codevira without a roadmap?
 
-Yes. If the roadmap doesn't exist, `get_roadmap()` auto-creates a minimal Phase 1 stub on first call. You can use all graph, search, and changeset features without ever touching the roadmap.
+Yes. If the roadmap doesn't exist, `get_roadmap()` auto-creates a minimal Phase 1 stub on first call. You can use all graph, search, decision, and code-reader features without ever touching the roadmap.
 
 ### Why is my agent reading the roadmap from a different project?
 
@@ -287,37 +286,36 @@ Claude Code, Cursor, and Windsurf use per-project config files, so this issue do
 New in v1.5. Codevira now tracks which functions call which — not just file-level imports. Use:
 - `query_graph(file, symbol, "callers")` — who calls this function?
 - `query_graph(file, symbol, "callees")` — what does this function call?
-- `analyze_changes()` — function-level risk scoring with test coverage gaps
-- `find_hotspots()` — large functions, high fan-in, complexity heatmap
+- `get_impact(file_path)` — blast radius: who depends on this code before you change it
 
 ---
 
 ## Architecture
 
-### What's the difference between the graph and the code index?
+### What's the difference between the graph and the decision store?
 
-| | Context Graph | Code Index |
+| | Context Graph | Decision Store |
 |---|---|---|
-| **Storage** | SQLite (`graph.db`) | ChromaDB (`codeindex/`) |
-| **Required?** | Yes (always) | Optional (`[search]` extras) |
-| **Content** | File metadata, rules, dependencies, symbols, call edges, sessions, decisions | Chunked source code as vectors |
-| **Used by** | `get_node`, `get_impact`, `query_graph`, `analyze_changes`, all learning tools | `search_codebase` |
-| **Best for** | "What does this file do? Who calls this function?" | "Where in the codebase is X implemented?" |
+| **Storage** | SQLite (`graph.db`), per-machine, rebuilds from source | JSONL (`.codevira/decisions.jsonl`), git-tracked |
+| **Content** | File metadata, dependencies, symbols, call edges | Decisions, fix history, rationale |
+| **Used by** | `get_node`, `get_impact`, `query_graph`, `get_signature`, `get_code` | `search_decisions`, `record_decision` |
+| **Search** | Graph traversal (callers/callees, blast radius) | Keyword/BM25 (FTS5) — no vectors, no model |
+| **Best for** | "What does this file do? Who calls this function?" | "What did we decide about X, and why?" |
 
 ### Does Codevira send my code anywhere?
 
 No. Everything runs locally:
-- Context graph is a local SQLite database
-- Embeddings (if using `[search]`) are generated locally using `sentence-transformers`
-- Session logs and decisions are stored in the local SQLite database
+- Context graph is a local SQLite database (rebuilds from source)
+- Decisions live in `.codevira/decisions.jsonl` and are searched with FTS5 keyword/BM25 — no embeddings, no model
+- Session logs and skills are local files
 - Global memory (`~/.codevira/global.db`) is a local file
 - The MCP server runs as a local subprocess
 
 Your code never leaves your machine.
 
-### What model does semantic search use?
+### How does decision search work — does it need a model?
 
-`all-MiniLM-L6-v2` from sentence-transformers — a fast, lightweight embedding model that runs entirely on CPU. Downloaded once on first use (~90MB) and cached locally. Only used if you install with `[search]` extras.
+No model, no download. `search_decisions(query)` ranks the decision log with SQLite FTS5 (keyword + BM25), so it's instant, deterministic, and adds zero ML dependencies. An opt-in `[semantic]` vector path is on the roadmap, but the default install is keyword-only by design.
 
 ---
 
@@ -338,17 +336,13 @@ Common causes: wrong Python version (requires 3.10+), missing `mcp` package, or 
 
 ### Database corruption
 
-If the SQLite database is corrupted:
+If the SQLite graph database is corrupted, delete it and rebuild from source:
 ```bash
 rm -rf .codevira/graph/graph.db
 codevira index --full
 ```
 
-If the search index is corrupted:
-```bash
-rm -rf .codevira/codeindex
-codevira index --full
-```
+The decision store (`.codevira/decisions.jsonl`) is plain JSONL — it's never an index to rebuild; the FTS5 search index over it lives in the rebuildable cache.
 
 ### The index is out of date
 
@@ -360,11 +354,11 @@ codevira index --full
 codevira index
 ```
 
-You can also ask your agent to call `refresh_index(["path/to/file.py"])` mid-session.
+The live file watcher and git post-commit hook normally keep this current, so you rarely need to run it by hand.
 
 ### `get_node()` returns `index_status.stale: true`
 
-The file has been modified since the last index build. The graph node is still valid, but search results may be outdated. Call `refresh_index(["path/to/file.py"])` to re-embed it.
+The file has been modified since the last index build. The graph node is still valid, but symbol/call-edge details may be outdated. Run `codevira index` (or just save the file again — the watcher reindexes on save) to refresh it.
 
 ---
 

@@ -185,14 +185,32 @@ class TestCrashLogSize:
         assert r.state == "PASS"
 
     def test_warn_when_oversized(self, isolated_project: Path):
-        from mcp_server.paths import get_global_home
+        from mcp_server.crash_logger import get_crash_log_path
 
-        log = get_global_home() / "crash.log"
-        log.write_bytes(b"x" * (6 * 1024 * 1024))  # 6 MB > 5 MB cap
+        log = get_crash_log_path()
+        log.parent.mkdir(parents=True, exist_ok=True)
+        # One real entry + padding past the 5 MB cap.
+        log.write_text(
+            ("=" * 72) + "\nCRASH: ValueError: x\n" + ("x" * (6 * 1024 * 1024))
+        )
         r = doctor.check_crash_log_size()
         assert r.state == "WARN"
         assert "MB" in r.message
         assert "archived" in r.fix_command
+
+    def test_surfaces_recorded_crashes(self, isolated_project: Path):
+        """The point of the fix: a recorded crash is now visible. Pre-fix the
+        check read crash.log while the logger writes crashes.log, so it never
+        saw a real crash."""
+        from mcp_server import crash_logger
+
+        try:
+            raise ValueError("boom")
+        except ValueError as e:
+            crash_logger.log_crash(e, context="test")
+        r = doctor.check_crash_log_size()
+        assert r.state == "WARN"
+        assert "1 crash" in r.message and "ValueError" in r.message
 
 
 class TestNudgeFiles:

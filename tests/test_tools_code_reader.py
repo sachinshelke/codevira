@@ -42,6 +42,7 @@ if "tree_sitter" not in sys.modules:
 from mcp_server.tools.code_reader import (  # noqa: E402
     _is_private,
     _resolve,
+    _within_root,
     get_code,
     get_signature,
 )
@@ -211,6 +212,28 @@ class TestResolve:
         abs_path = "/tmp/absolute/file.py"
         result = _resolve(abs_path)
         assert result == Path(abs_path)
+
+
+class TestPathContainment:
+    """The reader tools refuse paths outside the project root — defense in
+    depth against a prompt-injected read of an arbitrary file."""
+
+    def test_within_root_true_for_inside(self, mock_project_root):
+        assert _within_root(mock_project_root / "pkg" / "mod.py") is True
+
+    def test_within_root_false_for_outside(self, mock_project_root):
+        assert _within_root(Path("/etc/passwd")) is False
+
+    def test_get_signature_refuses_outside_root(self, mock_project_root):
+        for bad in ("/etc/passwd", "../../../../etc/passwd"):
+            res = get_signature(bad)
+            assert res["found"] is False
+            assert "outside the project root" in res["error"]
+
+    def test_get_code_refuses_outside_root(self, mock_project_root):
+        res = get_code("/etc/hosts", "anything")
+        assert res["found"] is False
+        assert "outside the project root" in res["error"]
 
 
 # ===========================================================================
@@ -718,3 +741,81 @@ class TestGetCodeTreesitter:
         assert result["found"] is True
         assert result["file_path"] == "handler.go"
         assert "HandleRequest" in result["source"]
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Phase 16 — TS / TSX / JS / JSX skeletons (tree-sitter)
+#
+# get_signature already dispatches these to tree-sitter; pin it so the
+# multi-language support can't silently regress (and the roadmap can't
+# mistake it for "Python-only" again).
+# ─────────────────────────────────────────────────────────────────────
+
+
+class TestGetSignatureWebLanguages:
+    @pytest.fixture(autouse=True)
+    def _require_real_grammars(self):
+        # This module mocks tree_sitter for the Python-only paths; the
+        # web-language tests need the REAL grammars. Skip (don't fail) when
+        # the optional deps aren't installed.
+        pytest.importorskip("tree_sitter_typescript")
+        pytest.importorskip("tree_sitter_javascript")
+        if not hasattr(sys.modules.get("tree_sitter"), "Parser"):
+            pytest.skip("tree_sitter is mocked in this module; real parser unavailable")
+
+    def _write(self, root, name, body):
+        (root / name).write_text(body, encoding="utf-8")
+
+    def test_typescript_functions_and_classes(self, mock_project_root):
+        self._write(
+            mock_project_root,
+            "svc.ts",
+            "export function greet(name: string): string {\n"
+            "  return `hi ${name}`;\n"
+            "}\n"
+            "export class Service {\n"
+            "  run(x: number): void {}\n"
+            "}\n",
+        )
+        result = get_signature("svc.ts")
+        assert result["found"] is True
+        assert result["language"] == "typescript"
+        names = {s["name"] for s in result["symbols"]}
+        assert "greet" in names and "Service" in names
+
+    def test_tsx_component(self, mock_project_root):
+        self._write(
+            mock_project_root,
+            "App.tsx",
+            "export function App(): JSX.Element {\n" "  return <div>hi</div>;\n" "}\n",
+        )
+        result = get_signature("App.tsx")
+        assert result["found"] is True
+        assert "App" in {s["name"] for s in result["symbols"]}
+
+    def test_javascript_functions(self, mock_project_root):
+        self._write(
+            mock_project_root,
+            "util.js",
+            "export function add(a, b) {\n  return a + b;\n}\n",
+        )
+        result = get_signature("util.js")
+        assert result["found"] is True
+        assert result["language"] == "javascript"
+        assert "add" in {s["name"] for s in result["symbols"]}
+
+    def test_jsx_function(self, mock_project_root):
+        self._write(
+            mock_project_root,
+            "Btn.jsx",
+            "export function Btn(props) {\n  return <button>{props.label}</button>;\n}\n",
+        )
+        result = get_signature("Btn.jsx")
+        assert result["found"] is True
+        assert "Btn" in {s["name"] for s in result["symbols"]}
+
+    def test_error_message_lists_js(self, mock_project_root):
+        (mock_project_root / "data.xyz").write_text("nope", encoding="utf-8")
+        result = get_signature("data.xyz")
+        assert result["found"] is False
+        assert ".js" in result["error"]  # accuracy: JS/JSX are advertised

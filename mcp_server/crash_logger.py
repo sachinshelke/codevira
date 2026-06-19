@@ -12,6 +12,7 @@ Max size: 5 MB, rotated with 3 backups (20 MB total)
 from __future__ import annotations
 
 import logging
+import hashlib
 import re
 import sys
 import threading
@@ -53,6 +54,28 @@ def _crash_signature(error: BaseException) -> str:
     msg = str(error)
     first_line = msg.split("\n", 1)[0][:200]  # cap at 200 chars
     return f"{type(error).__name__}:{first_line}"
+
+
+def crash_fingerprint(error: BaseException, *, version: str = "") -> str:
+    """A stable 12-char fingerprint for a crash — same root cause on any
+    machine → same key.
+
+    Hashes the exception type + the normalized top stack frames (file
+    basename + function name only; NOT line numbers, absolute paths, or
+    runtime values, which vary across edits/machines) + the codevira
+    ``major.minor``. This is the dedup key the crash digest groups by, and
+    the key any future opt-in reporting would collapse duplicates on.
+    Distinct from ``_crash_signature`` (the message-based key used for the
+    60-second local rate-limit). Never raises.
+    """
+    try:
+        frames = traceback.extract_tb(error.__traceback__)
+        norm = [f"{Path(fr.filename).name}:{fr.name}" for fr in frames[-5:]]
+        major_minor = ".".join(str(version).split(".")[:2]) if version else ""
+        raw = f"{type(error).__name__}|{'>'.join(norm)}|{major_minor}"
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
+    except Exception:  # noqa: BLE001 — fingerprinting must never break logging
+        return "unknown00000"
 
 
 def _should_rate_limit(error: BaseException) -> tuple[bool, int]:
@@ -262,12 +285,18 @@ def log_crash(
 
         # System info (non-sensitive)
         lines.append(f"PYTHON: {sys.version.split()[0]}")
+        _cv_version = ""
         try:
             from importlib.metadata import version as pkg_version
 
-            lines.append(f"CODEVIRA: {pkg_version('codevira')}")
+            _cv_version = pkg_version("codevira")
+            lines.append(f"CODEVIRA: {_cv_version}")
         except Exception:
             pass
+
+        # Stable cross-machine dedup key — surfaced by `doctor` and ready for
+        # any future opt-in reporting (groups duplicates of one root cause).
+        lines.append(f"FINGERPRINT: {crash_fingerprint(error, version=_cv_version)}")
 
         lines.append(f"TRACEBACK:\n{tb_text}")
         lines.append("")  # blank line separator
@@ -327,6 +356,38 @@ def read_recent_crashes(limit: int = 20) -> str:
 
     body = ("\n" + "=" * 72 + "\n").join(recent)
     return f"{header}\n{'=' * 72}\n{body}"
+
+
+def crash_digest() -> dict:
+    """Summarize the crash log for ``doctor``: total entries, distinct
+    fingerprints (falls back to distinct exception types for legacy entries
+    written before FINGERPRINT existed), the most-recent crash type, and the
+    on-disk size in KB. One cheap read; never raises.
+    """
+    out: dict = {"total": 0, "distinct": 0, "recent_type": None, "size_kb": 0.0}
+    try:
+        log_path = get_crash_log_path()
+        if not log_path.exists():
+            return out
+        text = log_path.read_text(encoding="utf-8", errors="replace")
+        entries = [e for e in text.split("=" * 72) if e.strip()]
+        out["total"] = len(entries)
+        out["size_kb"] = round(log_path.stat().st_size / 1024, 1)
+        fingerprints: set[str] = set()
+        types: set[str] = set()
+        for entry in entries:
+            for line in entry.splitlines():
+                if line.startswith("FINGERPRINT:"):
+                    fingerprints.add(line.split(":", 1)[1].strip())
+                elif line.startswith("CRASH:"):
+                    # "CRASH: <ExcType>: <msg>" → ExcType
+                    t = line.split(":", 1)[1].strip().split(":", 1)[0].strip()
+                    types.add(t)
+                    out["recent_type"] = t  # chronological file → last wins
+        out["distinct"] = len(fingerprints) if fingerprints else len(types)
+    except Exception:  # noqa: BLE001 — the digest must never break doctor
+        pass
+    return out
 
 
 def install_global_handler() -> None:

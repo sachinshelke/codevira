@@ -81,10 +81,48 @@ _DEFAULT_MIN_SCORE = 0.10
 _MIN_PROMPT_CHARS = 10  # ignore tiny prompts (e.g. "ok", "thanks")
 _MODES = ("off", "inject")
 
-# Per-component weights for the merged relevance score.
+# Per-component weights for the merged relevance score (shipped defaults).
 _TAG_WEIGHT = 0.4
 _FILE_WEIGHT = 0.4
 _FTS_WEIGHT = 0.2
+
+# Phase 13: OPT-IN learned weights. When CODEVIRA_LEARNED_WEIGHTS is set, the
+# tuner-learned vector from .codevira/learned_weights.json replaces the
+# defaults above. Loaded ONCE per process and cached so the injected block
+# stays cache-stable within a session (a mid-session weight change would
+# bust the Anthropic prompt cache). Default OFF + transparent fallback to the
+# shipped defaults, so this can never regress the wedge unless explicitly
+# enabled — and the tuner only persists weights that beat the defaults on E3.
+_UNSET: Any = object()
+_LEARNED_WEIGHTS_CACHE: Any = _UNSET
+
+
+def _learned_weights_enabled() -> bool:
+    return os.environ.get("CODEVIRA_LEARNED_WEIGHTS", "").strip().lower() in (
+        "1",
+        "true",
+        "on",
+        "yes",
+    )
+
+
+def _effective_weights() -> tuple[float, float, float]:
+    """Return ``(tag, file, fts)`` — learned (opt-in, cached) or shipped."""
+    if not _learned_weights_enabled():
+        return _TAG_WEIGHT, _FILE_WEIGHT, _FTS_WEIGHT
+    global _LEARNED_WEIGHTS_CACHE
+    if _LEARNED_WEIGHTS_CACHE is _UNSET:
+        try:
+            from mcp_server.storage import learned_weights
+
+            w = learned_weights.load()
+        except Exception:  # noqa: BLE001 — hot path never breaks on bad config
+            w = None
+        _LEARNED_WEIGHTS_CACHE = (w["tag"], w["file"], w["fts"]) if w else None
+    if _LEARNED_WEIGHTS_CACHE:
+        return _LEARNED_WEIGHTS_CACHE
+    return _TAG_WEIGHT, _FILE_WEIGHT, _FTS_WEIGHT
+
 
 # Tokenization for prompt → candidate tags + words.
 _TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]+")
@@ -339,23 +377,26 @@ class RelevanceInject(Policy):
         sorted by score desc."""
         digest_by_id = {str(d.get("id")): d for d in digest_records}
 
+        # Phase 13: effective weights (shipped defaults, or opt-in learned).
+        w_tag, w_file, w_fts = _effective_weights()
+
         # Accumulate component scores per decision id.
         tag_score: dict[str, float] = {}
         for ids in tag_candidates.values():
             for did in ids:
-                tag_score[did] = tag_score.get(did, 0.0) + _TAG_WEIGHT
+                tag_score[did] = tag_score.get(did, 0.0) + w_tag
         file_score: dict[str, float] = {}
         for ids in file_candidates.values():
             for did in ids:
-                file_score[did] = file_score.get(did, 0.0) + _FILE_WEIGHT
+                file_score[did] = file_score.get(did, 0.0) + w_file
 
-        # FTS BM25 → [0, _FTS_WEIGHT]. Lower BM25 = better; we invert.
-        # Simple normalization: top hit gets full _FTS_WEIGHT,
+        # FTS BM25 → [0, w_fts]. Lower BM25 = better; we invert.
+        # Simple normalization: top hit gets full w_fts,
         # each next halves the contribution (geometric falloff).
         fts_score: dict[str, float] = {}
         for i, hit in enumerate(fts_candidates):
             did = str(hit.get("decision_id") or hit.get("id"))
-            fts_score[did] = fts_score.get(did, 0.0) + _FTS_WEIGHT * (0.5**i)
+            fts_score[did] = fts_score.get(did, 0.0) + w_fts * (0.5**i)
 
         all_ids = set(tag_score) | set(file_score) | set(fts_score)
         scored: list[dict[str, Any]] = []

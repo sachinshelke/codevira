@@ -165,6 +165,15 @@ class TestL2_MCPHandlers:
         uris = [str(r.uri) for r in out]
         assert "codevira://decisions" in uris
 
+    def test_list_resource_templates_declares_query_form(self):
+        """The query-able resource (codevira://decisions/{query}) is declared
+        as a template so clients can discover it — resources/list only shows
+        the static URI."""
+        from mcp_server.server import handle_list_resource_templates
+
+        out = asyncio.run(handle_list_resource_templates())
+        assert "codevira://decisions/{query}" in [t.uriTemplate for t in out]
+
 
 # =====================================================================
 # L3 — Engine kill switch doesn't break browse surfaces
@@ -197,7 +206,7 @@ class TestL3_KillSwitchDoesNotBreakBrowse:
 
         from mcp_server.server import handle_read_resource
 
-        out = asyncio.run(handle_read_resource("codevira://decisions"))
+        out = asyncio.run(handle_read_resource("codevira://decisions"))[0].content
         # Even with engine off, the data layer reads the decision
         assert "use bcrypt over argon2" in out
 
@@ -346,7 +355,7 @@ class TestL5_XSSThroughWiring:
 
         from mcp_server.server import handle_read_resource
 
-        out = asyncio.run(handle_read_resource("codevira://decisions"))
+        out = asyncio.run(handle_read_resource("codevira://decisions"))[0].content
         # Critical: no UNESCAPED <script> in the body
         body_start = out.find("<body>")
         assert body_start > 0
@@ -380,7 +389,7 @@ class TestL6_HandlerRobustness:
 
         from mcp_server.server import handle_read_resource
 
-        out = asyncio.run(handle_read_resource("codevira://decisions"))
+        out = asyncio.run(handle_read_resource("codevira://decisions"))[0].content
         # Either the SDK's "wrap" returns empty timeline, OR the
         # try/except in the handler returned an error HTML. Either way:
         # - rc must succeed (handler returned a string)

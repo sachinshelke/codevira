@@ -807,44 +807,203 @@ class TestPureInsertionDowngrade:
         assert "ADDS lines" in (verdict.message or "")
         assert "D1" in (verdict.message or "")  # decisions still surfaced
 
-    def test_modifying_edit_still_blocks(self) -> None:
+    def test_modifying_edit_touching_decision_blocks(self) -> None:
+        """A modify that changes code referencing the decision's subject
+        still hard-blocks (v3.5.0: now for the RIGHT reason — content match)."""
         policy = DecisionLock()
+        signals = _FakeSignals(
+            decisions_for={
+                "foo.py": [
+                    {
+                        "id": "D1",
+                        "decision": "compute_total must not apply tax — prices are pre-tax",
+                        "timestamp": None,
+                    }
+                ]
+            }
+        )
         diff = (
             "--- before\n"
-            "def existing(x):\n"
-            "    return x\n"
+            "def compute_total(items):\n"
+            "    return sum(item.price for item in items)\n"
             "--- after\n"
-            "def existing(x):\n"
-            "    return x + 1\n"
+            "def compute_total(items):\n"
+            "    return sum(item.price * tax_rate for item in items)\n"
         )
-        verdict = policy.evaluate(_make_event(proposed_diff=diff), self._signals())
+        verdict = policy.evaluate(_make_event(proposed_diff=diff), signals)
         assert verdict.is_blocking()
         assert verdict.metadata["pure_insertion"] is False
+        assert verdict.metadata["content_orthogonal"] is False
+        assert verdict.metadata["conflict_tokens"]  # names the shared subject
 
-    def test_deleting_edit_still_blocks(self) -> None:
+    def test_deleting_decision_code_blocks(self) -> None:
+        """Deleting code the decision is about hard-blocks."""
         policy = DecisionLock()
+        signals = _FakeSignals(
+            decisions_for={
+                "foo.py": [
+                    {
+                        "id": "D1",
+                        "decision": "the validate_input guard must stay before processing",
+                        "timestamp": None,
+                    }
+                ]
+            }
+        )
         diff = (
             "--- before\n"
-            "def keep(x):\n"
-            "    return x\n"
-            "def gone(y):\n"
-            "    return y\n"
+            "def handler(req):\n"
+            "    validate_input(req)\n"
+            "    return process(req)\n"
             "--- after\n"
-            "def keep(x):\n"
-            "    return x\n"
+            "def handler(req):\n"
+            "    return process(req)\n"
         )
-        verdict = policy.evaluate(_make_event(proposed_diff=diff), self._signals())
+        verdict = policy.evaluate(_make_event(proposed_diff=diff), signals)
         assert verdict.is_blocking()
 
     def test_no_diff_full_write_still_blocks(self) -> None:
+        """No parseable diff → cannot prove orthogonality → strict block."""
         policy = DecisionLock()
         verdict = policy.evaluate(_make_event(proposed_diff=None), self._signals())
         assert verdict.is_blocking()
         assert verdict.metadata["pure_insertion"] is False
 
-    def test_reordered_lines_not_pure_insertion(self) -> None:
-        """Reordering existing lines changes behavior — must block."""
+    def test_reordered_decision_steps_block(self) -> None:
+        """Reordering steps the decision pins as ordered hard-blocks."""
         policy = DecisionLock()
+        signals = _FakeSignals(
+            decisions_for={
+                "foo.py": [
+                    {
+                        "id": "D1",
+                        "decision": "step_one must run before step_two; ordering is load-bearing",
+                        "timestamp": None,
+                    }
+                ]
+            }
+        )
         diff = "--- before\nstep_one()\nstep_two()\n--- after\nstep_two()\nstep_one()\n"
-        verdict = policy.evaluate(_make_event(proposed_diff=diff), self._signals())
+        verdict = policy.evaluate(_make_event(proposed_diff=diff), signals)
         assert verdict.is_blocking()
+
+
+# =====================================================================
+# v3.5.0 — content-aware orthogonality (block only on genuine conflict)
+# =====================================================================
+
+
+class TestContentAwareOrthogonality:
+    _WATCHER = {
+        "id": "D000009",
+        "decision": (
+            "CODEVIRA_NO_WATCHER=1 env var skips start_background_watcher in "
+            "both stdio and HTTP MCP servers"
+        ),
+        "timestamp": None,
+    }
+
+    def _signals(self, *decisions):
+        return _FakeSignals(
+            decisions_for={"server.py": list(decisions or (self._WATCHER,))}
+        )
+
+    @staticmethod
+    def _event(diff: str):
+        return _make_event(target=Path("/p/server.py"), proposed_diff=diff)
+
+    def test_orthogonal_modification_downgrades_to_warn(self) -> None:
+        """The bug that started this: editing a tool DESCRIPTION on a file
+        whose locked decisions are about the watcher must NOT block."""
+        diff = (
+            "--- before\n"
+            "enumerate decisions with filters (since_date, tags). ~50 tokens/row.\n"
+            "--- after\n"
+            "enumerate decisions. Default (E1): compact one-line summary; "
+            "full=true or expand(ids) for full records.\n"
+        )
+        verdict = DecisionLock().evaluate(self._event(diff), self._signals())
+        assert verdict.action == "warn"
+        assert verdict.metadata["content_orthogonal"] is True
+        assert "D000009" in (verdict.message or "")  # still surfaced
+
+    def test_conflicting_modification_blocks_with_reason(self) -> None:
+        diff = (
+            "--- before\n"
+            "def start_background_watcher():\n"
+            "    if os.environ.get('CODEVIRA_NO_WATCHER'):\n"
+            "        return\n"
+            "    spawn()\n"
+            "--- after\n"
+            "def start_background_watcher():\n"
+            "    spawn()  # always run\n"
+        )
+        verdict = DecisionLock().evaluate(self._event(diff), self._signals())
+        assert verdict.is_blocking()
+        assert "start_background_watcher" in verdict.metadata["conflict_tokens"]
+
+    def test_compound_identifier_subtoken_match_blocks(self) -> None:
+        """validate_input (code) must match a decision phrased 'validate input'."""
+        decision = {
+            "id": "D1",
+            "decision": "always validate input before processing requests",
+            "timestamp": None,
+        }
+        diff = (
+            "--- before\n"
+            "def handler(req):\n"
+            "    validate_input(req)\n"
+            "    return process(req)\n"
+            "--- after\n"
+            "def handler(req):\n"
+            "    return process(req)\n"
+        )
+        verdict = DecisionLock().evaluate(self._event(diff), self._signals(decision))
+        assert verdict.is_blocking()
+        assert {"validate", "input"} <= set(verdict.metadata["conflict_tokens"])
+
+    def test_one_of_many_conflicts_blocks_on_that_one(self) -> None:
+        """Orthogonal to decision A but conflicting with B → block on B."""
+        auth = {
+            "id": "DA",
+            "decision": "auth uses bcrypt password hashing",
+            "timestamp": None,
+        }
+        diff = (
+            "--- before\n"
+            "def start_background_watcher():\n    spawn_thread()\n"
+            "--- after\n"
+            "def start_background_watcher():\n    pass\n"
+        )
+        verdict = DecisionLock().evaluate(
+            self._event(diff), self._signals(auth, self._WATCHER)
+        )
+        assert verdict.is_blocking()
+        # Only the watcher decision is the conflict; auth is orthogonal.
+        assert verdict.metadata["locked_decision_ids"] == ["D000009"]
+
+    def test_content_aware_off_restores_strict_block(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("CODEVIRA_DECISION_LOCK_CONTENT_AWARE", "0")
+        # An orthogonal description edit that WOULD warn now hard-blocks.
+        diff = (
+            "--- before\n"
+            "enumerate decisions with filters. ~50 tokens/row.\n"
+            "--- after\n"
+            "enumerate decisions. compact one-line summary.\n"
+        )
+        verdict = DecisionLock().evaluate(self._event(diff), self._signals())
+        assert verdict.is_blocking()
+        assert verdict.metadata["content_orthogonal"] is False
+
+    def test_unparseable_diff_blocks(self) -> None:
+        """A diff with no codevira envelope can't be assessed → strict block."""
+        verdict = DecisionLock().evaluate(
+            self._event("totally not a --- before/after envelope"),
+            self._signals(),
+        )
+        assert verdict.is_blocking()
+
+    def test_config_exposes_content_aware_default_true(self) -> None:
+        assert DecisionLock()._config()["content_aware"] is True

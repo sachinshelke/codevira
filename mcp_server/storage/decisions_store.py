@@ -747,3 +747,27 @@ def _truncate(text: str, cap: int) -> str:
     if len(text) <= cap:
         return text
     return text[: cap - 1] + "…"
+
+
+def one_line_summary(text: str | None, cap: int = 140) -> str:
+    """Collapse ``text`` to a single line ≤ ``cap`` chars (E1, Phase 19).
+
+    The summary-first tool defaults need a compact one-liner per decision:
+    newlines/runs of whitespace collapse to single spaces, then the string
+    is cut at a sentence boundary (``. ``) if one sits past the halfway
+    mark, else at the last word boundary, with an ellipsis. Whole text is
+    returned verbatim when it already fits (no spurious ellipsis).
+    """
+    if not text:
+        return ""
+    collapsed = " ".join(text.split())
+    if len(collapsed) <= cap:
+        return collapsed
+    cut = collapsed[:cap]
+    dot = cut.rfind(". ")
+    if dot >= cap // 2:
+        return cut[: dot + 1]
+    space = cut.rfind(" ")
+    if space >= cap // 2:
+        cut = cut[:space]
+    return cut + "…"

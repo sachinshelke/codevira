@@ -221,6 +221,33 @@ class TestMonotonicIDs:
         new_id = jsonl_store.append_with_generated_id(jsonl_path, {"decision": "c"})
         assert new_id == "D000003"
 
+    def test_full_scan_fallback_when_tail_window_is_all_amendments(
+        self, jsonl_path: Path
+    ) -> None:
+        """v3.5.0 regression: on a >100 KB file the next-id scan only tail-reads
+        the last 4 KB. If that window holds ONLY amendment records — e.g. right
+        after ``observe-git`` appends a burst of small outcome amendments — the
+        reversed scan finds no real id, and pre-fix code fell back to D000001,
+        COLLIDING with the existing D000001 and clobbering it (incl.
+        do_not_revert decisions) in the merged view. The full-file fallback
+        must find the real max id instead.
+        """
+        # Two real decisions; pad the first so the file clears the 100 KB
+        # tail-read threshold (>100 KB → the 4 KB tail-read path).
+        jsonl_store.append_with_generated_id(jsonl_path, {"decision": "x" * 120_000})
+        jsonl_store.append_with_generated_id(jsonl_path, {"decision": "second"})
+        assert jsonl_path.stat().st_size > 100_000
+        # A burst of small amendments — easily enough to fill the last 4 KB
+        # window so it contains NO non-amendment record.
+        for _ in range(100):
+            jsonl_store.append(
+                jsonl_path,
+                {"id": "D000001", "_amendment_to_id": "D000001", "outcome": "kept"},
+            )
+        # A fresh record must still get D000003 (max real id + 1), NOT D000001.
+        new_id = jsonl_store.append_with_generated_id(jsonl_path, {"decision": "third"})
+        assert new_id == "D000003", f"ID collided: got {new_id}"
+
 
 class TestConcurrency:
     def test_concurrent_appenders_no_corruption(self, jsonl_path: Path) -> None:

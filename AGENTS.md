@@ -15,13 +15,15 @@
 
 ### Active conventions
 
-- **D000003** get_project_root() honors CODEVIRA_PROJECT_DIR env var as priority-2 (after --project-dir CLI flag, before cwd discover…  ·  _ide-integration, mcp-config, paths, v3.0.0-rc-audit, env-var_
+- **D000003** get_project_root() honors CODEVIRA_PROJECT_DIR env var as priority-2 (after --project-dir CLI flag, before cwd discover…  ·  _ide-integration, mcp-config, paths, v3.0.0-rc-audit_
 - **D000004** check_conflict uses TWO similarity regimes: (1) symmetric Jaccard ≥ 0.60 for duplicates, (2) asymmetric overlap_coeffic…  ·  _check_conflict, similarity, v3.0.0-rc-audit_
 - **D000005** v3.0.0 is NOT yet published to PyPI. .release-evidence/3.0.0.json::G5_human_confirmed=false. The PreToolUse hook blocks…
-- **D000011** v3.0.1 candidate fix list (a/b/c from the v3-rc-dogfood session) verified EMPTY on 2026-05-25 — no code work needed. (a…  ·  _decisions-store, no-op, v3.0.0, verification_
-- **D000015** list_decisions already DEFAULTS to a summary shape (full=False ⇒ slim ~50 tok/row: id, 200-char decision, file_path, do…  ·  _api-consistency, list-decisions, mcp-tools, search-decisions, token-efficiency, v3.0.0_
-- **D000016** v3.0.1 will add an interactive, queryable HTML viewer for codevira memory. Design (agreed 2026-05-26): self-contained S…  ·  _cli, cytoscape, export, feature, memory-viewer, v3.0.0, visualization_
-- **D000017** [supersedes D000014: D000014 premise was factually wrong: verified the committed code uses ~/.gemini/antigravity/, neve…  ·  `mcp_server/ide_inject.py`  ·  _antigravity, broken-integration, cross-tool, ide-inject, setup-wizard, v3.0.0_
+- **D000011** v3.0.1 candidate fix list (a/b/c from the v3-rc-dogfood session) verified EMPTY on 2026-05-25 — no code work needed. (a…  ·  _decisions-store, no-op, v3.0.1, verification_
+- **D000013** Antigravity 2.0 BROKE codevira's IDE integration: the hardcoded Antigravity MCP-config path '~/.gemini/in/mcp_config.js…  ·  _antigravity, broken-integration, cross-tool, ide-inject, setup-wizard, v3.0.1_
+- **D000014** [supersedes D000013: Original D000013 dropped its file_path + context (malformed parameters in the record_decision call…  ·  `mcp_server/ide_inject.py`  ·  _antigravity, broken-integration, cross-tool, ide-inject, setup-wizard, v3.0.1_
+- **D000015** list_decisions already DEFAULTS to a summary shape (full=False ⇒ slim ~50 tok/row: id, 200-char decision, file_path, do…  ·  _api-consistency, list-decisions, mcp-tools, search-decisions, token-efficiency, v3.0.1_
+- **D000016** v3.0.1 will add an interactive, queryable HTML viewer for codevira memory. Design (agreed 2026-05-26): self-contained S…  ·  _cli, cytoscape, export, feature, memory-viewer, v3.0.1, visualization_
+- **D000017** [supersedes D000014: D000014 premise was factually wrong: verified the committed code uses ~/.gemini/antigravity/, neve…  ·  `mcp_server/ide_inject.py`  ·  _antigravity, broken-integration, cross-tool, ide-inject, setup-wizard, v3.0.1_
 - **D000018** Measured codevira startup token footprint (2026-05-26, chars/4 estimate): MCP tools/list = 16,454 chars ≈ 4,100 tokens …
 - **D000019** IMPLEMENTED (commit 7a2bdd4) the D000018 token reduction. New env var CODEVIRA_TOOL_PROFILE=lean trims the advertised M…
 - **D00001A** RELEASE SCOPING (per Sachin 2026-05-26): ALL of this session's work ships in the SINGLE 3.0.0 release — there is no sep…
@@ -29,11 +31,8 @@
 - **D00001C** Antigravity 2.0 shared-config support BUILT (commit c83cddf), resolving the open item from D000017. ide_inject.py now d…  ·  _antigravity, cross-tool, ide-inject, v3.0.0_
 - **D00001D** 3.0.0 BUILD COMPLETE (this session). All enhancements are built, tested, committed to local main, and the full release …
 - **D00001E** fix: Python 3.10 CI failure — agents_md_generator._project_name() and cli_init used bare `import tomllib` (stdlib 3.11+…
-- **D00001F** RESOLVED the known release-smoke tooling bug: replaced `head -1` with `sed -n '1p'` in Makefile release-smoke + wheel-n…  ·  `Makefile`  ·  _makefile, release, tooling_
-- **D00001G** v3.0.x storage prereq IMPLEMENTATION COMPLETE on branch release/3.0.1 (commits 6253940 + c1352d7). Patches 1+2+3 done: …  ·  _memory, prereq, storage, v3.0.1_
-- **D00001H** M1 Phase A origin tagging IMPLEMENTATION COMPLETE on release/3.0.1 (commits 618710a storage + ff06b3d ide_inject). orig…  ·  _consensus, m1, memory, origin, v3.1.0_
 
-_+1210 more decision(s) — full log in `.codevira/decisions.jsonl`._
+_+46 more decision(s) — full log in `.codevira/decisions.jsonl`._
 
 
 For the full decision log + outcomes + reverts, see `.codevira/decisions.jsonl` or run `codevira list-decisions`.

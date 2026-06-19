@@ -1,4 +1,4 @@
-# Codevira — Architecture (v3.4.0)
+# Codevira — Architecture (v3.5.0)
 
 > Codevira is a lean cross-IDE decision-enforcement layer.
 > ~1-2 MB per project. In your repo. No cloud. No vectors. MIT.
@@ -10,12 +10,16 @@
 > safety on both Posix and Windows. v3.1.0 added five memory
 > subsystems (working memory, skills, spatial, consensus, reflections;
 > +24 tools). v3.3.0 added preference capture (`distill_preferences` /
-> `search_preferences`) — the tool surface is now 49 AI-facing tools.
+> `search_preferences`), taking the tool surface to 49 AI-facing tools.
 > v3.4.0 is a precision + hygiene release (no tool-surface change):
 > the engine wiring now hands `Write` an honest `--- before/--- after`
 > diff (read from disk) so the additive-edit guards stop false-blocking
 > purely-additive full-file writes, and `codevira projects` gained
 > staleness labels + an `archive` subcommand + an ephemeral-path guard.
+> v3.5.0 grew the read side (summary-first `expand`, read-only
+> session-transcript ingest, the relevance eval + learned weight
+> tuning, content-aware decision lock) — the tool surface is now 50
+> AI-facing tools.
 
 ## The three layers (top to bottom)
 
@@ -32,7 +36,7 @@
 │  CODEVIRA MCP SERVER                                              │
 │  ~85 MB pipx install, <100ms cold start                           │
 │                                                                   │
-│  Tools (49 surfaced to AI clients):                               │
+│  Tools (50 surfaced to AI clients):                               │
 │    Decisions: record_decision / search_decisions / list_decisions │
 │               / list_tags / supersede_decision / check_conflict   │
 │               / get_history / reaffirm_decision /                 │
@@ -255,7 +259,7 @@ These survived the v2.2.0 surgery untouched:
 | Per-project disk (active project) | 40-80 MB | **~1-2 MB** |
 | Worst-case disk explosion (v2.1.2 HNSW) | up to 64 GB | **structurally impossible** |
 | ChromaDB / sentence-transformers / torch | required | **gone** |
-| Tree-sitter grammars | 17 langs, 351 MB | **4 langs, ~5 MB** (TS/JS/Go/Rust). Long-tail via opt-in `[all-languages]` |
+| Tree-sitter grammars | 17 langs, 351 MB | **4 langs, ~5 MB** (TS/JS/Go/Rust; Python uses stdlib `ast`). Long-tail grammars dropped — agents Read those files directly |
 
 ## Comparison with alternative tools (2026)
 

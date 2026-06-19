@@ -730,7 +730,11 @@ def get_session_context(since: str | None = None) -> dict:
             ],
             "recent_decisions": [
                 {
-                    "decision": _truncate(d.get("decision"), 120),
+                    # E1 (Phase 19): one-line summary (collapses newlines) so
+                    # the brief stays genuinely single-line, not just ≤120 chars.
+                    "decision": decisions_store.one_line_summary(
+                        d.get("decision"), 120
+                    ),
                     "file_path": d.get("file_path"),
                     "source": "session",
                 }

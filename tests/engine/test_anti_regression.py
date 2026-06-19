@@ -81,7 +81,23 @@ def isolated_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 @pytest.fixture(autouse=True)
 def _clear_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("CODEVIRA_ANTI_REGRESSION_MODE", raising=False)
+    """Make every test in this module hermetic w.r.t. hero-policy mode env vars.
+
+    ``CODEVIRA_DECISION_LOCK_MODE=warn`` in particular is known to linger in a
+    developer's shell. Without clearing it, the simultaneous-fire scenario
+    (test 7) sees decision_lock downgraded to a *warn* — so anti_regression
+    becomes the sole blocker and the "decision_lock is primary" priority
+    assertion fails for a reason unrelated to the code under test. Clear the
+    decision-lock and anti-regression mode vars so each test asserts DEFAULT
+    (block) behavior regardless of ambient env. (Mirrors the v3.5.0 acceptance
+    suite's ``_clean_v350_env``.)
+    """
+    for env in (
+        "CODEVIRA_ANTI_REGRESSION_MODE",
+        "CODEVIRA_DECISION_LOCK_MODE",
+        "CODEVIRA_DECISION_LOCK_CONTENT_AWARE",
+    ):
+        monkeypatch.delenv(env, raising=False)
 
 
 # =====================================================================
@@ -147,10 +163,9 @@ class TestAcceptanceScenarios:
         )
         event = _make_event(target=target, proposed_diff=diff)
         verdict = policy.evaluate(event, signals)
-        assert verdict.is_allowing(), (
-            f"unrelated diff shouldn't trigger anti-regression; "
-            f"got {verdict.action}"
-        )
+        assert (
+            verdict.is_allowing()
+        ), f"unrelated diff shouldn't trigger anti-regression; got {verdict.action}"
 
     def test_4_revert_match_blocks_with_diagnostic(self):
         """The diff matches is_revert's heuristic → block.
@@ -290,10 +305,14 @@ class TestAcceptanceScenarios:
         )
 
         store_paths.ensure_dirs()
+        # v3.5.0 content-aware lock: the locked decision must be ABOUT the
+        # code the diff changes (self._lock / attempt) for decision_lock to
+        # fire — otherwise it correctly downgrades to a warn and this test's
+        # premise (BOTH heroes block, priority decides primary) won't hold.
         decisions_store.record(
-            decision="Use bcrypt",
+            decision="attempt() must run inside self._lock — no lock-free retry path",
             file_path="auth.py",
-            context="perf",
+            context="race condition guard",
             do_not_revert=True,
         )
 
@@ -356,9 +375,7 @@ class TestAcceptanceScenarios:
                 ],
             }
         )
-        diff = (
-            "--- before\ndef f():\n    return 1\n" "--- after\ndef f():\n    return 2\n"
-        )
+        diff = "--- before\ndef f():\n    return 1\n--- after\ndef f():\n    return 2\n"
         event = _make_event(target=target, proposed_diff=diff)
         durations = []
         for _ in range(100):

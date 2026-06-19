@@ -37,22 +37,32 @@ def cmd_reflect(
     from_file: str | None = None,
     apply: bool = False,
     yes: bool = False,
+    from_sessions: bool = False,
 ) -> int:
     """Entry point for ``codevira reflect``.
 
     Returns 0 on success (including "no-op, here's the prompt").
     Non-zero on parse / storage failure.
+
+    E2 (Phase 20): ``from_sessions=True`` (``--from-sessions``) folds a
+    READ-ONLY scan of local IDE session transcripts (tool failures + user
+    corrections) into the prompt as additional signal. Candidates only —
+    nothing is committed without ``--apply``.
     """
-    ctx = reflections_store.build_source_context(period_days=period_days)
+    ctx = reflections_store.build_source_context(
+        period_days=period_days, include_transcripts=from_sessions
+    )
 
     if from_file is None:
         # Pure render mode — print the prompt and instruct.
         prompt = reflections_store.render_prompt(ctx)
+        n_signals = len(ctx.get("transcript_signals") or [])
         sys.stdout.write(
             f"codevira reflect: built source context for the last "
             f"{period_days} day(s) "
             f"({len(ctx['sessions'])} session(s), "
             f"{len(ctx['decisions'])} decision(s), "
+            f"{n_signals} transcript signal(s), "
             f"{ctx['envelope_bytes']} bytes).\n\n"
         )
         sys.stdout.write(

@@ -75,11 +75,18 @@ def search_decisions(
     still work via porter stemming + BM25; concept-only queries with
     zero keyword overlap may miss (acceptable trade — see v2.2.0 plan).
 
+    E1 (Phase 19): the DEFAULT is now summary-first — each row is
+    {id, decision (one-line ≤140 chars), file_path, do_not_revert, tags,
+    score}, dropping the heavy per-row snippet/origin and full text. Use
+    ``full=True`` for untruncated rows, ``expand(ids=[...])`` to fetch
+    specific decisions in full, or set ``CODEVIRA_DECISION_DETAIL=full`` to
+    restore the pre-E1 verbose default machine-wide.
+
     Args:
         query: search terms; empty string returns 0 results.
         limit: max results (clamped to [1, 20]).
         session_id: filter to a session (post-FTS5 filter).
-        full: return full decision text (default truncates to 200 chars).
+        full: return full untruncated rows (incl. snippet/origin).
         summary_only: ~70% smaller payload — only {id, summary, score,
             do_not_revert} per result.
         since: ISO 8601 / YYYY-MM-DD; only decisions ts > since returned.
@@ -96,6 +103,16 @@ def search_decisions(
     # Apply session_id filter post-search (FTS5 has no notion of session).
     if session_id:
         results = [r for r in results if r.get("session_id") == session_id]
+
+    # E1 (Phase 19): summary-first default. The verbose pre-E1 default is
+    # restorable machine-wide via CODEVIRA_DECISION_DETAIL=full (mirrors the
+    # CODEVIRA_TOOL_PROFILE / CODEVIRA_TOKEN_PRECISION env convention).
+    # Explicit full=True / summary_only always win over the env.
+    import os
+
+    effective_full = full or (
+        os.environ.get("CODEVIRA_DECISION_DETAIL", "").strip().lower() == "full"
+    )
 
     # v2.2.0 retrieval mode is always "keyword" (no semantic).
     retrieval = "keyword" if results else "keyword-no-results"
@@ -122,21 +139,41 @@ def search_decisions(
             "mode": "summary_only",
         }
 
-    if not full:
-        for r in results:
-            if r.get("decision") and len(r["decision"]) > 200:
-                r["decision"] = r["decision"][:199] + "…"
+    if effective_full:
+        return {
+            "query": query,
+            "count": len(results),
+            "retrieval": retrieval,
+            "threshold_used": threshold,
+            "results": results,
+            "hint": "Showing full untruncated decisions.",
+        }
 
+    # Compact default (E1): id + one-line summary + key fields (do_not_revert,
+    # file_path, tags) + score. Drops the heavy per-row snippet/origin and the
+    # full decision text; expand(ids=[...]) or full=True fetches the rest.
+    compact = [
+        {
+            "id": r.get("id"),
+            "decision": decisions_store.one_line_summary(r.get("decision"), 140),
+            "file_path": r.get("file_path"),
+            "do_not_revert": bool(r.get("do_not_revert", False)),
+            "tags": r.get("tags") or [],
+            "created_at": r.get("created_at"),
+            "score": r.get("score"),
+        }
+        for r in results
+    ]
     return {
         "query": query,
-        "count": len(results),
+        "count": len(compact),
         "retrieval": retrieval,
         "threshold_used": threshold,
-        "results": results,
+        "results": compact,
         "hint": (
-            "Pass full=True for untruncated decision text. Increase limit up to 20."
-            if not full
-            else "Showing full untruncated decisions."
+            "Compact rows (E1 summary-first). Pass full=True for untruncated "
+            "text + snippet/origin, or expand(ids=[...]) to fetch specific "
+            "decisions in full."
         ),
     }
 
@@ -158,7 +195,11 @@ def list_decisions(
     are returned. ``tags`` is intersection (all tags must match).
 
     Three verbosity tiers (mirrors ``search_decisions``):
-    ``summary_only`` (tiny) < default slim (~50 tok/row) < ``full``.
+    ``summary_only`` (tiny) < default compact (one-line decision + key
+    fields) < ``full``. E1 (Phase 19): the default decision text is a
+    one-line summary (≤140 chars); ``full=True`` or
+    ``CODEVIRA_DECISION_DETAIL=full`` returns untruncated records, and
+    ``expand(ids=[...])`` fetches specific decisions in full.
 
     Args:
         limit: max rows (clamped to [1, 200]).
@@ -180,7 +221,15 @@ def list_decisions(
     """
     limit = max(1, min(int(limit), 200))
 
+    import os
+
     from mcp_server.storage import decisions_store
+
+    # E1 (Phase 19): summary-first default; CODEVIRA_DECISION_DETAIL=full
+    # restores the pre-E1 verbose default. Explicit full/summary_only win.
+    effective_full = full or (
+        os.environ.get("CODEVIRA_DECISION_DETAIL", "").strip().lower() == "full"
+    )
 
     result = decisions_store.list_all(
         limit=limit,
@@ -190,7 +239,7 @@ def list_decisions(
         session_id=session_id,
         tags=tags,
         include_superseded=include_superseded,
-        full=full and not summary_only,
+        full=effective_full and not summary_only,
     )
 
     filters_applied = {
@@ -220,11 +269,59 @@ def list_decisions(
             "filters_applied": filters_applied,
         }
 
+    if effective_full:
+        decisions_out = result["decisions"]
+    else:
+        # Compact default (E1): one-line the decision text; key fields
+        # (id, file_path, do_not_revert, tags, created_at) already present.
+        decisions_out = [
+            {**d, "decision": decisions_store.one_line_summary(d.get("decision"), 140)}
+            for d in result["decisions"]
+        ]
+
     return {
         "count": result["count"],
         "has_more": result["has_more"],
-        "decisions": result["decisions"],
+        "decisions": decisions_out,
         "filters_applied": filters_applied,
+    }
+
+
+def expand(ids: list[str]) -> dict[str, Any]:
+    """Batch-fetch FULL decision records by ID — the expand path for the
+    summary-first defaults (E1, Phase 19).
+
+    The compact ``search_decisions`` / ``list_decisions`` defaults return
+    one-line summaries + stable IDs; pass the IDs you care about here to get
+    their complete records (full text, context, origin, timestamps). This is
+    the token-efficient pattern: scan cheap summaries, expand only the few
+    that matter.
+
+    Args:
+        ids: decision IDs to fetch (e.g. ["D0000Z4", "D0000WR"]).
+
+    Returns:
+        {requested, count, decisions: [full records], not_found: [ids]}.
+        Order follows ``ids``; unknown IDs are listed under ``not_found``
+        and simply omitted from ``decisions`` (never raises).
+    """
+    from mcp_server.storage import decisions_store
+
+    id_list = [str(i).strip() for i in (ids or []) if str(i).strip()]
+    found: list[dict[str, Any]] = []
+    not_found: list[str] = []
+    for did in id_list:
+        rec = decisions_store.get(did)
+        if rec is None:
+            not_found.append(did)
+        else:
+            found.append(rec)
+
+    return {
+        "requested": len(id_list),
+        "count": len(found),
+        "decisions": found,
+        "not_found": not_found,
     }
 
 

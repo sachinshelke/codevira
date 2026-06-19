@@ -12,6 +12,7 @@ configuration knobs, and acceptance scenarios.
 from __future__ import annotations
 
 import os
+import re
 from typing import Any
 
 from mcp_server.engine.events import EventType, HookEvent
@@ -21,6 +22,77 @@ from mcp_server.engine.signals import SignalContext
 
 _DEFAULT_MODE = "block"
 _MODES = ("off", "warn", "block")
+
+# ---------------------------------------------------------------------
+# Content-aware orthogonality (v3.5.0) — the lock used to be PRESENCE-based:
+# any non-additive edit to a file holding a do_not_revert decision was
+# hard-blocked, even when the change had nothing to do with what was
+# locked (e.g. editing a tool's description on server.py while the locked
+# decisions are about the background watcher). We now compare the edit's
+# diff envelope against each locked decision's text: only a change that
+# actually references the decision's subject blocks; a provably-orthogonal
+# change downgrades to a warn (decisions still surfaced for self-check).
+#
+# The tokenizer mirrors check_conflict._tokenize (D000004) but is kept
+# local so this safety policy stays self-contained and never imports a
+# private symbol from the tools layer. Tokens are additionally expanded
+# across ``_``/``-`` so a compound code identifier (``validate_input``)
+# matches a decision that spells it out (``validate input``) — closing the
+# most dangerous false-NEGATIVE in a pure exact-match scheme.
+_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]+")
+_MIN_SHARED_FOR_CONFLICT = 2  # < this many shared salient tokens ⇒ orthogonal
+_STOPWORDS = frozenset(
+    {
+        "a",
+        "an",
+        "the",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "and",
+        "or",
+        "but",
+        "of",
+        "in",
+        "on",
+        "at",
+        "to",
+        "from",
+        "for",
+        "by",
+        "with",
+        "as",
+        "it",
+        "this",
+        "that",
+        "these",
+        "those",
+        "we",
+        "you",
+        "i",
+        "they",
+        "should",
+        "must",
+        "may",
+        "can",
+        "will",
+        "would",
+        "do",
+        "does",
+        "did",
+        "use",
+        "using",
+        "used",
+        "not",
+        "def",
+        "self",
+        "return",
+    }
+)
 
 
 class DecisionLock(Policy):
@@ -53,7 +125,15 @@ class DecisionLock(Policy):
             os.environ.get("CODEVIRA_DECISION_LOCK_MODE", _DEFAULT_MODE).strip().lower()
         )
         mode = mode_raw if mode_raw in _MODES else _DEFAULT_MODE
-        return {"mode": mode}
+        # v3.5.0: content-aware orthogonality is ON by default. Set
+        # CODEVIRA_DECISION_LOCK_CONTENT_AWARE=0 (false/off/no) to restore the
+        # strict pre-v3.5.0 behavior where every non-additive edit to a locked
+        # file hard-blocks regardless of whether it touches the decision.
+        ca_raw = (
+            os.environ.get("CODEVIRA_DECISION_LOCK_CONTENT_AWARE", "1").strip().lower()
+        )
+        content_aware = ca_raw not in ("0", "false", "off", "no")
+        return {"mode": mode, "content_aware": content_aware}
 
     def config_schema(self) -> dict[str, Any]:
         return {
@@ -63,6 +143,16 @@ class DecisionLock(Policy):
                 "default": _DEFAULT_MODE,
                 "env": "CODEVIRA_DECISION_LOCK_MODE",
                 "description": "off | warn | block",
+            },
+            "content_aware": {
+                "type": "boolean",
+                "default": True,
+                "env": "CODEVIRA_DECISION_LOCK_CONTENT_AWARE",
+                "description": (
+                    "When true, an edit whose diff doesn't reference a locked "
+                    "decision's subject downgrades block→warn instead of hard "
+                    "blocking. Set 0 to restore strict file-level locking."
+                ),
             },
         }
 
@@ -112,13 +202,57 @@ class DecisionLock(Policy):
             # to self-check) instead of hard-blocking. Found by dogfooding
             # 2026-06-12: file-granular block stopped tool registrations
             # being ADDED to server.py over unrelated locked decisions.
-            pure_insertion = self._is_pure_insertion(event)
+            if self._is_pure_insertion(event):
+                return self._make_verdict(
+                    event=event,
+                    config=config,
+                    decisions=locked_decisions,
+                    target_rel=target_rel,
+                    downgrade_kind="insertion",
+                )
+
+            # v3.5.0 content-aware orthogonality: a modify/delete edit only
+            # REVERTS a locked decision if it touches that decision's subject.
+            # Compare the diff envelope's salient tokens against each locked
+            # decision; if the change is provably orthogonal to ALL of them,
+            # downgrade to warn. We only RELAX on positive evidence of
+            # orthogonality — an unparseable / token-empty diff keeps the hard
+            # block (we can't prove it safe).
+            if config["content_aware"]:
+                changed = self._changed_tokens(event)
+                if changed:  # parseable AND non-empty → can assess orthogonality
+                    conflicting: list[dict[str, Any]] = []
+                    shared_all: set[str] = set()
+                    for d in locked_decisions:
+                        is_conf, shared = self._decision_conflicts(changed, d)
+                        if is_conf:
+                            conflicting.append(d)
+                            shared_all |= shared
+                    if not conflicting:
+                        return self._make_verdict(
+                            event=event,
+                            config=config,
+                            decisions=locked_decisions,
+                            target_rel=target_rel,
+                            downgrade_kind="orthogonal",
+                        )
+                    return self._make_verdict(
+                        event=event,
+                        config=config,
+                        decisions=conflicting,
+                        target_rel=target_rel,
+                        downgrade_kind=None,
+                        conflict_tokens=shared_all,
+                    )
+
+            # Strict block: content-aware disabled, or the diff couldn't be
+            # parsed into a non-empty delta (None/empty → can't prove safe).
             return self._make_verdict(
                 event=event,
                 config=config,
                 decisions=locked_decisions,
                 target_rel=target_rel,
-                pure_insertion=pure_insertion,
+                downgrade_kind=None,
             )
 
         # No locked decisions — but is the file marked do_not_revert
@@ -155,6 +289,63 @@ class DecisionLock(Policy):
         after_iter = iter(ln.rstrip() for ln in after.splitlines())
         return all(any(b == a for a in after_iter) for b in before_lines)
 
+    # ------------------------------------------------------------------
+    # Content-aware orthogonality (v3.5.0)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _salient_tokens(text: str) -> set[str]:
+        """Subject-bearing tokens of ``text``: lowercased, ≥3 chars, no
+        stop-words, with ``_``/``-`` compounds also split into their parts
+        (so ``validate_input`` matches a decision phrased ``validate input``).
+        """
+        out: set[str] = set()
+        for raw in _TOKEN_RE.findall(text or ""):
+            tok = raw.lower()
+            for piece in (tok, *re.split(r"[_-]", tok)):
+                if len(piece) >= 3 and piece not in _STOPWORDS:
+                    out.add(piece)
+        return out
+
+    @classmethod
+    def _changed_tokens(cls, event: HookEvent) -> set[str] | None:
+        """Salient tokens of the edit's diff envelope (``before`` + ``after``).
+
+        Returns ``None`` when the diff is absent / oversized / unparseable —
+        the caller treats that as "cannot prove orthogonal" and keeps the
+        hard block. An empty set (envelope parsed but no salient tokens) is
+        also treated conservatively by the caller.
+        """
+        from mcp_server.engine.policies._signature_detect import parse_diff
+
+        diff = event.proposed_diff
+        if not diff or len(diff) > 1_000_000:
+            return None
+        before, after = parse_diff(diff)
+        if before is None or after is None:
+            return None
+        return cls._salient_tokens(f"{before}\n{after}")
+
+    @classmethod
+    def _decision_conflicts(
+        cls, changed: set[str], decision: dict[str, Any]
+    ) -> tuple[bool, set[str]]:
+        """Does the changed code touch this decision's subject?
+
+        True when the diff envelope shares ≥ ``_MIN_SHARED_FOR_CONFLICT``
+        salient tokens with the decision's text (+context). A decision with
+        no analyzable tokens is treated conservatively as a conflict (we
+        can't prove the edit is orthogonal to it). Returns the shared tokens
+        for the explanation.
+        """
+        dtokens = cls._salient_tokens(
+            f"{decision.get('decision') or ''} {decision.get('context') or ''}"
+        )
+        if not dtokens:
+            return True, set()
+        shared = changed & dtokens
+        return (len(shared) >= _MIN_SHARED_FOR_CONFLICT), shared
+
     def _file_is_locked_without_decisions(
         self,
         signals: SignalContext,
@@ -189,15 +380,23 @@ class DecisionLock(Policy):
         config: dict[str, Any],
         decisions: list[dict[str, Any]],
         target_rel: str,
-        pure_insertion: bool = False,
+        downgrade_kind: str | None = None,
+        conflict_tokens: set[str] | None = None,
     ) -> PolicyVerdict:
         """Build the warn-or-block verdict for the locked-with-decisions case.
 
-        ``pure_insertion=True`` downgrades block → warn (v3.3.0 Phase 7):
-        the decisions are still surfaced, but an edit that only adds
-        lines can't have reverted anything.
+        ``downgrade_kind`` selects the outcome:
+
+        * ``None`` — genuine block (mode permitting). When ``conflict_tokens``
+          is given, the message names the shared subject the edit touches.
+        * ``"insertion"`` — pure-insertion warn (v3.3.0 Phase 7): the edit
+          only adds lines, so nothing is reverted.
+        * ``"orthogonal"`` — content-aware warn (v3.5.0): the edit's diff
+          doesn't reference any locked decision's subject, so it's allowed
+          with the decisions surfaced for self-check.
         """
         target_name = event.target_file.name if event.target_file else target_rel
+        is_downgrade = downgrade_kind is not None
 
         # Top-3 decisions for the message
         sample_lines: list[str] = []
@@ -211,7 +410,7 @@ class DecisionLock(Policy):
             sample_lines.append(f"  • #{did}: {decision_text!r}{ts}")
         more = f"\n  ... and {len(decisions) - 3} more" if len(decisions) > 3 else ""
 
-        if pure_insertion:
+        if downgrade_kind == "insertion":
             message = (
                 f"⚠️  Decision-lock notice on {target_name}: this file has "
                 f"{len(decisions)} locked decision(s), but your edit only "
@@ -220,10 +419,30 @@ class DecisionLock(Policy):
                 f"contradict them):\n"
                 f"{chr(10).join(sample_lines)}{more}"
             )
+        elif downgrade_kind == "orthogonal":
+            message = (
+                f"⚠️  Decision-lock notice on {target_name}: this file has "
+                f"{len(decisions)} locked decision(s), but your change doesn't "
+                f"reference their subject matter, so it doesn't appear to "
+                f"revert them — allowed as orthogonal.\n\n"
+                f"Locked decisions (self-check that your change truly doesn't "
+                f"contradict them):\n"
+                f"{chr(10).join(sample_lines)}{more}\n\n"
+                f"(If this is wrong, set CODEVIRA_DECISION_LOCK_CONTENT_AWARE=0 "
+                f"to restore strict file-level blocking.)"
+            )
         else:
+            reason = ""
+            if conflict_tokens:
+                shown = ", ".join(sorted(conflict_tokens)[:6])
+                reason = (
+                    f"Your change touches code referencing {shown} — the "
+                    f"subject of the locked decision(s) below.\n\n"
+                )
             message = (
                 f"🔒 Decision-lock veto on {target_name}: this file is marked "
                 f"do_not_revert with {len(decisions)} locked decision(s).\n\n"
+                f"{reason}"
                 f"Locked decisions:\n"
                 f"{chr(10).join(sample_lines)}{more}\n\n"
                 f"To proceed safely:\n"
@@ -243,10 +462,14 @@ class DecisionLock(Policy):
             "mode": config["mode"],
             "locked_decision_count": len(decisions),
             "locked_decision_ids": [d.get("id") for d in decisions[:20]],
-            "pure_insertion": pure_insertion,
+            # Back-compat: callers/tests still read ``pure_insertion``.
+            "pure_insertion": downgrade_kind == "insertion",
+            "content_orthogonal": downgrade_kind == "orthogonal",
+            "downgrade_kind": downgrade_kind,
+            "conflict_tokens": sorted(conflict_tokens) if conflict_tokens else [],
         }
 
-        if config["mode"] == "block" and not pure_insertion:
+        if config["mode"] == "block" and not is_downgrade:
             return PolicyVerdict.block(message=message, metadata=metadata)
         return PolicyVerdict.warn(message=message, metadata=metadata)
 

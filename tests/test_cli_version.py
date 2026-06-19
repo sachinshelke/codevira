@@ -7,13 +7,20 @@ ensures it stays wired to ``mcp_server.__version__`` so a single bump
 to ``__init__.py`` updates both ``--version`` output and the package
 metadata.
 """
+
 from __future__ import annotations
 
 import subprocess
 import sys
-
+from pathlib import Path
 
 from mcp_server import __version__ as expected_version
+
+# Resolve the subprocess against the REPO SOURCE, not whatever mcp_server is
+# pip-installed in this interpreter. Needed because the autouse isolation
+# fixture chdir's off the repo root (so `python -m mcp_server` would otherwise
+# pick up sys.path[0]=cwd → a stale installed package).
+_REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def _run_cli(*args: str) -> subprocess.CompletedProcess:
@@ -23,6 +30,7 @@ def _run_cli(*args: str) -> subprocess.CompletedProcess:
         capture_output=True,
         text=True,
         timeout=15,
+        cwd=str(_REPO_ROOT),
     )
 
 
@@ -31,14 +39,14 @@ class TestVersionFlag:
         result = _run_cli("--version")
         # argparse prints version to stdout (or stderr depending on Python
         # version). Accept either.
-        out = (result.stdout + result.stderr)
+        out = result.stdout + result.stderr
         assert expected_version in out
         assert "codevira" in out
         assert result.returncode == 0
 
     def test_short_form(self):
         result = _run_cli("-V")
-        out = (result.stdout + result.stderr)
+        out = result.stdout + result.stderr
         assert expected_version in out
         assert result.returncode == 0
 

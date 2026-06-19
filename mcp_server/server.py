@@ -38,6 +38,11 @@ try:
     import mcp.server.stdio
     from mcp.server import Server
     from mcp.types import Tool, TextContent
+
+    try:
+        from mcp.types import ToolAnnotations
+    except ImportError:  # older mcp (<1.3): tool annotations are skipped
+        ToolAnnotations = None  # type: ignore[assignment,misc]
 except ImportError:
     # Use stderr — stdout is the MCP protocol channel in stdio mode.
     # Printing to stdout here would corrupt the MCP handshake.
@@ -69,6 +74,7 @@ from mcp_server.tools.search import (
     write_session_log,
     list_decisions,
     list_tags,  # v2.1.2 Items 11 + 27
+    expand,  # E1 (Phase 19): summary-first expand path
 )
 # v2.2.0+ (2026-05-22 surface-cut audit batch 6) — dropped imports:
 #   - get_full_roadmap (rarely needed by agents; `get_roadmap` is the
@@ -177,6 +183,29 @@ async def handle_list_resources():
     ]
 
 
+@server.list_resource_templates()
+async def handle_list_resource_templates():
+    """Declare the parameterized decisions resource so MCP clients can
+    *discover* that the timeline is query-able. ``read_resource`` already
+    serves ``codevira://decisions/{query}`` (substring filter), but
+    ``resources/list`` only advertises the static URI — without a template,
+    a client has no way to learn it can append a query. SDK-supported since
+    the resource-templates capability landed."""
+    from mcp.types import ResourceTemplate
+
+    return [
+        ResourceTemplate(
+            uriTemplate="codevira://decisions/{query}",
+            name="Codevira decisions — filtered",
+            description=(
+                "The decision timeline filtered to decisions matching {query} "
+                "(URL-encoded substring). Example: codevira://decisions/retry."
+            ),
+            mimeType="text/html",
+        ),
+    ]
+
+
 @server.read_resource()
 async def handle_read_resource(uri):
     """Render a decision-replay timeline at the requested URI.
@@ -186,6 +215,7 @@ async def handle_read_resource(uri):
     yield a degraded result, not a broken client experience.
     """
     from mcp_server.decision_replay import build_timeline, render_html
+    from mcp.server.lowlevel.helper_types import ReadResourceContents
 
     uri_str = str(uri)
     query: str | None = None
@@ -210,18 +240,25 @@ async def handle_read_resource(uri):
         # returns an empty list and the renderer shows the friendly
         # placeholder.
         timeline = build_timeline(query=query, since_days=30, limit=20)
-        return render_html(timeline, title=title)
+        html_doc = render_html(timeline, title=title)
     except Exception as e:  # noqa: BLE001
         # Bug-X-shape defense: never let resource-read crash the MCP
         # client. Return an HTML page with the error so the user knows.
         import html as _html
 
-        return (
+        html_doc = (
             f"<!DOCTYPE html><html><body>"
             f"<h1>{_html.escape(title)}</h1>"
             f"<p style='color:red'>Codevira couldn't load decisions: "
             f"{_html.escape(str(e))}</p></body></html>"
         )
+
+    # Return ReadResourceContents (the modern SDK API). Returning a bare str
+    # is deprecated AND defaults the content mimeType to text/plain, so the
+    # text/html declared in list_resources never reached the client renderer
+    # (Claude Desktop showed escaped HTML instead of the timeline). This fixes
+    # the DeprecationWarning and the declared-vs-served mimeType mismatch.
+    return [ReadResourceContents(content=html_doc, mime_type="text/html")]
 
 
 @server.list_tools()
@@ -466,9 +503,12 @@ async def list_tools() -> list[Tool]:
                 "NO semantic/vector matching, so recall depends on sharing "
                 "keywords with the stored decision; for a concept with no "
                 "shared words, browse list_decisions or list_tags instead. "
-                "Default: 5 truncated matches (~500 tokens). Pass full=true for "
-                "untruncated text, or summary_only=true for a ~70%-smaller "
-                "{id, summary, score} payload. Answers 'has anyone decided this before?'"
+                "Default (E1): summary-first rows — {id, decision (one-line ≤140), "
+                "file_path, do_not_revert, tags, score}, dropping per-row "
+                "snippet/origin. Pass full=true for untruncated rows, "
+                "expand(ids=[...]) to fetch specific decisions in full, or "
+                "summary_only=true for a ~70%-smaller {id, summary, score} "
+                "payload. Answers 'has anyone decided this before?'"
             ),
             inputSchema={
                 "type": "object",
@@ -504,7 +544,10 @@ async def list_tools() -> list[Tool]:
                 "v2.1.2 Item 11: enumerate decisions with filters (since_date, "
                 "file_pattern, protected_only, session_id, tags). Closes the gap "
                 "that 'codevira can remember things across sessions, but can't "
-                "list what it remembers.' Returns ~50 tokens per row by default."
+                "list what it remembers.' Default (E1): compact rows — one-line "
+                "decision summary + key fields; full=true (or "
+                "CODEVIRA_DECISION_DETAIL=full) for untruncated records, "
+                "expand(ids=[...]) to fetch specific decisions in full."
             ),
             inputSchema={
                 "type": "object",
@@ -561,6 +604,28 @@ async def list_tools() -> list[Tool]:
                 "we track?'"
             ),
             inputSchema={"type": "object", "properties": {}},
+        ),
+        Tool(
+            name="expand",
+            description=(
+                "E1 (Phase 19): fetch FULL decision records by ID — the expand "
+                "path for the summary-first search_decisions / list_decisions "
+                "defaults. Scan the cheap compact rows, then pass the IDs you "
+                "care about here for complete text + context + origin. "
+                "Returns {requested, count, decisions, not_found}; never raises "
+                "on unknown IDs."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Decision IDs to fetch in full (e.g. ['D0000Z4']).",
+                    },
+                },
+                "required": ["ids"],
+            },
         ),
         # v2.2.0+ (2026-05-22 surface-cut audit batch 6): the batch
         # endpoints `record_decisions` and `write_session_logs` were
@@ -1591,6 +1656,7 @@ async def list_tools() -> list[Tool]:
             "get_roadmap",
             "search_decisions",
             "list_decisions",
+            "expand",  # E1 (Phase 19): essential complement to summary-first search
             "record_decision",
             "update_phase_status",
             "complete_phase",
@@ -1598,6 +1664,34 @@ async def list_tools() -> list[Tool]:
             "write_session_log",
         }
         tools = [t for t in tools if t.name in _lean_surface]
+
+    # MCP tool annotations (spec 2025-03-26): tell the client which tools are
+    # safe reads vs state mutations, so a host can run read tools without a
+    # confirmation prompt and reason about side effects. Codevira's reads
+    # (search / get / list / query / spatial / status) never mutate; everything
+    # else appends to the JSONL stores. Nothing here is destructive — the
+    # destructive ops (reset / uninstall) are CLI-only, not MCP tools.
+    _READ_ONLY = {
+        "get_session_context", "get_roadmap", "get_phase", "get_playbook",
+        "search_decisions", "list_decisions", "expand", "get_history",
+        "list_tags", "check_conflict", "get_node", "get_impact", "get_code",
+        "get_signature", "query_graph", "get_reflections", "list_reflections",
+        "get_skill", "list_skills", "get_working_context", "working_get",
+        "spatial_nearby", "spatial_heat", "spatial_neighborhood",
+        "spatial_affordances", "consensus_status", "origin_of",
+        "search_preferences",
+    }  # fmt: skip
+    if ToolAnnotations is not None:
+        for t in tools:
+            if t.annotations is None:
+                _is_read = t.name in _READ_ONLY
+                t.annotations = ToolAnnotations(
+                    readOnlyHint=_is_read,
+                    destructiveHint=False,
+                    # Reads are idempotent (repeat call → same result); writes
+                    # vary (record_decision appends), so leave theirs unset.
+                    idempotentHint=True if _is_read else None,
+                )
 
     return tools
 
@@ -1824,6 +1918,9 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             )
         elif name == "list_tags":
             result = list_tags()
+        elif name == "expand":
+            # E1 (Phase 19): expand path for the summary-first defaults.
+            result = expand(arguments.get("ids") or [])
         # v2.2.0+ batch 6: record_decisions (batch) and write_session_logs
         # (batch) dispatchers deleted along with the tools.
         elif name == "supersede_decision":

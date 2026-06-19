@@ -258,56 +258,21 @@ def _extract_file_mentions(text: str) -> list[str]:
 
 def _determine_file_outcome(file_path: str, session_date: str) -> dict | None:
     """
-    Check git history to see what happened to a file after a session.
-    Returns {'type': 'kept'|'modified'|'reverted', 'delta': ...}
+    Check git history to see what happened to a file after a decision was made.
+    Returns ``{'type': 'kept'|'modified'|'reverted', 'delta': ...}`` or None.
+
+    Phase 17: delegates the kept/modified/reverted decision to the shared
+    :func:`indexer.outcome_classifier.classify_outcome`, so the SQLite →
+    confidence surface labels every decision IDENTICALLY to the JSONL →
+    digest/replay/skills surface (``outcomes_writer``). ``session_date`` is the
+    decision's recorded timestamp (the caller passes ``created_at``).
     """
-    abs_path = _project_root() / file_path
-    if not abs_path.exists():
-        return {"type": "reverted", "delta": "File no longer exists"}
+    from indexer.outcome_classifier import classify_outcome
 
-    # Normalize date to ISO 8601 for git --since compatibility
-    try:
-        from datetime import datetime
-
-        dt = datetime.fromisoformat(session_date.replace(" ", "T"))
-        since_date = dt.isoformat()
-    except (ValueError, AttributeError):
-        since_date = session_date
-
-    # Get commits touching this file after the session date
-    log_output = _git_cmd(
-        "log", "--oneline", "--follow", f"--since={since_date}", "--", file_path
-    )
-
-    if not log_output:
-        return {"type": "kept", "delta": None}
-
-    commits = log_output.split("\n")
-    if not commits or commits == [""]:
-        return {"type": "kept", "delta": None}
-
-    # Check if any commit message suggests a revert
-    for commit_line in commits:
-        lower = commit_line.lower()
-        if any(word in lower for word in ["revert", "undo", "rollback", "roll back"]):
-            return {"type": "reverted", "delta": commit_line}
-
-    # If there are subsequent commits but no revert, it was modified
-    if len(commits) >= 1:
-        # Get a summary of changes
-        diff_stat = _git_cmd(
-            "diff", "--stat", f"HEAD~{min(len(commits), 5)}", "--", file_path
-        )
-        if not diff_stat:
-            logger.debug(
-                "Could not get diff stats for %s, using commit count", file_path
-            )
-        return {
-            "type": "modified",
-            "delta": diff_stat or f"{len(commits)} subsequent commits",
-        }
-
-    return {"type": "kept", "delta": None}
+    outcome = classify_outcome(_project_root(), file_path, session_date)
+    if outcome is None:
+        return None
+    return {"type": outcome, "delta": None}
 
 
 # v3.0.0 audit cleanup: _learn_from_modification deleted along with

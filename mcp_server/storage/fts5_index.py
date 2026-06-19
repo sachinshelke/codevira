@@ -37,6 +37,7 @@ manifest.yaml O(1) path which is faster + exact.
 from __future__ import annotations
 
 import logging
+import os
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -599,7 +600,18 @@ def _sanitize_fts_query(query: str) -> str:
     stripped = query.strip()
     if not stripped:
         return ""
-    tokens = []
+    # E5 (Phase 23): opt-in synonym widening (CODEVIRA_SYNONYM_WIDENING). When
+    # on, each token is OR-expanded with its code-domain synonyms so a query in
+    # one vocabulary recalls a decision recorded in another. Off by default —
+    # widening trades precision for recall, so the conservative default holds.
+    widen = os.environ.get("CODEVIRA_SYNONYM_WIDENING", "").strip().lower() in (
+        "1",
+        "true",
+        "on",
+        "yes",
+    )
+    tokens: list[str] = []
+    seen: set[str] = set()
     for raw in stripped.split():
         # Strip trailing punctuation and outer quotes.
         t = raw.strip("\"'.,;:!?()[]{}").strip()
@@ -612,8 +624,19 @@ def _sanitize_fts_query(query: str) -> str:
         # Skip stopwords and very short tokens.
         if t.lower() in _STOPWORDS or len(t) < 3:
             continue
-        # Quote to protect embedded dots / slashes / hyphens.
-        tokens.append(f'"{t}"')
+        if widen:
+            from mcp_server.storage.synonyms import expand
+
+            variants = expand(t)
+        else:
+            variants = [t]
+        for v in variants:
+            vl = v.lower()
+            if vl in seen:
+                continue
+            seen.add(vl)
+            # Quote to protect embedded dots / slashes / hyphens.
+            tokens.append(f'"{v}"')
     if not tokens:
         return ""
     # OR-join so ANY matching token scores the document.

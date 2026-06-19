@@ -24,6 +24,10 @@ repos:
         args: [--maxkb=500]
       - id: check-merge-conflict
       - id: detect-private-key
+        # test_crash_logger.py contains fake "-----BEGIN ... PRIVATE KEY-----"
+        # blocks on purpose — they exist to verify the crash-log redactor
+        # strips secrets before anything is written to disk.
+        exclude: ^tests/test_crash_logger\.py$
       - id: mixed-line-ending
         args: [--fix=lf]
 

@@ -165,7 +165,9 @@ def _read_decision_via_replay_mcp_resource(project: Path) -> str:
 
     paths_mod.set_project_dir(project)
     paths_mod.invalidate_data_dir_cache()
-    return asyncio.run(handle_read_resource("codevira://decisions"))
+    result = asyncio.run(handle_read_resource("codevira://decisions"))
+    # v3.5.0: handle_read_resource returns [ReadResourceContents]; pull the HTML.
+    return result[0].content if isinstance(result, list) else result
 
 
 def _read_decision_via_replay_cli(project: Path) -> str:

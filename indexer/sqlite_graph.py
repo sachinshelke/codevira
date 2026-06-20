@@ -412,6 +412,30 @@ class SQLiteGraph:
             # offers the user "run --full" which is correct in this state too.
             return 0
 
+    def clear(self) -> int:
+        """Delete every node — and, via ``ON DELETE CASCADE``, its edges,
+        symbols, and call_edges — for a true from-scratch wipe of this
+        project's graph.
+
+        ``codevira index --full`` (``cmd_full_rebuild``) calls this before
+        rebuilding so the add-if-absent loop in ``generate_graph_sqlite``
+        actually re-adds (and refreshes) every file-node instead of skipping
+        those already present — the reason a re-run used to report
+        "0 nodes". Cascade is relied upon: ``PRAGMA foreign_keys = ON`` is
+        set at connect, so emptying ``nodes`` empties the dependent tables.
+
+        Returns:
+            The node count removed (0 if already empty / table missing —
+            defensive, never raises).
+        """
+        try:
+            removed = self.count_nodes()
+            with self.transaction() as conn:
+                conn.execute("DELETE FROM nodes")
+            return removed
+        except Exception:
+            return 0
+
     def get_blast_radius(self, node_id: str, max_depth: int = 3) -> list[dict]:
         query = """
             WITH RECURSIVE

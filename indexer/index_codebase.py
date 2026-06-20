@@ -492,17 +492,24 @@ def cmd_full_rebuild(verbose: bool = False):
     db = SQLiteGraph(get_data_dir() / "graph" / "graph.db")
 
     if not _check_search_deps():
-        console.print(
-            "[yellow]⚠[/yellow]  Semantic search unavailable — reinstall codevira: [bold]pip install --upgrade codevira[/bold]"
-        )
-        # Still build the graph even without search deps
+        # Graph-only is the ONLY mode since v2.2.0 — semantic code search
+        # (chromadb / torch / sentence-transformers) was removed and is on
+        # hold (D0000PV / D0000XY). There is nothing to "reinstall", so the
+        # old "Semantic search unavailable — reinstall codevira" notice
+        # (printed on every index, pointing at a fix that does nothing) is
+        # dropped. The "Graph built" line below is the real, complete result.
         from indexer.graph_generator import generate_graph_sqlite
 
+        # full=True so `index --full` truly rebuilds (clears the graph first);
+        # the reported count is then the real graph total, not "0 new nodes".
         result = generate_graph_sqlite(
-            str(_project_root()), str(get_data_dir() / "graph" / "graph.db")
+            str(_project_root()),
+            str(get_data_dir() / "graph" / "graph.db"),
+            full=True,
         )
         console.print(
-            f"[green]✓[/green] Graph built: {result.get('nodes_added', 0)} nodes, {result.get('edges_added', 0)} edges."
+            f"[green]✓[/green] Graph built: {result.get('nodes_total', 0)} nodes, "
+            f"{result.get('edges_added', 0)} edges."
         )
         db.close()
         return

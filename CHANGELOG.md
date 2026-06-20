@@ -9,6 +9,20 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Fixed
+- **`codevira index --full` now truly rebuilds the graph.** The graph-only
+  index path (the only path since v2.2.0) called the incremental
+  `generate_graph_sqlite`, whose file-node loop is add-if-absent — so a
+  re-index of an already-built project added 0 new nodes and printed a
+  confusing `Graph built: 0 nodes, N edges`. `--full` now clears the graph
+  first (new FK-cascading `SQLiteGraph.clear()`) and the result reports the
+  real `nodes_total`, so the count is honest and node metadata is refreshed.
+- **Dropped the misleading "Semantic search unavailable — reinstall codevira"
+  notice.** Semantic code search (chromadb / torch) was removed in v2.2.0 and
+  is on hold (D0000PV / D0000XY); `_check_search_deps()` is hardcoded `False`,
+  so that notice printed on *every* index and pointed users at an upgrade that
+  could never restore it. Graph-only is the normal, complete result.
+
 ## [3.5.0] — 2026-06-19
 
 ### Added

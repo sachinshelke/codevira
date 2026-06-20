@@ -2228,3 +2228,31 @@ class TestCmdIncrementalHint:
             f"Expected truthful 'up to date' message when graph is populated. "
             f"Got: {captured.out!r}"
         )
+
+
+class TestStatusRichCounts:
+    """`codevira status` surfaces activity-bearing counts (3.5.1): Symbols and
+    Edges move as you edit; Decisions track codevira usage — so the panel isn't
+    just a flat file count. Tests the data helper directly (rendering-agnostic,
+    so it's immune to the rich-mock leakage other tests in this file create)."""
+
+    def test_entity_counts_include_symbols_edges_decisions(self, tmp_path, monkeypatch):
+        import indexer.index_codebase as ic
+        from indexer.graph_generator import generate_graph_sqlite
+        from indexer.sqlite_graph import SQLiteGraph
+        from mcp_server import paths
+
+        proj = tmp_path / "proj"
+        (proj / "src").mkdir(parents=True)
+        (proj / ".codevira" / "graph").mkdir(parents=True)
+        (proj / "src" / "a.py").write_text("def f():\n    return 1\n")
+        monkeypatch.setattr(ic, "_project_root", lambda: proj)
+        monkeypatch.setattr(ic, "get_data_dir", lambda: proj / ".codevira")
+        paths._data_dir_cache.clear()
+        db_path = proj / ".codevira" / "graph" / "graph.db"
+        generate_graph_sqlite(str(proj), str(db_path))
+
+        counts = ic._status_entity_counts(SQLiteGraph(db_path))
+        assert set(counts) == {"nodes", "symbols", "edges", "decisions"}
+        assert all(isinstance(v, int) for v in counts.values())
+        assert counts["nodes"] >= 1  # src/a.py is a file node

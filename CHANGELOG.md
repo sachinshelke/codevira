@@ -9,6 +9,12 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added
+- **`codevira status` shows activity counts.** Beyond Graph Nodes (a flat file
+  count), the panel now reports Symbols, Edges, and Decisions — counts that
+  move as you edit code and record decisions, so status reflects progress
+  instead of a number that barely changes.
+
 ### Fixed
 - **`codevira index --full` now truly rebuilds the graph.** The graph-only
   index path (the only path since v2.2.0) called the incremental

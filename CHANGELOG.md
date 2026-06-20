@@ -22,6 +22,12 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   is on hold (D0000PV / D0000XY); `_check_search_deps()` is hardcoded `False`,
   so that notice printed on *every* index and pointed users at an upgrade that
   could never restore it. Graph-only is the normal, complete result.
+- **Graph node count now tracks the filesystem.** Indexing was add-if-absent
+  and never pruned nodes for deleted files, so the graph — and `codevira
+  status`'s node count — only ever grew; it never shrank when you removed a
+  file. A new FK-cascading `SQLiteGraph.remove_node` plus a prune pass in
+  `generate_graph_sqlite` now drop nodes whose source file is gone, so the
+  count reflects reality on every index.
 
 ## [3.5.0] — 2026-06-19
 

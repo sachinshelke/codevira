@@ -55,6 +55,25 @@ class TestClear:
         assert db.count_nodes() == 0
 
 
+class TestRemoveNode:
+    def test_remove_node_deletes_and_cascades_edges(self, project_env):
+        _, _, db = project_env
+        db.add_node("file:a.py", "file", "a.py", "a.py")
+        db.add_node("file:b.py", "file", "b.py", "b.py")
+        db.add_edge("file:a.py", "file:b.py", kind="imports")
+        assert db.count_nodes() == 2
+
+        assert db.remove_node("file:a.py") is True
+        assert db.count_nodes() == 1
+        assert db.get_node("file:a.py") is None
+        # The edge from a.py cascade-deletes with its source node.
+        assert db.get_edges_from("file:a.py") == []
+
+    def test_remove_missing_node_returns_false(self, project_env):
+        _, _, db = project_env
+        assert db.remove_node("file:nonexistent.py") is False
+
+
 # ===========================================================================
 # Edge Management Tests
 # ===========================================================================

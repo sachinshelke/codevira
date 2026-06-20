@@ -724,3 +724,21 @@ class TestFullRebuildClearsGraph:
         rebuilt = generate_graph_sqlite(proj, db_path, full=True)
         assert rebuilt["nodes_added"] == total  # re-added, not skipped
         assert rebuilt["nodes_total"] == total  # honest count
+
+    def test_deleted_file_node_is_pruned_on_reindex(self, tmp_path):
+        """A deleted source file's node is pruned on the next (incremental)
+        index, so the graph — and `codevira status`'s count — SHRINKS instead
+        of accumulating orphans. This is the 'status count never decreases'
+        bug.
+        """
+        from indexer.graph_generator import generate_graph_sqlite
+
+        proj, db_path = self._project(tmp_path)  # src/a.py + src/b.py
+        first = generate_graph_sqlite(proj, db_path)
+        assert first["nodes_total"] >= 2
+
+        # Delete one file, then re-index WITHOUT full (the incremental path).
+        (tmp_path / "src" / "b.py").unlink()
+        second = generate_graph_sqlite(proj, db_path)
+        assert second["nodes_removed"] >= 1
+        assert second["nodes_total"] == first["nodes_total"] - 1

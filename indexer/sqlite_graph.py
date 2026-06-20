@@ -436,6 +436,26 @@ class SQLiteGraph:
         except Exception:
             return 0
 
+    def remove_node(self, node_id: str) -> bool:
+        """Delete a single node and (via ``ON DELETE CASCADE``) its edges,
+        symbols, and call_edges.
+
+        Used to prune nodes for source files that no longer exist on disk so
+        the graph — and ``codevira status``'s node count — tracks the
+        filesystem and shrinks on deletion instead of accumulating orphans
+        forever. (3.5.1)
+
+        Returns:
+            True if a node row was deleted, False otherwise (already gone /
+            error — defensive, never raises).
+        """
+        try:
+            with self.transaction() as conn:
+                cur = conn.execute("DELETE FROM nodes WHERE id = ?", (node_id,))
+                return bool(cur.rowcount)
+        except Exception:
+            return False
+
     def get_blast_radius(self, node_id: str, max_depth: int = 3) -> list[dict]:
         query = """
             WITH RECURSIVE

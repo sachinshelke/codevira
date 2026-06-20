@@ -316,6 +316,18 @@ def generate_graph_sqlite(
         fp for fp in file_paths if "node_modules" not in fp and ".venv" not in fp
     }
 
+    # Prune nodes for source files that no longer exist on disk, so the graph
+    # (and `codevira status`'s node count) tracks the filesystem and SHRINKS
+    # on deletion instead of accumulating orphans forever. Without this, a
+    # deleted file left its node behind and the count only ever grew. (3.5.1)
+    current_node_ids = {f"file:{fp}" for fp in all_node_paths}
+    nodes_removed = 0
+    for existing in db.list_file_nodes():
+        node_id = existing.get("id")
+        if node_id and node_id not in current_node_ids:
+            if db.remove_node(node_id):
+                nodes_removed += 1
+
     # ---- Phase 2: Populate function-level symbols ----
     symbols_added = 0
     for fp in all_node_paths:
@@ -423,6 +435,7 @@ def generate_graph_sqlite(
         "files_processed": added + skipped,
         "nodes_added": added,
         "nodes_total": nodes_total,
+        "nodes_removed": nodes_removed,
         "nodes_skipped": skipped,
         "edges_added": edges_added,
         "symbols_added": symbols_added,

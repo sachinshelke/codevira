@@ -119,6 +119,30 @@ class TestSkipsBadProjects:
         assert len(results) == 1
 
 
+class TestCurrentProjectAlwaysIncluded:
+    def test_unregistered_current_project_is_searched(self, tmp_path, monkeypatch):
+        # Current project has decisions but is NOT in the registry at all.
+        _make_project(tmp_path, "current", [("retry uses backoff", "x.py")])
+        monkeypatch.setattr(
+            "mcp_server._project_inventory.enumerate_projects", lambda: []
+        )
+        results = decisions_store.search_all_projects("retry", limit=10)
+        # The current project is still searched via the cwd fallback.
+        assert len(results) == 1
+        assert "retry" in results[0]["decision"]
+
+    def test_registered_current_project_not_double_counted(self, tmp_path, monkeypatch):
+        root = _make_project(tmp_path, "current", [("retry uses backoff", "x.py")])
+        entries = [SimpleNamespace(canonical_path=str(root), name="current-svc")]
+        monkeypatch.setattr(
+            "mcp_server._project_inventory.enumerate_projects", lambda: entries
+        )
+        results = decisions_store.search_all_projects("retry", limit=10)
+        assert len(results) == 1  # searched once, not twice
+        # Registered name wins (enumerated before the cwd fallback runs).
+        assert results[0]["project"] == "current-svc"
+
+
 class TestToolSurface:
     def test_tool_all_projects_includes_project_field(self, two_projects):
         from mcp_server.tools.search import search_decisions

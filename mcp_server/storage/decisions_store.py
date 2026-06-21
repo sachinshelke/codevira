@@ -483,24 +483,38 @@ def search_all_projects(
 
     seen_roots: set[str] = set()
     merged_hits: list[dict[str, Any]] = []
+
+    def _search_one(root: Path, name: str | None) -> None:
+        key = str(root)
+        if key in seen_roots:
+            return  # a project can surface via the slug dir, db row, AND cwd
+        seen_roots.add(key)
+        if not paths.decisions_path(root).is_file():
+            return  # ghost / moved / never recorded a decision here
+        try:
+            hits = search(query, limit=limit, since=since, project_root=root)
+        except Exception:  # noqa: BLE001 — isolate a bad project's failure
+            return
+        proj_name = name or root.name
+        for h in hits:
+            merged_hits.append({**h, "project": proj_name, "project_path": key})
+
     for entry in enumerate_projects():
         root_str = entry.canonical_path
         if not root_str:
             continue  # slug-only entry with no resolvable on-disk path
-        root = Path(root_str)
-        key = str(root)
-        if key in seen_roots:
-            continue  # a project can surface via both the slug dir + db row
-        seen_roots.add(key)
-        if not paths.decisions_path(root).is_file():
-            continue  # ghost / moved / never recorded a decision here
-        try:
-            hits = search(query, limit=limit, since=since, project_root=root)
-        except Exception:  # noqa: BLE001 — isolate a bad project's failure
-            continue
-        proj_name = entry.name or root.name
-        for h in hits:
-            merged_hits.append({**h, "project": proj_name, "project_path": key})
+        _search_one(Path(root_str), entry.name)
+
+    # Always include the CURRENT project, even if it isn't registered in the
+    # inventory yet (e.g. used only via CLI, or just initialised). A user
+    # running an all-projects search certainly expects their current repo's
+    # decisions in scope. No-op (dedup) if it was already enumerated above.
+    try:
+        from mcp_server.paths import get_project_root
+
+        _search_one(get_project_root(), None)
+    except Exception:  # noqa: BLE001 — cwd not a project / unresolvable → skip
+        pass
 
     merged_hits.sort(key=lambda r: r.get("score", 0.0))
     return merged_hits[:limit]

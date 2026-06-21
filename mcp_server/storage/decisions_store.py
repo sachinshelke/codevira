@@ -39,6 +39,7 @@ import fnmatch
 import logging
 import secrets
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from mcp_server.storage import (
@@ -383,31 +384,43 @@ def list_all(
 
 
 def search(
-    query: str, *, limit: int = 5, since: str | None = None
+    query: str,
+    *,
+    limit: int = 5,
+    since: str | None = None,
+    project_root: Path | None = None,
 ) -> list[dict[str, Any]]:
     """BM25 search via FTS5; returns digest records ranked by relevance.
 
     ``since`` filter is post-applied (cheap; small result set).
+
+    ``project_root`` (v3.6.0) selects which project to search. ``None`` (the
+    default) targets the current project — behavior is byte-for-byte unchanged.
+    A non-None root searches THAT project's ``.codevira/`` store instead, which
+    is how ``search_all_projects`` reuses this function per registered project.
     """
     if not query or not query.strip():
         return []
 
+    decisions_p = paths.decisions_path(project_root)
+    fts5_p = paths.fts5_path(project_root)
+
     # Lazy rebuild if stale.
-    if fts5_index.staleness_check(paths.decisions_path(), paths.fts5_path()):
+    if fts5_index.staleness_check(decisions_p, fts5_p):
         try:
-            fts5_index.rebuild_from_jsonl(paths.decisions_path(), paths.fts5_path())
+            fts5_index.rebuild_from_jsonl(decisions_p, fts5_p)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "decisions_store.search: FTS5 rebuild failed: %s",
                 exc,
             )
 
-    hits = fts5_index.search(paths.fts5_path(), query, limit=limit * 2)
+    hits = fts5_index.search(fts5_p, query, limit=limit * 2)
     if not hits:
         return []
 
     # Load merged decisions; map by id for quick lookup.
-    merged = _read_merged()
+    merged = jsonl_store.read_merged(decisions_p)
     by_id = {str(d.get("id")): d for d in merged}
 
     results: list[dict[str, Any]] = []
@@ -440,6 +453,57 @@ def search(
             break
 
     return results
+
+
+def search_all_projects(
+    query: str, *, limit: int = 5, since: str | None = None
+) -> list[dict[str, Any]]:
+    """Cross-project decision search (v3.6.0): BM25 search every registered
+    project's ``.codevira/`` decision store and return the globally top-ranked
+    matches, each tagged with the project it came from.
+
+    Reuses ``search`` per project (so ranking, staleness rebuild, and superseded
+    filtering are identical to single-project search). Projects whose decision
+    file no longer exists on disk (moved / ghost / never recorded) are skipped.
+    One project erroring out never sinks the whole search.
+
+    Each returned row is the normal ``search`` row plus:
+      * ``project``      — the project's name (falls back to its dir name)
+      * ``project_path`` — the project root on disk
+
+    BM25 ``score`` is a distance (lower = better), comparable across projects
+    (same weights), so the merge is a simple ascending-score sort.
+    """
+    if not query or not query.strip():
+        return []
+    try:
+        from mcp_server._project_inventory import enumerate_projects
+    except Exception:  # noqa: BLE001 — inventory unavailable → no cross-project
+        return []
+
+    seen_roots: set[str] = set()
+    merged_hits: list[dict[str, Any]] = []
+    for entry in enumerate_projects():
+        root_str = entry.canonical_path
+        if not root_str:
+            continue  # slug-only entry with no resolvable on-disk path
+        root = Path(root_str)
+        key = str(root)
+        if key in seen_roots:
+            continue  # a project can surface via both the slug dir + db row
+        seen_roots.add(key)
+        if not paths.decisions_path(root).is_file():
+            continue  # ghost / moved / never recorded a decision here
+        try:
+            hits = search(query, limit=limit, since=since, project_root=root)
+        except Exception:  # noqa: BLE001 — isolate a bad project's failure
+            continue
+        proj_name = entry.name or root.name
+        for h in hits:
+            merged_hits.append({**h, "project": proj_name, "project_path": key})
+
+    merged_hits.sort(key=lambda r: r.get("score", 0.0))
+    return merged_hits[:limit]
 
 
 def list_tags_with_counts() -> dict[str, Any]:

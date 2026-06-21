@@ -51,7 +51,7 @@ v3.5.0 shipped the entire **E1–E5 read-side batch** (summary-first + `expand`,
 |------|-----------------|----------|
 | **Opt-in `[semantic]` recall** | `pip install codevira[semantic]` adds a ~30 MB CPU embedding as a *fallback* re-rank on top of FTS5. **Off by default** — the base install stays pure-keyword, no vectors, no model download. The model-free half (synonym widening) shipped in v3.5.0; the embedding half is deferred until the on-device-model question is settled. | Medium |
 | **Symbol / region-level decision locking** | v3.5.0's content-aware lock blocks only when an edit's diff touches a locked decision's subject. The next step is AST symbol/region granularity — lock a function or block, not the whole file. | Medium |
-| **Cross-project decision search** | `search_decisions("retry policy")` across **all** your local projects, not just the current one. | Low |
+| **Cross-project decision search** | ✅ **Built (unreleased — lands in the next minor).** `search_decisions(query, all_projects=true)` searches every registered project's decisions and merges the BM25-ranked results, each tagged with its project. | ~~Low~~ Done |
 
 **On hold:** a tiny on-device model for memory abstraction (former Phase 14) remains **deferred** — its goal is folded into the opt-in `[semantic]` path, which delivers the same recall win without bundling a model into the default install.
 

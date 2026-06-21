@@ -10,6 +10,10 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ## [Unreleased]
 
 ### Added
+- **`codevira search` CLI.** Decision search is no longer MCP-only — search
+  from the terminal: `codevira search "retry policy"` (rich table),
+  `--all-projects` to search every registered repo, `--json` for a
+  machine-readable payload, plus `--limit` / `--full`.
 - **Cross-project decision search.** `search_decisions(query, all_projects=true)`
   now searches *every* registered project's decision store — not just the
   current one — and merges the BM25-ranked results, each tagged with the

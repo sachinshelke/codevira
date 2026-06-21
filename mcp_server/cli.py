@@ -925,6 +925,36 @@ def main() -> None:
     # the upcoming `codevira uninstall` command. Discoverability bonus:
     # users no longer need to remember two install paths.
 
+    # search (v3.6.0 — terminal decision search, incl. cross-project)
+    search_parser = subparsers.add_parser(
+        "search",
+        help="Search past decisions from the terminal (FTS5/BM25 keyword)",
+        description=(
+            "Keyword search over recorded decisions. Searches THIS project by "
+            "default; pass --all-projects to merge BM25-ranked matches from "
+            "every registered project, each row tagged with where it came from."
+        ),
+    )
+    search_parser.add_argument("query", help="Search terms (e.g. 'retry policy')")
+    search_parser.add_argument(
+        "--all-projects",
+        action="store_true",
+        dest="all_projects",
+        help="Search every registered project, not just the current one",
+    )
+    search_parser.add_argument(
+        "--limit", type=int, default=10, help="Max results (1-50, default 10)"
+    )
+    search_parser.add_argument(
+        "--full", action="store_true", help="Show untruncated decision text"
+    )
+    search_parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="output_json",
+        help="Emit the raw payload as JSON instead of a table",
+    )
+
     # replay (v2.0 hero 8 — Decision Replay)
     replay_parser = subparsers.add_parser(
         "replay",
@@ -1657,6 +1687,18 @@ def main() -> None:
             project=Path(project_arg) if project_arg else None,
             ascii_mode=getattr(args, "ascii", False),
             out_file=Path(out_arg) if out_arg else None,
+        )
+        sys.exit(rc)
+    elif args.command == "search":
+        # v3.6.0 — terminal decision search (incl. cross-project).
+        from mcp_server.cli_search import cmd_search
+
+        rc = cmd_search(
+            query=getattr(args, "query", None),
+            all_projects=getattr(args, "all_projects", False),
+            limit=getattr(args, "limit", 10),
+            full=getattr(args, "full", False),
+            output_json=getattr(args, "output_json", False),
         )
         sys.exit(rc)
     elif args.command == "clean":

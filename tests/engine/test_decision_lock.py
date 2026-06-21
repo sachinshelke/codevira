@@ -126,7 +126,10 @@ class _FakeCursor:
 
 @pytest.fixture(autouse=True)
 def _clear_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Both lock env vars are known to linger in a developer's shell; clear
+    # them so every test asserts DEFAULT (block + content-aware) behavior.
     monkeypatch.delenv("CODEVIRA_DECISION_LOCK_MODE", raising=False)
+    monkeypatch.delenv("CODEVIRA_DECISION_LOCK_CONTENT_AWARE", raising=False)
 
 
 # =====================================================================
@@ -1007,3 +1010,129 @@ class TestContentAwareOrthogonality:
 
     def test_config_exposes_content_aware_default_true(self) -> None:
         assert DecisionLock()._config()["content_aware"] is True
+
+
+# =====================================================================
+# Symbol / region-level locking (v3.6.0)
+# =====================================================================
+
+
+class TestSymbolLevelLocking:
+    """A locked decision scoped to a symbol blocks only edits that land INSIDE
+    that symbol; edits elsewhere in the same file downgrade to a warn. Uses the
+    real DecisionLock + real on-disk source (region detection reads the file at
+    PRE_TOOL_USE) with canned _FakeSignals for the locked decision.
+    """
+
+    _SRC = (
+        "import os\n"
+        "\n\n"
+        "def login(user):\n"
+        "    token = make_token(user)\n"
+        "    return token\n"
+        "\n\n"
+        "def logout(user):\n"
+        "    return None\n"
+    )
+
+    def _setup(self, tmp_path: Path, *, symbol: str | None, decision_text: str):
+        f = tmp_path / "auth.py"
+        f.write_text(self._SRC, encoding="utf-8")
+        decision = {
+            "id": 7,
+            "file_path": "auth.py",
+            "symbol": symbol,
+            "decision": decision_text,
+            "context": None,
+            "locked": True,
+            "timestamp": None,
+        }
+        return f, _FakeSignals(world=[("auth.py", True, decision)])
+
+    def _edit(self, tmp_path: Path, target: Path, before: str, after: str):
+        return _make_event(
+            target=target,
+            project_root=tmp_path,
+            proposed_diff=f"--- before\n{before}\n--- after\n{after}",
+        )
+
+    def test_edit_inside_locked_symbol_blocks(self, tmp_path: Path) -> None:
+        # Decision text deliberately shares NO salient token with the edit, so
+        # only region evidence can catch this — proving symbol scoping works
+        # independently of the v3.5.0 token check.
+        f, signals = self._setup(
+            tmp_path, symbol="login", decision_text="rate limiting is enforced here"
+        )
+        event = self._edit(
+            tmp_path, f, "    token = make_token(user)", "    token = user.tok"
+        )
+        verdict = DecisionLock().evaluate(event, signals)
+        assert verdict.is_blocking()
+        assert verdict.metadata["scope_symbols"] == ["login"]
+
+    def test_edit_in_other_symbol_warns(self, tmp_path: Path) -> None:
+        f, signals = self._setup(
+            tmp_path, symbol="login", decision_text="login mints via make_token"
+        )
+        event = self._edit(tmp_path, f, "    return None", "    return False")
+        verdict = DecisionLock().evaluate(event, signals)
+        assert verdict.action == "warn"
+        assert verdict.metadata["region_orthogonal"] is True
+
+    def test_module_level_edit_warns_for_symbol_scoped_lock(
+        self, tmp_path: Path
+    ) -> None:
+        # Modifying module-level code (swapping an import — a change, not a
+        # pure insertion) touches no symbol → determinate empty region → the
+        # login-scoped lock can't be reverted → warn via the region path.
+        f, signals = self._setup(
+            tmp_path, symbol="login", decision_text="login mints via make_token"
+        )
+        event = self._edit(tmp_path, f, "import os", "import sys")
+        verdict = DecisionLock().evaluate(event, signals)
+        assert verdict.action == "warn"
+        assert verdict.metadata["region_orthogonal"] is True
+
+    def test_undeterminable_region_falls_back_to_token_block(
+        self, tmp_path: Path
+    ) -> None:
+        # before-text isn't in the file → region undeterminable → fall back to
+        # token logic. Tokens DO overlap the decision ("make_token") → block,
+        # and it's NOT a region downgrade.
+        f, signals = self._setup(
+            tmp_path, symbol="login", decision_text="login mints via make_token"
+        )
+        event = self._edit(
+            tmp_path, f, "make_token must never be inlined", "token inlined"
+        )
+        verdict = DecisionLock().evaluate(event, signals)
+        assert verdict.is_blocking()
+        assert verdict.metadata["region_orthogonal"] is False
+
+    def test_no_symbol_decision_uses_unchanged_token_path(self, tmp_path: Path) -> None:
+        # A file-scoped (symbol=None) decision must behave exactly as v3.5.0:
+        # a token-orthogonal edit warns, and it is NOT flagged region_orthogonal.
+        f, signals = self._setup(
+            tmp_path, symbol=None, decision_text="caching uses redis with a ttl"
+        )
+        event = self._edit(
+            tmp_path, f, "    token = make_token(user)", "    token = user.tok"
+        )
+        verdict = DecisionLock().evaluate(event, signals)
+        assert verdict.action == "warn"
+        assert verdict.metadata["region_orthogonal"] is False
+        assert verdict.metadata["content_orthogonal"] is True
+
+    def test_inside_symbol_warn_mode_downgrades(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("CODEVIRA_DECISION_LOCK_MODE", "warn")
+        f, signals = self._setup(
+            tmp_path, symbol="login", decision_text="rate limiting is enforced here"
+        )
+        event = self._edit(
+            tmp_path, f, "    token = make_token(user)", "    token = user.tok"
+        )
+        verdict = DecisionLock().evaluate(event, signals)
+        # In-symbol conflict, but warn mode → surfaced as warn, not block.
+        assert verdict.action == "warn"

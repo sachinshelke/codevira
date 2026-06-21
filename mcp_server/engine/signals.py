@@ -241,6 +241,9 @@ class SignalContext:
                     {
                         "id": d.get("id"),
                         "file_path": d.get("file_path"),
+                        # v3.6.0: optional symbol scope for region-level locking
+                        # (None for file-scoped decisions — the common case).
+                        "symbol": d.get("symbol"),
                         "decision": d.get("decision"),
                         "context": d.get("context"),
                         "locked": bool(d.get("do_not_revert")),

@@ -101,6 +101,7 @@ def record(
     decision: str,
     *,
     file_path: str | None = None,
+    symbol: str | None = None,
     context: str | None = None,
     do_not_revert: bool = False,
     session_id: str | None = None,
@@ -151,10 +152,17 @@ def record(
         else None
     )
 
+    # v3.6.0: optional symbol scope for region-level decision locking. A bare
+    # identifier (function / class name) — strip + cap; None when blank. Not a
+    # free-text field, so no secret-scrub needed, but bound the length so a
+    # malformed value can't bloat the record / AGENTS.md.
+    norm_symbol = symbol.strip()[:200] if symbol and symbol.strip() else None
+
     base_record = {
         "ts": datetime.now(timezone.utc).isoformat(),
         "session_id": session_id or default_session_id(),
         "file_path": file_path,
+        "symbol": norm_symbol,
         "decision": sanitized_decision,
         "context": sanitized_context,
         "do_not_revert": bool(do_not_revert),

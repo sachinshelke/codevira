@@ -9,6 +9,20 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added
+- **Symbol / region-level decision locking.** A `do_not_revert` decision can now
+  be scoped to a single function or class via a new optional `symbol` argument
+  on `record_decision` (e.g. `record_decision(decision=…, file_path="auth.py",
+  symbol="login")`). The content-aware lock then blocks only edits that land
+  *inside* that symbol; an edit elsewhere in the same file downgrades to a warn
+  (it can't revert the protected region). At PRE_TOOL_USE the file still holds
+  the edit's `before` text, so the enclosing symbol is resolved by AST
+  (Python) / tree-sitter (TS/JS/Go/Rust) without needing the graph indexed.
+  Decisions with no `symbol` stay file-scoped — existing behavior is unchanged,
+  and the file is only parsed when a locked decision is actually symbol-scoped
+  (zero added cost for the common case). Restore strict file-level blocking
+  with `CODEVIRA_DECISION_LOCK_CONTENT_AWARE=0`.
+
 ## [3.5.0] — 2026-06-19
 
 ### Added

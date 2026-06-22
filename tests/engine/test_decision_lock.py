@@ -1136,3 +1136,116 @@ class TestSymbolLevelLocking:
         verdict = DecisionLock().evaluate(event, signals)
         # In-symbol conflict, but warn mode → surfaced as warn, not block.
         assert verdict.action == "warn"
+
+
+class TestSymbolLockAdversarialFixes:
+    """Region detection is fallible; symbol scoping must only RELAX a
+    token-clean edit, never override a token-positive block (v3.6.0 review).
+    These pin the specific bypasses the adversarial panel found."""
+
+    def _setup(self, tmp_path, *, src, symbol, decision_text):
+        f = tmp_path / "m.py"
+        f.write_text(src, encoding="utf-8")
+        decision = {
+            "id": 9,
+            "file_path": "m.py",
+            "symbol": symbol,
+            "decision": decision_text,
+            "context": None,
+            "locked": True,
+            "timestamp": None,
+        }
+        return f, _FakeSignals(world=[("m.py", True, decision)])
+
+    def _verdict(self, tmp_path, f, signals, before, after):
+        event = _make_event(
+            target=f,
+            project_root=tmp_path,
+            proposed_diff=f"--- before\n{before}\n--- after\n{after}",
+        )
+        return DecisionLock().evaluate(event, signals)
+
+    def test_duplicate_anchor_token_conflict_still_blocks(self, tmp_path):
+        # Same line in two functions → region undeterminable → the token check
+        # must still fire and block (was a bypass: it warned).
+        f, signals = self._setup(
+            tmp_path,
+            src=(
+                "def preview(base):\n    amount = base * tax\n    return amount\n\n\n"
+                "def charge(base):\n    amount = base * tax\n    return amount\n"
+            ),
+            symbol="charge",
+            decision_text="charge must apply tax to amount",
+        )
+        v = self._verdict(
+            tmp_path,
+            f,
+            signals,
+            "    amount = base * tax",
+            "    amount = base  # tax removed by mistake",
+        )
+        assert v.is_blocking()
+
+    def test_decorator_edit_blocks(self, tmp_path):
+        f, signals = self._setup(
+            tmp_path,
+            src=(
+                "import functools\n\n\n"
+                "@functools.lru_cache(maxsize=128)\n"
+                "def foo(x):\n    return x * 2\n"
+            ),
+            symbol="foo",
+            decision_text="foo is memoized with lru_cache",
+        )
+        v = self._verdict(
+            tmp_path,
+            f,
+            signals,
+            "@functools.lru_cache(maxsize=128)",
+            "@functools.lru_cache(maxsize=1)",
+        )
+        assert v.is_blocking()
+
+    def test_module_level_revert_with_token_overlap_blocks(self, tmp_path):
+        # Module-level edit that reverts the symbol's contract → region says
+        # "no symbol" (empty), but tokens overlap the decision → must block.
+        f, signals = self._setup(
+            tmp_path,
+            src=(
+                "MAX_RETRIES = 3\n\n\n"
+                "def handler(req):\n    for _ in range(MAX_RETRIES):\n        pass\n"
+            ),
+            symbol="handler",
+            decision_text="handler retries exactly MAX_RETRIES times",
+        )
+        v = self._verdict(tmp_path, f, signals, "MAX_RETRIES = 3", "MAX_RETRIES = 0")
+        assert v.is_blocking()
+
+    def test_qualified_symbol_name_matches_leaf(self, tmp_path):
+        f, signals = self._setup(
+            tmp_path,
+            src="class Session:\n    def refresh(self):\n        return make_token(self)\n",
+            symbol="Session.refresh",
+            decision_text="rate limiting lives here",
+        )
+        v = self._verdict(
+            tmp_path,
+            f,
+            signals,
+            "        return make_token(self)",
+            "        return None",
+        )
+        assert v.is_blocking()
+
+    def test_genuine_out_of_symbol_still_warns(self, tmp_path):
+        # The relaxation must still work: an edit in a different symbol, token-
+        # clean, downgrades to a region warn.
+        f, signals = self._setup(
+            tmp_path,
+            src="def login(u):\n    return mint(u)\n\n\ndef logout(u):\n    return None\n",
+            symbol="login",
+            decision_text="login mints tokens via the auth service",
+        )
+        v = self._verdict(tmp_path, f, signals, "    return None", "    return False")
+        assert v.action == "warn"
+        assert v.metadata["region_orthogonal"] is True

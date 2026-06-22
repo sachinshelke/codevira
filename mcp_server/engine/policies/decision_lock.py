@@ -98,9 +98,13 @@ _STOPWORDS = frozenset(
 class DecisionLock(Policy):
     """Block edits to files with locked architectural decisions.
 
-    The lock comes from the graph node's ``do_not_revert`` flag. Per-file
-    granularity (every decision attached to a locked file inherits the
-    lock); per-decision locking is deferred to v2.1.
+    The lock comes from a ``do_not_revert`` decision attached to the file.
+    Granularity (most to least precise): a decision may be scoped to a single
+    SYMBOL (v3.6.0 — blocks only edits inside that function/class); otherwise
+    it is FILE-scoped and the v3.5.0 content-aware token check decides whether
+    an edit touches its subject. Symbol scoping only ever *relaxes* a
+    token-clean edit — it never overrides a token-positive block, because
+    region detection is fallible.
     """
 
     name = "decision_lock"
@@ -241,25 +245,36 @@ class DecisionLock(Policy):
                     region_orthogonal_syms: set[str] = set()
                     for d in locked_decisions:
                         sym = (d.get("symbol") or "").strip()
-                        if sym and touched is not None:
-                            # Symbol-scoped + determinate region: the decision is
-                            # reverted only if the edit lands inside its symbol.
-                            if sym in touched:
-                                conflicting.append(d)
-                                conflict_symbols.add(sym)
-                            else:
-                                region_orthogonal_syms.add(sym)
+                        region_determinate = bool(sym) and touched is not None
+                        # In-region is a DEFINITIVE conflict: the edit lands
+                        # inside the locked symbol.
+                        if region_determinate and self._symbol_in_touched(sym, touched):
+                            conflicting.append(d)
+                            conflict_symbols.add(sym)
                             continue
-                        # File-scoped, or symbol-scoped but region undeterminable
-                        # → fall back to token orthogonality.
+                        # Otherwise (file-scoped, region-miss, OR region
+                        # undeterminable) the v3.5.0 token check STILL governs.
+                        # Region may only RELAX a token-clean edit — it must never
+                        # OVERRIDE a token-positive block, because region detection
+                        # is itself fallible (duplicate anchors, decorators,
+                        # module-level dependencies, whitespace-fuzzy matches).
                         if changed:
                             is_conf, shared = self._decision_conflicts(changed, d)
                             if is_conf:
                                 conflicting.append(d)
                                 shared_all |= shared
+                            elif region_determinate:
+                                # Tokens clean AND the edit is positively in a
+                                # different symbol → genuinely orthogonal by region.
+                                region_orthogonal_syms.add(sym)
+                            # else file-scoped + token-clean → orthogonal (omitted).
+                        elif region_determinate:
+                            # No token evidence, but region positively places the
+                            # edit outside the locked symbol → orthogonal.
+                            region_orthogonal_syms.add(sym)
                         else:
-                            # No token evidence and no usable region signal for
-                            # this decision → can't prove safe → conservative.
+                            # No token evidence AND no determinate region → can't
+                            # prove safe → conservative conflict.
                             conflicting.append(d)
 
                     if not conflicting:
@@ -385,6 +400,17 @@ class DecisionLock(Policy):
         from mcp_server.engine.policies._region_detect import symbols_touched_by_edit
 
         return symbols_touched_by_edit(event.target_file, event.proposed_diff)
+
+    @staticmethod
+    def _symbol_in_touched(sym: str, touched: set[str]) -> bool:
+        """Whether a locked decision's ``symbol`` matches a symbol the edit
+        landed in. The region detector emits BARE names, so a bare scope matches
+        directly and a qualified scope (``Class.method``) matches on its final
+        segment — otherwise ``record_decision(symbol="Auth.login")`` would
+        silently never fire."""
+        if sym in touched:
+            return True
+        return sym.rsplit(".", 1)[-1] in touched
 
     @classmethod
     def _decision_conflicts(

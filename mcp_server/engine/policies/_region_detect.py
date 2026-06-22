@@ -53,8 +53,15 @@ def _python_symbols(source: str) -> list[tuple[str, int, int]]:
     tree = ast.parse(source)
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            # ast.lineno points at the `def`/`class` line, EXCLUDING decorators.
+            # A decorator is often the load-bearing contract (@app.route,
+            # @lru_cache, @require_auth) a symbol-scoped lock means to protect,
+            # so extend the start up to the first decorator line.
             start = node.lineno
-            end = getattr(node, "end_lineno", None) or start
+            decorators = getattr(node, "decorator_list", None) or []
+            if decorators:
+                start = min(start, min(d.lineno for d in decorators))
+            end = getattr(node, "end_lineno", None) or node.lineno
             out.append((node.name, start, end))
     return out
 
@@ -68,11 +75,17 @@ def _treesitter_symbols(path: Path, ext: str) -> list[tuple[str, int, int]] | No
     if lang is None:
         return None
     parsed = parse_file(str(path), lang)
-    return [
+    symbols = [
         (s.name, s.start_line, s.end_line)
         for s in parsed.symbols
         if s.name and s.start_line and s.end_line
     ]
+    # tree-sitter is error-tolerant: a syntactically broken file (mid-refactor)
+    # parses to a partial/empty symbol list. Unlike Python's ast (which raises →
+    # None → conservative), that would yield a determinate-empty set and RELAX a
+    # symbol-scoped lock to a warn. Treat "no symbols extracted" as
+    # undeterminable (None) so the broken-file case stays conservative.
+    return symbols or None
 
 
 def _extract_symbols(path: Path, source: str) -> list[tuple[str, int, int]] | None:
@@ -91,13 +104,19 @@ def _edit_line_span(source: str, before: str) -> tuple[int, int] | None:
     """1-based ``(start_line, end_line)`` of ``before`` within ``source``,
     or ``None`` if it can't be located.
 
-    Uses the first occurrence: a well-formed Edit's ``old_string`` is unique
-    in the file (else the edit itself would be ambiguous), so first-match is
-    correct for valid edits and conservative otherwise.
+    Returns ``None`` if ``before`` is absent OR NON-UNIQUE. A non-unique anchor
+    means we can't know which occurrence the edit targets, so the located span
+    (and the symbol derived from it) would be a guess — and a wrong guess could
+    mis-attribute the edit to the locked symbol (false block) or away from it
+    (bypass). Undeterminable is the safe answer; the caller falls back to
+    file/token logic. (Claude Code's Edit guarantees a unique old_string, but
+    other MCP clients / MultiEdit do not.)
     """
     idx = source.find(before)
     if idx == -1:
         return None
+    if source.find(before, idx + 1) != -1:
+        return None  # non-unique anchor → can't attribute to one symbol
     start_line = source.count("\n", 0, idx) + 1
     # end line = start + number of newlines spanned by the matched text
     # (rstrip so a trailing newline in `before` doesn't over-count the span).

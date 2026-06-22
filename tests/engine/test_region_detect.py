@@ -95,3 +95,33 @@ class TestUndeterminable:
     def test_missing_file_returns_none(self, tmp_path):
         diff = _envelope("x = 1", "x = 2")
         assert symbols_touched_by_edit(tmp_path / "nope.py", diff) is None
+
+
+class TestRegionHardening:
+    """Adversarial-review fixes (v3.6.0)."""
+
+    def test_non_unique_before_returns_none(self, tmp_path):
+        # Identical line in two functions → the anchor is ambiguous, so we
+        # can't attribute the edit to one symbol → undeterminable (None), which
+        # makes the caller fall back to the token safety net rather than guess.
+        src = (
+            "def a(v):\n    x = compute(v)\n    return x\n\n\n"
+            "def b(v):\n    x = compute(v)\n    return x\n"
+        )
+        f = _write(tmp_path, "m.py", src)
+        diff = _envelope("    x = compute(v)", "    x = compute(v, fresh=True)")
+        assert symbols_touched_by_edit(f, diff) is None
+
+    def test_decorator_edit_maps_to_decorated_function(self, tmp_path):
+        # An edit to ONLY the decorator line must map to the function (the
+        # decorator is part of the symbol's contract), not module-level.
+        src = (
+            "import functools\n\n\n"
+            "@functools.lru_cache(maxsize=128)\n"
+            "def foo(x):\n    return x * 2\n"
+        )
+        f = _write(tmp_path, "d.py", src)
+        diff = _envelope(
+            "@functools.lru_cache(maxsize=128)", "@functools.lru_cache(maxsize=1)"
+        )
+        assert symbols_touched_by_edit(f, diff) == {"foo"}

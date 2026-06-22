@@ -75,11 +75,32 @@ class TestSearchAllProjects:
         # The non-matching 'cache' decision in beta is NOT returned.
         assert all("cache" not in (r.get("decision") or "") for r in results)
 
-    def test_ranked_by_score_across_projects(self, two_projects):
-        results = decisions_store.search_all_projects("retry", limit=10)
-        # BM25 score is a distance — ascending (best first) across the merge.
-        scores = [r["score"] for r in results]
-        assert scores == sorted(scores)
+    def test_interleaves_by_rank_for_fair_representation(self, tmp_path, monkeypatch):
+        # alpha has THREE 'retry' matches, beta only one. Raw-score sorting could
+        # let alpha's matches monopolize the top; rank-interleave must give each
+        # project's #1 a top slot (BM25 scores aren't comparable across corpora).
+        a = _make_project(
+            tmp_path,
+            "alpha",
+            [
+                ("retry alpha one", "a.py"),
+                ("retry alpha two", "b.py"),
+                ("retry alpha three", "c.py"),
+            ],
+        )
+        b = _make_project(tmp_path, "beta", [("retry beta one", "d.py")])
+        entries = [
+            SimpleNamespace(canonical_path=str(a), name="alpha"),
+            SimpleNamespace(canonical_path=str(b), name="beta"),
+        ]
+        monkeypatch.setattr(
+            "mcp_server._project_inventory.enumerate_projects", lambda: entries
+        )
+        results = decisions_store.search_all_projects("retry", limit=2)
+        # Top-2 spans BOTH projects (each project's #1), not alpha's top-2.
+        assert {r["project"] for r in results} == {"alpha", "beta"}
+        # The internal _rank key must not leak to callers.
+        assert all("_rank" not in r for r in results)
 
     def test_limit_caps_global_results(self, two_projects):
         results = decisions_store.search_all_projects("retry", limit=1)
@@ -117,6 +138,49 @@ class TestSkipsBadProjects:
         )
         results = decisions_store.search_all_projects("retry", limit=10)
         assert len(results) == 1
+
+
+class TestPathHardening:
+    def test_dedup_normalizes_symlinked_paths(self, tmp_path, monkeypatch):
+        # Same dir reached two ways: the registry stores a SYMLINK path while
+        # the cwd fallback uses the resolved real path. Must dedup to one result.
+        real = _make_project(tmp_path, "real", [("retry uses backoff", "x.py")])
+        link = tmp_path / "link"
+        try:
+            link.symlink_to(real, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            import pytest
+
+            pytest.skip("symlinks unsupported on this platform")
+        entries = [SimpleNamespace(canonical_path=str(link), name="via-link")]
+        monkeypatch.setattr(
+            "mcp_server._project_inventory.enumerate_projects", lambda: entries
+        )
+        # Current project (set by _make_project) is the REAL path.
+        results = decisions_store.search_all_projects("retry", limit=10)
+        assert len(results) == 1  # not double-counted via the symlink alias
+
+    def test_invalid_project_root_skipped(self, tmp_path, monkeypatch):
+        good = _make_project(tmp_path, "good", [("retry uses backoff", "x.py")])
+        bad = _make_project(tmp_path, "bad", [("retry also here", "y.py")])
+        entries = [
+            SimpleNamespace(canonical_path=str(good), name="good"),
+            SimpleNamespace(canonical_path=str(bad), name="bad"),
+        ]
+        monkeypatch.setattr(
+            "mcp_server._project_inventory.enumerate_projects", lambda: entries
+        )
+        # Flag `bad` as an unsafe root (e.g. $HOME / system dir).
+        import mcp_server.paths as P
+
+        real_guard = P.is_invalid_project_root
+        monkeypatch.setattr(
+            P,
+            "is_invalid_project_root",
+            lambda root: "unsafe" if str(root).endswith("bad") else real_guard(root),
+        )
+        results = decisions_store.search_all_projects("retry", limit=10)
+        assert {r["project"] for r in results} == {"good"}
 
 
 class TestCurrentProjectAlwaysIncluded:

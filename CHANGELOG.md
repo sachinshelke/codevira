@@ -16,11 +16,13 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   machine-readable payload, plus `--limit` / `--full`.
 - **Cross-project decision search.** `search_decisions(query, all_projects=true)`
   now searches *every* registered project's decision store — not just the
-  current one — and merges the BM25-ranked results, each tagged with the
-  `project` + `project_path` it came from. Recall how you solved something in
-  another repo without leaving this one. Reuses the same per-project FTS5 search
-  (identical ranking + superseded filtering); projects whose decision file has
-  moved or never existed are skipped, and one project erroring never sinks the
+  current one — each result tagged with the `project` + `project_path` it came
+  from. Recall how you solved something in another repo without leaving this
+  one. Reuses the same per-project FTS5 search (identical per-project ranking +
+  superseded filtering); the union is **interleaved by per-project rank** (raw
+  BM25 scores aren't comparable across repos, so each project's best gets fair
+  representation). Skips moved/ghost projects and invalid roots, dedups by
+  resolved path, caps the fan-out, and one project erroring never sinks the
   search. Default `all_projects=false` keeps the current-project behavior
   byte-for-byte unchanged.
 

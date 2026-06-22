@@ -72,6 +72,36 @@ class TestCmdSearch:
         assert payload["count"] <= 2
 
 
+class TestMarkupSafety:
+    def test_decision_with_rich_markup_renders_literally(self, tmp_path):
+        """A decision containing rich-markup-looking brackets (`[provider]`,
+        `[/]`) must render literally via the table, not crash to the fallback
+        or get silently eaten. Run the real CLI in a subprocess (real rich)."""
+        proj = tmp_path / "proj"
+        (proj / ".codevira").mkdir(parents=True)
+        (proj / "pyproject.toml").write_text("", encoding="utf-8")
+        seed = (
+            "import mcp_server.paths as p; p.set_project_dir(r'%s'); "
+            "p.invalidate_data_dir_cache(); "
+            "from mcp_server.storage import decisions_store as d; "
+            "d.record(decision='uses [provider] and an unbalanced [/] tag', "
+            "file_path='x.py')" % str(proj)
+        )
+        subprocess.run(
+            [sys.executable, "-c", seed], cwd=str(proj), check=True, timeout=20
+        )
+        result = subprocess.run(
+            [sys.executable, "-m", "mcp_server", "search", "provider"],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            cwd=str(proj),
+        )
+        assert result.returncode == 0
+        # The bracketed token survives in the output (escaped, not parsed away).
+        assert "[provider]" in result.stdout
+
+
 class TestCliWiring:
     def test_search_subcommand_help_parses(self):
         """`codevira search --help` exits 0 → the subcommand is registered."""

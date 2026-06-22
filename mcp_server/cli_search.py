@@ -16,13 +16,18 @@ project, each row tagged with the project it came from.
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from typing import Any
 
+logger = logging.getLogger(__name__)
+
 
 def _clamp_limit(value: int | None, default: int = 10) -> int:
+    # Cap matches the search_decisions tool's own [1, 20] clamp so the CLI's
+    # advertised max isn't a lie about how many rows actually come back.
     try:
-        return max(1, min(int(value), 50)) if value is not None else default
+        return max(1, min(int(value), 20)) if value is not None else default
     except (TypeError, ValueError):
         return default
 
@@ -74,19 +79,27 @@ def cmd_search(
 def _render_table(
     query: str, rows: list[dict[str, Any]], *, all_projects: bool
 ) -> None:
-    """Pretty-print results as a rich table, with a plain-text fallback."""
+    """Pretty-print results as a rich table, with a plain-text fallback.
+
+    Every dynamic value (query, decision text, project, file) is markup-escaped
+    before it reaches rich. Decision text legitimately contains ``[...]`` (e.g.
+    ``[provider]``, ``[red]``) which rich would otherwise parse as markup —
+    silently mangling content, or raising MarkupError on an unbalanced tag.
+    """
     scope = "all projects" if all_projects else "this project"
     try:
         from rich.console import Console
+        from rich.markup import escape
         from rich.table import Table
 
         console = Console()
+        q = escape(repr(query))
         if not rows:
-            console.print(f"No decisions matched [bold]{query!r}[/bold] in {scope}.")
+            console.print(f"No decisions matched [bold]{q}[/bold] in {scope}.")
             return
 
         table = Table(
-            title=f"Decisions matching {query!r} ({scope})",
+            title=f"Decisions matching {q} ({scope})",
             title_style="bold green",
             show_lines=False,
         )
@@ -98,16 +111,18 @@ def _render_table(
         table.add_column("🔒", justify="center", no_wrap=True)
 
         for r in rows:
-            cells = [str(r.get("id") or "?")]
+            cells = [escape(str(r.get("id") or "?"))]
             if all_projects:
-                cells.append(str(r.get("project") or "?"))
-            cells.append(str(r.get("decision") or ""))
-            cells.append(str(r.get("file_path") or ""))
+                cells.append(escape(str(r.get("project") or "?")))
+            cells.append(escape(str(r.get("decision") or "")))
+            cells.append(escape(str(r.get("file_path") or "")))
             cells.append("🔒" if r.get("do_not_revert") else "")
             table.add_row(*cells)
         console.print(table)
-    except Exception:  # noqa: BLE001 — never let rendering break the command
-        # Plain fallback (also covers environments without a real rich).
+    except Exception as exc:  # noqa: BLE001 — never let rendering break the command
+        # Plain fallback (also covers environments without a real rich). Log so
+        # an unexpected render failure is observable rather than silently masked.
+        logger.debug("codevira search: rich render failed (%s); plain fallback", exc)
         if not rows:
             print(f"No decisions matched {query!r} in {scope}.")
             return

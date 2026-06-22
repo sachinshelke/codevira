@@ -931,8 +931,13 @@ def main() -> None:
         help="Search past decisions from the terminal (FTS5/BM25 keyword)",
         description=(
             "Keyword search over recorded decisions. Searches THIS project by "
-            "default; pass --all-projects to merge BM25-ranked matches from "
-            "every registered project, each row tagged with where it came from."
+            "default; pass --all-projects to merge matches from every registered "
+            "project (interleaved by per-project rank), each row tagged with "
+            "where it came from."
+        ),
+        epilog=(
+            "Tip: to search a term that starts with a dash, put it after --, "
+            "e.g.  codevira search -- -flag"
         ),
     )
     search_parser.add_argument("query", help="Search terms (e.g. 'retry policy')")
@@ -943,7 +948,7 @@ def main() -> None:
         help="Search every registered project, not just the current one",
     )
     search_parser.add_argument(
-        "--limit", type=int, default=10, help="Max results (1-50, default 10)"
+        "--limit", type=int, default=10, help="Max results (1-20, default 10)"
     )
     search_parser.add_argument(
         "--full", action="store_true", help="Show untruncated decision text"

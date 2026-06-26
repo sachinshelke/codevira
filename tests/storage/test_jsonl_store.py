@@ -248,6 +248,30 @@ class TestMonotonicIDs:
         new_id = jsonl_store.append_with_generated_id(jsonl_path, {"decision": "third"})
         assert new_id == "D000003", f"ID collided: got {new_id}"
 
+    def test_next_id_uses_max_not_last_after_out_of_order_rewrite(
+        self, jsonl_path: Path
+    ) -> None:
+        """v3.6.0 regression: minting must use MAX(real id)+1, not last-in-file+1.
+
+        A junk cleanup / compact / cross-project repair can rewrite the store
+        out of id order, leaving a LOWER id at the tail. Pre-fix code took the
+        last real id (D000002 here) and +1'd it, re-issuing D000003 — which
+        already exists — silently clobbering it in the merged view. The fix
+        scans the whole file for the max id (D000005) and returns D000006.
+
+        This is the exact shape of the 2026-06-27 store corruption: after a
+        bulk junk cleanup left low ids at the tail, fresh writes collided
+        onto D000001/D000002/D000003.
+        """
+        for rec in (
+            {"id": "D000005", "decision": "kept-high"},
+            {"id": "D000003", "decision": "kept-mid"},
+            {"id": "D000002", "decision": "kept-low-at-tail"},
+        ):
+            jsonl_store.append(jsonl_path, rec)
+        new_id = jsonl_store.append_with_generated_id(jsonl_path, {"decision": "fresh"})
+        assert new_id == "D000006", f"expected max+1=D000006, got {new_id}"
+
 
 class TestConcurrency:
     def test_concurrent_appenders_no_corruption(self, jsonl_path: Path) -> None:

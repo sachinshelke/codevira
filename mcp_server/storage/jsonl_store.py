@@ -346,33 +346,31 @@ def append_with_generated_id(
 def _compute_next_id_locked(
     path: Path, *, prefix: str, width: int, id_field: str
 ) -> str:
-    """Compute next ID inside an already-held file lock. Internal."""
+    """Compute next ID inside an already-held file lock. Internal.
+
+    Returns ``max(real id) + 1``, scanning the FULL file — NOT the last /
+    tail id. Computing the MAX is what makes minting collision-safe across
+    rewrites: a store can be left out of id order by a junk cleanup,
+    ``compact``, or a cross-project repair, which puts a LOWER id at the tail.
+
+    Two pre-v3.6 bugs both came from trusting the tail:
+      - **last-not-max**: ``last id + 1`` re-issued an id that already existed
+        earlier in the file, silently clobbering that record (incl.
+        ``do_not_revert`` decisions) in the merged view.
+      - **tail-window**: for files >= 100 KB only the last 4 KB was read, so a
+        burst of small amendment lines could hide every real id and the old
+        code fell through to "D000001", colliding with the existing one.
+
+    Amendment records (carrying ``_amendment_to_id``) re-use an existing id
+    and are skipped. A full O(n) scan per append is acceptable here: these
+    stores are bounded and ``append_with_generated_id`` already fsyncs.
+    """
     if not path.is_file() or path.stat().st_size == 0:
         return f"{prefix}{'0' * (width - 1)}1"
 
-    # Tail-read (no re-lock).
-    size = path.stat().st_size
-    if size < 100_000:
-        with open(path, encoding="utf-8") as fh:
-            lines = fh.readlines()
-    else:
-        with open(path, "rb") as fb:
-            fb.seek(-4096, io.SEEK_END)
-            tail = fb.read()
-        lines = [
-            line + "\n" for line in tail.decode("utf-8", errors="ignore").splitlines()
-        ]
-
-    # v3.0.0 fix (2026-05-25): skip amendment records when computing the
-    # next ID. Amendments (records carrying ``_amendment_to_id``) re-use
-    # an EXISTING decision's id; treating the last amendment as the
-    # "last id" caused next = amended_id + 1, which collided with an
-    # already-issued sequential id. Bug exposed by set_decision_flag
-    # writes followed by a fresh record_decision call: the new decision
-    # got the old D000004's id and silently overwrote it in the merged
-    # view. We walk back until we find a non-amendment record.
-    def _last_real_id(scan_lines: list[str]) -> str | None:
-        for raw in reversed(scan_lines):
+    max_n = -1
+    with open(path, encoding="utf-8") as fh:
+        for raw in fh:
             raw = raw.strip()
             if not raw:
                 continue
@@ -380,34 +378,23 @@ def _compute_next_id_locked(
                 rec = json.loads(raw)
             except json.JSONDecodeError:
                 continue
-            if isinstance(rec, dict):
-                if rec.get("_amendment_to_id") is not None:
-                    continue  # amendment — id is borrowed from an earlier record
-                val = rec.get(id_field)
-                if val is not None:
-                    return str(val)
-        return None
+            if not isinstance(rec, dict):
+                continue
+            if rec.get("_amendment_to_id") is not None:
+                continue  # amendment — id is borrowed from an earlier record
+            val = rec.get(id_field)
+            if not isinstance(val, str) or not val.startswith(prefix):
+                continue
+            try:
+                n = int(val[len(prefix) :], 36)
+            except ValueError:
+                continue
+            if n > max_n:
+                max_n = n
 
-    last_val = _last_real_id(lines)
-
-    # v3.5.0 fix: the 4096-byte tail window can contain ONLY amendment
-    # records — e.g. right after `observe-git` appends a burst of outcome
-    # amendments (each a small ~100-byte amendment line). The reversed scan
-    # then finds no real id, and the old code fell through to "D000001",
-    # silently COLLIDING with the existing D000001 and clobbering it (incl.
-    # do_not_revert decisions) in the merged view. If the tail came up empty
-    # but we only read a 4 KB window, re-scan the FULL file before giving up.
-    if last_val is None and size >= 100_000:
-        with open(path, encoding="utf-8") as fh:
-            last_val = _last_real_id(fh.readlines())
-
-    if last_val is None or not last_val.startswith(prefix):
+    if max_n < 0:
         return f"{prefix}{'0' * (width - 1)}1"
-    try:
-        n = int(last_val[len(prefix) :], 36) + 1
-    except ValueError:
-        return f"{prefix}{'0' * (width - 1)}1"
-    encoded = _to_base36(n)
+    encoded = _to_base36(max_n + 1)
     if len(encoded) <= width:
         return f"{prefix}{encoded.rjust(width, '0')}"
     return f"{prefix}{encoded}"

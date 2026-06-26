@@ -2375,6 +2375,30 @@ def main():
 
             safe_log_crash(e, context="startup outcome analysis")
 
+        # v3.0.0 audit (§4.1): wire AntiRegression git populator
+        import os as _os
+
+        if _os.environ.get("CODEVIRA_NO_GIT_SCAN") != "1":
+            try:
+                from indexer.fix_history import scan_git_log
+                from mcp_server.paths import get_project_root
+
+                project_root = get_project_root()
+                summary = scan_git_log(project_root)
+                if "error" in summary:
+                    logger.warning("Git fix-history scan skipped: %s", summary["error"])
+                else:
+                    logger.info(
+                        "Git fix-history scan complete (background): %d recorded, %d skipped",
+                        summary.get("fixes_recorded", 0),
+                        summary.get("skipped_already_recorded", 0),
+                    )
+            except Exception as e:
+                logger.warning("Could not run startup git fix-history scan: %s", e)
+                from mcp_server._safe_crash import safe_log_crash
+
+                safe_log_crash(e, context="startup git fix-history scan")
+
     import threading
 
     threading.Thread(

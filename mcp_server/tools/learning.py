@@ -133,6 +133,7 @@ def _interpret_confidence_with_eligibility(
 def record_decision(
     decision: str,
     file_path: str | None = None,
+    symbol: str | None = None,
     context: str | None = None,
     do_not_revert: bool = False,
     session_id: str | None = None,
@@ -146,6 +147,14 @@ def record_decision(
     v2.2.0 — writes to ``<repo>/.codevira/decisions.jsonl`` (in-repo,
     git-committed). The v2.1.x SQLite-backed implementation is gone;
     no ChromaDB embedding, no calibration, no auto-recalibrate.
+
+    v3.6.0 — ``symbol`` (optional) scopes the decision to a single function
+    or class within ``file_path`` (e.g. ``file_path="auth.py",
+    symbol="login"``). When the decision is ``do_not_revert`` and
+    content-aware locking is on, the lock then blocks only edits that land
+    INSIDE that symbol; edits elsewhere in the file downgrade to a warn. With
+    no ``symbol`` (the default) the lock stays file-scoped, exactly as before.
+    ``symbol`` requires ``file_path`` to take effect.
 
     Conflict / duplicate check (Item 20): runs FTS5 pre-write search
     against existing protected decisions; surfaces ``_conflict_warning``
@@ -222,6 +231,7 @@ def record_decision(
     decision_id = decisions_store.record(
         decision=decision,
         file_path=file_path,
+        symbol=symbol,
         context=context,
         do_not_revert=bool(do_not_revert),
         session_id=effective_session_id,

@@ -98,9 +98,13 @@ _STOPWORDS = frozenset(
 class DecisionLock(Policy):
     """Block edits to files with locked architectural decisions.
 
-    The lock comes from the graph node's ``do_not_revert`` flag. Per-file
-    granularity (every decision attached to a locked file inherits the
-    lock); per-decision locking is deferred to v2.1.
+    The lock comes from a ``do_not_revert`` decision attached to the file.
+    Granularity (most to least precise): a decision may be scoped to a single
+    SYMBOL (v3.6.0 — blocks only edits inside that function/class); otherwise
+    it is FILE-scoped and the v3.5.0 content-aware token check decides whether
+    an edit touches its subject. Symbol scoping only ever *relaxes* a
+    token-clean edit — it never overrides a token-positive block, because
+    region detection is fallible.
     """
 
     name = "decision_lock"
@@ -220,15 +224,71 @@ class DecisionLock(Policy):
             # block (we can't prove it safe).
             if config["content_aware"]:
                 changed = self._changed_tokens(event)
-                if changed:  # parseable AND non-empty → can assess orthogonality
+
+                # v3.6.0 symbol-level scoping: only pay the file-parse cost when
+                # a locked decision is actually symbol-scoped. ``touched`` is the
+                # set of symbol(s) the edit lands in (possibly empty = "module
+                # level"), or None when undeterminable (unparseable diff / Write
+                # / before-text not locatable). File-scoped-only locks skip this
+                # entirely, so existing behavior is byte-for-byte unchanged.
+                has_symbol_scope = any(
+                    (d.get("symbol") or "").strip() for d in locked_decisions
+                )
+                touched = self._symbols_touched(event) if has_symbol_scope else None
+
+                # We can assess orthogonality with token evidence (``changed``)
+                # OR determinate region evidence (``touched is not None``).
+                if changed or touched is not None:
                     conflicting: list[dict[str, Any]] = []
                     shared_all: set[str] = set()
+                    conflict_symbols: set[str] = set()
+                    region_orthogonal_syms: set[str] = set()
                     for d in locked_decisions:
-                        is_conf, shared = self._decision_conflicts(changed, d)
-                        if is_conf:
+                        sym = (d.get("symbol") or "").strip()
+                        region_determinate = bool(sym) and touched is not None
+                        # In-region is a DEFINITIVE conflict: the edit lands
+                        # inside the locked symbol.
+                        if region_determinate and self._symbol_in_touched(sym, touched):
                             conflicting.append(d)
-                            shared_all |= shared
+                            conflict_symbols.add(sym)
+                            continue
+                        # Otherwise (file-scoped, region-miss, OR region
+                        # undeterminable) the v3.5.0 token check STILL governs.
+                        # Region may only RELAX a token-clean edit — it must never
+                        # OVERRIDE a token-positive block, because region detection
+                        # is itself fallible (duplicate anchors, decorators,
+                        # module-level dependencies, whitespace-fuzzy matches).
+                        if changed:
+                            is_conf, shared = self._decision_conflicts(changed, d)
+                            if is_conf:
+                                conflicting.append(d)
+                                shared_all |= shared
+                            elif region_determinate:
+                                # Tokens clean AND the edit is positively in a
+                                # different symbol → genuinely orthogonal by region.
+                                region_orthogonal_syms.add(sym)
+                            # else file-scoped + token-clean → orthogonal (omitted).
+                        elif region_determinate:
+                            # No token evidence, but region positively places the
+                            # edit outside the locked symbol → orthogonal.
+                            region_orthogonal_syms.add(sym)
+                        else:
+                            # No token evidence AND no determinate region → can't
+                            # prove safe → conservative conflict.
+                            conflicting.append(d)
+
                     if not conflicting:
+                        # Prefer the region message when the only thing we
+                        # relaxed was a symbol-scope miss.
+                        if region_orthogonal_syms:
+                            return self._make_verdict(
+                                event=event,
+                                config=config,
+                                decisions=locked_decisions,
+                                target_rel=target_rel,
+                                downgrade_kind="region",
+                                scope_symbols=region_orthogonal_syms,
+                            )
                         return self._make_verdict(
                             event=event,
                             config=config,
@@ -242,11 +302,12 @@ class DecisionLock(Policy):
                         decisions=conflicting,
                         target_rel=target_rel,
                         downgrade_kind=None,
-                        conflict_tokens=shared_all,
+                        conflict_tokens=shared_all or None,
+                        scope_symbols=conflict_symbols or None,
                     )
 
-            # Strict block: content-aware disabled, or the diff couldn't be
-            # parsed into a non-empty delta (None/empty → can't prove safe).
+            # Strict block: content-aware disabled, or neither token nor region
+            # evidence was available (can't prove safe).
             return self._make_verdict(
                 event=event,
                 config=config,
@@ -326,6 +387,31 @@ class DecisionLock(Policy):
             return None
         return cls._salient_tokens(f"{before}\n{after}")
 
+    @staticmethod
+    def _symbols_touched(event: HookEvent) -> set[str] | None:
+        """The named symbol(s) the edit lands in, or ``None`` when that can't
+        be determined (the caller then keeps file-level behavior).
+
+        Thin wrapper over ``_region_detect.symbols_touched_by_edit`` — lazy
+        import to match this module's pattern and keep engine startup cheap.
+        """
+        if event.target_file is None:
+            return None
+        from mcp_server.engine.policies._region_detect import symbols_touched_by_edit
+
+        return symbols_touched_by_edit(event.target_file, event.proposed_diff)
+
+    @staticmethod
+    def _symbol_in_touched(sym: str, touched: set[str]) -> bool:
+        """Whether a locked decision's ``symbol`` matches a symbol the edit
+        landed in. The region detector emits BARE names, so a bare scope matches
+        directly and a qualified scope (``Class.method``) matches on its final
+        segment — otherwise ``record_decision(symbol="Auth.login")`` would
+        silently never fire."""
+        if sym in touched:
+            return True
+        return sym.rsplit(".", 1)[-1] in touched
+
     @classmethod
     def _decision_conflicts(
         cls, changed: set[str], decision: dict[str, Any]
@@ -382,18 +468,23 @@ class DecisionLock(Policy):
         target_rel: str,
         downgrade_kind: str | None = None,
         conflict_tokens: set[str] | None = None,
+        scope_symbols: set[str] | None = None,
     ) -> PolicyVerdict:
         """Build the warn-or-block verdict for the locked-with-decisions case.
 
         ``downgrade_kind`` selects the outcome:
 
-        * ``None`` — genuine block (mode permitting). When ``conflict_tokens``
-          is given, the message names the shared subject the edit touches.
+        * ``None`` — genuine block (mode permitting). When ``scope_symbols`` is
+          given the message names the locked symbol the edit lands in; else
+          when ``conflict_tokens`` is given it names the shared subject.
         * ``"insertion"`` — pure-insertion warn (v3.3.0 Phase 7): the edit
           only adds lines, so nothing is reverted.
         * ``"orthogonal"`` — content-aware warn (v3.5.0): the edit's diff
           doesn't reference any locked decision's subject, so it's allowed
           with the decisions surfaced for self-check.
+        * ``"region"`` — symbol-level warn (v3.6.0): the locked decision(s) are
+          scoped to a symbol the edit doesn't touch, so it can't revert them.
+          ``scope_symbols`` names those symbols for the message.
         """
         target_name = event.target_file.name if event.target_file else target_rel
         is_downgrade = downgrade_kind is not None
@@ -431,9 +522,28 @@ class DecisionLock(Policy):
                 f"(If this is wrong, set CODEVIRA_DECISION_LOCK_CONTENT_AWARE=0 "
                 f"to restore strict file-level blocking.)"
             )
+        elif downgrade_kind == "region":
+            syms = ", ".join(sorted(scope_symbols or set())) or "the locked symbol(s)"
+            message = (
+                f"⚠️  Decision-lock notice on {target_name}: this file has "
+                f"{len(decisions)} symbol-scoped locked decision(s), but your "
+                f"edit lands outside {syms}, so it can't revert them — allowed "
+                f"as orthogonal by region.\n\n"
+                f"Locked decisions (self-check that your change truly doesn't "
+                f"contradict them):\n"
+                f"{chr(10).join(sample_lines)}{more}\n\n"
+                f"(Restore strict file-level blocking with "
+                f"CODEVIRA_DECISION_LOCK_CONTENT_AWARE=0.)"
+            )
         else:
             reason = ""
-            if conflict_tokens:
+            if scope_symbols:
+                shown = ", ".join(sorted(scope_symbols)[:6])
+                reason = (
+                    f"Your change edits the locked symbol(s) {shown} — the "
+                    f"exact region the decision(s) below protect.\n\n"
+                )
+            elif conflict_tokens:
                 shown = ", ".join(sorted(conflict_tokens)[:6])
                 reason = (
                     f"Your change touches code referencing {shown} — the "
@@ -465,8 +575,10 @@ class DecisionLock(Policy):
             # Back-compat: callers/tests still read ``pure_insertion``.
             "pure_insertion": downgrade_kind == "insertion",
             "content_orthogonal": downgrade_kind == "orthogonal",
+            "region_orthogonal": downgrade_kind == "region",
             "downgrade_kind": downgrade_kind,
             "conflict_tokens": sorted(conflict_tokens) if conflict_tokens else [],
+            "scope_symbols": sorted(scope_symbols) if scope_symbols else [],
         }
 
         if config["mode"] == "block" and not is_downgrade:

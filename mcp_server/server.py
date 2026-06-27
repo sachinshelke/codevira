@@ -803,6 +803,16 @@ async def list_tools() -> list[Tool]:
                         "type": "string",
                         "description": "Optional file/path the decision pertains to",
                     },
+                    "symbol": {
+                        "type": "string",
+                        "description": (
+                            "Optional function/class name within file_path to "
+                            'scope the decision to (e.g. "login"). With '
+                            "do_not_revert, the lock then blocks only edits "
+                            "INSIDE that symbol; edits elsewhere in the file "
+                            "warn instead. Requires file_path."
+                        ),
+                    },
                     "context": {
                         "type": "string",
                         "description": "Why this won (alternatives, what would force re-examination)",
@@ -1992,6 +2002,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             result = learning_record_decision(
                 decision=arguments["decision"],
                 file_path=arguments.get("file_path"),
+                symbol=arguments.get("symbol"),
                 context=arguments.get("context"),
                 do_not_revert=arguments.get("do_not_revert", False),
                 session_id=arguments.get("session_id"),

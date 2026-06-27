@@ -22,6 +22,38 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   and the file is only parsed when a locked decision is actually symbol-scoped
   (zero added cost for the common case). Restore strict file-level blocking
   with `CODEVIRA_DECISION_LOCK_CONTENT_AWARE=0`.
+- **`codevira search` CLI.** Decision search is no longer MCP-only — search
+  from the terminal: `codevira search "retry policy"` (rich table),
+  `--all-projects` to search every registered repo, `--json` for a
+  machine-readable payload, plus `--limit` / `--full`.
+- **Cross-project decision search.** `search_decisions(query, all_projects=true)`
+  now searches *every* registered project's decision store — not just the
+  current one — each result tagged with the `project` + `project_path` it came
+  from. Recall how you solved something in another repo without leaving this
+  one. Reuses the same per-project FTS5 search (identical per-project ranking +
+  superseded filtering); the union is **interleaved by per-project rank** (raw
+  BM25 scores aren't comparable across repos, so each project's best gets fair
+  representation). Skips moved/ghost projects and invalid roots, dedups by
+  resolved path, caps the fan-out, and one project erroring never sinks the
+  search. Default `all_projects=false` keeps the current-project behavior
+  byte-for-byte unchanged.
+
+### Fixed
+- **Anti-Regression fix-history is now populated.** `scan_git_log()` is wired
+  into the startup daemon thread, so the fix-history DB the hero reads is
+  actually built (it previously had no production caller). Gated by
+  `CODEVIRA_NO_GIT_SCAN`; runs only at startup.
+- **Native edits reach working memory.** `memory_fanout` now also fires from the
+  Claude Code hook path, so native `Edit`/`Write`/`Bash` populate working
+  memory — not just codevira's own MCP tool calls.
+- **Decision-ID minting is collision-safe.** Next-ID generation now scans the
+  full store for `max(id) + 1` instead of trusting the last/tail record, so a
+  rewrite that leaves a lower id at the tail (junk cleanup, compact,
+  cross-project repair) can no longer re-issue an existing id and clobber a
+  record (including `do_not_revert` decisions).
+- **`index --full` truly rebuilds** and prunes nodes for deleted files so graph
+  counts track reality; dropped the dead semantic notice. `codevira status` now
+  shows Symbols / Edges / Decisions counts.
 
 ## [3.5.0] — 2026-06-19
 

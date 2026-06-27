@@ -534,6 +534,15 @@ async def list_tools() -> list[Tool]:
                         "type": "boolean",
                         "description": "v2.1.2 Item 28: return id+summary+score only (smallest payload)",
                     },
+                    "all_projects": {
+                        "type": "boolean",
+                        "description": (
+                            "v3.6.0: search EVERY registered project's decisions, "
+                            "not just the current one. Each result gains `project` "
+                            "+ `project_path`. Use to recall how you solved "
+                            "something in another repo. Default false."
+                        ),
+                    },
                 },
                 "required": ["query"],
             },
@@ -1912,6 +1921,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 full=arguments.get("full", False),
                 summary_only=arguments.get("summary_only", False),
                 since=arguments.get("since"),  # v2.1.2 Item 25
+                all_projects=arguments.get("all_projects", False),  # v3.6.0
             )
         elif name == "list_decisions":
             # v2.1.2 Item 11.

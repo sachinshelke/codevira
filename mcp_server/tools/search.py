@@ -67,6 +67,7 @@ def search_decisions(
     full: bool = False,
     summary_only: bool = False,
     since: str | None = None,
+    all_projects: bool = False,
 ) -> dict[str, Any]:
     """Search past decisions via FTS5 (BM25-ranked).
 
@@ -90,6 +91,10 @@ def search_decisions(
         summary_only: ~70% smaller payload — only {id, summary, score,
             do_not_revert} per result.
         since: ISO 8601 / YYYY-MM-DD; only decisions ts > since returned.
+        all_projects: when True (v3.6.0), search EVERY registered project's
+            decision store, not just the current one. Each result gains
+            ``project`` + ``project_path`` so you can see where it came from.
+            Default False (current project only).
 
     Returns:
         {query, count, retrieval, threshold_used, results, [hint], [_warning]}
@@ -98,7 +103,12 @@ def search_decisions(
 
     from mcp_server.storage import decisions_store
 
-    results = decisions_store.search(query or "", limit=limit, since=since)
+    if all_projects:
+        results = decisions_store.search_all_projects(
+            query or "", limit=limit, since=since
+        )
+    else:
+        results = decisions_store.search(query or "", limit=limit, since=since)
 
     # Apply session_id filter post-search (FTS5 has no notion of session).
     if session_id:
@@ -127,6 +137,8 @@ def search_decisions(
                 "summary": (r.get("decision") or "")[:80],
                 "score": r.get("score"),
                 "do_not_revert": bool(r.get("do_not_revert", False)),
+                # v3.6.0: present only on all_projects results.
+                **({"project": r["project"]} if r.get("project") else {}),
             }
             for r in results
         ]
@@ -161,6 +173,12 @@ def search_decisions(
             "tags": r.get("tags") or [],
             "created_at": r.get("created_at"),
             "score": r.get("score"),
+            # v3.6.0: present only on all_projects results.
+            **(
+                {"project": r["project"], "project_path": r.get("project_path")}
+                if r.get("project")
+                else {}
+            ),
         }
         for r in results
     ]

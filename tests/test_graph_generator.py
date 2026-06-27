@@ -676,3 +676,69 @@ def _private_helper():
         # Symbol should exist if _get_python_symbols_detailed was called
         # (may or may not exist depending on schema — just verify no crash)
         assert result is not None
+
+
+class TestFullRebuildClearsGraph:
+    """Regression for the '0 nodes' report on re-index (3.5.1).
+
+    The file-node loop is add-if-absent, so re-indexing an already-built
+    graph adds 0 NEW nodes even though the graph is fully populated — which
+    surfaced as a confusing 'Graph built: 0 nodes' line. The result now also
+    carries ``nodes_total`` (the real size), and ``full=True`` does a true
+    from-scratch rebuild instead of skipping existing file-nodes.
+    """
+
+    def _project(self, tmp_path):
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "a.py").write_text("import b\n\n\ndef f():\n    return 1\n")
+        (src / "b.py").write_text("def g():\n    return 2\n")
+        return str(tmp_path), str(tmp_path / "graph.db")
+
+    def test_reindex_without_full_adds_zero_new_but_total_stays_populated(
+        self, tmp_path
+    ):
+        from indexer.graph_generator import generate_graph_sqlite
+
+        proj, db_path = self._project(tmp_path)
+        first = generate_graph_sqlite(proj, db_path)
+        assert first["nodes_added"] >= 1
+        assert first["nodes_total"] == first["nodes_added"]  # fresh graph
+
+        # Re-index WITHOUT full: file-nodes already exist → 0 new added, but
+        # the graph is still fully populated. This is the user's "0 nodes"
+        # line — now disambiguated by nodes_total.
+        second = generate_graph_sqlite(proj, db_path)
+        assert second["nodes_added"] == 0
+        assert second["nodes_total"] == first["nodes_total"] >= 1
+
+    def test_full_true_clears_and_rebuilds(self, tmp_path):
+        from indexer.graph_generator import generate_graph_sqlite
+
+        proj, db_path = self._project(tmp_path)
+        total = generate_graph_sqlite(proj, db_path)["nodes_total"]
+        assert total >= 1
+
+        # A real full rebuild wipes first, so every file-node is re-added and
+        # the reported total reflects the actual graph — never a phantom 0.
+        rebuilt = generate_graph_sqlite(proj, db_path, full=True)
+        assert rebuilt["nodes_added"] == total  # re-added, not skipped
+        assert rebuilt["nodes_total"] == total  # honest count
+
+    def test_deleted_file_node_is_pruned_on_reindex(self, tmp_path):
+        """A deleted source file's node is pruned on the next (incremental)
+        index, so the graph — and `codevira status`'s count — SHRINKS instead
+        of accumulating orphans. This is the 'status count never decreases'
+        bug.
+        """
+        from indexer.graph_generator import generate_graph_sqlite
+
+        proj, db_path = self._project(tmp_path)  # src/a.py + src/b.py
+        first = generate_graph_sqlite(proj, db_path)
+        assert first["nodes_total"] >= 2
+
+        # Delete one file, then re-index WITHOUT full (the incremental path).
+        (tmp_path / "src" / "b.py").unlink()
+        second = generate_graph_sqlite(proj, db_path)
+        assert second["nodes_removed"] >= 1
+        assert second["nodes_total"] == first["nodes_total"] - 1

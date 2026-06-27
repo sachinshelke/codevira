@@ -37,6 +37,10 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   resolved path, caps the fan-out, and one project erroring never sinks the
   search. Default `all_projects=false` keeps the current-project behavior
   byte-for-byte unchanged.
+- **`codevira status` shows activity counts.** Beyond Graph Nodes (a flat file
+  count), the panel now reports Symbols, Edges, and Decisions — counts that
+  move as you edit code and record decisions, so status reflects progress
+  instead of a number that barely changes.
 
 ### Fixed
 - **Anti-Regression fix-history is now populated.** `scan_git_log()` is wired
@@ -51,9 +55,24 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   rewrite that leaves a lower id at the tail (junk cleanup, compact,
   cross-project repair) can no longer re-issue an existing id and clobber a
   record (including `do_not_revert` decisions).
-- **`index --full` truly rebuilds** and prunes nodes for deleted files so graph
-  counts track reality; dropped the dead semantic notice. `codevira status` now
-  shows Symbols / Edges / Decisions counts.
+- **`codevira index --full` now truly rebuilds the graph.** The graph-only
+  index path (the only path since v2.2.0) called the incremental
+  `generate_graph_sqlite`, whose file-node loop is add-if-absent — so a
+  re-index of an already-built project added 0 new nodes and printed a
+  confusing `Graph built: 0 nodes, N edges`. `--full` now clears the graph
+  first (new FK-cascading `SQLiteGraph.clear()`) and the result reports the
+  real `nodes_total`, so the count is honest and node metadata is refreshed.
+- **Dropped the misleading "Semantic search unavailable — reinstall codevira"
+  notice.** Semantic code search (chromadb / torch) was removed in v2.2.0 and
+  is on hold (D0000PV / D0000XY); `_check_search_deps()` is hardcoded `False`,
+  so that notice printed on *every* index and pointed users at an upgrade that
+  could never restore it. Graph-only is the normal, complete result.
+- **Graph node count now tracks the filesystem.** Indexing was add-if-absent
+  and never pruned nodes for deleted files, so the graph — and `codevira
+  status`'s node count — only ever grew; it never shrank when you removed a
+  file. A new FK-cascading `SQLiteGraph.remove_node` plus a prune pass in
+  `generate_graph_sqlite` now drop nodes whose source file is gone, so the
+  count reflects reality on every index.
 
 ## [3.5.0] — 2026-06-19
 

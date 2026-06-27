@@ -106,6 +106,15 @@ def handle(event_type_str: str) -> int:
     # 3. Dispatch — this never raises; it always returns a verdict.
     verdict = dispatch(event)
 
+    # 3.5. v3.1.0 M2 Phase 3: memory fan-out. Sequenced AFTER policy eval so
+    # the verdict isn't affected by fan-out behavior. Fail-open.
+    try:
+        from mcp_server.engine.memory_fanout import dispatch as _fanout_dispatch
+
+        _fanout_dispatch(event)
+    except Exception:
+        pass
+
     # 4 + 5. Translate verdict to Claude Code response.
     return _emit(verdict, event)
 

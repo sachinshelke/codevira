@@ -13,7 +13,7 @@ Sprint week: **Week 8**. Smaller than Hero 4: most of the heavy lifting is in `i
 Bug fixes decay in the AI's awareness. Six weeks ago you fixed a race condition by adding a `with self._lock:` guard. Today the AI is "simplifying" the same function and removes the lock again — your bug is back. The fix is in git history, but the AI didn't see it.
 
 Codevira already has the data:
-- `indexer/fix_history.py:scan_git_log()` walks `git log` for `fix:`/`bug:`/`hotfix:`/`fixes #N` patterns and records each touched file as a fix region.
+- `indexer/fix_history.py:scan_git_log()` walks `git log` for `fix:`/`bug:`/`hotfix:`/`fixes #N` patterns and records each touched file as a fix region. *(Note: This scan is invoked only on server startup. Long-lived servers will not see new fix commits until restarted.)*
 - `is_revert(proposed_change, fix)` heuristically detects whether the AI's diff moves the file back toward the pre-fix state.
 - `signals.fixes(file_path)` returns the recorded fixes for a file.
 

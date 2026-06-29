@@ -7,7 +7,72 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [Unreleased]
+## [3.6.0] — 2026-06-27
+
+### Added
+- **Symbol / region-level decision locking.** A `do_not_revert` decision can now
+  be scoped to a single function or class via a new optional `symbol` argument
+  on `record_decision` (e.g. `record_decision(decision=…, file_path="auth.py",
+  symbol="login")`). The content-aware lock then blocks only edits that land
+  *inside* that symbol; an edit elsewhere in the same file downgrades to a warn
+  (it can't revert the protected region). At PRE_TOOL_USE the file still holds
+  the edit's `before` text, so the enclosing symbol is resolved by AST
+  (Python) / tree-sitter (TS/JS/Go/Rust) without needing the graph indexed.
+  Decisions with no `symbol` stay file-scoped — existing behavior is unchanged,
+  and the file is only parsed when a locked decision is actually symbol-scoped
+  (zero added cost for the common case). Restore strict file-level blocking
+  with `CODEVIRA_DECISION_LOCK_CONTENT_AWARE=0`.
+- **`codevira search` CLI.** Decision search is no longer MCP-only — search
+  from the terminal: `codevira search "retry policy"` (rich table),
+  `--all-projects` to search every registered repo, `--json` for a
+  machine-readable payload, plus `--limit` / `--full`.
+- **Cross-project decision search.** `search_decisions(query, all_projects=true)`
+  now searches *every* registered project's decision store — not just the
+  current one — each result tagged with the `project` + `project_path` it came
+  from. Recall how you solved something in another repo without leaving this
+  one. Reuses the same per-project FTS5 search (identical per-project ranking +
+  superseded filtering); the union is **interleaved by per-project rank** (raw
+  BM25 scores aren't comparable across repos, so each project's best gets fair
+  representation). Skips moved/ghost projects and invalid roots, dedups by
+  resolved path, caps the fan-out, and one project erroring never sinks the
+  search. Default `all_projects=false` keeps the current-project behavior
+  byte-for-byte unchanged.
+- **`codevira status` shows activity counts.** Beyond Graph Nodes (a flat file
+  count), the panel now reports Symbols, Edges, and Decisions — counts that
+  move as you edit code and record decisions, so status reflects progress
+  instead of a number that barely changes.
+
+### Fixed
+- **Anti-Regression fix-history is now populated.** `scan_git_log()` is wired
+  into the startup daemon thread, so the fix-history DB the hero reads is
+  actually built (it previously had no production caller). Gated by
+  `CODEVIRA_NO_GIT_SCAN`; runs only at startup.
+- **Native edits reach working memory.** `memory_fanout` now also fires from the
+  Claude Code hook path, so native `Edit`/`Write`/`Bash` populate working
+  memory — not just codevira's own MCP tool calls.
+- **Decision-ID minting is collision-safe.** Next-ID generation now scans the
+  full store for `max(id) + 1` instead of trusting the last/tail record, so a
+  rewrite that leaves a lower id at the tail (junk cleanup, compact,
+  cross-project repair) can no longer re-issue an existing id and clobber a
+  record (including `do_not_revert` decisions).
+- **`codevira index --full` now truly rebuilds the graph.** The graph-only
+  index path (the only path since v2.2.0) called the incremental
+  `generate_graph_sqlite`, whose file-node loop is add-if-absent — so a
+  re-index of an already-built project added 0 new nodes and printed a
+  confusing `Graph built: 0 nodes, N edges`. `--full` now clears the graph
+  first (new FK-cascading `SQLiteGraph.clear()`) and the result reports the
+  real `nodes_total`, so the count is honest and node metadata is refreshed.
+- **Dropped the misleading "Semantic search unavailable — reinstall codevira"
+  notice.** Semantic code search (chromadb / torch) was removed in v2.2.0 and
+  is on hold (D0000PV / D0000XY); `_check_search_deps()` is hardcoded `False`,
+  so that notice printed on *every* index and pointed users at an upgrade that
+  could never restore it. Graph-only is the normal, complete result.
+- **Graph node count now tracks the filesystem.** Indexing was add-if-absent
+  and never pruned nodes for deleted files, so the graph — and `codevira
+  status`'s node count — only ever grew; it never shrank when you removed a
+  file. A new FK-cascading `SQLiteGraph.remove_node` plus a prune pass in
+  `generate_graph_sqlite` now drop nodes whose source file is gone, so the
+  count reflects reality on every index.
 
 ## [3.5.0] — 2026-06-19
 

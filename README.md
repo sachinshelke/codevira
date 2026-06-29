@@ -195,6 +195,7 @@ The CLI surface is 23 commands (the daily-use ones below):
 | `codevira sync` | Regenerate AGENTS.md + manifest + digest from `decisions.jsonl` |
 | `codevira observe-git` | Classify past decisions as kept/modified/reverted from git history |
 | `codevira replay` | Browse the decisions timeline (terminal / markdown / HTML) |
+| `codevira search <query>` | Search decisions from the terminal (FTS5/BM25); `--all-projects` searches every registered repo, `--json` for scripts |
 | `codevira clean` | Remove orphaned project data |
 | `codevira reset` | Destructive cleanup (auto-exports decisions first) |
 | `codevira export` | Standalone decision backup (JSON / SQL); `export setup` bundles project memory + global learning for machine transfer |
@@ -349,7 +350,8 @@ kill list.
 | Tool | Description |
 |---|---|
 | `get_session_context` | **THE main "catch me up" call.** Returns ~500 tokens: current phase, next action, recent decisions, top tags, last session brief. |
-| `search_decisions(query)` | FTS5 BM25 search over `decisions.jsonl`. Default: top 5 truncated; pass `full=true` or `summary_only=true`. |
+| `search_decisions(query)` | FTS5 BM25 search over `decisions.jsonl`. Default: top 5 truncated; pass `full=true` or `summary_only=true`. **`all_projects=true`** (v3.6) searches every registered repo, tagging each result with its project. |
+| `record_decision(decision, …)` | Record a decision; `do_not_revert=true` locks it. **`symbol="login"`** (v3.6) scopes the lock to one function/class — edits elsewhere in the file warn instead of block. |
 | `list_decisions` | Paginate / filter: `since_date`, `file_pattern`, `protected_only`, `tags`, `include_superseded`. |
 | `list_tags` | Enumerate all tags with decision counts. |
 | `get_history(file_path)` | Recent decisions touching a file. |

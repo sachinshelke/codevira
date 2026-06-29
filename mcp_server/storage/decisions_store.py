@@ -39,6 +39,7 @@ import fnmatch
 import logging
 import secrets
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from mcp_server.storage import (
@@ -101,6 +102,7 @@ def record(
     decision: str,
     *,
     file_path: str | None = None,
+    symbol: str | None = None,
     context: str | None = None,
     do_not_revert: bool = False,
     session_id: str | None = None,
@@ -151,10 +153,17 @@ def record(
         else None
     )
 
+    # v3.6.0: optional symbol scope for region-level decision locking. A bare
+    # identifier (function / class name) — strip + cap; None when blank. Not a
+    # free-text field, so no secret-scrub needed, but bound the length so a
+    # malformed value can't bloat the record / AGENTS.md.
+    norm_symbol = symbol.strip()[:200] if symbol and symbol.strip() else None
+
     base_record = {
         "ts": datetime.now(timezone.utc).isoformat(),
         "session_id": session_id or default_session_id(),
         "file_path": file_path,
+        "symbol": norm_symbol,
         "decision": sanitized_decision,
         "context": sanitized_context,
         "do_not_revert": bool(do_not_revert),
@@ -383,31 +392,43 @@ def list_all(
 
 
 def search(
-    query: str, *, limit: int = 5, since: str | None = None
+    query: str,
+    *,
+    limit: int = 5,
+    since: str | None = None,
+    project_root: Path | None = None,
 ) -> list[dict[str, Any]]:
     """BM25 search via FTS5; returns digest records ranked by relevance.
 
     ``since`` filter is post-applied (cheap; small result set).
+
+    ``project_root`` (v3.6.0) selects which project to search. ``None`` (the
+    default) targets the current project — behavior is byte-for-byte unchanged.
+    A non-None root searches THAT project's ``.codevira/`` store instead, which
+    is how ``search_all_projects`` reuses this function per registered project.
     """
     if not query or not query.strip():
         return []
 
+    decisions_p = paths.decisions_path(project_root)
+    fts5_p = paths.fts5_path(project_root)
+
     # Lazy rebuild if stale.
-    if fts5_index.staleness_check(paths.decisions_path(), paths.fts5_path()):
+    if fts5_index.staleness_check(decisions_p, fts5_p):
         try:
-            fts5_index.rebuild_from_jsonl(paths.decisions_path(), paths.fts5_path())
+            fts5_index.rebuild_from_jsonl(decisions_p, fts5_p)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "decisions_store.search: FTS5 rebuild failed: %s",
                 exc,
             )
 
-    hits = fts5_index.search(paths.fts5_path(), query, limit=limit * 2)
+    hits = fts5_index.search(fts5_p, query, limit=limit * 2)
     if not hits:
         return []
 
     # Load merged decisions; map by id for quick lookup.
-    merged = _read_merged()
+    merged = jsonl_store.read_merged(decisions_p)
     by_id = {str(d.get("id")): d for d in merged}
 
     results: list[dict[str, Any]] = []
@@ -440,6 +461,112 @@ def search(
             break
 
     return results
+
+
+#: Cap on how many projects a single cross-project search will touch. Each
+#: project is a SQLite open + (possibly) an FTS rebuild + a search, run
+#: sequentially, so an unbounded fan-out over a machine with hundreds of
+#: registered repos would be slow. Bounds latency; logged when it bites.
+_MAX_CROSS_PROJECTS = 50
+
+
+def search_all_projects(
+    query: str, *, limit: int = 5, since: str | None = None
+) -> list[dict[str, Any]]:
+    """Cross-project decision search (v3.6.0): BM25 search every registered
+    project's ``.codevira/`` decision store and return the top matches, each
+    tagged with the project it came from.
+
+    Reuses ``search`` per project (so per-project ranking, staleness rebuild,
+    and superseded filtering are identical to single-project search). Skipped:
+    projects whose decision file is gone (moved / ghost / never recorded) and
+    invalid roots ($HOME / system dirs). One project erroring out never sinks
+    the whole search; at most ``_MAX_CROSS_PROJECTS`` projects are touched.
+
+    Each returned row is the normal ``search`` row plus:
+      * ``project``      — the project's name (falls back to its dir name)
+      * ``project_path`` — the resolved project root on disk
+
+    **Merge ranking.** BM25 ``score`` is a per-index distance — it is NOT
+    comparable across projects (it depends on each corpus's term/length
+    statistics), so we do NOT sort the union by raw score (that would let a
+    weak match in a term-rare repo outrank a strong one elsewhere). Instead we
+    interleave by per-project RANK: every project's #1 first (ties broken by
+    raw score), then every #2, and so on. This is corpus-independent and gives
+    each project — including the current one — fair representation in the top-N.
+    The raw ``score`` is still returned for reference.
+    """
+    if not query or not query.strip():
+        return []
+    try:
+        from mcp_server._project_inventory import enumerate_projects
+        from mcp_server.paths import get_project_root, is_invalid_project_root
+    except Exception:  # noqa: BLE001 — inventory unavailable → no cross-project
+        return []
+
+    def _resolve_key(root: Path) -> str:
+        """Canonical dedup key. ``get_project_root`` always returns a
+        ``.resolve()``-d path, but a registered ``canonical_path`` may be the
+        raw string stored at registration (e.g. an unresolved ``/var`` symlink
+        on macOS). Resolve both so the same dir can't be searched twice."""
+        try:
+            return str(root.resolve())
+        except OSError:
+            return str(root)
+
+    seen_roots: set[str] = set()
+    merged_hits: list[dict[str, Any]] = []
+
+    def _search_one(root: Path, name: str | None) -> None:
+        if len(seen_roots) >= _MAX_CROSS_PROJECTS:
+            return
+        key = _resolve_key(root)
+        if key in seen_roots:
+            return  # a project can surface via the slug dir, db row, AND cwd
+        seen_roots.add(key)
+        if is_invalid_project_root(root):
+            return  # $HOME / system dir / otherwise unsafe root — never search
+        resolved = Path(key)
+        if not paths.decisions_path(resolved).is_file():
+            return  # ghost / moved / never recorded a decision here
+        try:
+            hits = search(query, limit=limit, since=since, project_root=resolved)
+        except Exception:  # noqa: BLE001 — isolate a bad project's failure
+            return
+        proj_name = name or resolved.name
+        for rank, h in enumerate(hits):
+            merged_hits.append(
+                {**h, "project": proj_name, "project_path": key, "_rank": rank}
+            )
+
+    enumerated = 0
+    for entry in enumerate_projects():
+        root_str = entry.canonical_path
+        if not root_str:
+            continue  # slug-only entry with no resolvable on-disk path
+        _search_one(Path(root_str), entry.name)
+        enumerated += 1
+        if enumerated >= _MAX_CROSS_PROJECTS:
+            logger.warning(
+                "search_all_projects: capped at %d projects; some not searched",
+                _MAX_CROSS_PROJECTS,
+            )
+            break
+
+    # Always include the CURRENT project, even if it isn't registered yet
+    # (used only via CLI, or just initialised). No-op (dedup) if already seen.
+    try:
+        _search_one(get_project_root(), None)
+    except Exception:  # noqa: BLE001 — cwd not a project / unresolvable → skip
+        pass
+
+    # Interleave by per-project rank (corpus-independent); raw score only
+    # tie-breaks within the same rank. Strip the internal _rank before return.
+    merged_hits.sort(key=lambda r: (r.get("_rank", 0), r.get("score", 0.0)))
+    out = merged_hits[:limit]
+    for r in out:
+        r.pop("_rank", None)
+    return out
 
 
 def list_tags_with_counts() -> dict[str, Any]:

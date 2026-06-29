@@ -492,17 +492,24 @@ def cmd_full_rebuild(verbose: bool = False):
     db = SQLiteGraph(get_data_dir() / "graph" / "graph.db")
 
     if not _check_search_deps():
-        console.print(
-            "[yellow]⚠[/yellow]  Semantic search unavailable — reinstall codevira: [bold]pip install --upgrade codevira[/bold]"
-        )
-        # Still build the graph even without search deps
+        # Graph-only is the ONLY mode since v2.2.0 — semantic code search
+        # (chromadb / torch / sentence-transformers) was removed and is on
+        # hold (D0000PV / D0000XY). There is nothing to "reinstall", so the
+        # old "Semantic search unavailable — reinstall codevira" notice
+        # (printed on every index, pointing at a fix that does nothing) is
+        # dropped. The "Graph built" line below is the real, complete result.
         from indexer.graph_generator import generate_graph_sqlite
 
+        # full=True so `index --full` truly rebuilds (clears the graph first);
+        # the reported count is then the real graph total, not "0 new nodes".
         result = generate_graph_sqlite(
-            str(_project_root()), str(get_data_dir() / "graph" / "graph.db")
+            str(_project_root()),
+            str(get_data_dir() / "graph" / "graph.db"),
+            full=True,
         )
         console.print(
-            f"[green]✓[/green] Graph built: {result.get('nodes_added', 0)} nodes, {result.get('edges_added', 0)} edges."
+            f"[green]✓[/green] Graph built: {result.get('nodes_total', 0)} nodes, "
+            f"{result.get('edges_added', 0)} edges."
         )
         db.close()
         return
@@ -1146,6 +1153,39 @@ def start_background_full_index(callback=None) -> "threading.Thread":
     return t
 
 
+def _status_entity_counts(db) -> dict[str, int]:
+    """Activity-bearing counts for `codevira status` (3.5.1).
+
+    Graph nodes are a flat file count that barely moves while you edit
+    existing files; these extra counts reflect actual progress — symbols
+    (functions/classes) and edges shift as you change code, and decisions
+    track codevira usage. Each query is defensive (0 on any error) so status
+    never crashes on a partial / schema-drifted graph.
+
+    Returns a dict with int keys: nodes, symbols, edges, decisions.
+    """
+
+    def _c(sql: str) -> int:
+        try:
+            return int(db.conn.execute(sql).fetchone()[0])
+        except Exception:
+            return 0
+
+    counts = {
+        "nodes": _c("SELECT COUNT(*) FROM nodes"),
+        "symbols": _c("SELECT COUNT(*) FROM symbols"),
+        "edges": _c("SELECT COUNT(*) FROM edges"),
+        "decisions": 0,
+    }
+    try:
+        from mcp_server.storage import decisions_store
+
+        counts["decisions"] = int(decisions_store.list_all(limit=1).get("total", 0))
+    except Exception:
+        counts["decisions"] = 0
+    return counts
+
+
 def cmd_status(check_stale: bool = False, show_global: bool = False):
     """Print index health summary.
 
@@ -1226,11 +1266,12 @@ def cmd_status(check_stale: bool = False, show_global: bool = False):
     console = Console()
     db = SQLiteGraph(graph_db_path)
 
-    # Count graph nodes — fast SQLite query
-    try:
-        nodes = db.conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
-    except Exception:
-        nodes = 0
+    # Activity-bearing counts so `status` reflects progress, not just a flat
+    # file count: symbols (functions/classes) and edges move as you edit;
+    # decisions track codevira usage. Single source of truth in
+    # _status_entity_counts (testable without rendering). (3.5.1)
+    counts = _status_entity_counts(db)
+    nodes = counts["nodes"]  # also referenced by the explanation logic below
 
     # v2.2.0: ChromaDB / sentence-transformers / torch were deleted in
     # Phase E. There is no semantic chunk count to display. `chunk_count`
@@ -1239,7 +1280,10 @@ def cmd_status(check_stale: bool = False, show_global: bool = False):
     chunk_count = 0
 
     table = Table(show_header=False, box=None)
-    table.add_row("[cyan]Graph Nodes:[/cyan]", str(nodes))
+    table.add_row("[cyan]Graph Nodes:[/cyan]", str(counts["nodes"]))
+    table.add_row("[cyan]Symbols:[/cyan]", str(counts["symbols"]))
+    table.add_row("[cyan]Edges:[/cyan]", str(counts["edges"]))
+    table.add_row("[cyan]Decisions:[/cyan]", str(counts["decisions"]))
     # v2.2.0: ChromaDB / semantic code search was removed entirely
     # (Phase E). The "ChromaDB Chunks" / "Semantic Search" row is no
     # longer meaningful; the code graph IS the search surface now.

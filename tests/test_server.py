@@ -770,6 +770,44 @@ class TestCallToolMissingDispatches:
 
 
 class TestServerMain:
+    def test_main_runs_background_startup_tasks(self):
+        """Verifies that _run_startup_outcome_analysis calls the expected populators."""
+        with (
+            patch("mcp_server.crash_logger.install_global_handler"),
+            patch("asyncio.run"),
+            patch(
+                "indexer.index_codebase.start_background_watcher",
+                return_value=MagicMock(),
+            ),
+            patch("mcp_server.global_sync.import_global_to_project", return_value={}),
+            patch("mcp_server.migrate.detect_migration_needed", return_value=False),
+            # Mock the background thread tools
+            patch("indexer.outcome_tracker.analyze_session_outcomes") as mock_analyze,
+            patch(
+                "indexer.fix_history.scan_git_log", return_value={"fixes_recorded": 5}
+            ) as mock_scan,
+            patch("threading.Thread") as mock_thread,
+            patch(
+                "mcp_server.paths.get_project_root", return_value=MagicMock()
+            ) as mock_root,
+        ):
+            from mcp_server.server import main
+
+            main()
+
+            # Verify the thread was spawned
+            mock_thread.assert_called_once()
+            target_fn = (
+                mock_thread.call_args[1].get("target") or mock_thread.call_args[0][0]
+            )
+
+            # Execute the thread target directly
+            target_fn()
+
+            # Assert both background tasks were invoked
+            mock_analyze.assert_called_once()
+            mock_scan.assert_called_once_with(mock_root.return_value)
+
     def test_main_installs_crash_handler(self):
         with (
             patch("mcp_server.crash_logger.install_global_handler") as mock_handler,
@@ -779,6 +817,7 @@ class TestServerMain:
                 return_value=MagicMock(),
             ),
             patch("indexer.outcome_tracker.analyze_session_outcomes"),
+            patch("indexer.fix_history.scan_git_log", return_value={}),
             patch("mcp_server.global_sync.import_global_to_project", return_value={}),
             patch("mcp_server.migrate.detect_migration_needed", return_value=False),
         ):
@@ -800,6 +839,7 @@ class TestServerMain:
                 return_value=MagicMock(),
             ),
             patch("indexer.outcome_tracker.analyze_session_outcomes"),
+            patch("indexer.fix_history.scan_git_log", return_value={}),
             patch("mcp_server.global_sync.import_global_to_project", return_value={}),
             patch("mcp_server.migrate.detect_migration_needed", return_value=False),
         ):
@@ -817,6 +857,7 @@ class TestServerMain:
                 return_value=mock_watcher,
             ),
             patch("indexer.outcome_tracker.analyze_session_outcomes"),
+            patch("indexer.fix_history.scan_git_log", return_value={}),
             patch("mcp_server.global_sync.import_global_to_project", return_value={}),
             patch("mcp_server.migrate.detect_migration_needed", return_value=True),
             patch(
@@ -842,6 +883,7 @@ class TestServerMain:
                 return_value=MagicMock(),
             ),
             patch("indexer.outcome_tracker.analyze_session_outcomes"),
+            patch("indexer.fix_history.scan_git_log", return_value={}),
             patch("mcp_server.global_sync.import_global_to_project", return_value={}),
             patch(
                 "mcp_server.migrate.detect_migration_needed",
@@ -861,6 +903,7 @@ class TestServerMain:
                 side_effect=ImportError("watchdog not found"),
             ),
             patch("indexer.outcome_tracker.analyze_session_outcomes"),
+            patch("indexer.fix_history.scan_git_log", return_value={}),
             patch("mcp_server.global_sync.import_global_to_project", return_value={}),
             patch("mcp_server.migrate.detect_migration_needed", return_value=False),
         ):
@@ -880,6 +923,7 @@ class TestServerMain:
                 "indexer.outcome_tracker.analyze_session_outcomes",
                 side_effect=RuntimeError("learning fail"),
             ),
+            patch("indexer.fix_history.scan_git_log", return_value={}),
             patch("mcp_server.global_sync.import_global_to_project", return_value={}),
             patch("mcp_server.migrate.detect_migration_needed", return_value=False),
         ):
@@ -896,6 +940,7 @@ class TestServerMain:
                 return_value=MagicMock(),
             ),
             patch("indexer.outcome_tracker.analyze_session_outcomes"),
+            patch("indexer.fix_history.scan_git_log", return_value={}),
             patch(
                 "mcp_server.global_sync.import_global_to_project",
                 side_effect=RuntimeError("sync fail"),
@@ -916,6 +961,7 @@ class TestServerMain:
                 return_value=mock_watcher,
             ),
             patch("indexer.outcome_tracker.analyze_session_outcomes"),
+            patch("indexer.fix_history.scan_git_log", return_value={}),
             patch("mcp_server.global_sync.import_global_to_project", return_value={}),
             patch("mcp_server.migrate.detect_migration_needed", return_value=False),
         ):

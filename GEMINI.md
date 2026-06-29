@@ -25,7 +25,7 @@ Call these MCP tools at the moments the description matches your action — they
 
 - **`record_decision(...)`** — Capture the *why*: what alternatives were considered, why this won, what would force a re-examination. A one-line decision is enough; the value compounds across sessions and across the other AI tools the user opens this project in.
 
-- For commits that fix a bug, prefer commit messages starting with `fix:`, `bug:`, `hotfix:`, or `fixes #N`. Codevira scans these into a fix-history database used by the Anti-Regression hero to block silent re-introduction of fixed bugs.
+- For commits that fix a bug, prefer commit messages starting with `fix:`, `bug:`, `hotfix:`, or `fixes #N`. Codevira scans these into a fix-history database used by the Anti-Regression hero to block silent re-introduction of fixed bugs. *(Note: This scan currently runs only on server startup; for long-lived servers, the fix-history goes stale until the next restart.)*
 
 ### Before you finish a meaningful unit of work — NON-NEGOTIABLE
 

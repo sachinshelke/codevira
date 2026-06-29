@@ -175,7 +175,7 @@ codevira setup</pre>
     Claude Code.</div>
 
     <h2 id="commands">CLI commands</h2>
-    <p>23 commands total; <code>codevira &lt;cmd&gt; --help</code> shows flags for any one.
+    <p>24 commands total; <code>codevira &lt;cmd&gt; --help</code> shows flags for any one.
     The daily drivers:</p>
     <table>
       <tr><th>Command</th><th>What it does</th></tr>
@@ -186,6 +186,7 @@ codevira setup</pre>
       <tr><td><code>codevira index</code></td><td>Build / refresh the code graph cache</td></tr>
       <tr><td><code>codevira sync</code></td><td>Regenerate AGENTS.md + manifest from <code>decisions.jsonl</code></td></tr>
       <tr><td><code>codevira replay</code></td><td>Browse the decision timeline (terminal / markdown / HTML)</td></tr>
+      <tr><td><code>codevira search</code> <span class="pill">3.6</span></td><td>Search decisions from the terminal; <code>--all-projects</code> searches every registered repo, <code>--json</code> for scripts</td></tr>
       <tr><td><code>codevira eval</code> <span class="pill">3.5</span></td><td>Score read-side relevance (recall@k / MRR) on self-derived cases</td></tr>
       <tr><td><code>codevira tune-weights</code> <span class="pill">3.5</span></td><td>Learn ranking weights from your memory; persist only a proven win</td></tr>
       <tr><td><code>codevira reflect --from-sessions</code> <span class="pill">3.5</span></td><td>Mine local Claude Code / Codex / Gemini transcripts for lessons</td></tr>
@@ -210,6 +211,13 @@ codevira setup</pre>
     <div class="note">Code-reading tools (<code>get_signature</code> / <code>get_code</code>)
     cover Python, TypeScript, JS/JSX, Go, and Rust. For other languages the agent reads
     the file directly.</div>
+    <div class="note"><strong>New in 3.6:</strong>
+    <code>record_decision(symbol="login")</code> scopes a <code>do_not_revert</code>
+    decision to a single function/class — the lock then blocks only edits that land
+    <em>inside</em> that symbol (edits elsewhere in the file warn). And
+    <code>search_decisions(query, all_projects=true)</code> searches every registered
+    project's decisions, each result tagged with the repo it came from (also via
+    <code>codevira search --all-projects</code>).</div>
 
     <h2 id="config">Configuration</h2>
     <p>Codevira works with zero config. These environment variables (set them in your

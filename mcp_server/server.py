@@ -534,6 +534,15 @@ async def list_tools() -> list[Tool]:
                         "type": "boolean",
                         "description": "v2.1.2 Item 28: return id+summary+score only (smallest payload)",
                     },
+                    "all_projects": {
+                        "type": "boolean",
+                        "description": (
+                            "v3.6.0: search EVERY registered project's decisions, "
+                            "not just the current one. Each result gains `project` "
+                            "+ `project_path`. Use to recall how you solved "
+                            "something in another repo. Default false."
+                        ),
+                    },
                 },
                 "required": ["query"],
             },
@@ -802,6 +811,16 @@ async def list_tools() -> list[Tool]:
                     "file_path": {
                         "type": "string",
                         "description": "Optional file/path the decision pertains to",
+                    },
+                    "symbol": {
+                        "type": "string",
+                        "description": (
+                            "Optional function/class name within file_path to "
+                            'scope the decision to (e.g. "login"). With '
+                            "do_not_revert, the lock then blocks only edits "
+                            "INSIDE that symbol; edits elsewhere in the file "
+                            "warn instead. Requires file_path."
+                        ),
                     },
                     "context": {
                         "type": "string",
@@ -1902,6 +1921,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 full=arguments.get("full", False),
                 summary_only=arguments.get("summary_only", False),
                 since=arguments.get("since"),  # v2.1.2 Item 25
+                all_projects=arguments.get("all_projects", False),  # v3.6.0
             )
         elif name == "list_decisions":
             # v2.1.2 Item 11.
@@ -1992,6 +2012,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             result = learning_record_decision(
                 decision=arguments["decision"],
                 file_path=arguments.get("file_path"),
+                symbol=arguments.get("symbol"),
                 context=arguments.get("context"),
                 do_not_revert=arguments.get("do_not_revert", False),
                 session_id=arguments.get("session_id"),
@@ -2374,6 +2395,30 @@ def main():
             from mcp_server._safe_crash import safe_log_crash
 
             safe_log_crash(e, context="startup outcome analysis")
+
+        # v3.0.0 audit (§4.1): wire AntiRegression git populator
+        import os as _os
+
+        if _os.environ.get("CODEVIRA_NO_GIT_SCAN") != "1":
+            try:
+                from indexer.fix_history import scan_git_log
+                from mcp_server.paths import get_project_root
+
+                project_root = get_project_root()
+                summary = scan_git_log(project_root)
+                if "error" in summary:
+                    logger.warning("Git fix-history scan skipped: %s", summary["error"])
+                else:
+                    logger.info(
+                        "Git fix-history scan complete (background): %d recorded, %d skipped",
+                        summary.get("fixes_recorded", 0),
+                        summary.get("skipped_already_recorded", 0),
+                    )
+            except Exception as e:
+                logger.warning("Could not run startup git fix-history scan: %s", e)
+                from mcp_server._safe_crash import safe_log_crash
+
+                safe_log_crash(e, context="startup git fix-history scan")
 
     import threading
 

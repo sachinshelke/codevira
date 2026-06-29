@@ -207,7 +207,7 @@ def generate_graph_node(file_path: str, project_root: str) -> dict[str, Any]:
 
 
 def generate_graph_sqlite(
-    project_root: str, db_path: str | None = None
+    project_root: str, db_path: str | None = None, full: bool = False
 ) -> dict[str, Any]:
     if not db_path:
         from mcp_server.paths import get_data_dir
@@ -215,6 +215,13 @@ def generate_graph_sqlite(
         db_path = str(get_data_dir() / "graph" / "graph.db")
 
     db = SQLiteGraph(db_path)
+
+    # full=True (codevira index --full) is a genuine from-scratch rebuild:
+    # wipe the existing graph so the add-if-absent loop below re-adds and
+    # refreshes every file-node instead of skipping ones already present.
+    # Without this, a re-run reports "0 nodes" because nothing is new. (3.5.1)
+    if full:
+        db.clear()
 
     # Skip dirs that commonly contain symlinks to system/OS directories,
     # or are otherwise not user source code. rglob() follows symlinks by
@@ -308,6 +315,18 @@ def generate_graph_sqlite(
     all_node_paths = {
         fp for fp in file_paths if "node_modules" not in fp and ".venv" not in fp
     }
+
+    # Prune nodes for source files that no longer exist on disk, so the graph
+    # (and `codevira status`'s node count) tracks the filesystem and SHRINKS
+    # on deletion instead of accumulating orphans forever. Without this, a
+    # deleted file left its node behind and the count only ever grew. (3.5.1)
+    current_node_ids = {f"file:{fp}" for fp in all_node_paths}
+    nodes_removed = 0
+    for existing in db.list_file_nodes():
+        node_id = existing.get("id")
+        if node_id and node_id not in current_node_ids:
+            if db.remove_node(node_id):
+                nodes_removed += 1
 
     # ---- Phase 2: Populate function-level symbols ----
     symbols_added = 0
@@ -410,10 +429,13 @@ def generate_graph_sqlite(
                 db.add_edge(source_id, target_id, kind="imports")
                 edges_added += 1
 
+    nodes_total = db.count_nodes()
     db.close()
     return {
         "files_processed": added + skipped,
         "nodes_added": added,
+        "nodes_total": nodes_total,
+        "nodes_removed": nodes_removed,
         "nodes_skipped": skipped,
         "edges_added": edges_added,
         "symbols_added": symbols_added,

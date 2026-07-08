@@ -32,7 +32,7 @@
 - **D00001D** 3.0.0 BUILD COMPLETE (this session). All enhancements are built, tested, committed to local main, and the full release …
 - **D00001E** fix: Python 3.10 CI failure — agents_md_generator._project_name() and cli_init used bare `import tomllib` (stdlib 3.11+…
 
-_+46 more decision(s) — full log in `.codevira/decisions.jsonl`._
+_+51 more decision(s) — full log in `.codevira/decisions.jsonl`._
 
 
 For the full decision log + outcomes + reverts, see `.codevira/decisions.jsonl` or run `codevira list-decisions`.

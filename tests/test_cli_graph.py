@@ -509,6 +509,31 @@ class TestRenderHtml:
         # And there is no early-return-on-focused-id anywhere.
         assert "if (focusedId !== null) return;" not in h
 
+    def test_decision_labeled_by_text_not_id(self):
+        """Legibility pass: labelFor must surface decision TEXT, not the
+        opaque id. On pre-fix code the decision branch returned n.id, so a
+        reader saw 'D000123' instead of the sentence."""
+        h = render_graph_html([{"id": "D000123", "decision": "use bcrypt for hashing"}])
+        # The decision branch of labelFor returns the shortened text.
+        assert "if (n.type === 'decision') return shortLabel(n.decision)" in h
+        # The shortLabel helper exists and truncates long text.
+        assert "function shortLabel(s)" in h
+
+    def test_decision_reflection_labels_visible_by_default(self):
+        """Legibility pass: decision/reflection labels must be opacity>0 by
+        default (they were 0 until hover/zoom on pre-fix code)."""
+        h = render_graph_html([{"id": "D1", "decision": "x"}])
+        assert '.node[data-type="decision"] text' in h
+        assert '.node[data-type="reflection"] text { opacity:0.9; }' in h
+
+    def test_entry_node_selected_on_first_paint(self):
+        """Legibility pass: INIT must auto-select an entry node so the
+        details panel opens on a real decision, not an empty panel."""
+        h = render_graph_html([{"id": "D1", "decision": "x"}])
+        assert "function pickEntryNode()" in h
+        assert "if (!selectedId) {" in h
+        assert "selectNode(entry, { noHist: true })" in h
+
     def test_self_contained_no_external_loads(self):
         """No CDN, no external scripts, no remote images even after the rewrite."""
         h = render_graph_html([{"id": "D1", "decision": "x"}])

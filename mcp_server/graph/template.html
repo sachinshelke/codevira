@@ -287,6 +287,11 @@
                paint-order:stroke;
                stroke:#0a0b0f; stroke-width:3px; stroke-linejoin:round; }
   .show-labels .node text { opacity:0.92; }
+  /* Decisions + reflections are the story — legible on first paint even
+     zoomed out. Files/skills stay label-on-hover so the canvas doesn't
+     turn into a text hairball. */
+  .node[data-type="decision"] text,
+  .node[data-type="reflection"] text { opacity:0.9; }
   .node.match text, .node:hover text, .node.focus text,
   .node.selected text, .node.hub text { opacity:1; }
   .node.hub text { font-size:12px; }
@@ -969,7 +974,17 @@ function render() {
 function labelFor(n) {
   if (n.type === 'file') return n.label || n.id;
   if (n.type === 'skill') return n.name || n.id;
+  // Decisions/reflections used to show their opaque id ("D0000XY") — a field
+  // of cryptic dots. Show the actual text so the graph reads at a glance.
+  if (n.type === 'reflection') return shortLabel(n.summary || n.abstraction) || n.id;
+  if (n.type === 'decision') return shortLabel(n.decision) || n.id;
   return n.id;
+}
+// First words of a decision, capped so an SVG node label stays readable.
+function shortLabel(s) {
+  s = (s == null ? '' : String(s)).trim().replace(/\s+/g, ' ');
+  if (!s) return '';
+  return s.length > 42 ? s.slice(0, 41).trimEnd() + '…' : s;
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -2266,6 +2281,18 @@ if ((DATA.meta.ides || []).length < 2) {
 // INIT
 // ─────────────────────────────────────────────────────────────────
 
+// First-paint entry node: land the reader on a real decision (details
+// panel populated) instead of an empty panel. Most-recent protected
+// decision, else most-recent decision. Skipped if the URL hash already
+// restored a selection.
+function pickEntryNode() {
+  const decs = DATA.nodes.filter(n => n.type === 'decision' && !n.is_superseded);
+  if (!decs.length) return null;
+  const recent = (a, b) => (b.tsMs || 0) - (a.tsMs || 0);
+  const prot = decs.filter(n => n.do_not_revert).sort(recent);
+  return (prot.length ? prot : decs.slice().sort(recent))[0] || null;
+}
+
 suppressHashWrite = true;
 readHashState();
 suppressHashWrite = false;
@@ -2274,6 +2301,10 @@ runLayout();
 render();
 fitToView(90, { initial: true });
 applyVisibility();
+if (!selectedId) {
+  const entry = pickEntryNode();
+  if (entry) selectNode(entry, { noHist: true });
+}
 window.addEventListener('resize', () => fitToView());
 </script>
 </body>

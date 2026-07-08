@@ -1056,3 +1056,67 @@ class TestEnsureDirsRefusesForbiddenRoot:
         store_paths.ensure_dirs(project)
         store_paths.ensure_dirs(project)  # must not raise
         assert (project / ".codevira").is_dir()
+
+
+class TestProjectRootPinning:
+    """D000118: get_project_root() must pin to ONE root for the life of the
+    process so record()/search() bind to a SINGLE .codevira store even when
+    cwd changes mid-process.
+
+    Pre-fix, get_project_root() re-resolved from Path.cwd() on every call, so
+    two record() calls from two cwds landed in two different stores. Each
+    store mints max+1 independently -> the two ids collided ("D000001" twice,
+    non-monotonic) and a single list()/search() saw only one of them.
+    """
+
+    def _make_project(self, base: Path, name: str) -> Path:
+        proj = base / name
+        (proj / ".codevira").mkdir(parents=True)
+        (proj / ".codevira" / "config.yaml").write_text(f"project:\n  name: {name}\n")
+        return proj
+
+    def test_record_from_two_cwds_stays_in_one_store(self, tmp_path, monkeypatch):
+        """DONE-WHEN (red on pre-fix code): record from cwd A then cwd B in
+        ONE process -> ids strictly monotonic AND both decisions visible from
+        one list_all()."""
+        from mcp_server.storage import decisions_store
+
+        # Start clean regardless of test order; raising=False so this test is
+        # still meaningful (red) on pre-fix code where the attr doesn't exist.
+        monkeypatch.setattr(paths, "_pinned_root", None, raising=False)
+
+        proj_a = self._make_project(tmp_path, "alpha")
+        proj_b = self._make_project(tmp_path, "beta")
+
+        monkeypatch.chdir(proj_a)
+        id_a = decisions_store.record(decision="alpha decision one")
+
+        monkeypatch.chdir(proj_b)
+        id_b = decisions_store.record(decision="beta decision two")
+
+        # (1) ids strictly monotonic -> a single minting store was used.
+        assert id_b > id_a, (
+            f"ids collided/regressed across cwds: {id_a} then {id_b} "
+            "— get_project_root() re-resolved to a second store"
+        )
+
+        # (2) BOTH decisions visible from one list_all() call.
+        texts = {d["decision"] for d in decisions_store.list_all(limit=50)["decisions"]}
+        assert "alpha decision one" in texts
+        assert "beta decision two" in texts
+
+    def test_drift_returns_pinned_root_not_cwd(self, tmp_path, monkeypatch):
+        """Once pinned, get_project_root() ignores a later cwd change and keeps
+        returning the pinned root (stability over cwd)."""
+        monkeypatch.setattr(paths, "_pinned_root", None, raising=False)
+
+        proj_a = self._make_project(tmp_path, "gamma")
+        proj_b = self._make_project(tmp_path, "delta")
+
+        monkeypatch.chdir(proj_a)
+        first = paths.get_project_root()
+
+        monkeypatch.chdir(proj_b)
+        second = paths.get_project_root()
+
+        assert second == first, "get_project_root() drifted with cwd after pinning"

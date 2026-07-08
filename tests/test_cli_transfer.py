@@ -76,6 +76,11 @@ def _switch_to_machine_b(tmp_path, monkeypatch) -> tuple[Path, Path]:
         "mcp_server.paths.get_global_db_path", lambda: home / "global.db"
     )
     monkeypatch.chdir(project)
+    # A new machine is a new process: reset the process-lifetime project-root
+    # pin (D000118) so the import re-resolves to machine B, not machine A.
+    import mcp_server.paths as _paths
+
+    _paths.invalidate_data_dir_cache()
     return project, home / "global.db"
 
 

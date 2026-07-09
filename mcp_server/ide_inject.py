@@ -979,12 +979,21 @@ def inject_ide_config(
                     if path:
                         results["Windsurf (global)"] = path
                 elif ide == "claude_desktop":
-                    # Claude Desktop always needs --project-dir (no cwd + no url support)
-                    # In global mode, skip Claude Desktop (it can't do project-agnostic config)
-                    pass
+                    # Claude Desktop can't do project-agnostic config (no cwd,
+                    # no workspace roots, no url). v3.7.0: rather than skip it
+                    # (leaving the user with NO server), fall back to a
+                    # per-project registration so it still works.
+                    path = _inject_claude_desktop(project_root, cmd_path, python_exe)
+                    if path:
+                        results["Claude Desktop (per-project)"] = path
                 elif ide == "antigravity":
-                    # Antigravity always uses per-project keys; skip in global mode
-                    pass
+                    # Antigravity uses per-project keys; register per-project
+                    # even in global mode so it isn't silently left out.
+                    path = _inject_antigravity(
+                        project_root, cmd_path, python_exe, project_name
+                    )
+                    if path:
+                        results["Antigravity (per-project)"] = path
             else:
                 # Per-project mode (existing behavior)
                 if ide == "claude":

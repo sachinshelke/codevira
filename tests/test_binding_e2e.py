@@ -28,6 +28,10 @@ def _reset_binding_globals(monkeypatch) -> None:
 
     monkeypatch.setattr(srv, "_roots_bind_attempted", False)
     monkeypatch.setattr(paths, "_project_dir_override", None)
+    # D000118 process-root pin: reset so a pin leaked from an earlier test
+    # can't shadow this test's binding resolution (order-independent).
+    monkeypatch.setattr(paths, "_pinned_root", None)
+    paths._drift_warned.clear()
     monkeypatch.delenv("CODEVIRA_PROJECT_DIR", raising=False)
     monkeypatch.delenv("CODEVIRA_PROJECT_ROOT", raising=False)
 
@@ -74,9 +78,9 @@ def test_server_binds_to_client_root_over_real_protocol(tmp_path, monkeypatch):
     # Evidence: the server pinned the client's root, not cwd.
     import mcp_server.paths as paths
 
-    assert paths._project_dir_override == project.resolve(), (
-        "server did not bind to the client's workspace root via MCP roots"
-    )
+    assert (
+        paths._project_dir_override == project.resolve()
+    ), "server did not bind to the client's workspace root via MCP roots"
 
 
 def test_server_does_not_bind_to_git_only_root(tmp_path, monkeypatch):
@@ -104,9 +108,9 @@ def test_server_does_not_bind_to_git_only_root(tmp_path, monkeypatch):
     # H3: a fresh project (workspace root is a git repo, no .codevira yet)
     # SHOULD bind when cwd is uninitialized — otherwise auto-init lands in
     # the wrong inherited cwd. The neutral cwd here is uninitialized.
-    assert paths._project_dir_override == project.resolve(), (
-        "a fresh git workspace must bind when cwd is uninitialized (H3)"
-    )
+    assert (
+        paths._project_dir_override == project.resolve()
+    ), "a fresh git workspace must bind when cwd is uninitialized (H3)"
 
 
 def test_server_keeps_cwd_when_cwd_is_a_codevira_project(tmp_path, monkeypatch):
@@ -132,9 +136,9 @@ def test_server_keeps_cwd_when_cwd_is_a_codevira_project(tmp_path, monkeypatch):
 
     import mcp_server.paths as paths
 
-    assert paths._project_dir_override is None, (
-        "a git-only root must not override a cwd that is a real project"
-    )
+    assert (
+        paths._project_dir_override is None
+    ), "a git-only root must not override a cwd that is a real project"
 
 
 def test_tool_path_switches_project_for_claude_desktop(tmp_path, monkeypatch):

@@ -1032,70 +1032,82 @@ class TestInjectIdeConfigIntegration:
         results = inject_ide_config(project, project_name="emptyproject")
         assert results == {}
 
-    # --- New: global_mode=True skips Claude Desktop and Antigravity ---
-    def test_global_mode_skips_claude_desktop(self, tmp_path, monkeypatch):
-        """In global mode, Claude Desktop should be skipped (can't do project-agnostic)."""
+    # --- v3.7.0 (Phase 28): global_mode now FALLS BACK to per-project for
+    #     IDEs that can't do project-agnostic config, instead of skipping them
+    #     (so those users still get a working server). ---
+    def test_global_mode_registers_claude_desktop_per_project(
+        self, tmp_path, monkeypatch
+    ):
+        """In global mode, Claude Desktop (no cwd/roots) falls back to a
+        per-project registration rather than being silently skipped."""
         project = tmp_path / "proj"
         project.mkdir()
 
-        fakehome = tmp_path / "fakehome"
-        fakehome.mkdir()
-        # Set up Claude Desktop as detected
-        desktop_config_dir = fakehome / "Library" / "Application Support" / "Claude"
-        desktop_config_dir.mkdir(parents=True)
-        desktop_config = desktop_config_dir / "claude_desktop_config.json"
-
-        monkeypatch.setattr(Path, "home", lambda: fakehome)
-        # v3.0.0 detection hardening: empty .claude/ dir is no longer
-        # a sufficient signal. Mock `which('claude')` to return a
-        # fake binary path so the strong-signal detector trips.
         monkeypatch.setattr(
-            "shutil.which",
-            lambda name: "/usr/bin/claude" if name == "claude" else None,
-        )
-        monkeypatch.setattr(
-            ide_inject, "_claude_desktop_config_path", lambda: desktop_config
+            ide_inject, "detect_installed_ides", lambda pr: ["claude_desktop"]
         )
         monkeypatch.setattr(
             ide_inject,
             "_resolve_command",
             lambda: ("/usr/bin/codevira", sys.executable),
         )
+        monkeypatch.setattr(
+            ide_inject,
+            "_inject_claude_desktop",
+            lambda *a, **k: "/fake/claude_desktop_config.json",
+        )
 
         results = inject_ide_config(project, global_mode=True)
-        # Claude Desktop should NOT appear in global mode results
-        assert "Claude Desktop" not in results
+        assert "Claude Desktop (per-project)" in results
 
-    def test_global_mode_skips_antigravity(self, tmp_path, monkeypatch):
-        """In global mode, Antigravity should be skipped."""
+    def test_global_mode_registers_antigravity_per_project(self, tmp_path, monkeypatch):
+        """Antigravity uses per-project keys; global mode registers it
+        per-project rather than skipping it."""
         project = tmp_path / "proj"
         project.mkdir()
 
-        fakehome = tmp_path / "fakehome"
-        fakehome.mkdir()
-        (fakehome / ".gemini").mkdir()
-
-        monkeypatch.setattr(Path, "home", lambda: fakehome)
-        # v3.0.0 detection hardening: empty .claude/ dir is no longer
-        # a sufficient signal. Mock `which('claude')` to return a
-        # fake binary path so the strong-signal detector trips.
         monkeypatch.setattr(
-            "shutil.which",
-            lambda name: "/usr/bin/claude" if name == "claude" else None,
-        )
-        monkeypatch.setattr(
-            ide_inject,
-            "_claude_desktop_config_path",
-            lambda: fakehome / "nonexistent" / "config.json",
+            ide_inject, "detect_installed_ides", lambda pr: ["antigravity"]
         )
         monkeypatch.setattr(
             ide_inject,
             "_resolve_command",
             lambda: ("/usr/bin/codevira", sys.executable),
         )
+        monkeypatch.setattr(
+            ide_inject,
+            "_inject_antigravity",
+            lambda *a, **k: "/fake/antigravity.json",
+        )
 
         results = inject_ide_config(project, global_mode=True)
-        assert "Antigravity" not in results
+        assert "Antigravity (per-project)" in results
+
+    def test_global_mode_claude_is_single_global_registration(
+        self, tmp_path, monkeypatch
+    ):
+        """A roots-capable IDE (Claude Code) gets ONE global registration in
+        global mode — the core of the single-MCP win."""
+        project = tmp_path / "proj"
+        project.mkdir()
+
+        monkeypatch.setattr(ide_inject, "detect_installed_ides", lambda pr: ["claude"])
+        monkeypatch.setattr(
+            ide_inject,
+            "_resolve_command",
+            lambda: ("/usr/bin/codevira", sys.executable),
+        )
+        captured = {}
+
+        def _fake_global(cmd_path, python_exe):
+            captured["called"] = True
+            return "/fake/.claude.json"
+
+        monkeypatch.setattr(ide_inject, "inject_global_claude_code", _fake_global)
+
+        results = inject_ide_config(project, global_mode=True)
+        assert captured.get("called") is True
+        assert "Claude Code (global)" in results
 
     # --- New: exception handling (IDE injection failure logged, others continue) ---
     def test_exception_in_one_ide_does_not_block_others(self, tmp_path, monkeypatch):

@@ -344,7 +344,23 @@ def cmd_init() -> None:
         try:
             from mcp_server.ide_inject import inject_ide_config
 
-            results = inject_ide_config(cwd, project_name=detected["name"])
+            # v3.7.0 (Phase 28): default to ONE user-scope registration so N
+            # projects don't create N codevira entries in the IDE. The single
+            # global server resolves the active project at runtime from the
+            # MCP client's workspace roots. IDEs that can't do project-agnostic
+            # config (Claude Desktop, Antigravity) still get a per-project
+            # entry via inject_ide_config's fallback. Opt out with
+            # CODEVIRA_INIT_PER_PROJECT=1 or `codevira init --per-project`.
+            import os as _os
+
+            _per_project = getattr(cmd_init, "_per_project", False) or (
+                _os.environ.get("CODEVIRA_INIT_PER_PROJECT") == "1"
+            )
+            results = inject_ide_config(
+                cwd,
+                project_name=detected["name"],
+                global_mode=not _per_project,
+            )
             if results:
                 print("done")
                 for ide_name, config_path in results.items():  # type: ignore[assignment]
@@ -639,6 +655,16 @@ def main() -> None:
     init_parser.add_argument("--ext", help="Override file extensions (comma-separated)")
     init_parser.add_argument(
         "--no-inject", action="store_true", help="Skip auto-injecting IDE configs"
+    )
+    init_parser.add_argument(
+        "--per-project",
+        action="store_true",
+        help=(
+            "Register a per-project MCP entry instead of the default single "
+            "user-scope registration (v3.7.0). Use if your IDE can't resolve "
+            "the active project from workspace roots. Equivalent to setting "
+            "CODEVIRA_INIT_PER_PROJECT=1."
+        ),
     )
     init_parser.add_argument(
         "--single-language",
@@ -1597,6 +1623,7 @@ def main() -> None:
         }
         cmd_init._no_inject = getattr(args, "no_inject", False)  # type: ignore[attr-defined]
         cmd_init._single_language = getattr(args, "single_language", False)  # type: ignore[attr-defined]
+        cmd_init._per_project = getattr(args, "per_project", False)  # type: ignore[attr-defined]
         cmd_init()
         # v2.2.0: scaffold .codevira/ (in-repo storage layer).
         # v3.0.0: -y/--yes always passes through (init has always run

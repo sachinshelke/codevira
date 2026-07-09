@@ -325,6 +325,44 @@ class TestGetSessionContext:
     # (the changesets feature was deleted; this test exercised the
     # graceful-fallback for an import path that no longer exists).
 
+    def test_session_context_hides_outdated_and_reverted(self, tmp_path, monkeypatch):
+        """v3.7.0 staleness read-side: get_session_context must NOT surface
+        decisions that are outdated-tombstoned or outcome=reverted, so stale
+        memory stops dominating the catch-me-up call."""
+        _setup_project(tmp_path, monkeypatch)
+        from mcp_server.storage import decisions_store, jsonl_store
+        from mcp_server.storage import paths as _paths
+
+        # get_session_context projects recent_decisions to {decision, ...} —
+        # assert on the decision TEXT, which is the observable field.
+        fresh_txt = "use argon2id for password hashing"
+        stale_txt = "use md5 for password hashing"
+        reverted_txt = "store sessions in local memory"
+
+        decisions_store.record(decision=fresh_txt)
+        stale = decisions_store.record(decision=stale_txt)
+        decisions_store.mark_outdated(stale)
+
+        # A reverted-outcome decision (git tracker verdict) — inject via amendment.
+        reverted = decisions_store.record(decision=reverted_txt)
+        jsonl_store.append(
+            _paths.decisions_path(),
+            {"id": reverted, "_amendment_to_id": reverted, "outcome": "reverted"},
+        )
+
+        with patch(
+            "mcp_server.tools.roadmap.get_roadmap",
+            return_value={
+                "current_phase": {"next_action": "password hashing sessions"}
+            },
+        ):
+            result = learning.get_session_context()
+
+        surfaced = {d.get("decision") for d in result["recent_decisions"]}
+        assert fresh_txt in surfaced, "the current decision should still surface"
+        assert stale_txt not in surfaced, "outdated decision must not surface"
+        assert reverted_txt not in surfaced, "reverted decision must not surface"
+
     def test_session_context_working_panel_empty(self, tmp_path, monkeypatch):
         """v3.1.0 M2 Phase 3: empty working memory surfaces as
         {entries: [], count: 0} — never crashes the catch-me-up call."""

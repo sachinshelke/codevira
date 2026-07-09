@@ -712,6 +712,41 @@ async def list_tools() -> list[Tool]:
                         "items": {"type": "string"},
                         "description": "Replacement tag list (omit to leave unchanged)",
                     },
+                    "is_outdated": {
+                        "type": "boolean",
+                        "description": (
+                            "v3.7.0: set/clear the outdated tombstone "
+                            "(omit to leave unchanged; False un-retires a "
+                            "decision marked via mark_decision_outdated)"
+                        ),
+                    },
+                },
+                "required": ["decision_id"],
+            },
+        ),
+        Tool(
+            name="mark_decision_outdated",
+            description=(
+                "v3.7.0 staleness read-side: tombstone a decision as "
+                "OUTDATED so it stops surfacing in get_session_context / "
+                "search_decisions / list_decisions — without deleting it. "
+                "Use when a decision is simply no longer true and has NO "
+                "successor (for a replacement, use supersede_decision to "
+                "preserve lineage). Reversible via "
+                "set_decision_flag(is_outdated=false). Writes one amendment "
+                "to .codevira/decisions.jsonl; audit preserved."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "decision_id": {
+                        "type": "string",
+                        "description": "Decision id to retire (e.g. 'D000007')",
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "Optional short note on why it's outdated",
+                    },
                 },
                 "required": ["decision_id"],
             },
@@ -1965,6 +2000,16 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 decision_id=arguments["decision_id"],
                 do_not_revert=arguments.get("do_not_revert"),
                 tags=arguments.get("tags"),
+                is_outdated=arguments.get("is_outdated"),
+            )
+        elif name == "mark_decision_outdated":
+            # v3.7.0 staleness read-side: tombstone a stale decision so it
+            # stops surfacing (reversible via set_decision_flag).
+            from mcp_server.tools.learning import mark_decision_outdated
+
+            result = mark_decision_outdated(
+                decision_id=arguments["decision_id"],
+                reason=arguments.get("reason"),
             )
         elif name == "reaffirm_decision":
             # v3.2.0 do_not_revert soft-expire: append a reaffirmed_at

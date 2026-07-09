@@ -325,12 +325,17 @@ def list_all(
     session_id: str | None = None,
     tags: list[str] | None = None,
     include_superseded: bool = False,
+    include_outdated: bool = False,
     full: bool = False,
 ) -> dict[str, Any]:
     """Filter + paginate decisions. Filters are AND-combined.
 
     ``tags`` filter is intersection: a decision matches only if it has
     ALL the requested tags.
+
+    ``include_outdated`` (v3.7.0): outdated-tombstoned decisions
+    (``mark_outdated``) are hidden by default so stale memory stops
+    surfacing; pass True to include them.
     """
     merged = _read_merged()
     filtered: list[dict[str, Any]] = []
@@ -343,6 +348,8 @@ def list_all(
         if not include_superseded and (
             d.get("is_superseded") or d.get("superseded_by")
         ):
+            continue
+        if not include_outdated and d.get("is_outdated"):
             continue
         if protected_only and not d.get("do_not_revert"):
             continue
@@ -379,6 +386,9 @@ def list_all(
                 "tags": d.get("tags") or [],
                 "created_at": d.get("ts"),
                 "session_id": d.get("session_id"),
+                # v3.7.0: expose outcome so freshness-ranking callers
+                # (get_session_context) can down-rank reverted decisions.
+                "outcome": d.get("outcome"),
             }
             for d in paged
         ]
@@ -440,6 +450,9 @@ def search(
         # rebuild, but if cache is stale we re-filter).
         if d.get("is_superseded") or d.get("superseded_by"):
             continue
+        # Skip outdated tombstones (v3.7.0) so stale memory stops surfacing.
+        if d.get("is_outdated"):
+            continue
         if since and (d.get("ts") or "") < since:
             continue
         result = {
@@ -451,6 +464,8 @@ def search(
             "created_at": d.get("ts"),
             "score": hit["score"],
             "snippet": hit.get("snippet"),
+            # v3.7.0: expose outcome for freshness-ranking (reverted down-rank).
+            "outcome": d.get("outcome"),
             # v3.1.0 M1: pass origin through so check_conflict can
             # surface provenance per candidate. None for v3.0.x records
             # (callers treat absent → ide="unknown").
@@ -730,11 +745,43 @@ def compute_dnr_soft_expire(
     }
 
 
+def mark_outdated(decision_id: str, *, reason: str | None = None) -> dict[str, Any]:
+    """Tombstone a decision as *outdated* so it stops surfacing in
+    ``list_all`` / ``search`` / ``get_session_context`` — WITHOUT deleting it.
+
+    v3.7.0 staleness read-side. Unlike ``supersede`` there is no
+    replacement decision; use this when a decision is simply no longer true
+    and has no successor. Reversible: writes an amendment (audit preserved),
+    cleared via ``set_flag(is_outdated=False)``. Protected
+    (``do_not_revert``) decisions can be marked outdated too — the amendment
+    IS the audit trail — but the MCP tool layer should confirm first.
+    """
+    paths.ensure_dirs()
+    existing = get(decision_id)
+    if existing is None:
+        return {"success": False, "error": f"decision {decision_id} not found"}
+    now = datetime.now(timezone.utc).isoformat()
+    amendment = {
+        "id": decision_id,
+        "ts": now,
+        "_amendment_to_id": decision_id,
+        "is_outdated": True,
+        "outdated_at": now,
+        "outdated_reason": (
+            reason.strip()[:500] if reason and reason.strip() else None
+        ),
+    }
+    jsonl_store.append(paths.decisions_path(), amendment)
+    rebuild_indexes()
+    return {"success": True, "decision_id": decision_id, "is_outdated": True}
+
+
 def set_flag(
     decision_id: str,
     *,
     do_not_revert: bool | None = None,
     tags: list[str] | None = None,
+    is_outdated: bool | None = None,
 ) -> dict[str, Any]:
     """Lightweight in-place flag/tag updates via an amendment line.
 
@@ -761,6 +808,9 @@ def set_flag(
         if not isinstance(tags, list) or not all(isinstance(t, str) for t in tags):
             return {"success": False, "error": "tags must be a list[str]"}
         updates["tags"] = tags
+    if is_outdated is not None:
+        # Clears (or re-sets) the outdated tombstone written by mark_outdated.
+        updates["is_outdated"] = bool(is_outdated)
 
     if not updates:
         return {"success": True, "decision_id": decision_id, "updates": {}}

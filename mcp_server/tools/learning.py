@@ -311,6 +311,7 @@ def set_decision_flag(
     *,
     do_not_revert: bool | None = None,
     tags: list[str] | None = None,
+    is_outdated: bool | None = None,
 ) -> dict:
     """v3.0.0 (2026-05-23 RC-audit follow-up): lightweight in-place
     update for do_not_revert and/or tags on an existing decision.
@@ -337,10 +338,10 @@ def set_decision_flag(
     """
     if not decision_id or not isinstance(decision_id, str):
         return {"success": False, "error": "decision_id must be a non-empty string"}
-    if do_not_revert is None and tags is None:
+    if do_not_revert is None and tags is None and is_outdated is None:
         return {
             "success": False,
-            "error": "supply at least one of do_not_revert / tags",
+            "error": "supply at least one of do_not_revert / tags / is_outdated",
         }
 
     from mcp_server.storage import decisions_store
@@ -349,7 +350,33 @@ def set_decision_flag(
         decision_id=decision_id,
         do_not_revert=do_not_revert,
         tags=tags,
+        is_outdated=is_outdated,
     )
+
+
+def mark_decision_outdated(decision_id: str, reason: str | None = None) -> dict:
+    """v3.7.0 staleness read-side: tombstone a decision as *outdated* so it
+    stops surfacing in ``get_session_context`` / ``search_decisions`` /
+    ``list_decisions`` — without deleting it.
+
+    Use when a decision is simply no longer true and has NO successor (for a
+    replacement, use ``supersede_decision`` to preserve lineage). Reversible:
+    ``set_decision_flag(decision_id, is_outdated=False)`` clears it. The
+    record and its audit trail are preserved.
+
+    Args:
+        decision_id: ID of the decision to retire (e.g. ``"D000007"``).
+        reason: Optional short note on why it's outdated (capped, stored).
+
+    Returns ``{success, decision_id, is_outdated}`` or ``{success: False,
+    error}`` if the id is unknown.
+    """
+    if not decision_id or not isinstance(decision_id, str):
+        return {"success": False, "error": "decision_id must be a non-empty string"}
+
+    from mcp_server.storage import decisions_store
+
+    return decisions_store.mark_outdated(decision_id, reason=reason)
 
 
 def reaffirm_decision(decision_id: str) -> dict:
@@ -568,11 +595,18 @@ def get_session_context(since: str | None = None) -> dict:
         # scripts/system_test_agentstore.py::A8.
         from mcp_server.storage import decisions_store
 
+        # v3.7.0 staleness read-side: don't surface decisions the git
+        # outcome-tracker labeled "reverted" — reality moved past them, so
+        # they read as stale/confusing in a fresh session. (Outdated
+        # tombstones + superseded are already filtered by search/list_all.)
+        def _is_stale(d: dict) -> bool:
+            return (d.get("outcome") == "reverted") or bool(d.get("is_outdated"))
+
         recent_decisions: list[dict] = []
         if focus:
             try:
-                hits = decisions_store.search(focus, limit=3, since=since)
-                recent_decisions = list(hits)
+                hits = decisions_store.search(focus, limit=5, since=since)
+                recent_decisions = [d for d in hits if not _is_stale(d)][:3]
             except Exception:
                 recent_decisions = []
         # Fallback / pad to 3 with chronological-recent decisions from JSONL.
@@ -592,6 +626,8 @@ def get_session_context(since: str | None = None) -> dict:
             for d in all_recent:
                 did = str(d.get("id") or "")
                 if not did or did in seen_ids:
+                    continue
+                if _is_stale(d):
                     continue
                 recent_decisions.append(d)
                 seen_ids.add(did)

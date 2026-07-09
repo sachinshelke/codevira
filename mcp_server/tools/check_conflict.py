@@ -55,110 +55,32 @@ a vector-cosine call and the surface contract stays identical.
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 
-# Tunable thresholds. Duplicate path stays conservative; conflict path
-# (against do_not_revert decisions only) adds the asymmetric-overlap
-# detector with its own thresholds.
-_DUP_THRESHOLD = 0.60  # symmetric Jaccard ≥ 0.60 → duplicate
-_CONFLICT_OVERLAP_THRESHOLD = 0.60  # asymmetric overlap ≥ 0.60 → conflict
-_CONFLICT_MIN_SHARED_TOKENS = 3  # floor on |A∩B| to avoid 1- or 2-token noise
-
-# Stop-word list for tokenization (English + common code words).
-_STOPWORDS = frozenset(
-    {
-        "a",
-        "an",
-        "the",
-        "is",
-        "are",
-        "was",
-        "were",
-        "be",
-        "been",
-        "being",
-        "and",
-        "or",
-        "but",
-        "of",
-        "in",
-        "on",
-        "at",
-        "to",
-        "from",
-        "for",
-        "by",
-        "with",
-        "as",
-        "it",
-        "this",
-        "that",
-        "these",
-        "those",
-        "we",
-        "you",
-        "i",
-        "they",
-        "should",
-        "must",
-        "may",
-        "can",
-        "will",
-        "would",
-        "do",
-        "does",
-        "did",
-        "use",
-        "using",
-        "used",
-    }
+# v3.7.0 (Phase 29): the tokenizer + Jaccard/overlap math + thresholds moved
+# to storage/reconcile.py (single source of truth, shared with consensus_store,
+# supersede-on-write, and the Tier-1 cross-engineer reconcile). Re-imported
+# here so this module's public behavior — and importers that pull these names
+# from check_conflict (e.g. consensus_store) — are unchanged.
+from mcp_server.storage.reconcile import (  # noqa: E402
+    _CONFLICT_MIN_SHARED_TOKENS,
+    _CONFLICT_OVERLAP_THRESHOLD,
+    _DUP_THRESHOLD,
+    _jaccard,
+    _overlap_coefficient,
+    _tokenize,
 )
 
-_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]+")
-
-
-def _tokenize(text: str) -> set[str]:
-    """Lowercase, strip stop-words, return token set."""
-    return {
-        tok.lower()
-        for tok in _TOKEN_RE.findall(text or "")
-        if tok.lower() not in _STOPWORDS and len(tok) >= 3
-    }
-
-
-def _jaccard(a: set[str], b: set[str]) -> float:
-    """Jaccard similarity: |A∩B| / |A∪B| ∈ [0, 1]."""
-    if not a and not b:
-        return 1.0
-    if not a or not b:
-        return 0.0
-    inter = a & b
-    union = a | b
-    return len(inter) / len(union) if union else 0.0
-
-
-def _overlap_coefficient(a: set[str], b: set[str]) -> float:
-    """Asymmetric overlap coefficient: |A∩B| / min(|A|, |B|) ∈ [0, 1].
-
-    Catches the contradiction shape where a terse new decision shares
-    most of its tokens with a longer protected decision. Pure Jaccard
-    misses this because the protected decision's extra context tokens
-    dilute the symmetric union.
-
-    Example (v3.0.0 round-3 system-test finding):
-      A = "AgentStore should switch from pnpm to npm" — 4 content tokens
-      B = "AgentStore uses pnpm workspaces — DO NOT switch package manager"
-          — 8 content tokens
-      |A∩B| = 3 (agentstore, pnpm, switch)
-      Jaccard = 3/9 = 0.333  (below DUP threshold — miss)
-      Overlap = 3/min(4,8) = 0.75  (fires at CONFLICT_OVERLAP threshold)
-    """
-    if not a or not b:
-        return 0.0
-    inter = a & b
-    return len(inter) / min(len(a), len(b))
+__all__ = [
+    "check_conflict",
+    "_DUP_THRESHOLD",
+    "_CONFLICT_OVERLAP_THRESHOLD",
+    "_CONFLICT_MIN_SHARED_TOKENS",
+    "_tokenize",
+    "_jaccard",
+    "_overlap_coefficient",
+]
 
 
 def check_conflict(

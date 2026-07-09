@@ -232,7 +232,16 @@ def lookup(project_root: Path, file_path: str | Path) -> list[dict[str, Any]]:
     Path is normalized to project-relative if it falls under project_root.
     Empty list if no fixes recorded yet (the common case until Week 2's
     git-scanning work).
+
+    v3.7.0 fix (D): before reading, opportunistically refresh the git
+    fix-history if HEAD advanced (throttled). The startup scan alone goes
+    stale in a long-lived MCP process, so the Anti-Regression hero — which
+    reads through this function — would miss ``fix:`` commits made after boot
+    until a restart. Self-freshening on read closes that gap without a
+    perpetual timer thread.
     """
+    _maybe_refresh_on_read(project_root)
+
     if isinstance(file_path, Path):
         try:
             rel = str(file_path.resolve().relative_to(project_root.resolve()))
@@ -662,3 +671,86 @@ def scan_git_log(
                 continue
 
     return summary
+
+
+# v3.7.0 fix (D): the startup git fix-history scan (server.py) runs ONCE, so a
+# long-lived MCP process never sees `fix:` commits that land after boot — the
+# Anti-Regression hero goes stale until the next restart. This staleness-gated
+# refresh re-scans ONLY when git HEAD advanced, so it is cheap to call often.
+_last_scanned_head: dict[str, str] = {}
+
+
+def _current_head(project_root: Path) -> str | None:
+    """Return the current HEAD sha, or None if not a git repo / git missing."""
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(project_root), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
+def refresh_fix_history_if_stale(
+    project_root: Path, *, max_commits: int = 1000
+) -> dict[str, Any]:
+    """Re-scan git fix-history, but ONLY when HEAD moved since the last scan.
+
+    Cheap to call repeatedly: when HEAD is unchanged it returns immediately
+    with ``rescanned=False`` and does no git-log walk. When HEAD advanced it
+    delegates to :func:`scan_git_log` (itself idempotent — skips SHAs already
+    recorded) and updates the per-project HEAD marker.
+
+    Returns the scan summary augmented with ``{"rescanned": bool, "head":
+    <sha|None>}``. Never raises — mirrors ``scan_git_log``'s error shape.
+    """
+    pr = project_root.resolve()
+    key = str(pr)
+    head = _current_head(pr)
+    if head is None:
+        return {"rescanned": False, "head": None, "error": "not a git repo / no git"}
+    if _last_scanned_head.get(key) == head:
+        return {"rescanned": False, "head": head}
+    summary = scan_git_log(pr, max_commits=max_commits)
+    if "error" not in summary:
+        # Only advance the marker on a clean scan, so a transient failure
+        # doesn't wedge the store into "scanned" for a HEAD it never read.
+        _last_scanned_head[key] = head
+    return {**summary, "rescanned": True, "head": head}
+
+
+# Throttle the on-read refresh so a burst of lookup() calls (the hero checks
+# every edit) does at most one `git rev-parse` per window per project.
+_last_read_refresh: dict[str, float] = {}
+_READ_REFRESH_THROTTLE_SEC = 30.0
+
+
+def _maybe_refresh_on_read(project_root: Path) -> None:
+    """Throttled, best-effort staleness refresh invoked from ``lookup``.
+
+    No-op when CODEVIRA_NO_GIT_SCAN=1 or when called again within the throttle
+    window. Never raises — a git hiccup must not break a fix-history read.
+    """
+    import os
+    import time
+
+    if os.environ.get("CODEVIRA_NO_GIT_SCAN") == "1":
+        return
+    key = str(project_root)
+    now = time.monotonic()
+    last = _last_read_refresh.get(key)
+    if last is not None and (now - last) < _READ_REFRESH_THROTTLE_SEC:
+        return
+    _last_read_refresh[key] = now
+    try:
+        refresh_fix_history_if_stale(project_root)
+    except Exception:  # noqa: BLE001 — best-effort; never break a read
+        pass

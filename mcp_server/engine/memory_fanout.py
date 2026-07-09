@@ -205,7 +205,19 @@ def _build_observation(event: HookEvent) -> dict[str, Any] | None:
     has_error = isinstance(output, dict) and bool(output.get("error"))
 
     if tool_name in _FILE_EDITING_TOOLS:
-        file_path = args.get("file_path") or args.get("path") or "<unknown>"
+        # v3.7.0 fix (C): resolve the edited path from the FULL set of keys
+        # the different editing tools use — matching claude_code_hooks'
+        # target_file resolution. Pre-fix only file_path/path were checked,
+        # so NotebookEdit (notebook_path) and camelCase MCP tools logged
+        # "<unknown>", blinding the activity heatmap to those edits.
+        file_path = (
+            args.get("file_path")
+            or args.get("path")
+            or args.get("notebook_path")  # NotebookEdit
+            or args.get("filePath")  # camelCase MCP tools
+            or args.get("node_id")  # update_node (codevira graph tool)
+            or "<unknown>"
+        )
         return {
             "content": f"{tool_name}: touched {file_path}",
             "kind": "observation",

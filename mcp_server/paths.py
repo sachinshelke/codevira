@@ -23,10 +23,13 @@ Performance notes:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import subprocess
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # Allow overriding project directory via CLI flag (e.g. for Google Antigravity
 # which doesn't support the `cwd` option in its MCP config) or via the
@@ -36,12 +39,24 @@ from pathlib import Path
 _project_dir_override: Path | None = None
 _PROJECT_DIR_ENV = "CODEVIRA_PROJECT_DIR"
 
+# D000118 — process-lifetime project-root pin. get_project_root() used to
+# re-resolve from Path.cwd() on every call, so a cwd change between record()
+# and search() within ONE process bound them to two different .codevira
+# stores; each minted ids independently (non-monotonic / duplicate ids, reads
+# that missed just-written records). We pin the first resolved root for the
+# life of the process; a later cwd/env drift logs a WARN but the pinned root
+# wins (stability over cwd). Cleared wherever the data-dir cache is cleared
+# (set_project_dir -> invalidate_data_dir_cache; tests reset it per-test).
+_pinned_root: Path | None = None
+_drift_warned: set[Path] = set()
+
 
 def set_project_dir(path: str | Path) -> None:
     """Override the project directory (called by CLI when --project-dir is passed).
 
-    Also clears the data-dir cache so subsequent get_data_dir() calls
-    resolve against the new project root, not a stale cached entry.
+    Also clears the data-dir cache AND the project-root pin so subsequent
+    get_project_root()/get_data_dir() calls resolve against the new override,
+    not a stale cached entry or an earlier-pinned root.
     """
     global _project_dir_override
     _project_dir_override = Path(path).resolve()
@@ -173,8 +188,8 @@ def _discover_project_root(start: Path) -> Path:
     return start
 
 
-def get_project_root() -> Path:
-    """Return the project root directory.
+def _resolve_project_root() -> Path:
+    """Resolve the project root from override / env / cwd (no pinning).
 
     Resolution order:
       1. ``--project-dir`` CLI flag (via ``set_project_dir()``) — wins
@@ -195,6 +210,34 @@ def get_project_root() -> Path:
     if env_override:
         return _discover_project_root(Path(env_override).resolve())
     return _discover_project_root(Path.cwd())
+
+
+def get_project_root() -> Path:
+    """Return the project root directory, pinned for the process life.
+
+    Resolves via :func:`_resolve_project_root` (override > env > cwd) on the
+    FIRST call and pins the result. Every later call returns that pinned root
+    so record()/search() stay bound to a single ``.codevira`` store even if
+    the process's cwd changes in between (D000118). A drift — a later
+    resolution that differs from the pin — logs a WARN once per drifted target
+    but the pinned root still wins. The pin is cleared by
+    :func:`set_project_dir` / :func:`invalidate_data_dir_cache`.
+    """
+    global _pinned_root
+    resolved = _resolve_project_root()
+    if _pinned_root is None:
+        _pinned_root = resolved
+        return _pinned_root
+    if resolved != _pinned_root and resolved not in _drift_warned:
+        _drift_warned.add(resolved)
+        logger.warning(
+            "get_project_root: project-root drift — resolved %s but keeping "
+            "pinned root %s for this process (D000118). record()/search() stay "
+            "bound to one store; call set_project_dir() to re-pin deliberately.",
+            resolved,
+            _pinned_root,
+        )
+    return _pinned_root
 
 
 # ---------------------------------------------------------------------------
@@ -342,6 +385,12 @@ def invalidate_data_dir_cache(project_root: Path | None = None) -> None:
         project_root: If given, only invalidate that project's entry.
                       If None, clear the entire cache.
     """
+    # Also drop the process-lifetime project-root pin (D000118) so the next
+    # get_project_root() re-resolves — init/migration/set_project_dir may have
+    # moved the root out from under an earlier pin.
+    global _pinned_root
+    _pinned_root = None
+    _drift_warned.clear()
     if project_root is None:
         _data_dir_cache.clear()
     else:

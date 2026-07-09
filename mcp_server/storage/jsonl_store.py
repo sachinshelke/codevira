@@ -470,6 +470,19 @@ def read_merged(
             else:
                 base.update({k: v for k, v in rec.items() if not k.startswith("_")})
         else:
+            # v3.7.0 (Phase 25): two BASE records sharing an id is a
+            # cross-machine mint collision (see storage/id_repair). read_merged
+            # would silently overwrite one — turning a lost decision into a
+            # visible warning. Only warn on a genuine base-vs-base clash
+            # (amendments legitimately reuse the id and are handled above).
+            if did in by_id and not by_id[did].get(amendment_field):
+                logger.warning(
+                    "jsonl_store.read_merged: base-id collision on %r in %s — "
+                    "one record is being shadowed. Run `codevira repair-ids` "
+                    "(or let the git merge driver resolve it).",
+                    did,
+                    path.name,
+                )
             if did not in by_id:
                 order.append(did)
             by_id[did] = dict(rec)
@@ -542,6 +555,26 @@ def compact(
         atomic_write_text(path, new_content)
 
     return dropped
+
+
+def rewrite_all(path: Path, records: list[dict[str, Any]]) -> int:
+    """Atomically replace the whole file with ``records`` (one JSON per line).
+
+    v3.7.0 (Phase 25): used by ``decisions_store.repair_ids`` to write back the
+    id-collision-repaired record list. Holds the exclusive file lock for the
+    entire replace so a concurrent appender can't interleave, and writes via
+    tempfile + os.replace (atomic). Serialization matches ``append`` exactly
+    (compact separators, ensure_ascii=False, one line per record).
+    """
+    lines: list[str] = []
+    for rec in records:
+        line = json.dumps(rec, ensure_ascii=False, separators=(",", ":"))
+        if "\n" in line:
+            raise ValueError("jsonl_store.rewrite_all: serialization contains newline")
+        lines.append(line)
+    with _file_lock(path, exclusive=True):
+        atomic_write_text(path, ("\n".join(lines) + "\n") if lines else "")
+    return len(lines)
 
 
 def read_recent(

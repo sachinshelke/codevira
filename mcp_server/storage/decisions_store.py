@@ -881,6 +881,80 @@ def supersede(
 # ─── Index maintenance ──────────────────────────────────────────────
 
 
+def find_semantic_duplicates(*, threshold: float = 0.75) -> list[dict[str, Any]]:
+    """Tier-1 (semantic) surface: cluster ACTIVE decisions whose TEXT is a
+    near-duplicate even though their ids differ (two engineers recorded the
+    same decision in different words).
+
+    Reporting only — the pairs are SURFACED for a human/agent to merge via
+    supersede_decision, never auto-merged. The structural tier (repair_ids) is
+    authoritative for correctness; the semantic tier escalates, so it can't
+    silently destroy or mis-merge a genuine decision. O(n^2) over active
+    decisions; fine for the bounded decision log.
+    """
+    from mcp_server.storage import reconcile
+
+    active = list_all(limit=100000)["decisions"]
+    pairs: list[dict[str, Any]] = []
+    for i, a in enumerate(active):
+        a_text = a.get("decision") or ""
+        for b in active[i + 1 :]:
+            c = reconcile.classify(
+                a_text,
+                b.get("decision") or "",
+                b_protected=bool(b.get("do_not_revert")),
+            )
+            if c["kind"] == reconcile.KIND_DUPLICATE and c["similarity"] >= threshold:
+                pairs.append(
+                    {
+                        "a_id": a.get("id"),
+                        "b_id": b.get("id"),
+                        "similarity": round(c["similarity"], 4),
+                    }
+                )
+    pairs.sort(key=lambda p: (-p["similarity"], str(p["a_id"]), str(p["b_id"])))
+    return pairs
+
+
+def repair_ids(*, apply: bool = False) -> dict[str, Any]:
+    """Detect (and optionally repair) base-id collisions in decisions.jsonl.
+
+    v3.7.0 (Phase 25) cross-engineer surface. Two engineers who share a repo
+    can both mint the same id; ``git merge`` combines the appended lines
+    cleanly and ``read_merged`` then silently shadows one. This runs the
+    deterministic :func:`id_repair.normalize` over the raw store:
+
+      - ``apply=False`` (default): report only — how many collisions/dups and
+        the id remap, without writing.
+      - ``apply=True``: atomically rewrite decisions.jsonl with the normalized
+        records (winners keep their id, losers get content-derived ids,
+        byte-identical dups dropped) and rebuild all indexes.
+
+    Idempotent: a store with no collisions is unchanged. Returns
+    ``{collisions, deduped, remap, applied, changed}``.
+    """
+    from mcp_server.storage import id_repair
+
+    path = paths.decisions_path()
+    raw = jsonl_store.read_all(path)
+    result = id_repair.normalize(raw)
+    changed = bool(result["collisions"] or result["deduped"])
+
+    applied = False
+    if apply and changed:
+        jsonl_store.rewrite_all(path, result["records"])
+        rebuild_indexes()
+        applied = True
+
+    return {
+        "collisions": result["collisions"],
+        "deduped": result["deduped"],
+        "remap": result["remap"],
+        "changed": changed,
+        "applied": applied,
+    }
+
+
 def rebuild_indexes() -> None:
     """Full rebuild of manifest + digest + FTS5 from decisions.jsonl.
 

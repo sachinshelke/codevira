@@ -375,6 +375,20 @@ def cmd_init() -> None:
                 e, context="codevira init: IDE inject", project_path=str(cwd)
             )
 
+    # v3.7.0 (Phase 25): register the git merge driver so cross-engineer
+    # decision-id collisions resolve deterministically on `git merge` / rebase.
+    # No-op outside a git repo. Best-effort — never fail init on this.
+    try:
+        from mcp_server.cli_repair import install_merge_driver
+
+        md = install_merge_driver(cwd)
+        if md.get("configured"):
+            print("  Registering git merge driver for the decision log ... done")
+    except Exception as e:
+        from mcp_server._safe_crash import safe_log_crash
+
+        safe_log_crash(e, context="codevira init: merge-driver", project_path=str(cwd))
+
     # Step 10: Register in global memory (with git_remote for rename-resilient lookup)
     try:
         from mcp_server.paths import get_global_db_path, _get_git_remote_url
@@ -1293,6 +1307,53 @@ def main() -> None:
         help="Print per-step counts",
     )
 
+    # v3.7.0 (Phase 25): cross-engineer id-collision repair + git merge driver.
+    repair_ids_parser = subparsers.add_parser(
+        "repair-ids",
+        help="Detect/repair decision-id collisions from cross-engineer merges",
+        description=(
+            "Two engineers sharing a repo can both mint the same decision id; "
+            "git merges the appended lines cleanly and one decision gets "
+            "silently shadowed on read. This runs the deterministic "
+            "id-collision repair over .codevira/decisions.jsonl: without "
+            "--apply it reports only; with --apply it rewrites the log "
+            "(winners keep their id, losers get content-derived ids, exact "
+            "duplicates dropped) and rebuilds indexes. Idempotent."
+        ),
+    )
+    repair_ids_parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Rewrite decisions.jsonl (default: report only)",
+    )
+    repair_ids_parser.add_argument(
+        "--verbose", "-v", action="store_true", help="Print the full id remap"
+    )
+    repair_ids_parser.add_argument(
+        "--semantic",
+        action="store_true",
+        help=(
+            "Also surface SEMANTIC near-duplicates (different ids, similar "
+            "text) for review — reported, never auto-merged"
+        ),
+    )
+
+    # git custom merge driver (invoked BY git, not usually by hand).
+    merge_driver_parser = subparsers.add_parser(
+        "merge-driver",
+        help="git merge driver for the decision log (invoked by git)",
+        description=(
+            "Custom git merge driver for the append-only decision log. git "
+            "calls `codevira merge-driver %O %A %B`; this unions both sides, "
+            "drops exact duplicates, resolves id collisions deterministically, "
+            "and writes the result. Registered by `codevira init` via "
+            ".gitattributes + git config."
+        ),
+    )
+    merge_driver_parser.add_argument("base", help="%O — common-ancestor version")
+    merge_driver_parser.add_argument("ours", help="%A — current version (output)")
+    merge_driver_parser.add_argument("theirs", help="%B — other version")
+
     # v2.2.0 Phase F: `codevira observe-git` — git-observed outcome tracker.
     observe_parser = subparsers.add_parser(
         "observe-git",
@@ -1805,6 +1866,22 @@ def main() -> None:
             dry_run=getattr(args, "dry_run", False),
             verbose=getattr(args, "verbose", False),
         )
+        sys.exit(rc)
+    elif args.command == "repair-ids":
+        # v3.7.0 (Phase 25): repair cross-engineer decision-id collisions.
+        from mcp_server.cli_repair import cmd_repair_ids
+
+        rc = cmd_repair_ids(
+            apply=getattr(args, "apply", False),
+            verbose=getattr(args, "verbose", False),
+            semantic=getattr(args, "semantic", False),
+        )
+        sys.exit(rc)
+    elif args.command == "merge-driver":
+        # v3.7.0 (Phase 25): git-invoked merge driver for the decision log.
+        from mcp_server.cli_repair import cmd_merge_driver
+
+        rc = cmd_merge_driver(args.base, args.ours, args.theirs)
         sys.exit(rc)
     elif args.command == "observe-git":
         # 2026-05-19 v2.2.0 Phase F: classify decision outcomes from git.

@@ -28,10 +28,9 @@ def _reset_binding_globals(monkeypatch) -> None:
 
     monkeypatch.setattr(srv, "_roots_bind_attempted", False)
     monkeypatch.setattr(paths, "_project_dir_override", None)
-    # D000118 process-root pin: reset so a pin leaked from an earlier test
-    # can't shadow this test's binding resolution (order-independent).
-    monkeypatch.setattr(paths, "_pinned_root", None)
-    paths._drift_warned.clear()
+    # D000118 pin (ContextVar since Phase 31): reset so a pin leaked from an
+    # earlier test can't shadow this test's binding resolution.
+    paths.reset_pinned_root()
     monkeypatch.delenv("CODEVIRA_PROJECT_DIR", raising=False)
     monkeypatch.delenv("CODEVIRA_PROJECT_ROOT", raising=False)
 

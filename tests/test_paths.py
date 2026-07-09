@@ -1083,7 +1083,7 @@ class TestProjectRootPinning:
 
         # Start clean regardless of test order; raising=False so this test is
         # still meaningful (red) on pre-fix code where the attr doesn't exist.
-        monkeypatch.setattr(paths, "_pinned_root", None, raising=False)
+        paths.reset_pinned_root()
 
         proj_a = self._make_project(tmp_path, "alpha")
         proj_b = self._make_project(tmp_path, "beta")
@@ -1108,7 +1108,7 @@ class TestProjectRootPinning:
     def test_drift_returns_pinned_root_not_cwd(self, tmp_path, monkeypatch):
         """Once pinned, get_project_root() ignores a later cwd change and keeps
         returning the pinned root (stability over cwd)."""
-        monkeypatch.setattr(paths, "_pinned_root", None, raising=False)
+        paths.reset_pinned_root()
 
         proj_a = self._make_project(tmp_path, "gamma")
         proj_b = self._make_project(tmp_path, "delta")
@@ -1120,3 +1120,29 @@ class TestProjectRootPinning:
         second = paths.get_project_root()
 
         assert second == first, "get_project_root() drifted with cwd after pinning"
+
+    def test_pin_is_context_scoped_for_multiplex(self):
+        """Phase 31: the pin is a ContextVar, so a single process can serve
+        MULTIPLE projects concurrently — each request's context keeps its own
+        pin, and neither leaks into the other or into the outer context."""
+        import contextvars
+        from pathlib import Path as _P
+
+        paths.reset_pinned_root()
+        a = _P("/tmp/proj_alpha").resolve()
+        b = _P("/tmp/proj_beta").resolve()
+
+        def _pin_and_read(root):
+            paths._pinned_root.set(root)
+            return paths._pinned_root.get()
+
+        ctx1 = contextvars.copy_context()
+        ctx2 = contextvars.copy_context()
+        r1 = ctx1.run(_pin_and_read, a)
+        r2 = ctx2.run(_pin_and_read, b)
+
+        # Each context kept its OWN pin — no cross-request contamination.
+        assert r1 == a
+        assert r2 == b
+        # The outer context is untouched by either request's pin.
+        assert paths._pinned_root.get() is None

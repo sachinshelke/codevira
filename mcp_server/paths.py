@@ -27,6 +27,7 @@ import logging
 import os
 import re
 import subprocess
+from contextvars import ContextVar
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -39,16 +40,30 @@ logger = logging.getLogger(__name__)
 _project_dir_override: Path | None = None
 _PROJECT_DIR_ENV = "CODEVIRA_PROJECT_DIR"
 
-# D000118 — process-lifetime project-root pin. get_project_root() used to
-# re-resolve from Path.cwd() on every call, so a cwd change between record()
-# and search() within ONE process bound them to two different .codevira
-# stores; each minted ids independently (non-monotonic / duplicate ids, reads
-# that missed just-written records). We pin the first resolved root for the
-# life of the process; a later cwd/env drift logs a WARN but the pinned root
-# wins (stability over cwd). Cleared wherever the data-dir cache is cleared
-# (set_project_dir -> invalidate_data_dir_cache; tests reset it per-test).
-_pinned_root: Path | None = None
+# D000118 — project-root pin. get_project_root() used to re-resolve from
+# Path.cwd() on every call, so a cwd change between record() and search() bound
+# them to two different .codevira stores (non-monotonic / duplicate ids, reads
+# that missed just-written records). We pin the first resolved root and reuse
+# it; a later cwd/env drift logs a WARN but the pinned root wins.
+#
+# v3.7.0 (Phase 31) — the pin is a ContextVar, NOT a plain module global, so it
+# is scoped per asyncio task/request. This is what makes a SINGLE MCP process
+# safely serve MULTIPLE projects concurrently (the multiplex): each request
+# runs in its own context (asyncio copies context per Task), so one request's
+# pin can't clobber another's. Within one request the D000118 guarantee is
+# unchanged. NOT a revert of D000118 — the pin logic is identical; only its
+# scope narrows from process to request.
+_pinned_root: ContextVar[Path | None] = ContextVar("codevira_pinned_root", default=None)
 _drift_warned: set[Path] = set()
+
+
+def reset_pinned_root() -> None:
+    """Clear the project-root pin in the current context (+ drift warnings).
+
+    Called by set_project_dir / invalidate_data_dir_cache and by tests to keep
+    the per-request pin from leaking. Idempotent."""
+    _pinned_root.set(None)
+    _drift_warned.clear()
 
 
 def set_project_dir(path: str | Path) -> None:
@@ -223,21 +238,21 @@ def get_project_root() -> Path:
     but the pinned root still wins. The pin is cleared by
     :func:`set_project_dir` / :func:`invalidate_data_dir_cache`.
     """
-    global _pinned_root
     resolved = _resolve_project_root()
-    if _pinned_root is None:
-        _pinned_root = resolved
-        return _pinned_root
-    if resolved != _pinned_root and resolved not in _drift_warned:
+    pinned = _pinned_root.get()
+    if pinned is None:
+        _pinned_root.set(resolved)
+        return resolved
+    if resolved != pinned and resolved not in _drift_warned:
         _drift_warned.add(resolved)
         logger.warning(
             "get_project_root: project-root drift — resolved %s but keeping "
-            "pinned root %s for this process (D000118). record()/search() stay "
+            "pinned root %s for this request (D000118). record()/search() stay "
             "bound to one store; call set_project_dir() to re-pin deliberately.",
             resolved,
-            _pinned_root,
+            pinned,
         )
-    return _pinned_root
+    return pinned
 
 
 # ---------------------------------------------------------------------------
@@ -385,12 +400,10 @@ def invalidate_data_dir_cache(project_root: Path | None = None) -> None:
         project_root: If given, only invalidate that project's entry.
                       If None, clear the entire cache.
     """
-    # Also drop the process-lifetime project-root pin (D000118) so the next
-    # get_project_root() re-resolves — init/migration/set_project_dir may have
-    # moved the root out from under an earlier pin.
-    global _pinned_root
-    _pinned_root = None
-    _drift_warned.clear()
+    # Also drop the project-root pin (D000118) so the next get_project_root()
+    # re-resolves — init/migration/set_project_dir may have moved the root out
+    # from under an earlier pin. (Context-scoped since Phase 31.)
+    reset_pinned_root()
     if project_root is None:
         _data_dir_cache.clear()
     else:

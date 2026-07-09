@@ -163,8 +163,7 @@ def _isolate_global_home(tmp_path_factory, monkeypatch):
     monkeypatch.setattr(paths, "get_global_home", lambda: fake_home)
     # Clear module-level caches that carry state between tests:
     paths._data_dir_cache.clear()
-    paths._pinned_root = None  # D000118 process-root pin must not leak across tests
-    paths._drift_warned.clear()
+    paths.reset_pinned_root()  # D000118 pin (ContextVar) must not leak across tests
     monkeypatch.setattr(paths, "_project_dir_override", None)
     iso_project = base / "project"
     (iso_project / ".codevira").mkdir(parents=True)

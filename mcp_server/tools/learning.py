@@ -21,10 +21,23 @@ MCP tool that exposed it is gone.
 from __future__ import annotations
 
 import logging
+import os
 from mcp_server.paths import get_data_dir
 from indexer.sqlite_graph import SQLiteGraph
 
 logger = logging.getLogger(__name__)
+
+# v3.7.0 (Phase 30) supersede-on-write. Only supersede an existing UNPROTECTED
+# decision whose similarity to the new one is at least this high — conservative
+# so distinct decisions are never collapsed. check_conflict only returns
+# duplicates ≥ 0.60 already; this raises the bar for the destructive action.
+_SUPERSEDE_THRESHOLD = 0.75
+
+
+def _supersede_on_record_enabled() -> bool:
+    """Supersede-on-write is on by default; CODEVIRA_SUPERSEDE_ON_RECORD=0
+    restores the old append-a-twin behavior."""
+    return os.environ.get("CODEVIRA_SUPERSEDE_ON_RECORD", "1").strip() != "0"
 
 
 def _get_db() -> SQLiteGraph:
@@ -182,6 +195,8 @@ def record_decision(
 
     # Item 20: pre-write conflict check (FTS5-based in v2.2.0).
     conflict_warning = None
+    conflicts: list[dict] = []
+    duplicates: list[dict] = []
     if not force:
         try:
             from mcp_server.tools.check_conflict import check_conflict
@@ -227,6 +242,52 @@ def record_decision(
     # decisions_store.record() wrote a unique "ad-hoc-XXXXXX" slug,
     # leaving caller-visible and persisted state divergent.
     effective_session_id = session_id or decisions_store.default_session_id()
+
+    # v3.7.0 (Phase 30) — supersede-on-write. If this decision is a STRONG,
+    # UNPROTECTED near-duplicate of an existing one, SUPERSEDE it instead of
+    # appending a parallel twin (which is how stale twins accumulate and keep
+    # surfacing — the write-side half of the "outdated memory" complaint).
+    # Protected (do_not_revert) near-duplicates are NEVER auto-superseded — the
+    # conflict is surfaced above and the user must act. Opt out with force=True
+    # or CODEVIRA_SUPERSEDE_ON_RECORD=0.
+    if not force and _supersede_on_record_enabled():
+        strong = [
+            d
+            for d in duplicates
+            if not d.get("do_not_revert")
+            and (d.get("similarity") or 0.0) >= _SUPERSEDE_THRESHOLD
+            and d.get("decision_id")
+        ]
+        if strong:
+            target = strong[0]  # check_conflict returns duplicates ranked desc
+            old_id = target["decision_id"]
+            sup = decisions_store.supersede(
+                old_id=old_id,
+                new_decision=decision.strip(),
+                reason=(
+                    f"auto-superseded near-duplicate "
+                    f"(similarity={target.get('similarity')})"
+                ),
+                file_path=file_path,
+                do_not_revert=bool(do_not_revert),
+                tags=tags,
+            )
+            if sup.get("success"):
+                resp = {
+                    "recorded": True,
+                    "superseded": old_id,
+                    "decision_id": sup.get("new_id"),
+                    "session_id": effective_session_id,
+                    "do_not_revert": bool(do_not_revert),
+                    "hint": (
+                        f"Superseded near-duplicate {old_id} instead of "
+                        f"recording a twin (staleness write-side). Pass "
+                        f"force=True to record a parallel decision instead."
+                    ),
+                }
+                if input_coerced_warning:
+                    resp["_input_coerced_warning"] = input_coerced_warning
+                return resp
 
     decision_id = decisions_store.record(
         decision=decision,

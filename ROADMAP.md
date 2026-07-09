@@ -12,7 +12,20 @@ Have a suggestion? [Open a feature request](https://github.com/sachinshelke/code
 
 ---
 
-## 🚀 Current release — v3.5.0 (2026-06-19)
+## 🚀 Current release — v3.7.0 (2026-07-10)
+
+Fresh memory, shared repos, one registration — all model-free, all local:
+
+- **Memory stays fresh** — `record_decision` **supersedes** a strong, unprotected near-duplicate instead of appending a stale twin; `get_session_context` hides superseded / outdated / reverted decisions; `mark_decision_outdated(id)` retires a decision that's no longer true (reversible). Protected `do_not_revert` decisions are never auto-retired — the conflict is surfaced. Opt out with `CODEVIRA_SUPERSEDE_ON_RECORD=0`.
+- **Two engineers, one repo** — decision-id collisions from cross-branch merges are now visible (`read_merged` warns), deterministically repairable (`codevira repair-ids [--apply] [--semantic]` — a *fixed point*, so it can't oscillate), and auto-resolved by a git **merge driver** that `codevira init` registers.
+- **One MCP for all projects** — `codevira init` registers **one** user-scope server by default (resolves the active project from workspace roots); `--per-project` opts out. The project-root pin is now per-request (`ContextVar`), so a single process can serve many projects.
+- **Fixes** — decision-id drift within a process (D000118); `NotebookEdit` / camelCase edits no longer log `<unknown>`; Anti-Regression fix-history self-freshens on read.
+
+Full notes in [CHANGELOG.md](CHANGELOG.md#370--2026-07-10).
+
+---
+
+## ✅ v3.5.0 (2026-06-19)
 
 The **read** side gets intelligent — measurable, leaner, and self-tuning, with **no new runtime dependencies**:
 

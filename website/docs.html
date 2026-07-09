@@ -101,7 +101,7 @@
   <div class="inner">
     <a class="logo" href="index.html" style="text-decoration:none">
       <span class="mark">cv</span> codevira
-      <span class="version">v3.5.0</span>
+      <span class="version">v3.7.0</span>
     </a>
     <div class="links">
       <a class="home" href="index.html">← Home</a>
@@ -185,6 +185,7 @@ codevira setup</pre>
       <tr><td><code>codevira projects</code></td><td>List tracked projects with staleness; <code>projects archive &lt;name&gt;</code></td></tr>
       <tr><td><code>codevira index</code></td><td>Build / refresh the code graph cache</td></tr>
       <tr><td><code>codevira sync</code></td><td>Regenerate AGENTS.md + manifest from <code>decisions.jsonl</code></td></tr>
+      <tr><td><code>codevira repair-ids</code> <span class="pill">3.7</span></td><td>Detect/repair cross-engineer decision-id collisions (<code>--apply</code>; <code>--semantic</code> reports near-duplicate decisions)</td></tr>
       <tr><td><code>codevira replay</code></td><td>Browse the decision timeline (terminal / markdown / HTML)</td></tr>
       <tr><td><code>codevira search</code> <span class="pill">3.6</span></td><td>Search decisions from the terminal; <code>--all-projects</code> searches every registered repo, <code>--json</code> for scripts</td></tr>
       <tr><td><code>codevira eval</code> <span class="pill">3.5</span></td><td>Score read-side relevance (recall@k / MRR) on self-derived cases</td></tr>
@@ -194,7 +195,7 @@ codevira setup</pre>
     </table>
 
     <h2 id="tools">MCP tool surface</h2>
-    <p><strong>50 tools</strong> are surfaced to AI clients via <code>tools/list</code>
+    <p><strong>51 tools</strong> are surfaced to AI clients via <code>tools/list</code>
     (one admin tool, <code>refresh_graph</code>, is hidden). They're summary-first by
     default — pass <code>full=true</code> or <code>expand(ids=[…])</code> for detail.
     Set <code>CODEVIRA_TOOL_PROFILE=lean</code> to advertise only the 12 daily-driver
@@ -202,7 +203,7 @@ codevira setup</pre>
     <table>
       <tr><th>Group</th><th>Representative tools</th></tr>
       <tr><td>Orientation</td><td><code>get_session_context</code>, <code>get_roadmap</code></td></tr>
-      <tr><td>Decisions</td><td><code>search_decisions</code>, <code>list_decisions</code>, <code>expand</code>, <code>record_decision</code>, <code>supersede_decision</code>, <code>set_decision_flag</code>, <code>get_history</code></td></tr>
+      <tr><td>Decisions</td><td><code>search_decisions</code>, <code>list_decisions</code>, <code>expand</code>, <code>record_decision</code>, <code>supersede_decision</code>, <code>mark_decision_outdated</code>, <code>set_decision_flag</code>, <code>get_history</code></td></tr>
       <tr><td>Code graph</td><td><code>get_node</code>, <code>get_impact</code>, <code>get_signature</code>, <code>get_code</code>, <code>query_graph</code></td></tr>
       <tr><td>Roadmap / phases</td><td><code>get_phase</code>, <code>add_phase</code>, <code>update_phase_status</code>, <code>complete_phase</code>, <code>update_next_action</code>, <code>write_session_log</code></td></tr>
       <tr><td>Memory subsystems</td><td>working memory, skills, spatial, consensus, reflections (<code>working_add</code>, <code>record_skill</code>, <code>spatial_nearby</code>, <code>consensus_status</code>, <code>reflect</code>, …)</td></tr>
@@ -218,6 +219,13 @@ codevira setup</pre>
     <code>search_decisions(query, all_projects=true)</code> searches every registered
     project's decisions, each result tagged with the repo it came from (also via
     <code>codevira search --all-projects</code>).</div>
+    <div class="note"><strong>New in 3.7 — memory stays fresh:</strong>
+    <code>record_decision</code> now <em>supersedes</em> a strong, unprotected
+    near-duplicate instead of appending a stale twin;
+    <code>get_session_context</code> hides superseded / outdated / reverted
+    decisions; and <code>mark_decision_outdated(id)</code> retires a decision
+    that's simply no longer true (reversible). Protected <code>do_not_revert</code>
+    decisions are never auto-retired — the conflict is surfaced for you.</div>
 
     <h2 id="config">Configuration</h2>
     <p>Codevira works with zero config. These environment variables (set them in your
@@ -260,7 +268,7 @@ codevira setup</pre>
 </div>
 
 <footer>
-  <span>© 2026 Codevira · MIT License · <span style="font-family:var(--mono)">v3.5.0</span></span>
+  <span>© 2026 Codevira · MIT License · <span style="font-family:var(--mono)">v3.7.0</span></span>
   <span><a href="index.html">Home</a> · <a href="https://github.com/sachinshelke/codevira">GitHub</a> · <a href="https://pypi.org/project/codevira/">PyPI</a> · <a href="https://github.com/sachinshelke/codevira/blob/main/CHANGELOG.md">Changelog</a></span>
 </footer>
 

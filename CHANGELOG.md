@@ -7,6 +7,68 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [3.7.0] — 2026-07-10
+
+### Fixed
+- **Decision-id drift within a process (D000118).** `get_project_root()`
+  re-resolved from `cwd` on every call, so a `cwd` change between `record()`
+  and `search()` in one process bound them to two different `.codevira` stores —
+  each minting ids independently (non-monotonic / duplicate ids, and a
+  just-recorded decision missing from search). The resolved root is now pinned
+  for the request; a later drift logs a WARN but the pin wins.
+- **Activity heatmap blind to some edits.** `NotebookEdit` (`notebook_path`) and
+  camelCase MCP tools logged `<unknown>` instead of the file they touched; the
+  edit-path resolver now covers the full key set.
+- **Anti-Regression fix-history went stale on long-lived servers.** The git
+  `fix:`-commit scan ran once at startup; it now self-freshens (HEAD-gated) on
+  read, so `fix:` commits made after boot are seen without a restart.
+
+### Added — memory freshness (stale decisions no longer block you)
+- **`mark_decision_outdated(id, reason)`** — tombstone a decision that's simply
+  no longer true so it stops surfacing in `get_session_context` /
+  `search_decisions` / `list_decisions`, without deleting it (reversible via
+  `set_decision_flag(is_outdated=false)`).
+- **Freshness ranking on read.** `get_session_context` now hides superseded,
+  outdated, and `outcome=reverted` decisions from `recent_decisions`.
+- **Supersede-on-write.** `record_decision` now *supersedes* a strong,
+  unprotected near-duplicate instead of appending a parallel twin (the way
+  stale twins used to accumulate). Protected (`do_not_revert`) near-duplicates
+  are never auto-superseded — the conflict is surfaced for you to act on.
+  Opt out with `force=True` or `CODEVIRA_SUPERSEDE_ON_RECORD=0`.
+
+### Added — cross-engineer, one repo
+- **Deterministic decision-id collision repair.** When two engineers on two
+  branches both mint the same id, `git merge` combines the appended lines
+  cleanly and one decision used to be silently shadowed on read. New:
+  - `read_merged` now WARNS on a base-id collision instead of hiding it.
+  - **`codevira repair-ids [--apply] [--semantic]`** — deterministic repair:
+    the earliest writer keeps the id; the loser gets a content-derived id;
+    byte-identical duplicates are dropped. `--semantic` also *reports*
+    near-duplicate decisions (different ids, similar text) for review — never
+    auto-merged. Idempotent; converges (a fixed point, so it can't oscillate).
+  - **git merge driver** (`codevira merge-driver`) registered by `codevira init`
+    via `.gitattributes` + git config, so collisions resolve automatically on
+    `git merge` / rebase — both engineers converge to byte-identical output.
+
+### Added — one MCP registration for all your projects
+- **Single user-scope registration by default.** `codevira init` now registers
+  ONE user-scope MCP server instead of a per-project entry, so N projects no
+  longer create N codevira servers in your IDE. The single server resolves the
+  active project from the MCP client's workspace roots at runtime. IDEs that
+  can't do project-agnostic config (Claude Desktop, Antigravity) still get a
+  per-project entry. Opt back with `codevira init --per-project` or
+  `CODEVIRA_INIT_PER_PROJECT=1`.
+- **Per-request project multiplex.** The project-root pin is now a
+  `ContextVar`, so a single process can serve multiple projects concurrently —
+  each request keeps its own binding.
+
+### Internal
+- Extracted the shared decision-similarity core (`storage/reconcile.py`) used by
+  `check_conflict`, `consensus`, supersede-on-write, and the cross-engineer
+  reconcile — single source of truth for the Jaccard/overlap classification.
+
+---
+
 ## [3.6.0] — 2026-06-27
 
 ### Added

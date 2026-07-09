@@ -193,6 +193,7 @@ The CLI surface is 23 commands (the daily-use ones below):
 | `codevira projects` | List tracked projects with staleness (`today` / `5d ago` / `stale 45d`); `projects archive <name>` drops one from the registry |
 | `codevira index` | Build / refresh the code graph cache |
 | `codevira sync` | Regenerate AGENTS.md + manifest + digest from `decisions.jsonl` |
+| `codevira repair-ids` | **v3.7** — detect/repair cross-engineer decision-id collisions (`--apply` to rewrite; `--semantic` also reports near-duplicate decisions for review) |
 | `codevira observe-git` | Classify past decisions as kept/modified/reverted from git history |
 | `codevira replay` | Browse the decisions timeline (terminal / markdown / HTML) |
 | `codevira search <query>` | Search decisions from the terminal (FTS5/BM25); `--all-projects` searches every registered repo, `--json` for scripts |
@@ -228,6 +229,23 @@ Uninstall also strips legacy v2.1.x per-IDE nudge files (CLAUDE.md /
 GEMINI.md / .windsurfrules / .cursor/rules/codevira.mdc /
 .github/copilot-instructions.md) for users upgrading from older
 versions. User content outside the codevira markers stays.
+
+---
+
+## What's new in v3.7.0 — fresh memory, shared repos, one registration
+
+> Three things users asked for: memory that *updates* instead of piling up
+> stale decisions, memory that survives *two engineers on one repo*, and *one*
+> MCP entry instead of one-per-project. All model-free, all local.
+
+| Area | What you get |
+|---|---|
+| **Memory stays fresh** | `record_decision` now **supersedes** a strong, unprotected near-duplicate instead of appending a parallel twin, so stale copies stop accumulating. `get_session_context` hides superseded / outdated / reverted decisions. New `mark_decision_outdated(id)` retires a decision that's simply no longer true (reversible). Protected `do_not_revert` decisions are never auto-retired — the conflict is surfaced. |
+| **Two engineers, one repo** | Decision ids used to collide silently when two branches merged (one decision shadowed on read). Now `read_merged` warns, `codevira repair-ids [--apply]` deterministically repairs (earliest writer keeps the id; losers get content-derived ids; a *fixed point*, so it can't oscillate), and a git **merge driver** — installed by `codevira init` — resolves collisions automatically on `git merge`. `--semantic` also reports near-duplicate decisions for review (never auto-merged). |
+| **One MCP for all projects** | `codevira init` registers **one** user-scope server by default instead of one-per-project; it resolves the active project from the MCP client's workspace roots at runtime. Opt back with `--per-project`. Under the hood the project-root pin is now per-request (`ContextVar`), so one process can serve many projects. |
+| **Fixes** | Decision-id drift within a process (D000118) — record/search no longer split across two stores. `NotebookEdit` / camelCase edits no longer log `<unknown>` to the activity heatmap. Anti-Regression fix-history self-freshens on read instead of going stale until restart. |
+
+Full v3.7.0 release notes: [CHANGELOG.md](CHANGELOG.md#370--2026-07-10).
 
 ---
 
@@ -363,8 +381,9 @@ kill list.
 |---|---|
 | `record_decision` | Capture an architectural decision. Optional `do_not_revert=true` triggers hard enforcement at the Claude Code PreToolUse hook. Supports `tags`, `force`, `session_id`. |
 | `supersede_decision(old_id, new_decision, reason)` | Retire an old decision and link to its replacement. Audit trail preserved. |
+| `mark_decision_outdated(decision_id, reason)` | **v3.7** — tombstone a decision that's no longer true (with no successor) so it stops surfacing. Reversible via `set_decision_flag(is_outdated=false)`. |
 | `reaffirm_decision(decision_id)` | Re-confirm a soft-expired `do_not_revert` lock is still wanted. |
-| `set_decision_flag(decision_id, ...)` | Toggle `do_not_revert` / tags on an existing decision. |
+| `set_decision_flag(decision_id, ...)` | Toggle `do_not_revert` / tags / `is_outdated` on an existing decision. |
 | `write_session_log` | Structured session record. |
 
 ### Roadmap

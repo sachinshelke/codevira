@@ -153,14 +153,19 @@ codevira setup</pre>
 
     <h2 id="connect">Connect your AI tools</h2>
     <p><code>codevira setup</code> auto-detects installed tools (strong signals: binary on
-    PATH + valid config) and configures each one. Pass <span class="kbd">--force</span>
-    if the detector misses an install, or <span class="kbd">--dry-run</span> to preview.</p>
+    PATH + valid config) and configures each one. <span class="pill">3.7</span> By default it
+    registers <strong>one</strong> user-scope <code>codevira</code> server that resolves the
+    active project from your editor's workspace roots — so N projects don't create N entries
+    in your IDE. Opt back into per-project entries with <span class="kbd">--per-project</span>.
+    Pass <span class="kbd">--force</span> if the detector misses an install, or
+    <span class="kbd">--dry-run</span> to preview.</p>
     <table>
       <tr><th>Tool</th><th>What codevira writes</th></tr>
-      <tr><td>Claude Code</td><td>MCP server entry + PreToolUse / SessionStart lifecycle hooks (the only client with <strong>hard</strong> enforcement)</td></tr>
-      <tr><td>Cursor · Windsurf</td><td>MCP server entry (stdio) + reads <code>AGENTS.md</code></td></tr>
-      <tr><td>Claude Desktop</td><td>stdio MCP entry (per-project <code>--project-dir</code>)</td></tr>
-      <tr><td>Antigravity · Codex · Copilot</td><td>read <code>AGENTS.md</code> natively — the decisions are portable, no MCP entry required</td></tr>
+      <tr><td>Claude Code</td><td>one user-scope MCP entry + PreToolUse / SessionStart lifecycle hooks (the only client with <strong>hard</strong> enforcement)</td></tr>
+      <tr><td>Cursor · Windsurf</td><td>one user-scope MCP entry (stdio, roots-resolved) + reads <code>AGENTS.md</code></td></tr>
+      <tr><td>Antigravity</td><td>one constant-key MCP entry (sets its own working dir per window) + reads <code>AGENTS.md</code></td></tr>
+      <tr><td>Claude Desktop</td><td>per-project stdio MCP entry (<code>--project-dir</code> — can't advertise roots)</td></tr>
+      <tr><td>Codex · Copilot</td><td>read <code>AGENTS.md</code> natively — the decisions are portable, no MCP entry required</td></tr>
     </table>
     <p>Prefer manual config? Add this stdio entry to your tool's MCP config — codevira
     resolves the active project from the client's workspace roots:</p>

@@ -706,42 +706,40 @@
         <p class="tabnote">Fully reversible: <code style="font-family:var(--mono)">codevira uninstall</code> removes every system write.</p>
       </div>
       <div class="tabpane" id="p-claude">
-        <div class="codecard"><pre><span class="cm">// ~/.claude.json  (written by `codevira setup`)</span>
+        <div class="codecard"><pre><span class="cm">// ~/.claude.json  — one user-scope entry (v3.7.0 default)</span>
 {
   <span class="bb">"mcpServers"</span>: {
     <span class="bb">"codevira"</span>: {
       <span class="bb">"command"</span>: <span class="yy">"/path/to/codevira-python"</span>,
-      <span class="bb">"args"</span>: [<span class="yy">"-m"</span>, <span class="yy">"mcp_server"</span>],
-      <span class="bb">"cwd"</span>: <span class="yy">"/path/to/your/project"</span>
+      <span class="bb">"args"</span>: [<span class="yy">"-m"</span>, <span class="yy">"mcp_server"</span>]
     }
   }
 }</pre></div>
-        <p class="tabnote">Claude Code also gets lifecycle hooks (PreToolUse / PostToolUse / UserPromptSubmit / Stop / SessionStart) — that's where enforcement lives.</p>
+        <p class="tabnote">One registration for every project — the server resolves the active project from your editor's workspace roots at runtime. Claude Code also gets lifecycle hooks (PreToolUse / PostToolUse / UserPromptSubmit / Stop / SessionStart) — that's where enforcement lives.</p>
       </div>
       <div class="tabpane" id="p-cursor">
-        <div class="codecard"><pre><span class="cm">// ~/.cursor/mcp.json</span>
+        <div class="codecard"><pre><span class="cm">// ~/.cursor/mcp.json  — one user-scope entry (v3.7.0 default)</span>
 {
   <span class="bb">"mcpServers"</span>: {
     <span class="bb">"codevira"</span>: {
       <span class="bb">"command"</span>: <span class="yy">"/path/to/codevira-python"</span>,
-      <span class="bb">"args"</span>: [<span class="yy">"-m"</span>, <span class="yy">"mcp_server"</span>],
-      <span class="bb">"cwd"</span>: <span class="yy">"/path/to/your/project"</span>
+      <span class="bb">"args"</span>: [<span class="yy">"-m"</span>, <span class="yy">"mcp_server"</span>]
     }
   }
 }</pre></div>
-        <p class="tabnote">Cursor reads the repo's <code style="font-family:var(--mono)">AGENTS.md</code> natively — the decision digest rides along with zero config.</p>
+        <p class="tabnote">One entry, project resolved from workspace roots at runtime. Cursor also reads the repo's <code style="font-family:var(--mono)">AGENTS.md</code> natively — the decision digest rides along with zero config.</p>
       </div>
       <div class="tabpane" id="p-windsurf">
-        <div class="codecard"><pre><span class="cm">// ~/.codeium/windsurf/mcp_config.json</span>
+        <div class="codecard"><pre><span class="cm">// ~/.codeium/windsurf/mcp_config.json  — one user-scope entry</span>
 {
   <span class="bb">"mcpServers"</span>: {
     <span class="bb">"codevira"</span>: {
       <span class="bb">"command"</span>: <span class="yy">"/path/to/codevira-python"</span>,
-      <span class="bb">"args"</span>: [<span class="yy">"-m"</span>, <span class="yy">"mcp_server"</span>, <span class="yy">"--project-dir"</span>, <span class="yy">"/path/to/project"</span>]
+      <span class="bb">"args"</span>: [<span class="yy">"-m"</span>, <span class="yy">"mcp_server"</span>]
     }
   }
 }</pre></div>
-        <p class="tabnote">Tools that don't pass <code style="font-family:var(--mono)">cwd</code> get an explicit <code style="font-family:var(--mono)">--project-dir</code> instead.</p>
+        <p class="tabnote">To pin a specific project instead of resolving from workspace roots, add <code style="font-family:var(--mono)">"--project-dir", "/path/to/project"</code> to <code style="font-family:var(--mono)">args</code> (or run <code style="font-family:var(--mono)">codevira init --per-project</code>).</p>
       </div>
       <div class="tabpane" id="p-any">
         <div class="codecard"><pre><span class="cm"># Codevira is a standard MCP stdio server — any client in any</span>

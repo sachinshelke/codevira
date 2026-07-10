@@ -242,7 +242,7 @@ versions. User content outside the codevira markers stays.
 |---|---|
 | **Memory stays fresh** | `record_decision` now **supersedes** a strong, unprotected near-duplicate instead of appending a parallel twin, so stale copies stop accumulating. `get_session_context` hides superseded / outdated / reverted decisions. New `mark_decision_outdated(id)` retires a decision that's simply no longer true (reversible). Protected `do_not_revert` decisions are never auto-retired — the conflict is surfaced. |
 | **Two engineers, one repo** | Decision ids used to collide silently when two branches merged (one decision shadowed on read). Now `read_merged` warns, `codevira repair-ids [--apply]` deterministically repairs (earliest writer keeps the id; losers get content-derived ids; a *fixed point*, so it can't oscillate), and a git **merge driver** — installed by `codevira init` — resolves collisions automatically on `git merge`. `--semantic` also reports near-duplicate decisions for review (never auto-merged). |
-| **One MCP for all projects** | `codevira init` registers **one** user-scope server by default instead of one-per-project; it resolves the active project from the MCP client's workspace roots at runtime. Opt back with `--per-project`. Under the hood the project-root pin is now per-request (`ContextVar`), so one process can serve many projects. |
+| **One MCP for all projects** | `codevira init` registers **one** user-scope server by default instead of one-per-project; it resolves the active project from the MCP client's workspace roots at runtime, so N projects no longer mean N entries in your IDE. Opt back with `--per-project`. The project-root pin is now per-request (`ContextVar`) so it can't leak across requests. |
 | **Fixes** | Decision-id drift within a process (D000118) — record/search no longer split across two stores. `NotebookEdit` / camelCase edits no longer log `<unknown>` to the activity heatmap. Anti-Regression fix-history self-freshens on read instead of going stale until restart. |
 
 Full v3.7.0 release notes: [CHANGELOG.md](CHANGELOG.md#370--2026-07-10).
@@ -352,10 +352,11 @@ servers you aren't actively using.
 
 ## MCP Tools
 
-**50 tools** surfaced to AI clients via `tools/list` (token-optimized,
+**51 tools** surfaced to AI clients via `tools/list` (token-optimized,
 summary-first): the core decision/roadmap/graph surface plus the
 v3.1.0 memory subsystems (working memory, skills, spatial, consensus,
-reflections), the v3.3.0 preference tools, and v3.5.0's `expand`. One additional admin
+reflections), the v3.3.0 preference tools, v3.5.0's `expand`, and v3.7.0's
+`mark_decision_outdated`. One additional admin
 tool (`refresh_graph`) is registered but hidden from `tools/list`
 because it runs automatically in the background — humans invoke it via
 `codevira sync`. Set `CODEVIRA_TOOL_PROFILE=lean` to advertise only
@@ -503,11 +504,12 @@ Common questions about setup, usage, architecture, and troubleshooting
 
 ## Roadmap
 
-**Current release:** **v3.5.0** — the read side gets intelligent:
-summary-first decisions + `expand`, a content-aware decision lock,
-read-only session-transcript ingest, a self-derived relevance eval +
-learned weight tuning, multi-file managed memory, and opt-in synonym
-recall — all with no new runtime dependencies.
+**Current release:** **v3.7.0** — fresh memory, shared repos, one
+registration: supersede-on-write + freshness-ranked reads +
+`mark_decision_outdated` (stale decisions stop piling up), deterministic
+cross-engineer decision-id collision repair (`repair-ids` + a git merge
+driver), and one user-scope MCP registration for all your projects — all
+model-free, all local.
 
 **Next up** (directional, not dated):
 

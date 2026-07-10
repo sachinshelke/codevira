@@ -61,6 +61,28 @@ class TestRepairIdsStore:
         assert res["changed"] is False
         assert res["applied"] is False
 
+    def test_apply_preserves_malformed_lines(self):
+        """Foolproof: repairing collisions must NEVER silently drop
+        unparseable lines (a git-conflict marker, a truncated write). Same
+        no-data-loss contract as jsonl_store.compact."""
+        p = store_paths.decisions_path()
+        jsonl_store.append(p, _collide("aaa", "alice", "2026-01-01T10:00:00"))
+        jsonl_store.append(p, _collide("bbb", "bob", "2026-01-01T10:05:00"))
+        with open(p, "a", encoding="utf-8") as f:
+            f.write("<<<<<<< HEAD this is not json\n")
+
+        res = decisions_store.repair_ids(apply=True)
+        assert res["applied"] is True
+        text = p.read_text()
+        assert (
+            "<<<<<<< HEAD this is not json" in text
+        ), "malformed line was silently dropped — data loss"
+        # And the collision was still repaired.
+        raw = jsonl_store.read_all(p)
+        from mcp_server.storage import id_repair
+
+        assert id_repair.find_collisions(raw) == {}
+
 
 class TestMergeDriver:
     def test_union_dedup_and_repair(self, tmp_path):

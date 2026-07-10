@@ -18,7 +18,7 @@ Fresh memory, shared repos, one registration — all model-free, all local:
 
 - **Memory stays fresh** — `record_decision` **supersedes** a strong, unprotected near-duplicate instead of appending a stale twin; `get_session_context` hides superseded / outdated / reverted decisions; `mark_decision_outdated(id)` retires a decision that's no longer true (reversible). Protected `do_not_revert` decisions are never auto-retired — the conflict is surfaced. Opt out with `CODEVIRA_SUPERSEDE_ON_RECORD=0`.
 - **Two engineers, one repo** — decision-id collisions from cross-branch merges are now visible (`read_merged` warns), deterministically repairable (`codevira repair-ids [--apply] [--semantic]` — a *fixed point*, so it can't oscillate), and auto-resolved by a git **merge driver** that `codevira init` registers.
-- **One MCP for all projects** — `codevira init` registers **one** user-scope server by default (resolves the active project from workspace roots); `--per-project` opts out. The project-root pin is now per-request (`ContextVar`), so a single process can serve many projects.
+- **One MCP for all projects** — `codevira init` registers **one** user-scope server by default (resolves the active project from workspace roots); `--per-project` opts out. The project-root pin is now per-request (`ContextVar`) so it can't leak across requests (a step toward one process serving many projects concurrently).
 - **Fixes** — decision-id drift within a process (D000118); `NotebookEdit` / camelCase edits no longer log `<unknown>`; Anti-Regression fix-history self-freshens on read.
 
 Full notes in [CHANGELOG.md](CHANGELOG.md#370--2026-07-10).
@@ -54,16 +54,17 @@ One user-scope server now serves **every** project correctly:
 
 ---
 
-## 🔜 What's next (after v3.5.0)
+## 🔜 What's next (after v3.7.0)
 
 > **Directional, not dated.** Priority-ordered next phases — *not* committed release dates. The non-negotiables stay: local-first, MIT, and **no vectors in the default install**. Want one sooner? [Open a feature request](https://github.com/sachinshelke/codevira/issues/new?template=feature_request.md).
 
-v3.5.0 shipped the entire **E1–E5 read-side batch** (summary-first + `expand`, session-transcript ingest, the relevance eval, learned weight tuning, multi-file managed memory, opt-in synonym recall) plus the content-aware decision lock, the reconciled outcome store, and multi-language `get_signature`. What remains on deck:
+v3.6.0 shipped symbol/region-level decision locking (`record_decision(..., symbol="login")`) and cross-project decision search (`search_decisions(query, all_projects=true)`). v3.7.0 shipped memory freshness, cross-engineer id-collision repair, and single-MCP registration (above). What remains on deck:
 
 | Next | What you'll get | Priority |
 |------|-----------------|----------|
-| **Symbol / region-level decision locking** | ✅ **Built (unreleased — lands in the next minor).** A `do_not_revert` decision can be scoped to a function/class via `record_decision(..., symbol="login")`; the lock then blocks only edits *inside* that symbol, warning on edits elsewhere in the file. AST (Python) / tree-sitter (TS/JS/Go/Rust). | ~~Medium~~ Done |
-| **Cross-project decision search** | ✅ **Built (unreleased — lands in the next minor).** `search_decisions(query, all_projects=true)` searches every registered project's decisions and merges the BM25-ranked results, each tagged with its project. | ~~Low~~ Done |
+| **Full concurrent multiplex** | v3.7.0 made the project-root *pin* per-request (`ContextVar`); the explicit project override is still process-global, so one process serving many projects *concurrently* (the multi-project HTTPS case) needs that override to be per-request too. The common stdio case — one process per open workspace — already works. | Medium |
+| **Tier-1 auto-merge** | The cross-engineer reconcile currently *reports* semantic near-duplicate decisions (`repair-ids --semantic`) for review; auto-merging safe duplicates (never touching genuine conflicts) is the next step once the deterministic core is battle-tested. | Medium |
+| **Tighter content-aware policy matching** | The `decision_lock` / `anti_regression` guards use keyword-based subject matching that can false-positive on provably-orthogonal edits to a locked file; tightening it to reduce those hard-blocks. | Medium |
 | **Opt-in `[semantic]` recall** | `pip install codevira[semantic]` adds a ~30 MB CPU embedding as a *fallback* re-rank on top of FTS5. **Off by default** — the base install stays pure-keyword, no vectors, no model download. The model-free half (synonym widening) shipped in v3.5.0; the embedding half is deferred until the on-device-model question is settled. | Deferred |
 
 **On hold:** a tiny on-device model for memory abstraction (former Phase 14) remains **deferred** — its goal is folded into the opt-in `[semantic]` path, which delivers the same recall win without bundling a model into the default install.

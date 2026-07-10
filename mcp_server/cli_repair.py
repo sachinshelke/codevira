@@ -96,11 +96,16 @@ def cmd_merge_driver(base: str, ours: str, theirs: str) -> int:
     from mcp_server.storage import id_repair, jsonl_store
 
     ours_p = Path(ours)
-    a = jsonl_store.read_all(ours_p)
-    b = jsonl_store.read_all(Path(theirs))
+    a, a_bad = jsonl_store.read_records_and_malformed(ours_p)
+    b, b_bad = jsonl_store.read_records_and_malformed(Path(theirs))
     combined = _union_dedup(a, b)
     repaired = id_repair.normalize(combined)["records"]
     lines = [json.dumps(r, ensure_ascii=False, separators=(",", ":")) for r in repaired]
+    # Preserve malformed lines from either side (deduped) so the merge never
+    # silently drops unparseable data.
+    for bad in [*a_bad, *b_bad]:
+        if bad not in lines:
+            lines.append(bad)
     ours_p.write_text(("\n".join(lines) + "\n") if lines else "", encoding="utf-8")
     return 0
 

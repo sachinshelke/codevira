@@ -557,7 +557,42 @@ def compact(
     return dropped
 
 
-def rewrite_all(path: Path, records: list[dict[str, Any]]) -> int:
+def read_records_and_malformed(path: Path) -> tuple[list[dict[str, Any]], list[str]]:
+    """Read a JSONL file, returning ``(records, malformed_lines)``.
+
+    Like :func:`read_all` but ALSO returns the verbatim lines that failed to
+    parse or weren't objects, so a rewrite (``repair_ids``, the merge driver)
+    can PRESERVE them instead of silently dropping unparseable data — the same
+    no-data-loss contract :func:`compact` follows. Blank lines are dropped.
+    """
+    records: list[dict[str, Any]] = []
+    malformed: list[str] = []
+    if not path.is_file():
+        return records, malformed
+    with _file_lock(path, exclusive=False):
+        with open(path, encoding="utf-8") as fh:
+            for raw in fh:
+                s = raw.rstrip("\n")
+                if not s:
+                    continue
+                try:
+                    rec = json.loads(s)
+                except json.JSONDecodeError:
+                    malformed.append(s)
+                    continue
+                if not isinstance(rec, dict):
+                    malformed.append(s)
+                    continue
+                records.append(rec)
+    return records, malformed
+
+
+def rewrite_all(
+    path: Path,
+    records: list[dict[str, Any]],
+    *,
+    extra_lines: list[str] | None = None,
+) -> int:
     """Atomically replace the whole file with ``records`` (one JSON per line).
 
     v3.7.0 (Phase 25): used by ``decisions_store.repair_ids`` to write back the
@@ -565,6 +600,9 @@ def rewrite_all(path: Path, records: list[dict[str, Any]]) -> int:
     entire replace so a concurrent appender can't interleave, and writes via
     tempfile + os.replace (atomic). Serialization matches ``append`` exactly
     (compact separators, ensure_ascii=False, one line per record).
+
+    ``extra_lines`` are appended verbatim after the serialized records — used
+    to PRESERVE malformed/unparseable lines through a rewrite (no data loss).
     """
     lines: list[str] = []
     for rec in records:
@@ -572,6 +610,8 @@ def rewrite_all(path: Path, records: list[dict[str, Any]]) -> int:
         if "\n" in line:
             raise ValueError("jsonl_store.rewrite_all: serialization contains newline")
         lines.append(line)
+    if extra_lines:
+        lines.extend(extra_lines)
     with _file_lock(path, exclusive=True):
         atomic_write_text(path, ("\n".join(lines) + "\n") if lines else "")
     return len(lines)

@@ -936,13 +936,21 @@ def repair_ids(*, apply: bool = False) -> dict[str, Any]:
     from mcp_server.storage import id_repair
 
     path = paths.decisions_path()
-    raw = jsonl_store.read_all(path)
+    # Read raw AND malformed so a repair rewrite can preserve unparseable lines
+    # (a git-conflict marker, a truncated write) — never silent data loss.
+    raw, malformed = jsonl_store.read_records_and_malformed(path)
     result = id_repair.normalize(raw)
     changed = bool(result["collisions"] or result["deduped"])
 
     applied = False
     if apply and changed:
-        jsonl_store.rewrite_all(path, result["records"])
+        jsonl_store.rewrite_all(path, result["records"], extra_lines=malformed)
+        if malformed:
+            logger.warning(
+                "decisions_store.repair_ids: preserved %d malformed line(s) "
+                "verbatim through the rewrite (run `codevira doctor` to clean).",
+                len(malformed),
+            )
         rebuild_indexes()
         applied = True
 
@@ -950,6 +958,7 @@ def repair_ids(*, apply: bool = False) -> dict[str, Any]:
         "collisions": result["collisions"],
         "deduped": result["deduped"],
         "remap": result["remap"],
+        "malformed_preserved": len(malformed),
         "changed": changed,
         "applied": applied,
     }

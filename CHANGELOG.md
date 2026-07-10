@@ -58,9 +58,11 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   can't do project-agnostic config (Claude Desktop, Antigravity) still get a
   per-project entry. Opt back with `codevira init --per-project` or
   `CODEVIRA_INIT_PER_PROJECT=1`.
-- **Per-request project multiplex.** The project-root pin is now a
-  `ContextVar`, so a single process can serve multiple projects concurrently —
-  each request keeps its own binding.
+- **Per-request project-root pin.** The project-root pin is now a `ContextVar`
+  — scoped per request instead of process-global, so it can't leak across
+  requests. (Each IDE window already runs its own codevira process bound to its
+  workspace; one process serving many projects *concurrently* also needs the
+  explicit override to be per-request, which is a follow-on.)
 
 ### Internal
 - Extracted the shared decision-similarity core (`storage/reconcile.py`) used by

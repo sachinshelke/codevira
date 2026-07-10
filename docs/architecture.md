@@ -1,4 +1,4 @@
-# Codevira — Architecture (v3.5.0)
+# Codevira — Architecture (v3.7.0)
 
 > Codevira is a lean cross-IDE decision-enforcement layer.
 > ~1-2 MB per project. In your repo. No cloud. No vectors. MIT.
@@ -18,8 +18,16 @@
 > staleness labels + an `archive` subcommand + an ephemeral-path guard.
 > v3.5.0 grew the read side (summary-first `expand`, read-only
 > session-transcript ingest, the relevance eval + learned weight
-> tuning, content-aware decision lock) — the tool surface is now 50
-> AI-facing tools.
+> tuning, content-aware decision lock). v3.6.0 added symbol/region-level
+> decision locking + cross-project decision search. v3.7.0 makes memory
+> *fresh* (supersede-on-write + freshness-ranked reads +
+> `mark_decision_outdated`), makes the decision log safe for **two
+> engineers on one repo** (deterministic id-collision repair in
+> `storage/id_repair.py`, surfaced via `codevira repair-ids` + a git
+> merge driver), extracts the shared similarity core to
+> `storage/reconcile.py`, and makes the project-root pin per-request (a
+> `contextvars.ContextVar` in `paths.py`) — the tool surface is now 51
+> AI-facing tools (`mark_decision_outdated` added).
 
 ## The three layers (top to bottom)
 

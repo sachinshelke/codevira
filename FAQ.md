@@ -17,10 +17,11 @@ A persistent memory layer for AI coding agents — so Claude Code, Cursor, Winds
 ### I'm on v1.x — should I upgrade to 2.0?
 
 Probably yes, but read [MIGRATING.md](MIGRATING.md) first. Three default
-behaviors changed (`init` indexes more, `agents` renders fewer files,
-`register` is deprecated in favor of `setup`), all opt-out-able if you
-want the legacy behavior. No data loss; existing `~/.codevira/global.db`
-migrates safely. The upgrade is `pipx install --upgrade codevira`.
+behaviors changed (`init` indexes more, `agents` renders fewer files, and the
+old `register` command was removed — use `setup`, or `init`, which since
+v3.7.0 registers one user-scope server), all opt-out-able if you want the
+legacy behavior. No data loss; existing `~/.codevira/global.db` migrates
+safely. The upgrade is `pipx install --upgrade codevira`.
 
 The biggest reason to upgrade: 2.0 introduces the **active guardian
 engine** — codevira now intercepts every AI tool call and can block /
@@ -62,9 +63,9 @@ The full toolkit installs out of the box — no ML stack, no embedding model, no
 
 ### Do I need to run `codevira init` for every project?
 
-No. Just run `codevira register` once globally — it injects MCP config into all your AI tools. Then open any project; the first MCP tool call auto-initializes that project in the background.
+You register the MCP server **once**, not per project. Since v3.7.0 `codevira init` (and `codevira setup`) writes a single **user-scope** server that resolves the active project from your editor's workspace at runtime — so N projects don't create N codevira entries in your IDE. Opening any project then auto-initializes its `.codevira/` on the first MCP tool call.
 
-`codevira init` is still available if you want to set things up explicitly with custom settings, but it's optional.
+You still run `codevira init` (or let auto-init handle it) in each repo to scaffold that project's `.codevira/` and detect its languages. Want a per-project MCP entry instead of the shared one (e.g. an IDE that can't advertise workspace roots)? Run `codevira init --per-project`.
 
 ### Do I need to run the indexer every time?
 
@@ -171,7 +172,7 @@ No need to re-explain. Switch to Antigravity to run tests — same memory. The A
 
 ### Which transport should I use — stdio or HTTP?
 
-**Short answer: stdio.** `codevira register` sets this up globally, and it handles every project automatically.
+**Short answer: stdio.** `codevira setup` (or `codevira init`) sets this up as one user-scope server, and it handles every project automatically.
 
 | Client | Use | Why |
 |--------|-----|-----|
@@ -180,7 +181,7 @@ No need to re-explain. Switch to Antigravity to run tests — same memory. The A
 | Cursor, Windsurf | stdio | These tools use `command`+`args` config |
 | Google Antigravity | stdio | Same |
 
-**Stdio** (default + recommended): the MCP client spawns `codevira` as a subprocess per project. Each project gets its own process with its own memory from `~/.codevira/projects/<key>/`. Zero config after `codevira register`.
+**Stdio** (default + recommended): the MCP client spawns `codevira` as a subprocess for each open workspace, bound to that project via the client's workspace roots, with its own memory from `~/.codevira/projects/<key>/`. One user-scope registration covers every project — zero per-project config after `codevira setup`.
 
 **HTTP/HTTPS** — **Preview in v1.7, single-project only.** The HTTP server binds to one project at startup and cannot switch contexts per request. Useful only when:
 - You need Claude.ai (web) support (single-project anyway)

@@ -111,3 +111,29 @@ class TestFixHistoryStalenessRefresh:
         res = fix_history.refresh_fix_history_if_stale(not_a_repo)
         assert res["rescanned"] is False
         assert res["head"] is None
+
+    def test_persistent_scan_error_backs_off(self, tmp_path, monkeypatch):
+        """M8: a persistently-failing scan must NOT re-walk git-log every call
+        while HEAD is unchanged (this runs on the anti-regression hot path)."""
+        repo = tmp_path / "repo"
+        _init_repo(repo)
+        (repo / "a.py").write_text("x = 1\n")
+        _git(repo, "add", ".")
+        _git(repo, "commit", "-m", "fix: seed")
+
+        fix_history._last_scanned_head.clear()
+        fix_history._failed_scan_head.clear()
+        calls = {"n": 0}
+
+        def _failing(*a, **k):
+            calls["n"] += 1
+            return {"error": "boom"}
+
+        monkeypatch.setattr(fix_history, "scan_git_log", _failing)
+
+        r1 = fix_history.refresh_fix_history_if_stale(repo)
+        assert r1.get("error") and calls["n"] == 1  # scanned once, errored
+
+        r2 = fix_history.refresh_fix_history_if_stale(repo)  # HEAD unchanged
+        assert r2["rescanned"] is False
+        assert calls["n"] == 1, "must NOT re-invoke scan_git_log during backoff"

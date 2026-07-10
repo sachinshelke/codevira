@@ -909,6 +909,27 @@ def check_mcp_running_versions() -> CheckResult:
     )
 
 
+def check_merge_driver() -> CheckResult:
+    """v3.7.0 — the decision-log git merge driver is configured in THIS clone
+    when .gitattributes references it. Catches the fresh-clone gap where a
+    teammate inherits the .gitattributes mapping but never ran `codevira init`,
+    so cross-engineer decision-log merges would conflict."""
+    try:
+        from mcp_server.cli_repair import merge_driver_gap
+        from mcp_server.paths import get_project_root
+
+        gap = merge_driver_gap(get_project_root())
+    except Exception as e:  # noqa: BLE001 — never crash the doctor
+        return CheckResult("merge_driver", _WARN, f"could not check merge driver: {e}")
+    if gap:
+        return CheckResult("merge_driver", _WARN, gap, fix_command="codevira init")
+    return CheckResult(
+        "merge_driver",
+        _PASS,
+        "decision-log merge driver configured (or not referenced)",
+    )
+
+
 _CHECKS: tuple[Callable[[], CheckResult], ...] = (
     check_python_version,
     check_codevira_data_dir,
@@ -928,6 +949,7 @@ _CHECKS: tuple[Callable[[], CheckResult], ...] = (
     # removed (chromadb deleted in Phase E).
     check_ghost_projects,  # rc.4 (Bug 21c)
     check_crash_log_size,
+    check_merge_driver,  # v3.7.0 — cross-engineer decision-log merge driver
 )
 
 

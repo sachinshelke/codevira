@@ -136,8 +136,21 @@ def install_merge_driver(project_root: Path) -> dict:
             )
     result["gitattributes"] = str(ga)
 
+    # Stage .gitattributes so a teammate who clones INHERITS the driver mapping
+    # (the driver-command config below is per-machine local and can't be
+    # committed — .gitattributes is the shareable half).
     try:
         subprocess.run(
+            ["git", "-C", str(project_root), "add", ".gitattributes"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except (FileNotFoundError, OSError):
+        pass
+
+    try:
+        r1 = subprocess.run(
             [
                 "git",
                 "-C",
@@ -150,7 +163,7 @@ def install_merge_driver(project_root: Path) -> dict:
             capture_output=True,
             text=True,
         )
-        subprocess.run(
+        r2 = subprocess.run(
             [
                 "git",
                 "-C",
@@ -163,7 +176,49 @@ def install_merge_driver(project_root: Path) -> dict:
             capture_output=True,
             text=True,
         )
-        result["configured"] = True
+        # Honest: only 'configured' when git actually accepted both writes.
+        result["configured"] = r1.returncode == 0 and r2.returncode == 0
     except (FileNotFoundError, OSError):
         pass
+
+    if result["configured"]:
+        result["commit_hint"] = (
+            "Commit .gitattributes so teammates inherit the decision-log merge "
+            "driver (each teammate still runs `codevira init` once to configure "
+            "the driver command locally)."
+        )
     return result
+
+
+def merge_driver_gap(project_root: Path) -> str | None:
+    """Return a warning if ``.gitattributes`` references the codevira merge
+    driver but THIS clone hasn't configured the driver command — the fresh-clone
+    gap where a teammate would otherwise hit the exact hard merge conflict the
+    driver exists to prevent. Returns None when there's no gap. Never raises.
+    """
+    ga = project_root / ".gitattributes"
+    try:
+        if not ga.is_file() or "merge=codevira-jsonl" not in ga.read_text():
+            return None
+        r = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(project_root),
+                "config",
+                "--get",
+                "merge.codevira-jsonl.driver",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except (FileNotFoundError, OSError):
+        return None
+    if r.returncode != 0 or not r.stdout.strip():
+        return (
+            "decision-log merge driver is referenced in .gitattributes but not "
+            "configured in this clone — run `codevira init` (or "
+            "`codevira repair-ids`) or decision-log merges will conflict."
+        )
+    return None

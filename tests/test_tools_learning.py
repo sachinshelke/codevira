@@ -363,6 +363,39 @@ class TestGetSessionContext:
         assert stale_txt not in surfaced, "outdated decision must not surface"
         assert reverted_txt not in surfaced, "reverted decision must not surface"
 
+    def test_session_context_backfills_past_reverted_top_decisions(
+        self, tmp_path, monkeypatch
+    ):
+        """M7: when the freshest decisions are outcome=reverted, over-fetch so
+        recent_decisions backfills to the non-reverted ones instead of
+        under-filling to zero."""
+        monkeypatch.setenv("CODEVIRA_SUPERSEDE_ON_RECORD", "0")  # keep 5 distinct
+        _setup_project(tmp_path, monkeypatch)
+        from mcp_server.storage import decisions_store, jsonl_store
+        from mcp_server.storage import paths as _paths
+
+        decisions_store.record(decision="keepalpha ledger invoices postgres")
+        decisions_store.record(decision="keepbeta receipts monospace rendering")
+        for i in range(3):
+            rev = decisions_store.record(
+                decision=f"revertedgamma{i} websocket streaming attempt {i}"
+            )
+            jsonl_store.append(
+                _paths.decisions_path(),
+                {"id": rev, "_amendment_to_id": rev, "outcome": "reverted"},
+            )
+
+        with patch(
+            "mcp_server.tools.roadmap.get_roadmap",
+            return_value={"current_phase": {}},
+        ):
+            result = learning.get_session_context()
+
+        texts = {d.get("decision") for d in result["recent_decisions"]}
+        assert any("keepalpha" in (t or "") for t in texts)
+        assert any("keepbeta" in (t or "") for t in texts)
+        assert not any("revertedgamma" in (t or "") for t in texts)
+
     def test_session_context_working_panel_empty(self, tmp_path, monkeypatch):
         """v3.1.0 M2 Phase 3: empty working memory surfaces as
         {entries: [], count: 0} — never crashes the catch-me-up call."""

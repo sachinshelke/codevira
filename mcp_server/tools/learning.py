@@ -695,8 +695,13 @@ def get_session_context(since: str | None = None) -> dict:
                 str(r.get("id") or "") for r in recent_decisions if r.get("id")
             }
             try:
+                # v3.7.0 (M7): over-fetch so the post-pagination staleness
+                # filter (_is_stale drops outcome=reverted) can BACKFILL to 3.
+                # A window of 3 would under-fill recent_decisions to zero when
+                # the freshest 3 are all reverted — degrading the very brief it
+                # exists to provide. The loop below still caps the result at 3.
                 page = decisions_store.list_all(
-                    limit=10 if since else 3,
+                    limit=20,
                     since=since,
                     full=False,
                 )

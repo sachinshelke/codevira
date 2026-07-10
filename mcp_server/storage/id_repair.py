@@ -96,12 +96,34 @@ def _order_key(
     )
 
 
-def _loser_id(
-    record: dict[str, Any], *, id_field: str, amendment_field: str, prefix: str
+def _mint_loser_id(
+    record: dict[str, Any],
+    claimed: set[str],
+    *,
+    id_field: str,
+    amendment_field: str,
+    prefix: str,
 ) -> str:
-    """Content-derived id for a renumbered loser (pure function of content)."""
+    """Content-derived id for a renumbered loser that is UNIQUE against
+    ``claimed`` (all surviving base ids + already-minted loser ids).
+
+    Starts at ``_LOSER_HASH_WIDTH`` hex of the content hash and widens the
+    slice until the id isn't already claimed. Still a pure function of content
+    + the (deterministic) claimed set, so two machines normalizing the same
+    merged store mint identical ids — and because every id ends up unique,
+    ``normalize`` is a true fixed point (a fresh loser id can never re-open a
+    base-id collision in ``read_merged``).
+    """
     h = _content_hash(record, id_field=id_field, amendment_field=amendment_field)
-    return f"{prefix}{h[:_LOSER_HASH_WIDTH]}"
+    for w in range(_LOSER_HASH_WIDTH, len(h) + 1):
+        cand = f"{prefix}{h[:w]}"
+        if cand not in claimed:
+            return cand
+    # Astronomically unlikely (full 40-hex sha1 already claimed): disambiguate.
+    n = 0
+    while f"{prefix}{h}-{n}" in claimed:
+        n += 1
+    return f"{prefix}{h}-{n}"
 
 
 def find_collisions(
@@ -159,6 +181,16 @@ def normalize(
     remap: list[dict[str, Any]] = []
     collisions = 0
 
+    # Every surviving base id keeps its value (winners + singletons), so a
+    # minted loser id must avoid ALL of them — plus every other minted loser.
+    claimed: set[str] = {
+        str(r.get(id_field) or "")
+        for r in recs
+        if not r.get(amendment_field) and str(r.get(id_field) or "")
+    }
+
+    loser_idxs: list[int] = []
+    winner_host_by_id: dict[str, str] = {}  # old_id -> host of the base that KEPT it
     for rid, idxs in base_idxs.items():
         if len(idxs) <= 1:
             continue
@@ -177,29 +209,63 @@ def normalize(
         if len(distinct) <= 1:
             continue
 
-        # Winner keeps the id; losers get content-derived ids.
+        # Winner (smallest order key) keeps the id; the rest are losers.
         distinct.sort(
             key=lambda i: _order_key(
                 recs[i], id_field=id_field, amendment_field=amendment_field
             )
         )
-        for loser in distinct[1:]:
-            new_id = _loser_id(
-                recs[loser],
-                id_field=id_field,
-                amendment_field=amendment_field,
-                prefix=prefix,
-            )
-            reassign[loser] = new_id
-            remap.append(
-                {"old_id": rid, "new_id": new_id, "loser_host": _host(recs[loser])}
-            )
+        winner_host_by_id[rid] = _host(recs[distinct[0]])
+        loser_idxs.extend(distinct[1:])
 
-    # Map (old_id, host) -> new_id so amendments can follow their loser base.
-    follow: dict[tuple[str, str], str] = {}
+    # Mint loser ids in a DETERMINISTIC global order (by content hash, then old
+    # id) against the shared claimed set, so two machines converge identically.
+    loser_idxs.sort(
+        key=lambda i: (
+            _content_hash(recs[i], id_field=id_field, amendment_field=amendment_field),
+            str(recs[i].get(id_field) or ""),
+        )
+    )
+    for loser in loser_idxs:
+        old_id = str(recs[loser].get(id_field) or "")
+        new_id = _mint_loser_id(
+            recs[loser],
+            claimed,
+            id_field=id_field,
+            amendment_field=amendment_field,
+            prefix=prefix,
+        )
+        claimed.add(new_id)
+        reassign[loser] = new_id
+        remap.append(
+            {"old_id": old_id, "new_id": new_id, "loser_host": _host(recs[loser])}
+        )
+
+    # M6: an amendment follows its renumbered loser base ONLY when the
+    # (old_id, host) pair unambiguously identifies exactly one loser — i.e. a
+    # single renumbered loser has that host AND the winner (which keeps old_id)
+    # does NOT share the host, AND the host is non-empty. Otherwise the
+    # attribution is a guess (host-less amendment, or winner+loser / two losers
+    # sharing a host): leave the amendment on the WINNER (it keeps old_id) and
+    # FLAG it, so nothing silently moves is_protected/is_outdated onto the wrong
+    # engineer's decision. (The docstring promised "never guessed".)
+    loser_keys: dict[tuple[str, str], list[str]] = defaultdict(list)
     for idx, new_id in reassign.items():
-        follow[(str(recs[idx].get(id_field)), _host(recs[idx]))] = new_id
+        loser_keys[(str(recs[idx].get(id_field) or ""), _host(recs[idx]))].append(
+            new_id
+        )
+    follow: dict[tuple[str, str], str] = {}
+    ambiguous_keys: set[tuple[str, str]] = set()
+    for (old, host), new_ids in loser_keys.items():
+        unambiguous = (
+            bool(host) and len(new_ids) == 1 and winner_host_by_id.get(old) != host
+        )
+        if unambiguous:
+            follow[(old, host)] = new_ids[0]
+        else:
+            ambiguous_keys.add((old, host))
 
+    ambiguous_amendments = 0
     out: list[dict[str, Any]] = []
     for i, r in enumerate(recs):
         if i in dropped:
@@ -217,6 +283,17 @@ def normalize(
                 r[amendment_field] = follow[key]
                 out.append(r)
                 continue
+            if key in ambiguous_keys or (
+                str(r.get(amendment_field)) in {k[0] for k in loser_keys}
+                and not _host(r)
+            ):
+                # Its base id was split among renumbered losers but we can't
+                # attribute this amendment — keep it on the winner, flag it.
+                r = dict(r)
+                r["_amendment_ambiguous"] = True
+                ambiguous_amendments += 1
+                out.append(r)
+                continue
         out.append(dict(r))
 
     return {
@@ -224,4 +301,5 @@ def normalize(
         "remap": remap,
         "collisions": collisions,
         "deduped": len(dropped),
+        "ambiguous_amendments": ambiguous_amendments,
     }

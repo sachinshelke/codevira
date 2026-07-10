@@ -454,6 +454,7 @@ def read_merged(
     raw = read_all(path)
     by_id: dict[str, dict[str, Any]] = {}
     order: list[str] = []  # preserves insertion order of base records
+    collided: set[str] = set()  # base ids shadowed by a collision (M9: warn once)
 
     for rec in raw:
         did = str(rec.get(id_field, ""))
@@ -472,20 +473,24 @@ def read_merged(
         else:
             # v3.7.0 (Phase 25): two BASE records sharing an id is a
             # cross-machine mint collision (see storage/id_repair). read_merged
-            # would silently overwrite one — turning a lost decision into a
-            # visible warning. Only warn on a genuine base-vs-base clash
-            # (amendments legitimately reuse the id and are handled above).
+            # would silently overwrite one — collect the collided ids and warn
+            # ONCE after the loop (M9: not N-1 identical lines per read, which
+            # would drown real warnings on every session-context / search).
             if did in by_id and not by_id[did].get(amendment_field):
-                logger.warning(
-                    "jsonl_store.read_merged: base-id collision on %r in %s — "
-                    "one record is being shadowed. Run `codevira repair-ids` "
-                    "(or let the git merge driver resolve it).",
-                    did,
-                    path.name,
-                )
+                collided.add(did)
             if did not in by_id:
                 order.append(did)
             by_id[did] = dict(rec)
+
+    if collided:
+        logger.warning(
+            "jsonl_store.read_merged: base-id collision on %d id(s) in %s (%s) "
+            "— records are being shadowed. Run `codevira repair-ids` (or let the "
+            "git merge driver resolve it).",
+            len(collided),
+            path.name,
+            ", ".join(sorted(collided)[:10]),
+        )
 
     return [by_id[did] for did in order]
 

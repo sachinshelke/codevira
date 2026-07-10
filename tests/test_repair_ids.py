@@ -171,6 +171,51 @@ class TestInstallMergeDriver:
         assert res["configured"] is False
         assert res["gitattributes"] is None
 
+    def test_stages_gitattributes_for_sharing(self, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        subprocess.run(
+            ["git", "-C", str(repo), "init"], check=True, capture_output=True
+        )
+        install_merge_driver(repo)
+        staged = subprocess.run(
+            ["git", "-C", str(repo), "diff", "--cached", "--name-only"],
+            capture_output=True,
+            text=True,
+        )
+        assert (
+            ".gitattributes" in staged.stdout
+        ), ".gitattributes must be staged so teammates inherit the mapping"
+
+    def test_gap_check_warns_on_fresh_clone(self, tmp_path):
+        """H4: .gitattributes references the driver but this clone has no driver
+        config (the fresh-clone gap) -> warn."""
+        from mcp_server.cli_repair import merge_driver_gap
+
+        repo = tmp_path / "clone"
+        repo.mkdir()
+        subprocess.run(
+            ["git", "-C", str(repo), "init"], check=True, capture_output=True
+        )
+        (repo / ".gitattributes").write_text(
+            ".codevira/decisions.jsonl merge=codevira-jsonl\n"
+        )
+        # No driver config yet -> gap.
+        assert merge_driver_gap(repo) is not None
+        # After install, no gap.
+        install_merge_driver(repo)
+        assert merge_driver_gap(repo) is None
+
+    def test_gap_check_none_without_gitattributes(self, tmp_path):
+        from mcp_server.cli_repair import merge_driver_gap
+
+        repo = tmp_path / "plain"
+        repo.mkdir()
+        subprocess.run(
+            ["git", "-C", str(repo), "init"], check=True, capture_output=True
+        )
+        assert merge_driver_gap(repo) is None
+
 
 class TestSemanticDuplicates:
     def test_finds_near_duplicate_pairs(self, monkeypatch):
@@ -196,6 +241,28 @@ class TestSemanticDuplicates:
         learning.record_decision(decision="use postgres for the invoice ledger")
         learning.record_decision(decision="render receipts with a monospace font")
         assert decisions_store.find_semantic_duplicates() == []
+
+
+def test_read_merged_collision_warns_exactly_once(tmp_path, caplog):
+    """M9: 60 same-id base records must produce ONE warning per read, not 59
+    (which would drown real warnings on every get_session_context/search)."""
+    p = tmp_path / "decisions.jsonl"
+    lines = [
+        json.dumps(
+            {
+                "id": "D000120",
+                "decision": f"d{i}",
+                "ts": f"2026-01-01T10:{i % 60:02d}:00",
+                "origin": {"host_hash": f"h{i}"},
+            }
+        )
+        for i in range(60)
+    ]
+    p.write_text("\n".join(lines) + "\n")
+    with caplog.at_level(logging.WARNING):
+        jsonl_store.read_merged(p)
+    warns = [r for r in caplog.records if "base-id collision" in r.message]
+    assert len(warns) == 1, f"expected exactly one collision warning, got {len(warns)}"
 
 
 def test_read_merged_warns_on_base_id_collision(tmp_path, caplog):

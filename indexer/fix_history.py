@@ -678,6 +678,10 @@ def scan_git_log(
 # Anti-Regression hero goes stale until the next restart. This staleness-gated
 # refresh re-scans ONLY when git HEAD advanced, so it is cheap to call often.
 _last_scanned_head: dict[str, str] = {}
+# M8: (head, monotonic-ts) of the last FAILED scan per project — bounds wasted
+# git-log walks under a degraded-git condition (a HEAD move clears it).
+_failed_scan_head: dict[str, tuple[str, float]] = {}
+_FAILED_SCAN_BACKOFF_SEC = 300.0
 
 
 def _current_head(project_root: Path) -> str | None:
@@ -712,6 +716,8 @@ def refresh_fix_history_if_stale(
     Returns the scan summary augmented with ``{"rescanned": bool, "head":
     <sha|None>}``. Never raises — mirrors ``scan_git_log``'s error shape.
     """
+    import time
+
     pr = project_root.resolve()
     key = str(pr)
     head = _current_head(pr)
@@ -719,11 +725,28 @@ def refresh_fix_history_if_stale(
         return {"rescanned": False, "head": None, "error": "not a git repo / no git"}
     if _last_scanned_head.get(key) == head:
         return {"rescanned": False, "head": head}
+    # M8: if the LAST scan for this exact HEAD errored, back off — don't re-walk
+    # git-log every call (this runs on the anti-regression read hot path). A
+    # HEAD move clears the backoff immediately (different key value below).
+    failed = _failed_scan_head.get(key)
+    if (
+        failed
+        and failed[0] == head
+        and (time.monotonic() - failed[1]) < _FAILED_SCAN_BACKOFF_SEC
+    ):
+        return {
+            "rescanned": False,
+            "head": head,
+            "error": "recent scan failed (backoff)",
+        }
     summary = scan_git_log(pr, max_commits=max_commits)
     if "error" not in summary:
         # Only advance the marker on a clean scan, so a transient failure
         # doesn't wedge the store into "scanned" for a HEAD it never read.
         _last_scanned_head[key] = head
+        _failed_scan_head.pop(key, None)
+    else:
+        _failed_scan_head[key] = (head, time.monotonic())
     return {**summary, "rescanned": True, "head": head}
 
 

@@ -125,6 +125,80 @@ class TestNormalize:
         # And no collisions survive in either.
         assert id_repair.find_collisions(forward) == {}
 
+    def test_minted_loser_ids_globally_unique_under_hash_collision(self, monkeypatch):
+        """H5: with a tiny loser-hash width, 19 losers can't fit the 16-value
+        1-hex space (pigeonhole) — normalize must widen so every id stays
+        unique, and the result must be a true fixed point (no fresh collision
+        that re-opens read_merged shadowing)."""
+        monkeypatch.setattr(id_repair, "_LOSER_HASH_WIDTH", 1)
+        recs = [
+            _base(
+                "D000120",
+                f"distinct decision number {i}",
+                ts=f"2026-01-01T10:{i:02d}:00",
+                host=f"h{i}",
+            )
+            for i in range(20)
+        ]
+        out = id_repair.normalize(recs)
+        ids = [r["id"] for r in out["records"]]
+        assert len(set(ids)) == len(ids), f"minted loser ids collided: {ids}"
+        assert id_repair.find_collisions(out["records"]) == {}
+        # True fixed point: re-normalizing changes nothing.
+        twice = id_repair.normalize(out["records"])["records"]
+        assert _canon(out["records"]) == _canon(twice)
+
+    def test_loser_id_avoids_an_existing_distinct_base_id(self, monkeypatch):
+        """H5: a minted loser id must also avoid a DISTINCT pre-existing base
+        id, not just other losers."""
+        monkeypatch.setattr(id_repair, "_LOSER_HASH_WIDTH", 1)
+        # 16 singleton bases occupy every 1-hex value D0..Df, plus a collision
+        # pair whose loser must therefore widen past width 1.
+        recs = [
+            _base(f"D{d:x}", f"singleton {d}", ts="2026-01-01T09:00:00", host="s")
+            for d in range(16)
+        ] + [
+            _base("D000120", "winner", ts="2026-01-01T10:00:00", host="a"),
+            _base("D000120", "loser", ts="2026-01-01T10:01:00", host="b"),
+        ]
+        out = id_repair.normalize(recs)
+        ids = [r["id"] for r in out["records"]]
+        assert len(set(ids)) == len(ids)
+        assert id_repair.find_collisions(out["records"]) == {}
+
+    def test_amendment_ambiguous_same_host_stays_on_winner_and_flagged(self):
+        """M6: winner+loser share a host, so an amendment on that host can't be
+        attributed — it must stay on the WINNER (keeps old id) and be flagged,
+        not silently follow the loser (which would move protection/staleness
+        onto the wrong engineer's decision)."""
+        recs = [
+            _base("D000120", "winner", ts="2026-01-01T10:00:00", host="same"),
+            _base("D000120", "loser", ts="2026-01-01T10:05:00", host="same"),
+            {
+                "id": "D000120",
+                "_amendment_to_id": "D000120",
+                "do_not_revert": True,
+                "origin": {"host_hash": "same"},
+            },
+        ]
+        out = id_repair.normalize(recs)
+        amend = next(r for r in out["records"] if r.get("_amendment_to_id"))
+        assert amend["_amendment_to_id"] == "D000120"
+        assert amend.get("_amendment_ambiguous") is True
+        assert out["ambiguous_amendments"] == 1
+
+    def test_hostless_amendment_is_flagged_not_silently_followed(self):
+        """M6: a host-less amendment to a split base can't be attributed."""
+        recs = [
+            _base("D000120", "winner", ts="2026-01-01T10:00:00", host="aaa"),
+            _base("D000120", "loser", ts="2026-01-01T10:05:00", host="bbb"),
+            {"id": "D000120", "_amendment_to_id": "D000120", "is_outdated": True},
+        ]
+        out = id_repair.normalize(recs)
+        amend = next(r for r in out["records"] if r.get("_amendment_to_id"))
+        assert amend["_amendment_to_id"] == "D000120"
+        assert amend.get("_amendment_ambiguous") is True
+
     def test_three_way_collision_all_survive_with_distinct_ids(self):
         recs = [
             _base("D000120", "a", ts="2026-01-01T10:00:00", host="aaa"),

@@ -25,7 +25,9 @@ Call these MCP tools at the moments the description matches your action — they
 
 - **`record_decision(...)`** — Capture the *why*: what alternatives were considered, why this won, what would force a re-examination. A one-line decision is enough; the value compounds across sessions and across the other AI tools the user opens this project in.
 
-- For commits that fix a bug, prefer commit messages starting with `fix:`, `bug:`, `hotfix:`, or `fixes #N`. Codevira scans these into a fix-history database used by the Anti-Regression hero to block silent re-introduction of fixed bugs. *(Note: This scan currently runs only on server startup; for long-lived servers, the fix-history goes stale until the next restart.)*
+- For commits that fix a bug, prefer commit messages starting with `fix:`, `bug:`, `hotfix:`, or `fixes #N`. Codevira scans these into a fix-history database used by the Anti-Regression hero to block silent re-introduction of fixed bugs. *(v3.7.0: the scan now self-freshens on read — `fix_history.lookup()` re-scans when git HEAD has advanced — so `fix:` commits made after the server started are picked up without a restart.)*
+
+- **`mark_decision_outdated(decision_id, reason)`** (v3.7.0) — retire a decision that is simply no longer true and has NO successor, so it stops surfacing in `search_decisions` / `list_decisions` / `get_session_context` (reversible; audit preserved). Use `supersede_decision` instead when there IS a replacement. A `do_not_revert` decision needs `force=True` (surface its reasoning first).
 
 ### Before you finish a meaningful unit of work — STRONG RECOMMENDATION
 
@@ -33,7 +35,6 @@ Codevira's promise is "the project remembers what you did." That promise breaks 
 
 - **`update_phase_status(status, ...)`** — if you started or are blocked on the current phase
 - **`complete_phase(phase_number, key_decisions=[...])`** — if you finished a phase
-- **`complete_changeset(changeset_id, decisions=[...])`** — if you closed a multi-file fix
 - **`write_session_log(...)`** — at minimum, at the end of any session that produced commits or non-trivial output
 
 A session that ships code WITHOUT a codevira write call leaves the project's memory stale for the next AI. That's the most common way the wedge breaks. Treat it as part of the definition-of-done.

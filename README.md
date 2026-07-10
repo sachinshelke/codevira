@@ -182,7 +182,7 @@ summary: 13 pass · 0 warn · 0 fail
 
 ### Daily-use commands
 
-The CLI surface is 23 commands (the daily-use ones below):
+The CLI surface is 26 commands (the daily-use ones below):
 
 | Command | What it does |
 |---|---|
@@ -342,7 +342,7 @@ data:
 The agent always asks for what it needs, in the size it needs.
 
 **Shrink the tool surface itself.** The advertised MCP `tools/list` is a
-fixed per-session cost (~8K tokens for the full 50-tool surface). Set
+fixed per-session cost (~8K tokens for the full 51-tool surface). Set
 `CODEVIRA_TOOL_PROFILE=lean` in the MCP server's `env` block to advertise
 only the 12 daily-driver tools (~71% smaller); hidden tools still work
 when called explicitly. Bigger wins usually come from disabling MCP
@@ -468,7 +468,7 @@ the install lean (v2.3.0 may re-add specific grammars on demand).
 | `do_not_revert` enforcement at Claude Code PreToolUse | Symbol tools (`get_signature` / `get_code`) cover Python / TS / JS / Go / Rust; for other languages the AI `Read`s the file directly (the legacy `[all-languages]` grammar pack was removed in v2.2.0) |
 | FTS5 decision search with BM25 ranking | Real-time multi-machine sync — by design, codevira is local-first; for team sharing, commit `.codevira/` to git |
 | Per-project + cross-machine project inventory (`global.db`) | Web UI for browsing decisions — use the `codevira://decisions` MCP resource in Claude Desktop, or `codevira replay --format html` for a static file |
-| All 50 surfaced MCP tools + 23 CLI commands + 8 engine policies | The HTTP server (`codevira serve`) is single-project per launch — for daily use, stick with stdio via `codevira setup` |
+| All 51 surfaced MCP tools + 26 CLI commands + 8 engine policies | The HTTP server (`codevira serve`) is single-project per launch — for daily use, stick with stdio via `codevira setup` |
 | Concurrent-safe storage layer (Posix `fcntl.flock` + Windows sentinel fallback). Proven against 50-thread + 20-subprocess stress + 29-attack chaos harness | The cross-process file-lock contract has been exercised on macOS + Linux CI; the Windows sentinel-file fallback is verified via unit-test simulation but hasn't been load-tested on real Windows yet |
 | Code graph data store is functional but the v3.0.0 spec target (`<project>/.codevira-cache/graph.sqlite`) and the actual location (`<data_dir>/graph/graph.db`) drifted during the surface-cut audit. Tracked for v3.1 reconciliation | n/a (functional today; spec-truthfulness gap only) |
 

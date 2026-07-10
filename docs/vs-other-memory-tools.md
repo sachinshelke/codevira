@@ -12,7 +12,7 @@ Honest comparison vs the agent-memory tools shipping in 2026. Not marketing — 
 
 | Tool | Pitch | Coverage | Local-first | Decision protection | Cross-tool memory per project | LongMemEval |
 |---|---|---|---|---|---|---|
-| **codevira** | One memory layer for every AI coding tool | 7+ tier-1 IDEs, AGENTS.md fallback for any MCP client | ✅ MIT, no signup | ✅ `do_not_revert` + 10 hero policies | ✅ **the wedge** | not benchmarked (coding-specific data) |
+| **codevira** | One memory layer for every AI coding tool | 7+ tier-1 IDEs, AGENTS.md fallback for any MCP client | ✅ MIT, no signup | ✅ `do_not_revert` + 8 hero policies | ✅ **the wedge** | not benchmarked (coding-specific data) |
 | Mem0 | General agent memory (managed cloud + OSS) | Cloud SDK; user wires up | ⚠ self-host OSS or cloud | ❌ | ❌ (cross-session, not cross-tool) | published |
 | claude-mem | Auto-captures Claude Code sessions | **Claude Code only** | ✅ | ❌ | ❌ (single-tool) | not published |
 | MemPalace | 96.6% LongMemEval, 28 MCP tools | Mostly Claude Code | ⚠ local but heavy | ❌ | ❌ | **96.6%** (state-of-art) |
@@ -41,7 +41,7 @@ Hero 1 (Decision Lock): mark a decision as locked, and codevira refuses any AI e
 
 Codevira blocks that with a clear message + the original reasoning. **No other tool in this matrix has this.**
 
-### 3. AI guardians (10 of them)
+### 3. AI guardians (8 of them)
 
 Beyond `do_not_revert`, codevira intercepts every AI tool call with 10 policies that work as a single engine:
 

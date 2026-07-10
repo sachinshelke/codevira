@@ -44,11 +44,11 @@
 │  CODEVIRA MCP SERVER                                              │
 │  ~85 MB pipx install, <100ms cold start                           │
 │                                                                   │
-│  Tools (50 surfaced to AI clients):                               │
+│  Tools (51 surfaced to AI clients):                               │
 │    Decisions: record_decision / search_decisions / list_decisions │
 │               / list_tags / supersede_decision / check_conflict   │
 │               / get_history / reaffirm_decision /                 │
-│               set_decision_flag                                   │
+│               set_decision_flag / mark_decision_outdated          │
 │    Sessions:  write_session_log / get_session_context             │
 │    Phases:    get_roadmap / get_phase / add_phase /               │
 │               update_phase_status / defer_phase / complete_phase  │

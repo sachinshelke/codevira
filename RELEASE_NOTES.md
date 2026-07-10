@@ -1,3 +1,35 @@
+# v3.7.0 — Fresh memory, shared repos, one registration
+
+**Released:** 2026-07-10
+**Test status:** 3020 / 3020 passing
+
+Three things users asked for, all model-free and local:
+
+- **Memory stays fresh.** `record_decision` now *supersedes* a strong,
+  unprotected near-duplicate (gated on symmetric jaccard) instead of appending
+  a stale twin; `get_session_context` hides superseded / outdated /
+  outcome=reverted decisions; and `mark_decision_outdated(id)` retires a
+  decision that's no longer true (reversible). A `do_not_revert` decision is
+  never silently retired — `force=True` is required.
+- **Two engineers, one repo.** Decision-id collisions from cross-branch merges
+  are now visible (`read_merged` warns), deterministically repairable
+  (`codevira repair-ids [--apply] [--semantic]` — a true fixed point, so it
+  can't oscillate; malformed lines preserved), and auto-resolved by a git
+  **merge driver** installed by `codevira init` (with a `doctor` gap-check for
+  fresh clones).
+- **One MCP for all projects.** `codevira init` registers **one** user-scope
+  server by default (resolves the active project from workspace roots);
+  `--per-project` opts out. The project-root pin is now per-request.
+
+Also: the fix-history scan self-freshens on read; `NotebookEdit`/camelCase
+edits no longer log `<unknown>`; the D000118 intra-process id-drift is fixed.
+
+Full detail in [CHANGELOG.md](CHANGELOG.md#370--2026-07-10).
+
+> Upgrading? `pipx install --upgrade codevira`. See [MIGRATING.md](MIGRATING.md).
+
+---
+
 # v2.0.0 — First public 2.0 release
 
 **Released:** 2026-05-14

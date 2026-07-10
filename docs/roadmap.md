@@ -14,11 +14,13 @@ The `roadmap.yaml` file is the AI agent's living memory of your project's progre
 > concurrent IDE sessions. See [`docs/architecture.md`](architecture.md)
 > § "Concurrent-write safety".
 >
-> **v1.6+ historical note:** As of v1.6, project data lives centrally
-> at `~/.codevira/projects/<project-key>/` instead of inside the
-> project repo at `<project>/.codevira/`. The code graph still lives
-> at the centralized location in v3.0.0 (spec/impl drift documented
-> in [ROADMAP.md § Known limitations](../ROADMAP.md)).
+> **Storage note (current, v2.2.0+):** decisions, roadmap, sessions,
+> skills, and reflections live in the **committed in-repo** `.codevira/`
+> (git-diffable, team-shareable). Only the cross-project `global.db` and
+> rebuildable caches (the code graph, FTS index) sit under `~/.codevira/`
+> / `<project>/.codevira-cache/`. (v1.6 briefly centralized everything
+> under `~/.codevira/projects/<key>/`; the in-repo migration reversed that
+> for the canonical stores.)
 
 ---
 
@@ -35,7 +37,7 @@ The `roadmap.yaml` file is the AI agent's living memory of your project's progre
 
 ## What is the roadmap?
 
-The roadmap is a YAML file at `~/.codevira/projects/<project-key>/roadmap.yaml` that tracks:
+The roadmap is a YAML file at `<project-root>/.codevira/roadmap.yaml` that tracks:
 
 - **What phase of development you're in** (e.g., "Phase 2 — Auth System")
 - **What the agent should do next** (`next_action` field — updated at session end)
@@ -52,7 +54,7 @@ When you run `codevira init`, the initializer:
 1. **Reads your git history** — extracts tags (e.g., `v0.1`, `v1.0-auth`) as completed phase milestones
 2. **Detects your framework** — looks for `pyproject.toml`, `package.json`, `Cargo.toml`, `go.mod` etc. to infer the project type
 3. **Infers phase state** — if very few source files exist, creates a "Getting Started" phase; if the project is active, creates a "Feature Development" phase
-4. **Creates a stub** at `~/.codevira/projects/<project-key>/roadmap.yaml` — only if the file doesn't already exist (never overwrites)
+4. **Creates a stub** at `<project-root>/.codevira/roadmap.yaml` — only if the file doesn't already exist (never overwrites)
 
 ### Auto-generated stub example
 
@@ -77,7 +79,7 @@ deferred_phases: []
 ```
 
 **What to do after init:**
-- Open `~/.codevira/projects/<project-key>/roadmap.yaml` in your editor
+- Open `<project-root>/.codevira/roadmap.yaml` in your editor
 - Replace "Getting Started" with your actual current phase name
 - Update `goal` with what you're actually building
 - Add `upcoming_phases` for future work
@@ -137,8 +139,7 @@ The agent updates the roadmap automatically through MCP tool calls. You don't ne
 | `add_phase(title, goal)` | Planning a new upcoming feature | New entry appended to `upcoming_phases` |
 | `complete_phase(number)` | Phase fully done | Phase moved to `completed_phases`, `current_phase.number` incremented |
 | `defer_phase(number)` | Deprioritizing future work | Phase moved to `deferred_phases` |
-| `add_open_changeset("fix-id")` | Starting multi-file change | `current_phase.open_changesets` += "fix-id" |
-| `remove_open_changeset("fix-id")` | Changeset done | "fix-id" removed from `open_changesets` |
+| `update_phase_status(number, status)` | Starting / blocking a phase | `current_phase.status = ...` |
 
 ### Example: a typical session
 
@@ -149,11 +150,9 @@ Session start:
 
 During session:
   agent calls update_phase_status(2, "in_progress")
-  agent calls start_changeset("jwt-refresh", "Add /auth/refresh endpoint", [...])
-  agent calls add_open_changeset("jwt-refresh")
+  agent calls record_decision("chose rotating refresh tokens; ...", file_path="auth.py")
   ... (does the work) ...
-  agent calls complete_changeset("jwt-refresh", decisions=[...])
-  agent calls remove_open_changeset("jwt-refresh")
+  agent calls write_session_log(...)
 
 Session end:
   agent calls update_next_action("Write integration tests for /auth/refresh")
@@ -168,7 +167,7 @@ Next session:
 
 ## Manual editing guide
 
-You can always edit `~/.codevira/projects/<project-key>/roadmap.yaml` directly. The agent will pick up changes on the next `get_roadmap()` call.
+You can always edit `<project-root>/.codevira/roadmap.yaml` directly. The agent will pick up changes on the next `get_roadmap()` call.
 
 ### When to edit manually
 
@@ -244,11 +243,11 @@ deferred_phases:
 
 ### "Roadmap not found" error
 
-Run `codevira init` from your project root. The roadmap is created at `~/.codevira/projects/<project-key>/roadmap.yaml`.
+Run `codevira init` from your project root. The roadmap is created at `<project-root>/.codevira/roadmap.yaml`.
 
 ### Roadmap is out of sync with actual progress
 
-Edit `~/.codevira/projects/<project-key>/roadmap.yaml` directly to set the correct `current_phase.number` and `status`. The agent will read the updated file on the next tool call.
+Edit `<project-root>/.codevira/roadmap.yaml` directly to set the correct `current_phase.number` and `status`. The agent will read the updated file on the next tool call.
 
 ### Agent keeps doing work from a completed phase
 
@@ -267,20 +266,20 @@ current_phase:
 
 ### Roadmap corrupted (YAML parse error)
 
-Run the following to validate (replace `<project-key>` with your actual project key — find it via `codevira status` or by listing `~/.codevira/projects/`):
+Run the following to validate (the roadmap is the committed in-repo file):
 ```bash
-python -c "import yaml; yaml.safe_load(open('$HOME/.codevira/projects/<project-key>/roadmap.yaml'))"
+python -c "import yaml; yaml.safe_load(open('.codevira/roadmap.yaml'))"
 ```
 
 If the file is corrupted beyond repair, delete it and restart:
 ```bash
-rm ~/.codevira/projects/<project-key>/roadmap.yaml
-codevira index --full  # Regenerates the roadmap stub on next get_roadmap() call
+rm <project-root>/.codevira/roadmap.yaml
+codevira init  # get_roadmap() auto-creates a minimal Phase 1 stub on next call
 ```
 
 ### Agent's `next_action` doesn't match what I want
 
-Directly edit the `next_action` field in `~/.codevira/projects/<project-key>/roadmap.yaml`, or ask the agent:
+Directly edit the `next_action` field in `<project-root>/.codevira/roadmap.yaml`, or ask the agent:
 > "Update next_action to say: [your intent]"
 
 The agent will call `update_next_action()` and save it.
@@ -291,7 +290,7 @@ The agent will call `update_next_action()` and save it.
 
 **Q: Is the roadmap committed to git?**
 
-No. As of v1.6, the roadmap lives at `~/.codevira/projects/<key>/roadmap.yaml` — outside your project repo entirely. Each developer's roadmap is local to their machine.
+Yes (v2.2.0+). The roadmap lives at `<project-root>/.codevira/roadmap.yaml` — the committed in-repo store — so it's git-diffable and shared with your team when you commit `.codevira/`. (Only `~/.codevira/global.db` and rebuildable caches stay per-machine.)
 
 If you want to share roadmap state across a team, you can manually copy the file into your repo (e.g. `docs/roadmap.yaml`) and commit it. But Codevira itself is local-first by design — team-shared memory is on the v2.0 roadmap.
 

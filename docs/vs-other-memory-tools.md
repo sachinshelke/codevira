@@ -4,7 +4,7 @@ Honest comparison vs the agent-memory tools shipping in 2026. Not marketing — 
 
 ## TL;DR
 
-**Pick codevira if you**: code with AI agents, switch between Claude Code / Cursor / Windsurf / Antigravity on the same project, want decision protection (`do_not_revert`) + outcome scoring + scope locks, and want it all local-first with no signup.
+**Pick codevira if you**: code with AI agents, switch between Claude Code / Cursor / Windsurf / Antigravity on the same project, want decision protection (`do_not_revert`) + outcome scoring, and want it all local-first with no signup.
 
 **Pick something else if you**: need cross-process memory across machines (Mem0 cloud), need temporal knowledge graphs at enterprise scale (Zep), or want the highest LongMemEval benchmark score (MemPalace).
 
@@ -43,16 +43,14 @@ Codevira blocks that with a clear message + the original reasoning. **No other t
 
 ### 3. AI guardians (8 of them)
 
-Beyond `do_not_revert`, codevira intercepts every AI tool call with 10 policies that work as a single engine:
+Beyond `do_not_revert`, codevira intercepts every AI tool call with 8 policies that work as a single engine:
 
 | Trigger | Policy |
 |---|---|
-| Before Edit | Decision Lock, Anti-Regression Memory, Blast-Radius Veto, Scope Contract Lock |
-| User submits a prompt | Cross-Session Consistency (surfaces past decisions), Proactive Intent Inference (pre-fetches relevant fixes / impact / outcomes) |
-| After Edit | Live Style Enforcement (snake_case vs camelCase, quote-style, indent — vs your project's preferences) |
-| Session start | AI Promotion Score (top stable decisions injected) |
-| Stop | Token Budget logged |
-| On demand | Decision Replay (timeline browser) |
+| Before Edit | Decision Lock, Anti-Regression Memory, Blast-Radius Veto |
+| User submits a prompt | Relevance Inject (surfaces ≤3 relevant past decisions, or 0 tokens off-topic), Prompt Capture (records sanitized prompts for preference distillation) |
+| After Edit | Post-Edit Graph Refresh (keeps the code graph fresh) |
+| Stop | Token Budget logged, Session-Log Enforcer (nudges `write_session_log` when commits shipped without one) |
 
 This is the "active guardian" model. Claude-mem captures sessions. Mem0 retrieves. Codevira **intervenes**.
 
@@ -76,7 +74,7 @@ Honest:
 ## Choosing
 
 ```
-Want decision protection + scope locks?         → codevira
+Want decision protection + anti-regression?         → codevira
 Need it to work across Claude/Cursor/Windsurf?   → codevira
 Want max LongMemEval score?                      → MemPalace
 Need cloud + non-coding memory?                  → Mem0
@@ -95,7 +93,7 @@ Be honest about this. Codevira is **not** the right fit if:
 
 ## Star history disclosure
 
-Codevira is **early** (~10 stars at v2.0). Mem0, MemPalace, Zep are weeks-to-months ahead in user base. The trade-off: codevira ships features the others don't (decision protection, scope locks, cross-tool wedge) at the cost of less polish + smaller community.
+Codevira is **early** (early-stage, v3.7.0). Mem0, MemPalace, Zep are weeks-to-months ahead in user base. The trade-off: codevira ships features the others don't (decision protection, anti-regression, cross-tool wedge) at the cost of less polish + smaller community.
 
 If you try codevira and hit a bug, file it on GitHub. Response time is hours, not days.
 

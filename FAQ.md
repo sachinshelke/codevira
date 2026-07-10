@@ -12,7 +12,7 @@ A persistent memory layer for AI coding agents — so Claude Code, Cursor, Winds
 
 **Solo developers** working on local projects with AI coding tools. If you switch between AI agents (Claude Code in the morning, Cursor for autocomplete, Antigravity to test), Codevira makes them all share one memory of your project.
 
-**Not for teams (yet)** — Codevira is local-first. Every developer has their own `~/.codevira/` directory with their own project memory. Team-shared memory is on the roadmap but not in v2.0.
+**Local-first, and team-safe as of v3.7.0.** The decision log lives in the committed in-repo `.codevira/` (git-diffable, team-shareable); only the cross-project `global.db` + rebuildable caches sit under `~/.codevira/`. Two engineers can share one repo without silently losing decisions on merge — `codevira init` installs a deterministic git merge driver for the decision log, and `codevira repair-ids` fixes an already-merged store.
 
 ### I'm on v1.x — should I upgrade to 2.0?
 
@@ -25,7 +25,7 @@ safely. The upgrade is `pipx install --upgrade codevira`.
 
 The biggest reason to upgrade: 2.0 introduces the **active guardian
 engine** — codevira now intercepts every AI tool call and can block /
-warn / inject context (10 hero policies). Pre-2.0 was passive: the AI
+warn / inject context (8 engine policies). Pre-2.0 was passive: the AI
 looked things up only when it remembered to. Post-2.0 is active: codevira
 surfaces relevant prior decisions, blocks reverts of `do_not_revert`
 items, etc.

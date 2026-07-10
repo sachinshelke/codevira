@@ -154,10 +154,7 @@ codevira budget --full > /tmp/budget-week.txt
 # Snapshot insights
 codevira insights --since 7d > /tmp/insights-week.txt
 
-# Check for any crash logs accumulated
-codevira report
-
-# Re-run doctor
+# Re-run doctor (the crash_log_size check surfaces accumulated crash logs)
 codevira doctor
 ```
 

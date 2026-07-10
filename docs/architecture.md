@@ -185,10 +185,10 @@ mcp_server/storage/decisions_store.py::record()
           → enforces 5 KB cap (drops oldest unlocked if needed)
 ```
 
-Same pattern for `record_decisions` (batch), `supersede_decision`,
-`mark_decision_protected`. The append-only contract means amendments
-are appended as new lines that reference the original by id; the read
-path merges them in order.
+Same pattern for `supersede_decision`, `set_decision_flag`,
+`reaffirm_decision`, and `mark_decision_outdated` (v3.7.0). The
+append-only contract means amendments are appended as new lines that
+reference the original by id; the read path merges them in order.
 
 ## Relevance-gated injection (the v2.2.0 token-budget win)
 
@@ -249,9 +249,10 @@ These survived the v2.2.0 surgery untouched:
   `get_impact`, `query_graph`, `get_node`, etc. work exactly the same.
 - **PreToolUse enforcement** (`mcp_server/engine/policies/decision_lock.py`) —
   do_not_revert decisions still hard-block matching edits.
-- **Anti-regression, scope-contract, token-budget, post-edit-refresh,
-  intent-inference, blast-radius, ai-promotion, live-style policies** —
-  all unchanged.
+- **Anti-regression, blast-radius, relevance-inject, token-budget,
+  post-edit-refresh, prompt-capture, session-log-enforcer policies** —
+  the 8 that register (scope-contract, intent-inference, ai-promotion,
+  live-style were removed in the 2026-05-22 surface-cut audit).
 - **Setup wizard** (`mcp_server/setup_wizard.py`) — still configures
   8 IDEs in one command.
 - **Per-IDE hook scripts** (`~/.claude/hooks/codevira-*.sh`) — unchanged.

@@ -50,6 +50,10 @@ Auto-discovered from `.claude/skills/`:
 - **`epistemic-honesty`** — triggers on definitive claims, solution
   proposals, or bug diagnoses. Forces confidence calibration with
   inline evidence; refuses unverified "done" claims.
+- **`foolproof-product`** — triggers on any change to the product
+  surface (`mcp_server/`, `indexer/`). Enforces 10 product-reliability
+  principles (no silent failures, atomic state, defensive parsing,
+  reversible operations, helpful errors, …).
 
 ### 2. Pre-commit hooks (run automatically on every `git commit`)
 
@@ -71,7 +75,7 @@ Five gates that must pass before a release reaches PyPI:
 | **G1** | Unit tests | `make test-unit` |
 | **G2** | First-contact e2e | `make test-e2e` against 4 fixtures |
 | **G3** | Real-IDE smoke | `scripts/check_real_ide_smoke.sh` (stub today) |
-| **G4** | Crash-log clean | `codevira report` shows 0 CRASH |
+| **G4** | Crash-log clean | `codevira doctor` shows `crash_log_size` ✓ |
 | **G5** | Human verification | Maintainer confirms on a real machine |
 
 The PreToolUse hook (`.claude/hooks/pre-release-block.sh`) refuses
@@ -174,7 +178,7 @@ search_decisions("topic")             -> check what's already been decided
 
 AI agents can change many files quickly. For a PR to be reviewable:
 
-- **Start a changeset** before the agent begins: `start_changeset(id, description, files)`
+- **Scope the change up front** — `record_decision(...)` the intent before the agent begins, and `write_session_log(...)` at the end (the `changesets` tools were removed in the 2026-05-22 surface-cut audit)
 - **One concern per PR** — if the agent discovers additional improvements, open a separate issue
 - **Review every file** the agent changed before submitting
 
@@ -304,8 +308,8 @@ Go to GitHub and open a PR from your branch. Fill in the template.
 git clone https://github.com/sachinshelke/codevira.git
 cd codevira
 
-# Install in development mode (editable, with all optional deps)
-pip install -e .
+# Install in development mode (editable, with dev extras: ruff, mypy, pytest)
+pip install -e ".[dev]"
 
 # Verify MCP server starts
 python -m mcp_server

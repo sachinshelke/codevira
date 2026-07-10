@@ -114,7 +114,7 @@ server is ready.
 **Verify:**
 
 ```bash
-codevira doctor          # 11-ish health checks, ✓/⚠/✗
+codevira doctor          # 17 health checks, ✓/⚠/✗
 codevira list-decisions  # any decisions recorded yet?
 codevira sync            # regen AGENTS.md from current decisions.jsonl
 ```
@@ -156,7 +156,7 @@ Flags:
 
 ### What `codevira doctor` reports
 
-11 health checks in one run, each with a concrete `fix_command` for
+17 health checks in one run, each with a concrete `fix_command` for
 any WARN or FAIL. Read-only — never modifies anything.
 
 ```text
@@ -166,6 +166,7 @@ Codevira health check
 ✓  python_version         Python 3.13 (≥ 3.10 required)
 ✓  codevira_data_dir      /Users/you/.codevira exists and is writable
 ✓  project_root           /Users/you/Projects/my-project is a valid project root
+✓  project_binding        resolved from workspace → /Users/you/Projects/my-project
 ✓  codevira_dir           .codevira/ present (4 decision(s))
 ✓  agents_md_size         AGENTS.md is 1,234 bytes (≤10 KB safety threshold)
 ✓  graph_db               graph.db has all 4 expected tables
@@ -175,9 +176,12 @@ Codevira health check
 ✓  watcher_circuit        watcher circuit clean (no recent failures)
 ✓  engine_kill_switch     engine ON (default; CODEVIRA_ENGINE not set)
 ✓  claude_mcp_visibility  codevira visible to Claude Code
+✓  mcp_running_versions   in-memory server matches installed wheel
+✓  ghost_projects         no stale project registrations
 ✓  crash_log_size         no crash log (clean state)
+✓  merge_driver           decision-log merge driver configured
 ────────────────────────────────────────────────────────────
-summary: 13 pass · 0 warn · 0 fail
+summary: 17 pass · 0 warn · 0 fail
 ```
 
 ### Daily-use commands

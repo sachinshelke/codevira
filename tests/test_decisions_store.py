@@ -60,6 +60,49 @@ class TestMarkOutdated:
         assert res["success"] is False
         assert "not found" in res["error"]
 
+
+class TestOutdatedProtectionGate:
+    """SB2: a do_not_revert decision must NOT be silently retired via the
+    outdated tombstone — force is required, mirroring record_decision."""
+
+    def test_mark_outdated_refuses_protected_without_force(self):
+        did = decisions_store.record(
+            decision="protected decision A", do_not_revert=True
+        )
+        res = decisions_store.mark_outdated(did)
+        assert res["success"] is False
+        assert res.get("do_not_revert") is True
+        assert decisions_store.get(did).get("is_outdated") is not True
+
+    def test_mark_outdated_force_overrides_protection(self):
+        did = decisions_store.record(
+            decision="protected decision B", do_not_revert=True
+        )
+        res = decisions_store.mark_outdated(did, force=True)
+        assert res["success"] is True
+        assert decisions_store.get(did).get("is_outdated") is True
+
+    def test_set_flag_outdated_refuses_protected_without_force(self):
+        did = decisions_store.record(
+            decision="protected decision C", do_not_revert=True
+        )
+        res = decisions_store.set_flag(did, is_outdated=True)
+        assert res["success"] is False
+        assert decisions_store.get(did).get("is_outdated") is not True
+
+    def test_clearing_outdated_is_always_allowed(self):
+        did = decisions_store.record(
+            decision="protected decision D", do_not_revert=True
+        )
+        decisions_store.mark_outdated(did, force=True)
+        res = decisions_store.set_flag(did, is_outdated=False)
+        assert res["success"] is True
+        assert decisions_store.get(did).get("is_outdated") is False
+
+    def test_unprotected_outdated_needs_no_force(self):
+        did = decisions_store.record(decision="normal decision E")
+        assert decisions_store.mark_outdated(did)["success"] is True
+
     def test_outdated_record_preserved_on_disk(self):
         """Tombstone is an amendment overlay — the original text survives."""
         did = decisions_store.record(decision="original text stays on disk")

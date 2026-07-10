@@ -28,9 +28,11 @@ from indexer.sqlite_graph import SQLiteGraph
 logger = logging.getLogger(__name__)
 
 # v3.7.0 (Phase 30) supersede-on-write. Only supersede an existing UNPROTECTED
-# decision whose similarity to the new one is at least this high — conservative
-# so distinct decisions are never collapsed. check_conflict only returns
-# duplicates ≥ 0.60 already; this raises the bar for the destructive action.
+# decision whose SYMMETRIC jaccard to the new one is at least this high —
+# conservative so distinct decisions are never collapsed, and symmetric so a
+# terse token-subset can't supersede (and hide) a richer superset decision.
+# check_conflict only returns duplicates at jaccard ≥ 0.60; this raises the bar
+# for the destructive action.
 _SUPERSEDE_THRESHOLD = 0.75
 
 
@@ -251,11 +253,15 @@ def record_decision(
     # conflict is surfaced above and the user must act. Opt out with force=True
     # or CODEVIRA_SUPERSEDE_ON_RECORD=0.
     if not force and _supersede_on_record_enabled():
+        # Gate on the SYMMETRIC jaccard, not check_conflict's display
+        # "similarity" (= max(jaccard, overlap)). Overlap alone can hit 1.0 for
+        # a terse token-SUBSET of a richer decision; superseding on that would
+        # HIDE the richer decision behind the shorter one — the inverse bug.
         strong = [
             d
             for d in duplicates
             if not d.get("do_not_revert")
-            and (d.get("similarity") or 0.0) >= _SUPERSEDE_THRESHOLD
+            and (d.get("jaccard") or 0.0) >= _SUPERSEDE_THRESHOLD
             and d.get("decision_id")
         ]
         if strong:
@@ -265,12 +271,15 @@ def record_decision(
                 old_id=old_id,
                 new_decision=decision.strip(),
                 reason=(
-                    f"auto-superseded near-duplicate "
-                    f"(similarity={target.get('similarity')})"
+                    f"auto-superseded near-duplicate (jaccard={target.get('jaccard')})"
                 ),
                 file_path=file_path,
+                symbol=symbol,
+                context=context,
                 do_not_revert=bool(do_not_revert),
                 tags=tags,
+                alternatives_considered=alternatives_considered,
+                would_re_examine_if=would_re_examine_if,
             )
             if sup.get("success"):
                 resp = {
@@ -279,6 +288,7 @@ def record_decision(
                     "decision_id": sup.get("new_id"),
                     "session_id": effective_session_id,
                     "do_not_revert": bool(do_not_revert),
+                    "tags": tags,
                     "hint": (
                         f"Superseded near-duplicate {old_id} instead of "
                         f"recording a twin (staleness write-side). Pass "
@@ -373,6 +383,7 @@ def set_decision_flag(
     do_not_revert: bool | None = None,
     tags: list[str] | None = None,
     is_outdated: bool | None = None,
+    force: bool = False,
 ) -> dict:
     """v3.0.0 (2026-05-23 RC-audit follow-up): lightweight in-place
     update for do_not_revert and/or tags on an existing decision.
@@ -412,10 +423,13 @@ def set_decision_flag(
         do_not_revert=do_not_revert,
         tags=tags,
         is_outdated=is_outdated,
+        force=force,
     )
 
 
-def mark_decision_outdated(decision_id: str, reason: str | None = None) -> dict:
+def mark_decision_outdated(
+    decision_id: str, reason: str | None = None, force: bool = False
+) -> dict:
     """v3.7.0 staleness read-side: tombstone a decision as *outdated* so it
     stops surfacing in ``get_session_context`` / ``search_decisions`` /
     ``list_decisions`` — without deleting it.
@@ -425,19 +439,24 @@ def mark_decision_outdated(decision_id: str, reason: str | None = None) -> dict:
     ``set_decision_flag(decision_id, is_outdated=False)`` clears it. The
     record and its audit trail are preserved.
 
+    A ``do_not_revert`` (protected) decision is NOT retired without
+    ``force=True`` — surface its reasoning to the user first, then pass
+    ``force=True`` if they confirm.
+
     Args:
         decision_id: ID of the decision to retire (e.g. ``"D000007"``).
         reason: Optional short note on why it's outdated (capped, stored).
+        force: Required to retire a ``do_not_revert`` decision.
 
     Returns ``{success, decision_id, is_outdated}`` or ``{success: False,
-    error}`` if the id is unknown.
+    error, [do_not_revert]}``.
     """
     if not decision_id or not isinstance(decision_id, str):
         return {"success": False, "error": "decision_id must be a non-empty string"}
 
     from mcp_server.storage import decisions_store
 
-    return decisions_store.mark_outdated(decision_id, reason=reason)
+    return decisions_store.mark_outdated(decision_id, reason=reason, force=force)
 
 
 def reaffirm_decision(decision_id: str) -> dict:

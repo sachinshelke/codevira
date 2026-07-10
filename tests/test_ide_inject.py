@@ -1060,9 +1060,9 @@ class TestInjectIdeConfigIntegration:
         results = inject_ide_config(project, global_mode=True)
         assert "Claude Desktop (per-project)" in results
 
-    def test_global_mode_registers_antigravity_per_project(self, tmp_path, monkeypatch):
-        """Antigravity uses per-project keys; global mode registers it
-        per-project rather than skipping it."""
+    def test_global_mode_registers_antigravity_global(self, tmp_path, monkeypatch):
+        """SB3: global mode registers Antigravity under the CONSTANT-key global
+        helper (one 'codevira' entry), not the per-project one."""
         project = tmp_path / "proj"
         project.mkdir()
 
@@ -1076,12 +1076,48 @@ class TestInjectIdeConfigIntegration:
         )
         monkeypatch.setattr(
             ide_inject,
-            "_inject_antigravity",
+            "inject_global_antigravity",
             lambda *a, **k: "/fake/antigravity.json",
         )
 
         results = inject_ide_config(project, global_mode=True)
-        assert "Antigravity (per-project)" in results
+        assert "Antigravity (global)" in results
+
+    def test_global_mode_antigravity_uses_single_constant_key(
+        self, tmp_path, monkeypatch
+    ):
+        """SB3 regression: global_mode must register Antigravity under the
+        CONSTANT 'codevira' key, not a per-project 'codevira-<name>' key —
+        otherwise N projects create N Antigravity entries (the very problem
+        the single-registration release exists to kill). Does NOT mock the
+        inject fn — exercises the real write path against a temp config."""
+        import json as _json
+
+        cfg = tmp_path / "gemini" / "config.json"
+        cfg.parent.mkdir(parents=True)
+        monkeypatch.setattr(ide_inject, "_antigravity_write_targets", lambda: [cfg])
+        monkeypatch.setattr(
+            ide_inject, "detect_installed_ides", lambda pr: ["antigravity"]
+        )
+        monkeypatch.setattr(
+            ide_inject,
+            "_resolve_command",
+            lambda: ("/usr/bin/codevira", sys.executable),
+        )
+
+        proj_a = tmp_path / "alpha"
+        proj_a.mkdir()
+        proj_b = tmp_path / "beta"
+        proj_b.mkdir()
+        inject_ide_config(proj_a, project_name="alpha", global_mode=True)
+        inject_ide_config(proj_b, project_name="beta", global_mode=True)
+
+        servers = _json.loads(cfg.read_text()).get("mcpServers", {})
+        keys = [k for k in servers if k.startswith("codevira")]
+        assert keys == ["codevira"], (
+            f"expected exactly one constant 'codevira' key, got {keys} "
+            "— N projects created N Antigravity entries"
+        )
 
     def test_global_mode_claude_is_single_global_registration(
         self, tmp_path, monkeypatch

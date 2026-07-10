@@ -720,6 +720,13 @@ async def list_tools() -> list[Tool]:
                             "decision marked via mark_decision_outdated)"
                         ),
                     },
+                    "force": {
+                        "type": "boolean",
+                        "description": (
+                            "Required to set is_outdated=true on a "
+                            "do_not_revert (protected) decision"
+                        ),
+                    },
                 },
                 "required": ["decision_id"],
             },
@@ -746,6 +753,13 @@ async def list_tools() -> list[Tool]:
                     "reason": {
                         "type": "string",
                         "description": "Optional short note on why it's outdated",
+                    },
+                    "force": {
+                        "type": "boolean",
+                        "description": (
+                            "Required to retire a do_not_revert (protected) "
+                            "decision — surface its reasoning to the user first"
+                        ),
                     },
                 },
                 "required": ["decision_id"],
@@ -2001,6 +2015,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 do_not_revert=arguments.get("do_not_revert"),
                 tags=arguments.get("tags"),
                 is_outdated=arguments.get("is_outdated"),
+                force=arguments.get("force", False),
             )
         elif name == "mark_decision_outdated":
             # v3.7.0 staleness read-side: tombstone a stale decision so it
@@ -2010,6 +2025,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             result = mark_decision_outdated(
                 decision_id=arguments["decision_id"],
                 reason=arguments.get("reason"),
+                force=arguments.get("force", False),
             )
         elif name == "reaffirm_decision":
             # v3.2.0 do_not_revert soft-expire: append a reaffirmed_at

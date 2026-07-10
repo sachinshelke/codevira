@@ -745,21 +745,38 @@ def compute_dnr_soft_expire(
     }
 
 
-def mark_outdated(decision_id: str, *, reason: str | None = None) -> dict[str, Any]:
+def mark_outdated(
+    decision_id: str, *, reason: str | None = None, force: bool = False
+) -> dict[str, Any]:
     """Tombstone a decision as *outdated* so it stops surfacing in
     ``list_all`` / ``search`` / ``get_session_context`` — WITHOUT deleting it.
 
     v3.7.0 staleness read-side. Unlike ``supersede`` there is no
     replacement decision; use this when a decision is simply no longer true
     and has no successor. Reversible: writes an amendment (audit preserved),
-    cleared via ``set_flag(is_outdated=False)``. Protected
-    (``do_not_revert``) decisions can be marked outdated too — the amendment
-    IS the audit trail — but the MCP tool layer should confirm first.
+    cleared via ``set_flag(is_outdated=False)``.
+
+    A ``do_not_revert`` (protected) decision is NOT retired without
+    ``force=True`` — otherwise this would be a silent back door around the
+    protection contract (any AI, any IDE, one call, and the decision vanishes
+    from every reader). Refusal returns ``{success: False, do_not_revert:
+    True}``; the caller should surface the reasoning and pass ``force=True`` or
+    use ``supersede_decision`` instead.
     """
     paths.ensure_dirs()
     existing = get(decision_id)
     if existing is None:
         return {"success": False, "error": f"decision {decision_id} not found"}
+    if existing.get("do_not_revert") and not force:
+        return {
+            "success": False,
+            "error": (
+                f"decision {decision_id} is do_not_revert (protected). Surface "
+                f"its reasoning and pass force=True to retire it, or use "
+                f"supersede_decision to replace it."
+            ),
+            "do_not_revert": True,
+        }
     now = datetime.now(timezone.utc).isoformat()
     amendment = {
         "id": decision_id,
@@ -782,6 +799,7 @@ def set_flag(
     do_not_revert: bool | None = None,
     tags: list[str] | None = None,
     is_outdated: bool | None = None,
+    force: bool = False,
 ) -> dict[str, Any]:
     """Lightweight in-place flag/tag updates via an amendment line.
 
@@ -809,7 +827,18 @@ def set_flag(
             return {"success": False, "error": "tags must be a list[str]"}
         updates["tags"] = tags
     if is_outdated is not None:
-        # Clears (or re-sets) the outdated tombstone written by mark_outdated.
+        # Setting the outdated tombstone on a protected decision is the same
+        # back door as mark_outdated — gate it behind force. Clearing it
+        # (is_outdated=False) is always allowed.
+        if bool(is_outdated) and existing.get("do_not_revert") and not force:
+            return {
+                "success": False,
+                "error": (
+                    f"decision {decision_id} is do_not_revert (protected); "
+                    f"pass force=True to mark it outdated, or use supersede_decision."
+                ),
+                "do_not_revert": True,
+            }
         updates["is_outdated"] = bool(is_outdated)
 
     if not updates:
@@ -834,6 +863,10 @@ def supersede(
     file_path: str | None = None,
     do_not_revert: bool = False,
     tags: list[str] | None = None,
+    symbol: str | None = None,
+    context: str | None = None,
+    alternatives_considered: list[str] | None = None,
+    would_re_examine_if: str | None = None,
 ) -> dict[str, Any]:
     """Append a new decision; amend the old to is_superseded=True.
 
@@ -845,6 +878,13 @@ def supersede(
     file_path). Same inheritance for ``tags``. Callers wanting to
     explicitly detach can still pass ``file_path=""`` — only ``None``
     triggers the inheritance.
+
+    v3.7.0 (Phase 30 follow-up): ``symbol`` / ``context`` /
+    ``alternatives_considered`` / ``would_re_examine_if`` are now threaded onto
+    the new decision so supersede-on-write can't silently DROP a region-lock
+    scope, the rationale, or the counter-decision fields. ``symbol`` inherits
+    from the old decision when None; ``context`` falls back to the
+    ``[supersedes …]`` marker only when the caller passes none.
     """
     paths.ensure_dirs()
     old = get(old_id)
@@ -853,13 +893,21 @@ def supersede(
 
     effective_file_path = file_path if file_path is not None else old.get("file_path")
     effective_tags = tags if tags is not None else old.get("tags")
+    effective_symbol = symbol if symbol is not None else old.get("symbol")
+    supersede_marker = f"[supersedes {old_id}: {reason}]"
+    effective_context = (
+        f"{context}\n{supersede_marker}" if context else supersede_marker
+    )
 
     new_id = record(
         decision=new_decision,
         file_path=effective_file_path,
-        context=f"[supersedes {old_id}: {reason}]",
+        symbol=effective_symbol,
+        context=effective_context,
         do_not_revert=do_not_revert,
         tags=effective_tags,
+        alternatives_considered=alternatives_considered,
+        would_re_examine_if=would_re_examine_if,
     )
     amendment = {
         "id": old_id,

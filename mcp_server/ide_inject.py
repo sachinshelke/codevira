@@ -987,13 +987,14 @@ def inject_ide_config(
                     if path:
                         results["Claude Desktop (per-project)"] = path
                 elif ide == "antigravity":
-                    # Antigravity uses per-project keys; register per-project
-                    # even in global mode so it isn't silently left out.
-                    path = _inject_antigravity(
-                        project_root, cmd_path, python_exe, project_name
-                    )
+                    # v3.7.0 fix (SB3): use the CONSTANT-key global helper, not
+                    # the per-project `codevira-<name>` one — otherwise N
+                    # projects create N Antigravity entries, re-opening the very
+                    # N-entries problem single-registration exists to close.
+                    # Antigravity sets the working dir when it spawns the server.
+                    path = inject_global_antigravity(cmd_path, python_exe)
                     if path:
-                        results["Antigravity (per-project)"] = path
+                        results["Antigravity (global)"] = path
             else:
                 # Per-project mode (existing behavior)
                 if ide == "claude":

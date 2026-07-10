@@ -55,7 +55,13 @@ codevira doctor
 
 ## During the week (no extra time — your normal coding)
 
-Just code. The 10 heroes run automatically. **Don't disable anything.** If something blocks you legitimately:
+Just code. The engine's 8 active policies run automatically. **Don't disable anything.** If something blocks you legitimately:
+
+> **Note (v2.2.0+):** the 2026-05-22 surface-cut audit removed several early
+> "heroes" and their CLI. Live-Style enforcement (`CODEVIRA_LIVE_STYLE_MODE`),
+> the Scope-Contract lock, Intent Inference, and the AI-Promotion / `codevira
+> insights` + `codevira budget` commands referenced later in this doc are no
+> longer shipped — treat those scenarios as historical.
 
 ```bash
 # Switch any single hero to advisory:

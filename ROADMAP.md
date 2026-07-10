@@ -4,7 +4,7 @@
 
 Codevira gives every AI coding tool — Claude Code, Cursor, Windsurf, Google Antigravity, or any MCP-compatible agent — persistent memory that survives across sessions, learns from developer behavior, and works on any project in any language.
 
-**Built for solo developers.** All memory lives on your machine in `~/.codevira/`. No cloud, no accounts, no team sharing (yet). One install handles every project you work on.
+**Local-first, and now team-safe.** The decision log lives in the committed in-repo `.codevira/` (git-diffable, team-shareable); only the cross-project `global.db` + rebuildable caches sit under `~/.codevira/`. No cloud, no accounts. As of v3.7.0 two engineers can share one repo without silently losing decisions on merge (a deterministic git merge driver + `codevira repair-ids`). One install handles every project you work on.
 
 **Vision:** Install once. Register once. Every project on your machine gets intelligent memory automatically. No config files, no manual setup, no vendor lock-in.
 

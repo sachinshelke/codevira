@@ -255,32 +255,20 @@ Your agent will still work — the MCP tools are always available. But without f
 
 The context graph lives in `.codevira/graph/graph.db` (SQLite). It's git-ignored by default because it contains local index data and rebuilds from source. The canonical, team-shareable memory is the JSONL in `.codevira/` (decisions, skills, reflections) — commit that to share it across the team; the graph index stays local and per-machine.
 
+**v3.7.0 makes this safe for real cross-engineer work.** Before, two engineers on two branches could both mint the same decision id; `git merge` combined the appended lines cleanly and one decision was silently shadowed on read. Now `codevira init` installs a **git merge driver** that resolves those collisions deterministically (both sides converge), `read_merged` warns if a collision slips through, and `codevira repair-ids [--apply]` fixes an already-merged store. Commit `.gitattributes` so teammates inherit the driver mapping (each still runs `codevira init` once to configure it locally; `codevira doctor` flags the gap otherwise).
+
 ### Can I use Codevira without a roadmap?
 
 Yes. If the roadmap doesn't exist, `get_roadmap()` auto-creates a minimal Phase 1 stub on first call. You can use all graph, search, decision, and code-reader features without ever touching the roadmap.
 
 ### Why is my agent reading the roadmap from a different project?
 
-This happens with global MCP clients like Google Antigravity that share config across workspaces. Each project needs a unique server name:
+As of **v3.7.0** codevira registers ONE user-scope server (a single constant `codevira` entry) that resolves the active project from your editor's workspace roots at runtime — so this cross-workspace bleed shouldn't happen. If it does, your client isn't advertising workspace roots. Two fixes:
 
-```json
-{
-  "mcpServers": {
-    "codevira-project-a": {
-      "$typeName": "exa.cascade_plugins_pb.CascadePluginCommandTemplate",
-      "command": "codevira",
-      "args": ["--project-dir", "/path/to/project-a"]
-    },
-    "codevira-project-b": {
-      "$typeName": "exa.cascade_plugins_pb.CascadePluginCommandTemplate",
-      "command": "codevira",
-      "args": ["--project-dir", "/path/to/project-b"]
-    }
-  }
-}
-```
+- **Pin explicitly** — set `CODEVIRA_PROJECT_DIR=/path/to/project` in that server's `env` (or run with `--project-dir`), which overrides roots resolution.
+- **Per-project entries** — run `codevira init --per-project` (or `CODEVIRA_INIT_PER_PROJECT=1`) to register a distinct server per project instead of the shared one.
 
-Claude Code, Cursor, and Windsurf use per-project config files, so this issue doesn't apply to them.
+Run `codevira doctor` — the `project_binding` check shows exactly which project the server resolved to and why.
 
 ### What is the function-level call graph?
 

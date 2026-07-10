@@ -164,29 +164,34 @@ Restart your AI tool after init. Verify: ask your agent to call `get_roadmap()`.
 **Manual config (if auto-inject didn't work):**
 
 Codevira supports two MCP transports:
-- **stdio (default + recommended)** — the IDE spawns `codevira` per project. Multi-project out of the box.
+- **stdio (default + recommended)** — as of v3.7.0, ONE user-scope `codevira`
+  server (no `--project-dir`, no `cwd`) that resolves the active project from
+  the MCP client's workspace roots at runtime. One registration covers every
+  project.
 - **HTTP/HTTPS (preview)** — single-project only. Use stdio for multi-project work.
 
-**Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`) — stdio only:
+**Claude Code CLI, Cursor, Windsurf** — stdio, single user-scope entry (resolves the project from workspace roots):
+```json
+{
+  "mcpServers": {
+    "codevira": {
+      "command": "codevira",
+      "args": []
+    }
+  }
+}
+```
+To PIN a specific project instead of resolving from roots (the `--per-project`
+shape), add `"args": ["--project-dir", "/path/to/your-project"]` or
+`"cwd": "/path/to/your-project"`.
+
+**Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`) — can't advertise roots, so it uses an explicit pin:
 ```json
 {
   "mcpServers": {
     "codevira": {
       "command": "/path/to/codevira",
       "args": ["--project-dir", "/path/to/your-project"]
-    }
-  }
-}
-```
-
-**Claude Code CLI, Cursor, Windsurf** — stdio (`.claude/settings.json` / `.cursor/mcp.json` / `.windsurf/mcp.json`):
-```json
-{
-  "mcpServers": {
-    "codevira": {
-      "command": "codevira",
-      "args": [],
-      "cwd": "/path/to/your-project"
     }
   }
 }

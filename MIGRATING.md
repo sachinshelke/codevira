@@ -1,5 +1,28 @@
 # Migrating to Codevira
 
+## Upgrading to 3.7.0
+
+`pipx install --upgrade codevira`. No data migration — existing
+`.codevira/decisions.jsonl` and `~/.codevira/global.db` are read as-is. Three
+default-behavior changes worth knowing:
+
+- **Single user-scope MCP registration.** `codevira init` now registers ONE
+  user-scope `codevira` server that resolves the active project from your
+  editor's workspace roots at runtime, instead of a per-project entry — so N
+  projects no longer create N codevira entries in your IDE. If your IDE can't
+  advertise workspace roots, opt back in with `codevira init --per-project`
+  (or `CODEVIRA_INIT_PER_PROJECT=1`).
+- **Supersede-on-write.** `record_decision` now *supersedes* a strong,
+  unprotected near-duplicate instead of appending a parallel twin. Protected
+  (`do_not_revert`) near-duplicates are never auto-superseded. Restore the old
+  append-a-twin behavior with `force=True` or `CODEVIRA_SUPERSEDE_ON_RECORD=0`.
+- **`init` installs a git merge driver** (`.gitattributes` + local git config)
+  so cross-engineer decision-id collisions resolve automatically on `git
+  merge`. `codevira doctor` gains a `merge_driver` check.
+
+New tool: `mark_decision_outdated(decision_id, reason)` — retire a decision
+with no successor (protected decisions need `force=True`).
+
 ## Upgrading to 3.0.0
 
 **v3.0.0 is a tool-surface contraction.** Existing `.codevira/`

@@ -1,4 +1,8 @@
-# Codevira
+<p align="center">
+  <img src="https://raw.githubusercontent.com/sachinshelke/codevira/main/website/assets/logo.png" alt="Codevira" width="140" height="140">
+</p>
+
+<h1 align="center">Codevira</h1>
 
 > **Cross-IDE decision memory for AI coding agents.** One in-repo memory
 > layer that every AI tool you use can read — plus PreToolUse hooks that

@@ -7,6 +7,14 @@
 <meta name="description" content="Codevira gives Claude Code, Cursor, Windsurf, Copilot and every AI coding tool a shared, persistent project memory — and enforces past decisions, blocking regressions before they ship. Local-first, ~1 MB per project, no cloud, MIT.">
 <link rel="canonical" href="https://sachinshelke.github.io/codevira/">
 <meta name="robots" content="index, follow">
+<meta name="theme-color" content="#0b0d12">
+
+<!-- Icons -->
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="assets/favicon-16x16.png">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+<link rel="manifest" href="site.webmanifest">
 
 <!-- Open Graph -->
 <meta property="og:type" content="website">
@@ -14,11 +22,15 @@
 <meta property="og:title" content="Codevira — persistent memory for AI coding agents">
 <meta property="og:description" content="Cross-IDE persistent memory + decision enforcement for AI coding agents. Local-first, in your repo, no cloud. MIT.">
 <meta property="og:url" content="https://sachinshelke.github.io/codevira/">
+<meta property="og:image" content="https://sachinshelke.github.io/codevira/assets/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
 
 <!-- Twitter -->
-<meta name="twitter:card" content="summary">
+<meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Codevira — persistent memory for AI coding agents">
 <meta name="twitter:description" content="Cross-IDE persistent memory + decision enforcement for AI coding agents. Local-first, in your repo, no cloud. MIT.">
+<meta name="twitter:image" content="https://sachinshelke.github.io/codevira/assets/og-image.png">
 
 <!-- Structured data -->
 <script type="application/ld+json">
@@ -31,6 +43,7 @@
   "softwareVersion": "3.7.0",
   "description": "Cross-IDE persistent memory and decision enforcement for AI coding agents. Local-first, stored in your repo, no cloud, no vectors.",
   "url": "https://sachinshelke.github.io/codevira/",
+  "image": "https://sachinshelke.github.io/codevira/assets/logo-512.png",
   "downloadUrl": "https://pypi.org/project/codevira/",
   "license": "https://opensource.org/licenses/MIT",
   "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"},
@@ -92,8 +105,7 @@
       border-radius:99px;background:var(--glass-strong);backdrop-filter:blur(24px) saturate(1.8);
       -webkit-backdrop-filter:blur(24px) saturate(1.8);border:1px solid var(--glass-line);box-shadow:var(--shadow)}
   .logo{display:flex;align-items:center;gap:10px;font-weight:600;font-size:19px;color:var(--text)}
-  .logo .mark{width:30px;height:30px;border-radius:9px;background:linear-gradient(135deg,var(--blue),var(--violet));
-      display:grid;place-items:center;color:#fff;font-family:var(--mono);font-size:14px;font-weight:500}
+  .logo .mark{width:32px;height:32px;border-radius:8px;object-fit:contain;display:block}
   .version{font-family:var(--mono);font-size:11.5px;font-weight:500;color:var(--blue);
       border:1px solid currentColor;border-radius:99px;padding:2px 10px;margin-left:6px;opacity:.9}
   nav .links{display:flex;align-items:center;gap:2px}
@@ -309,7 +321,7 @@
 <nav>
   <div class="inner">
     <div class="logo">
-      <span class="mark">cv</span> codevira
+      <img class="mark" src="assets/logo.png" alt="Codevira" width="32" height="32"> codevira
       <a class="version" href="https://github.com/sachinshelke/codevira/blob/main/CHANGELOG.md" title="Changelog">v3.7.0</a>
     </div>
     <div class="links">

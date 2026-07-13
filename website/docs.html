@@ -31,6 +31,8 @@
     --mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
     --sans:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
     --display:"Space Grotesk","IBM Plex Sans",-apple-system,sans-serif;
+    /* single centered logo watermark + ripple rings */
+    --wm-size:min(70vmin,680px); --wm-logo-op:.055; --wm-ring:255,106,26; --wm-ring-op:.10;
   }
   [data-theme="dark"]{
     --blue:#6db1ff; --violet:#8d9bff; --red:#ff7b7b; --amber:#ffc466;
@@ -40,11 +42,32 @@
     --shadow:0 8px 32px rgba(0,0,0,.45);
     --term-bg:rgba(10,12,18,.88); --term-text:#e8eaf2;
     --code-inline:rgba(109,177,255,.12);
+    --wm-logo-op:.075; --wm-ring-op:.15;
   }
   *{box-sizing:border-box;margin:0;padding:0}
   html{scroll-behavior:smooth}
   body{background:var(--bg);color:var(--text);font-family:var(--sans);line-height:1.65;
        transition:background .35s ease,color .35s ease;-webkit-font-smoothing:antialiased}
+  /* single centered logo watermark + soft sonar-style ripple rings, fixed,
+     behind everything. tweak via --wm-size / --wm-logo-op / --wm-ring-op */
+  .wm-brand{position:fixed;inset:0;z-index:-1;pointer-events:none;display:grid;place-items:center}
+  .wm-emblem{display:flex;flex-direction:column;align-items:center;transform:translateY(-3%)}
+  .wm-logowrap{position:relative;display:grid;place-items:center;width:var(--wm-size);height:var(--wm-size)}
+  .wm-logowrap .wm-logo{width:100%;height:100%;object-fit:contain;opacity:var(--wm-logo-op)}
+  .wm-logowrap .wm-ring{position:absolute;width:90%;height:90%;border-radius:50%;
+       border:2px solid rgba(var(--wm-ring),.9);opacity:0;transform:scale(.6);
+       animation:wm-ripple 7.5s ease-out infinite;will-change:transform,opacity}
+  .wm-logowrap .wm-ring:nth-child(2){animation-delay:2.5s}
+  .wm-logowrap .wm-ring:nth-child(3){animation-delay:5s}
+  .wm-word{font-family:var(--display);font-weight:600;letter-spacing:.16em;
+       font-size:calc(var(--wm-size) * .125);color:rgb(var(--wm-ring));
+       opacity:var(--wm-logo-op);margin-top:calc(var(--wm-size) * -.03)}
+  @keyframes wm-ripple{
+    0%{transform:scale(.6);opacity:0}
+    14%{opacity:var(--wm-ring-op)}
+    100%{transform:scale(1.55);opacity:0}
+  }
+  @media(prefers-reduced-motion:reduce){.wm-logowrap .wm-ring{display:none}}
   a{color:var(--blue);text-decoration:none}
   a:hover{text-decoration:underline}
   code{font-family:var(--mono);font-size:.86em;color:var(--blue);background:var(--code-inline);
@@ -108,6 +131,7 @@
 </style>
 </head>
 <body>
+<div class="wm-brand" aria-hidden="true"><div class="wm-emblem"><div class="wm-logowrap"><span class="wm-ring"></span><span class="wm-ring"></span><span class="wm-ring"></span><img class="wm-logo" src="assets/logo.png" alt=""></div><span class="wm-word">codevira</span></div></div>
 <nav>
   <div class="inner">
     <a class="logo" href="index.html" style="text-decoration:none">

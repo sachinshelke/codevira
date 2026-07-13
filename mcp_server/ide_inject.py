@@ -403,6 +403,54 @@ def remove_codevira_from_config(
     return True
 
 
+def _has_codevira_entry(config_path: Path) -> bool:
+    """True if `config_path` has a `codevira` (or `codevira-*`) mcpServers key."""
+    if not config_path.exists():
+        return False
+    servers = _read_json_safe(config_path).get("mcpServers", {})
+    return any(k == "codevira" or k.startswith("codevira-") for k in servers)
+
+
+def heal_stale_registration(
+    project_root: Path, require_global: bool = False
+) -> list[str]:
+    """Remove the stale per-project `codevira` MCP entry a pre-3.7 `init` wrote.
+
+    v3.7.0 switched to ONE user-scope registration. An existing per-project
+    entry (in `<project>/.mcp.json`, `.cursor/mcp.json`, `.windsurf/mcp.json`)
+    otherwise lingers alongside the new global one — a duplicate server, and its
+    hardcoded ``--project-dir`` can even pin the server to one project regardless
+    of the workspace. This surgically removes just the codevira key (atomic,
+    every other mcpServers entry preserved).
+
+    NON-ORPHANING: with ``require_global=True`` (the startup path), a per-project
+    entry is removed ONLY when a global codevira entry already exists for that
+    IDE — so a user who only ever had a per-project registration is never left
+    with no server. ``require_global=False`` (the init path) is used right after
+    we've written the global entry ourselves, so removal is unconditional.
+
+    Returns the list of config files cleaned.
+    """
+    project_root = project_root.resolve()
+    cleaned: list[str] = []
+    targets = [
+        (_claude_config_path(project_root), _claude_global_config_path()),
+        (_cursor_config_path(project_root), _cursor_global_config_path()),
+        (_windsurf_config_path(project_root), _windsurf_global_config_path()),
+    ]
+    for per_project, global_path in targets:
+        if not _has_codevira_entry(per_project):
+            continue
+        if require_global and not _has_codevira_entry(global_path):
+            continue  # never orphan a user whose only registration is per-project
+        try:
+            if remove_codevira_from_config(per_project):
+                cleaned.append(str(per_project))
+        except Exception:
+            pass  # best-effort; a heal failure must never break init/startup
+    return cleaned
+
+
 # ---------------------------------------------------------------------------
 # Resolve the best command to run codevira
 # ---------------------------------------------------------------------------

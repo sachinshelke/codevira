@@ -367,6 +367,21 @@ def cmd_init() -> None:
                     print(f"    ✓ {ide_name}: {config_path}")
             else:
                 print("no AI tools detected")
+
+            # v3.7.0: after writing the single global entry, remove any stale
+            # per-project codevira entry a pre-3.7 init left behind — otherwise
+            # the user ends up with a duplicate server (and its hardcoded
+            # --project-dir can pin the server to the wrong project). Unconditional
+            # here: we just wrote the global entry, so removal can't orphan.
+            if not _per_project:
+                try:
+                    from mcp_server.ide_inject import heal_stale_registration
+
+                    healed = heal_stale_registration(cwd, require_global=False)
+                    for path in healed:
+                        print(f"    ✓ removed stale per-project entry: {path}")
+                except Exception:
+                    pass  # best-effort; never fail init on cleanup
         except Exception as e:
             print(f"skipped ({e})")
             from mcp_server._safe_crash import safe_log_crash
@@ -2589,7 +2604,11 @@ def _collect_project_cleanup(project_path: Path, actions: list) -> None:
 
     # Per-project IDE configs
     for ide_name, config_path in [
-        ("claude", project_path / ".claude" / "settings.json"),
+        # Claude Code's per-project MCP entry lives in <project>/.mcp.json
+        # (see ide_inject._claude_config_path), NOT .claude/settings.json
+        # (that file is hooks/permissions/env). Targeting settings.json left
+        # the stale per-project codevira entry behind on `clean`.
+        ("claude", project_path / ".mcp.json"),
         ("cursor", project_path / ".cursor" / "mcp.json"),
         ("windsurf", project_path / ".windsurf" / "mcp.json"),
     ]:

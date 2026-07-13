@@ -234,3 +234,170 @@ def _ensure_git_remote_column(gdb) -> None:
             gdb.conn.commit()
     except Exception:
         pass
+
+
+# ---------------------------------------------------------------------------
+# v3.7.0 (M1) — automatic, non-breaking DATA self-heal at server startup
+# ---------------------------------------------------------------------------
+#
+# Users must never run a manual command after upgrading, even for a big
+# upgrade. This migrator runs at server startup (and on `codevira init`) and is:
+#
+#   * idempotent   — a per-project ledger records which named migrations ran;
+#                    each runs at most once.
+#   * lock-safe    — a file lock guards the ledger, so two concurrent codevira
+#                    processes (two IDE windows) can't double-apply.
+#   * non-breaking — collision repair reuses decisions_store.repair_ids, which
+#                    writes through the SAME exclusive-flock + atomic-replace
+#                    that a normal append uses. A record() in another window is
+#                    serialized against it; a concurrent read gets a consistent
+#                    snapshot. No lost writes, no torn reads. (Verified: the
+#                    write path locks — jsonl_store.append/rewrite_all.)
+#   * non-destructive — decisions.jsonl is backed up before any rewrite.
+#   * failure-isolated — a migration that raises is logged and left un-marked
+#                    (retried next start); it never blocks server startup.
+#
+# It ONLY touches codevira-owned data files. IDE registration config is NOT
+# migrated here — that file is written concurrently by the IDE and can't be
+# lock-controlled, so a silent background rewrite could race and corrupt it.
+# Registration is healed surgically by init/setup instead (M2).
+
+_LEDGER_NAME = "migration_ledger.json"
+
+
+def _ledger_path() -> Path:
+    """Ledger lives beside decisions.jsonl (the per-project data dir)."""
+    from mcp_server.storage import paths as store_paths
+
+    return store_paths.decisions_path().parent / _LEDGER_NAME
+
+
+def _load_ledger(path: Path) -> dict:
+    if not path.is_file():
+        return {"applied": []}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict) or not isinstance(data.get("applied"), list):
+            return {"applied": []}
+        return data
+    except (json.JSONDecodeError, OSError):
+        return {"applied": []}
+
+
+def _save_ledger(path: Path, ledger: dict) -> None:
+    from mcp_server.storage.atomic import atomic_write_text
+
+    atomic_write_text(path, json.dumps(ledger, indent=2, sort_keys=True))
+
+
+def _mig_v370_repair_collisions(project_root: Path) -> bool:
+    """Heal any PRE-3.7.0 base-id collisions (a shared repo whose decisions.jsonl
+    already carries two records minted with the same id — one is silently
+    shadowed on read until repaired).
+
+    Backup-first, then reuse ``decisions_store.repair_ids(apply=True)`` —
+    deterministic, idempotent, non-lossy, lock+atomic. Returns True if a repair
+    was applied. New (post-upgrade) collisions are handled by the merge driver
+    at merge time + the doctor check, not here — this is a one-time upgrade heal.
+    """
+    from mcp_server.storage import decisions_store
+    from mcp_server.storage import paths as store_paths
+
+    report = decisions_store.repair_ids(apply=False)
+    if not report.get("changed"):
+        return False  # clean store — nothing to heal
+
+    src = store_paths.decisions_path()
+    backup = src.with_name(src.name + ".bak-pre-v370")
+    if src.is_file() and not backup.exists():
+        shutil.copy2(src, backup)
+
+    decisions_store.repair_ids(apply=True)
+    return True
+
+
+def _mig_v370_merge_driver(project_root: Path) -> bool:
+    """Self-install the decision-log git merge driver so future cross-engineer
+    id collisions resolve automatically on merge/rebase. Idempotent; no-op
+    outside a git repo.
+    """
+    from mcp_server.cli_repair import install_merge_driver
+
+    install_merge_driver(project_root)
+    return True
+
+
+def _mig_v370_dedupe_registration(project_root: Path) -> bool:
+    """Remove a stale per-project `codevira` IDE entry left by a pre-3.7 init —
+    but ONLY when a global codevira entry already exists (non-orphaning).
+
+    This is the ONE registration action safe to do silently at startup: it
+    touches only project-local config files (low-write, not the IDE's own
+    heavily-written global state), edits are surgical + atomic, and it can never
+    leave a user with no server. Creating the global entry is NOT done here —
+    that write is handled by init/setup, where it isn't racing the IDE.
+    """
+    from mcp_server.ide_inject import heal_stale_registration
+
+    heal_stale_registration(project_root, require_global=True)
+    return True
+
+
+# Ordered ledger of named startup migrations. APPEND new entries; never rename
+# or renumber an existing one — the name is the idempotency key.
+_STARTUP_MIGRATIONS = (
+    ("v370_repair_collisions", _mig_v370_repair_collisions),
+    ("v370_merge_driver", _mig_v370_merge_driver),
+    ("v370_dedupe_registration", _mig_v370_dedupe_registration),
+)
+
+
+def run_startup_migrations(project_root: Path | None = None) -> dict:
+    """Run every not-yet-applied startup migration. Automatic + non-breaking.
+
+    Called at server startup and by ``codevira init``. Ledger-gated (each named
+    migration runs at most once per project) and lock-protected (concurrent
+    processes can't race). A migration that raises is logged and left un-marked
+    so it retries next start; it NEVER blocks startup.
+
+    Returns ``{"applied": [names run this call], "ledger": [all applied names]}``.
+    """
+    from mcp_server.storage.atomic import file_lock
+
+    if project_root is None:
+        try:
+            from mcp_server.paths import get_project_root
+
+            project_root = get_project_root()
+        except Exception as e:
+            logger.warning("run_startup_migrations: no project root (%s)", e)
+            return {"applied": [], "ledger": []}
+
+    applied_now: list[str] = []
+    try:
+        ledger_path = _ledger_path()
+        lock_path = ledger_path.parent / (_LEDGER_NAME + ".lock")
+        with file_lock(lock_path, exclusive=True):
+            ledger = _load_ledger(ledger_path)
+            done = set(ledger.get("applied", []))
+            for name, fn in _STARTUP_MIGRATIONS:
+                if name in done:
+                    continue
+                try:
+                    fn(project_root)
+                except Exception as e:  # failure-isolated: retry next boot
+                    logger.warning(
+                        "startup migration %s failed (will retry next start): %s",
+                        name,
+                        e,
+                    )
+                    continue
+                ledger.setdefault("applied", []).append(name)
+                applied_now.append(name)
+            if applied_now:
+                _save_ledger(ledger_path, ledger)
+            return {"applied": applied_now, "ledger": ledger.get("applied", [])}
+    except Exception as e:
+        # A lock/ledger failure must never crash startup.
+        logger.warning("run_startup_migrations skipped (non-fatal): %s", e)
+        return {"applied": applied_now, "ledger": []}

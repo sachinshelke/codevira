@@ -2400,6 +2400,20 @@ def main():
     except Exception as e:
         logger.warning("Could not run storage migration: %s", e)
 
+    # v3.7.0 (M1): automatic, non-breaking DATA self-heal. Idempotent +
+    # ledger-gated + lock-protected + backup-first; failure-isolated so it can
+    # never block startup. Heals pre-3.7 id collisions and self-installs the
+    # decision-log merge driver. Touches codevira-owned data only — IDE
+    # registration is handled surgically by init/setup, never here.
+    try:
+        from mcp_server.migrate import run_startup_migrations
+
+        _healed = run_startup_migrations()
+        if _healed.get("applied"):
+            logger.info("Codevira self-heal applied: %s", ", ".join(_healed["applied"]))
+    except Exception as e:
+        logger.warning("Startup self-heal skipped (non-fatal): %s", e)
+
     # Auto-start background file watcher so the index stays fresh
     # on every file save — no manual trigger or git commit needed.
     #

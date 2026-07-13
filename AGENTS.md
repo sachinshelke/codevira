@@ -2,6 +2,8 @@
 
 ## Codevira-tracked project memory: codevira
 
+> **Codevira** — cross-IDE persistent memory. Read it with the codevira MCP tools (`get_session_context`, `search_decisions`); do **not** open `.codevira/*.jsonl` directly — those files are large and token-heavy.
+
 ### Locked decisions (do_not_revert)
 
 - **D000001** All disk writes in product surface MUST go through mcp_server/storage/atomic.py — never use open(..., 'w'), write_text(…  ·  _atomic, concurrency, storage, v3.0.0-rc-audit_
@@ -29,13 +31,11 @@
 - **D00001A** RELEASE SCOPING (per Sachin 2026-05-26): ALL of this session's work ships in the SINGLE 3.0.0 release — there is no sep…
 - **D00001B** CORRECTION: the release gauntlet is GREEN, not broken. The 53 'failures' I reported earlier were NOT test rot, NOT test…
 - **D00001C** Antigravity 2.0 shared-config support BUILT (commit c83cddf), resolving the open item from D000017. ide_inject.py now d…  ·  _antigravity, cross-tool, ide-inject, v3.0.0_
-- **D00001D** 3.0.0 BUILD COMPLETE (this session). All enhancements are built, tested, committed to local main, and the full release …
-- **D00001E** fix: Python 3.10 CI failure — agents_md_generator._project_name() and cli_init used bare `import tomllib` (stdlib 3.11+…
 
-_+51 more decision(s) — full log in `.codevira/decisions.jsonl`._
+_+54 more decision(s) — full log in `.codevira/decisions.jsonl`._
 
 
-For the full decision log + outcomes + reverts, see `.codevira/decisions.jsonl` or run `codevira list-decisions`.
+For the full decision log, use `search_decisions` / `list_decisions` (or the `codevira` CLI) — don't read `.codevira/*.jsonl` directly.
 
 <!-- codevira:end -->
 

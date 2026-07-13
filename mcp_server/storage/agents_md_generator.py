@@ -56,6 +56,10 @@ _BLOCK_MAX_BYTES = 5 * 1024
 # readable + leaves token budget for many decisions.
 _SUMMARY_LINE_CAP = 120
 
+# Reserve for inter-subset join separators so the 5 KB cap is truly hard
+# (see _render_block for why base_bytes alone under-counts).
+_JOIN_MARGIN = 128
+
 # E4 (Phase 22): managed memory files beyond AGENTS.md. The marker-block
 # writer is already file-generic; this registry says WHICH files to maintain
 # and HOW:
@@ -103,11 +107,21 @@ def _render_block(decisions: list[dict[str, Any]], project_name: str | None) -> 
     else:
         header_lines.append("## Codevira-tracked project memory")
     header_lines.append("")
+    # Branded, single-line usage guard. Kept to ~2 lines because this block is
+    # loaded into the agent's context on every prompt. The token guard matters:
+    # reading .codevira/*.jsonl directly can cost tens of thousands of tokens —
+    # the codevira MCP tools return capped summaries instead.
+    header_lines.append(
+        "> **Codevira** — cross-IDE persistent memory. Read it with the codevira "
+        "MCP tools (`get_session_context`, `search_decisions`); do **not** open "
+        "`.codevira/*.jsonl` directly — those files are large and token-heavy."
+    )
+    header_lines.append("")
 
     footer_lines = [
         "",
-        "For the full decision log + outcomes + reverts, see "
-        "`.codevira/decisions.jsonl` or run `codevira list-decisions`.",
+        "For the full decision log, use `search_decisions` / `list_decisions` "
+        "(or the `codevira` CLI) — don't read `.codevira/*.jsonl` directly.",
         "",
         _END_MARKER,
     ]
@@ -125,7 +139,11 @@ def _render_block(decisions: list[dict[str, Any]], project_name: str | None) -> 
     # Then unlocked (active conventions) — fill remaining budget.
     base = "\n".join(header_lines + locked_section + footer_lines)
     base_bytes = len(base.encode("utf-8"))
-    remaining_bytes = _BLOCK_MAX_BYTES - base_bytes
+    # Reserve a small margin so the cap is genuinely hard: base_bytes counts
+    # each subset joined internally, but the final join also inserts separators
+    # BETWEEN header/locked/unlocked/footer. Without the margin the last fitted
+    # decision could overshoot _BLOCK_MAX_BYTES by a few dozen bytes.
+    remaining_bytes = _BLOCK_MAX_BYTES - base_bytes - _JOIN_MARGIN
 
     unlocked_section = ["### Active conventions", ""]
     if not unlocked:

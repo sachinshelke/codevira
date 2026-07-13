@@ -42,6 +42,30 @@ def isolated_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return project
 
 
+class TestUsageGuard:
+    """v3.7.0 (M3): the block carries a branded usage guard telling the agent
+    to use the codevira MCP tools, NOT to read .codevira/*.jsonl directly
+    (which would burn tens of thousands of tokens)."""
+
+    def test_block_has_branding_and_raw_read_guard(self):
+        block = agents_md_generator._render_block([], "myproj")
+        assert "Codevira" in block, "branded"
+        # The guard must appear and must steer AWAY from raw file reads.
+        assert "do **not** open" in block or "don't read" in block
+        assert ".codevira/*.jsonl" in block
+
+    def test_block_does_not_tell_agent_to_read_raw_jsonl(self):
+        # Regression: the old footer said "see `.codevira/decisions.jsonl`",
+        # actively encouraging the token-heavy raw read. It must not return.
+        block = agents_md_generator._render_block([], "myproj")
+        assert "see `.codevira/decisions.jsonl`" not in block
+        assert "`.codevira/decisions.jsonl` or run" not in block
+
+    def test_guard_stays_within_5kb_cap(self):
+        block = agents_md_generator._render_block([], "myproj")
+        assert len(block.encode("utf-8")) <= agents_md_generator._BLOCK_MAX_BYTES
+
+
 class TestBasicGeneration:
     def test_regenerate_creates_agents_md(self, isolated_project: Path):
         decisions_store.record(decision="Use bcrypt", file_path="auth.py")

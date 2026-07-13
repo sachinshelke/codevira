@@ -516,3 +516,37 @@ class TestSubprocessWiring:
         assert result.returncode == 0
         assert "Diagnose codevira" in result.stdout
         assert "--verbose" in result.stdout
+
+
+class TestDecisionCollisions:
+    """v3.7.0 — doctor surfaces un-healed base-id collisions in decisions.jsonl."""
+
+    @staticmethod
+    def _collide(host, ts):
+        return {
+            "id": "D000120",
+            "decision": f"decision from {host}",
+            "ts": ts,
+            "origin": {"host_hash": host},
+        }
+
+    def test_clean_store_passes(self):
+        from mcp_server.storage import jsonl_store
+        from mcp_server.storage import paths as store_paths
+
+        jsonl_store.append(
+            store_paths.decisions_path(), self._collide("aaa", "2026-01-01T10:00:00")
+        )
+        r = doctor.check_decision_collisions()
+        assert r.state == doctor._PASS
+
+    def test_collision_warns_with_repair_fix(self):
+        from mcp_server.storage import jsonl_store
+        from mcp_server.storage import paths as store_paths
+
+        p = store_paths.decisions_path()
+        jsonl_store.append(p, self._collide("aaa", "2026-01-01T10:00:00"))
+        jsonl_store.append(p, self._collide("bbb", "2026-01-01T10:05:00"))
+        r = doctor.check_decision_collisions()
+        assert r.state == doctor._WARN
+        assert r.fix_command == "codevira repair-ids --apply"

@@ -118,7 +118,7 @@ server is ready.
 **Verify:**
 
 ```bash
-codevira doctor          # 17 health checks, ✓/⚠/✗
+codevira doctor          # 18 health checks, ✓/⚠/✗
 codevira list-decisions  # any decisions recorded yet?
 codevira sync            # regen AGENTS.md from current decisions.jsonl
 ```
@@ -160,7 +160,7 @@ Flags:
 
 ### What `codevira doctor` reports
 
-17 health checks in one run, each with a concrete `fix_command` for
+18 health checks in one run, each with a concrete `fix_command` for
 any WARN or FAIL. Read-only — never modifies anything.
 
 ```text

@@ -64,6 +64,30 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   workspace; one process serving many projects *concurrently* also needs the
   explicit override to be per-request, which is a follow-on.)
 
+### Added — automatic, non-breaking upgrade (self-heal, zero manual steps)
+- **Startup self-heal.** `migrate.run_startup_migrations()` runs at server
+  startup: version/ledger-gated (each step runs at most once), lock-protected
+  (concurrent IDE processes can't race), backup-first, and failure-isolated (it
+  can never block startup). Users never run a manual command after upgrading.
+  - **Pre-3.7 id collisions are repaired automatically** — backup to
+    `decisions.jsonl.bak-pre-v370`, then the deterministic repair, through the
+    same exclusive lock + atomic replace a normal append uses (safe during
+    active use — a concurrent `record_decision` is serialized, not lost).
+  - **The decision-log merge driver self-installs.**
+  - **A stale per-project MCP entry is removed** — but only when a global entry
+    already exists, so a per-project-only user is never orphaned
+    (`heal_stale_registration`, surgical + atomic; other `mcpServers` preserved).
+    `codevira init` global-mode also removes it right after writing the global
+    entry, so re-init never leaves a duplicate.
+- **`doctor` gains a `decision_collisions` check** that surfaces any collision
+  the one-time startup heal wouldn't re-catch (18 checks total).
+- **AGENTS.md carries a branded, token-guard usage line** — steers the agent to
+  the codevira MCP tools and away from reading `.codevira/*.jsonl` directly
+  (which would cost tens of thousands of tokens). The 5 KB block cap is now a
+  hard cap.
+- Fixed a `clean`-path bug: per-project Claude cleanup targeted
+  `.claude/settings.json`, but the MCP entry lives in `.mcp.json`.
+
 ### Internal
 - Extracted the shared decision-similarity core (`storage/reconcile.py`) used by
   `check_conflict`, `consensus`, supersede-on-write, and the cross-engineer

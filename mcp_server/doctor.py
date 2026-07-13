@@ -930,6 +930,34 @@ def check_merge_driver() -> CheckResult:
     )
 
 
+def check_decision_collisions() -> CheckResult:
+    """v3.7.0 — surface pre-existing base-id collisions in decisions.jsonl.
+
+    The startup self-heal repairs these automatically the first time; this
+    catches any that appear LATER (e.g. a cross-engineer merge on a clone
+    without the merge driver installed), which would otherwise silently shadow
+    one decision per collision on read."""
+    try:
+        from mcp_server.storage import id_repair, jsonl_store
+        from mcp_server.storage import paths as store_paths
+
+        raw = jsonl_store.read_all(store_paths.decisions_path())
+        collisions = id_repair.find_collisions(raw)
+    except Exception as e:  # noqa: BLE001 — never crash the doctor
+        return CheckResult(
+            "decision_collisions", _WARN, f"could not scan for collisions: {e}"
+        )
+    if collisions:
+        return CheckResult(
+            "decision_collisions",
+            _WARN,
+            f"{len(collisions)} base-id collision(s) in decisions.jsonl — one "
+            "decision per collision is shadowed on read until repaired",
+            fix_command="codevira repair-ids --apply",
+        )
+    return CheckResult("decision_collisions", _PASS, "no decision-id collisions")
+
+
 _CHECKS: tuple[Callable[[], CheckResult], ...] = (
     check_python_version,
     check_codevira_data_dir,
@@ -950,6 +978,7 @@ _CHECKS: tuple[Callable[[], CheckResult], ...] = (
     check_ghost_projects,  # rc.4 (Bug 21c)
     check_crash_log_size,
     check_merge_driver,  # v3.7.0 — cross-engineer decision-log merge driver
+    check_decision_collisions,  # v3.7.0 — surface un-healed base-id collisions
 )
 
 

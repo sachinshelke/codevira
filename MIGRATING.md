@@ -2,26 +2,53 @@
 
 ## Upgrading to 3.7.0
 
-`pipx install --upgrade codevira`. No data migration — existing
-`.codevira/decisions.jsonl` and `~/.codevira/global.db` are read as-is. Three
-default-behavior changes worth knowing:
+**Just `pipx install --upgrade codevira`. There are no manual steps.** The
+upgrade is automatic and non-breaking — codevira migrates itself.
 
-- **Single user-scope MCP registration.** `codevira init` now registers ONE
+### What happens automatically (you do nothing)
+
+The first time your IDE launches codevira after the upgrade, a startup
+self-heal runs. It's version/ledger-gated (each step runs at most once),
+lock-protected (two IDE windows can't race), backup-first, and
+failure-isolated (it can never block startup):
+
+- **Pre-3.7 decision-id collisions are repaired.** If a shared repo's
+  `decisions.jsonl` carried two records minted with the same id (one silently
+  shadowed on read), codevira repairs it deterministically. `decisions.jsonl`
+  is backed up first (`.bak-pre-v370`), and the rewrite goes through the same
+  exclusive lock + atomic replace a normal write uses — **safe even while you're
+  actively coding** (a concurrent `record_decision` is serialized, not lost).
+- **The decision-log git merge driver is installed**, so future cross-engineer
+  id collisions resolve automatically on `git merge` / rebase.
+- **A stale per-project MCP entry is cleaned up** — but only when a single
+  global entry already exists, so a per-project-only setup is never orphaned.
+
+No data migration: existing `.codevira/decisions.jsonl` and
+`~/.codevira/global.db` are read as-is; the on-disk schema is unchanged.
+
+### Default-behavior changes worth knowing
+
+- **Single user-scope MCP registration.** `codevira init` registers ONE
   user-scope `codevira` server that resolves the active project from your
   editor's workspace roots at runtime, instead of a per-project entry — so N
-  projects no longer create N codevira entries in your IDE. If your IDE can't
-  advertise workspace roots, opt back in with `codevira init --per-project`
-  (or `CODEVIRA_INIT_PER_PROJECT=1`).
+  projects no longer create N codevira entries. Re-running `init` now also
+  removes any stale per-project entry it wrote in an earlier version, so you
+  never end up with a duplicate. Opt back into per-project with `codevira init
+  --per-project` (or `CODEVIRA_INIT_PER_PROJECT=1`).
 - **Supersede-on-write.** `record_decision` now *supersedes* a strong,
-  unprotected near-duplicate instead of appending a parallel twin. Protected
-  (`do_not_revert`) near-duplicates are never auto-superseded. Restore the old
-  append-a-twin behavior with `force=True` or `CODEVIRA_SUPERSEDE_ON_RECORD=0`.
-- **`init` installs a git merge driver** (`.gitattributes` + local git config)
-  so cross-engineer decision-id collisions resolve automatically on `git
-  merge`. `codevira doctor` gains a `merge_driver` check.
+  unprotected near-duplicate instead of appending a parallel twin (append-only
+  and reversible — the audit trail is preserved). Protected (`do_not_revert`)
+  near-duplicates are never auto-superseded. Restore the old append-a-twin
+  behavior with `force=True` or `CODEVIRA_SUPERSEDE_ON_RECORD=0`.
 
 New tool: `mark_decision_outdated(decision_id, reason)` — retire a decision
 with no successor (protected decisions need `force=True`).
+
+### Verifying / manual fallback (not normally needed)
+
+`codevira doctor` gains a `merge_driver` check and a `decision_collisions`
+check. If you ever want to force the collision repair by hand (the startup
+heal does it for you), run `codevira repair-ids --apply`.
 
 ## Upgrading to 3.0.0
 

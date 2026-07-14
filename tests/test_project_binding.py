@@ -95,6 +95,46 @@ class TestPickProjectRoot:
         assert pick_project_root([None]) is None
 
 
+class TestAmbiguousMultiRoot:
+    """v3.7.0 Lane-A safety net: 2+ .codevira roots is ambiguous. We keep the
+    deterministic first-match (no behavior change) but surface it."""
+
+    def _two_codevira(self, tmp_path: Path):
+        a = tmp_path / "a"
+        (a / ".codevira").mkdir(parents=True)
+        b = tmp_path / "b"
+        (b / ".codevira").mkdir(parents=True)
+        return a, b
+
+    def test_pick_is_unchanged_first_codevira_wins(self, tmp_path: Path) -> None:
+        a, b = self._two_codevira(tmp_path)
+        assert pick_project_root([a, b]) == a
+        assert pick_project_root([b, a]) == b  # deterministic on input order
+
+    def test_ambiguity_is_detected(self, tmp_path: Path) -> None:
+        from mcp_server.project_binding import ambiguous_codevira_roots
+
+        a, b = self._two_codevira(tmp_path)
+        assert set(ambiguous_codevira_roots([a, b])) == {a, b}
+
+    def test_single_codevira_is_not_ambiguous(self, tmp_path: Path) -> None:
+        from mcp_server.project_binding import ambiguous_codevira_roots
+
+        a = tmp_path / "a"
+        (a / ".codevira").mkdir(parents=True)
+        b = tmp_path / "b"
+        (b / ".git").mkdir(parents=True)
+        assert ambiguous_codevira_roots([a, b]) == []
+
+    def test_ambiguity_is_logged(self, tmp_path: Path, caplog) -> None:
+        import logging
+
+        a, b = self._two_codevira(tmp_path)
+        with caplog.at_level(logging.WARNING):
+            pick_project_root([a, b])
+        assert any("ambiguous" in r.message for r in caplog.records)
+
+
 def _root(uri):
     return types.SimpleNamespace(uri=uri)
 

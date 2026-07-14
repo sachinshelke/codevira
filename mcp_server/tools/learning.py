@@ -845,7 +845,21 @@ def get_session_context(since: str | None = None) -> dict:
         except Exception:  # noqa: BLE001 — the brief must never fail on this
             style_line = None
 
+        # v3.7.0 Lane-A safety net: echo the RESOLVED project (path + name) so a
+        # single-registration server that bound to the WRONG project is a
+        # visible, correctable event at session start — not silent cross-project
+        # contamination. Best-effort; never fails the brief.
+        active_project: dict = {}
+        try:
+            from mcp_server.paths import get_project_root
+
+            _root = get_project_root()
+            active_project = {"path": str(_root), "name": _root.name}
+        except Exception:
+            active_project = {}
+
         return {
+            "active_project": active_project,
             "current_phase": current_phase,
             "drift_warning": drift_warning,
             **({"style": style_line} if style_line else {}),

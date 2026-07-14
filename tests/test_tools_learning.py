@@ -282,6 +282,23 @@ class TestGetSessionContext:
         # v2.2.0+: top_signals (preferences + rules) removed per the
         # 2026-05-22 surface-cut audit. No longer asserted.
 
+    def test_session_context_echoes_active_project(self, tmp_path, monkeypatch):
+        # v3.7.0 Lane-A safety net: the brief echoes the RESOLVED project so a
+        # single-registration server bound to the wrong project is visible.
+        _, _, db = _setup_project(tmp_path, monkeypatch)
+        db.close()
+
+        result = learning.get_session_context()
+
+        assert "active_project" in result
+        ap = result["active_project"]
+        assert ap.get("path"), "active_project.path must be surfaced"
+        assert ap.get("name"), "active_project.name must be surfaced"
+        # It reflects the actual resolved root.
+        from mcp_server.paths import get_project_root
+
+        assert ap["path"] == str(get_project_root())
+
     def test_session_context_with_roadmap(self, tmp_path, monkeypatch):
         _, _, db = _setup_project(tmp_path, monkeypatch)
         db.close()

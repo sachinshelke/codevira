@@ -18,9 +18,12 @@ into ``call_tool`` (once per process, best-effort, never blocking).
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
+
+logger = logging.getLogger(__name__)
 
 
 def root_uri_to_path(uri: str | None) -> Path | None:
@@ -101,13 +104,53 @@ def pick_project_root(candidates: list[Path | None]) -> Path | None:
 
     if not valid:
         return None
-    for c in valid:
-        if (c / ".codevira").is_dir():
-            return c
+
+    codevira_roots = [c for c in valid if _has_codevira(c)]
+    if len(codevira_roots) > 1:
+        # Lane-A safety net (v3.7.0): a multi-root workspace with 2+ initialized
+        # codevira projects is AMBIGUOUS — we still pick deterministically (the
+        # first) so behavior is unchanged, but we no longer do it SILENTLY. The
+        # user can pin the intended one with --project-dir / CODEVIRA_PROJECT_DIR.
+        logger.warning(
+            "project binding is ambiguous: %d workspace roots have a .codevira/ "
+            "(%s). Binding to the first (%s). Pin the intended project with "
+            "`--project-dir` or CODEVIRA_PROJECT_DIR to remove the ambiguity.",
+            len(codevira_roots),
+            ", ".join(str(c) for c in codevira_roots),
+            codevira_roots[0],
+        )
+    if codevira_roots:
+        return codevira_roots[0]
     for c in valid:
         if (c / ".git").is_dir():
             return c
     return valid[0]
+
+
+def _has_codevira(path: Path) -> bool:
+    try:
+        return (path / ".codevira").is_dir()
+    except OSError:
+        return False
+
+
+def ambiguous_codevira_roots(candidates: list[Path | None]) -> list[Path]:
+    """Return the initialized-codevira roots among ``candidates`` when there is
+    MORE THAN ONE (i.e. the binding is ambiguous); otherwise an empty list.
+
+    Pure + unit-testable. Callers use this to surface the ambiguity (e.g. in
+    ``get_session_context``) so a silently-wrong multi-root binding becomes a
+    visible, correctable event rather than a guess."""
+    roots: list[Path] = []
+    for c in candidates:
+        if c is None:
+            continue
+        try:
+            if c.is_dir() and _has_codevira(c):
+                roots.append(c)
+        except OSError:
+            continue
+    return roots if len(roots) > 1 else []
 
 
 def is_initialized_codevira_project(path: Path | None) -> bool:

@@ -237,6 +237,35 @@ class TestDiscoverProjectRoot:
         _set_project_root(monkeypatch, inner)
         assert get_project_root() == inner.resolve()
 
+    def test_home_global_home_does_not_hijack_markerless_subfolder(
+        self, tmp_path, monkeypatch
+    ):
+        """Regression: ~/.codevira (codevira's OWN global home) is a `.codevira`
+        marker, so a markerless folder under $HOME used to resolve to $HOME and
+        get refused (`codevira init` failed with '$HOME is not a project').
+        The walk must skip $HOME and resolve to the folder itself."""
+        from mcp_server.paths import _discover_project_root, is_invalid_project_root
+
+        fake_home = tmp_path / "home"
+        (fake_home / ".codevira").mkdir(parents=True)  # the global home marker
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
+
+        sub = fake_home / "Software"  # a fresh, markerless project folder
+        sub.mkdir()
+        resolved = _discover_project_root(sub)
+        assert resolved == sub.resolve(), "must not escape upward to $HOME"
+        assert is_invalid_project_root(resolved) is None
+
+    def test_home_itself_is_still_refused(self, tmp_path, monkeypatch):
+        """$HOME must STILL be rejected even after the skip (the v1.8.1 guard)."""
+        from mcp_server.paths import _discover_project_root, is_invalid_project_root
+
+        fake_home = tmp_path / "home"
+        (fake_home / ".codevira").mkdir(parents=True)
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
+
+        assert is_invalid_project_root(_discover_project_root(fake_home)) is not None
+
     def test_falls_back_to_cwd_when_no_marker(self, tmp_path, monkeypatch):
         project = tmp_path / "no-markers"
         project.mkdir()

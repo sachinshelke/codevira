@@ -194,9 +194,18 @@ def _discover_project_root(start: Path) -> Path:
 
     Stops at the first match so that nested repos return the inner root.
     Falls back to *start* if no marker is found.
+
+    ``$HOME`` and system top-levels are NEVER returned even when they carry
+    a marker: codevira's own global home lives at ``~/.codevira``, so ``$HOME``
+    ALWAYS has a ``.codevira`` "marker". Without this skip, every marker-less
+    folder under ``$HOME`` (e.g. a fresh project you're about to ``init``)
+    resolved to ``$HOME`` and got refused. The skip lets the walk fall through
+    to the real ``start`` directory instead.
     """
     start = start.resolve()
     for candidate in (start, *start.parents):
+        if is_invalid_project_root(candidate) is not None:
+            continue  # never resolve to $HOME / a system top-level
         for marker in _PROJECT_MARKERS:
             if (candidate / marker).exists():
                 return candidate

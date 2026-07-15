@@ -1,9 +1,14 @@
 # Plan — Opt-in project activation (stop auto-adopt)
 
-> Status: **PLAN — approved decisions pending (D1–D4 below). Do NOT code until the
-> four decisions are locked.** Written 2026-07-15. Grounded in a 3-agent code map
-> (workflow `opt-in-activation-mapping`). Execute phase-by-phase; each phase is
-> independently committable with a failing-first test.
+> Status: **APPROVED — D1–D4 LOCKED (Sachin, 2026-07-15). Executing phase-by-phase.**
+> Written 2026-07-15. Grounded in a 3-agent code map (workflow
+> `opt-in-activation-mapping`). Each phase is independently committable with a
+> failing-first test.
+>
+> **Locked decisions:** D1 = `hint` (reads empty+hint, writes refuse+hint) ·
+> D2 = **refuse writes** until `codevira init`, with actionable hint ·
+> D3 = marker is the in-repo `.codevira/config.yaml` · D4 = ghost-dir cleanup
+> is **backlog** (a separate `codevira untrack` follow-up; the gate stops NEW adoption).
 
 ## Problem
 
@@ -47,22 +52,27 @@ stub `roadmap.yaml` under the **centralized** dir on first read (update_phase_st
 - Secondary/denormalized signals (for `codevira projects` inventory, NOT the hot-path
   gate): a `global.db` `explicit_init` column + `metadata.json` `explicit_init` field.
 
-## DECISIONS TO LOCK before coding (D1–D4)
+## DECISIONS — LOCKED (D1–D4, Sachin 2026-07-15)
 
-- **D1 — Default mode.** `strict` (reads empty+hint, writes refuse) · **`hint`
-  (RECOMMENDED)** · `auto_adopt` (today's behavior + opt-out). Global default for
-  un-adopted projects lives in `~/.codevira/config.yaml` + env `CODEVIRA_AUTO_ADOPT`
-  (a per-project config can't hold it — an un-adopted project has no config).
-- **D2 — Do WRITES implicitly opt-in, or refuse until `init`?** Refuse+hint gives
-  true control but adds friction to "AI records the first decision in a fresh
-  project." Alternative: **first write auto-inits** (write = intent), only reads stay
-  gated. **RECOMMENDED: refuse writes with an actionable hint** ("run `codevira init`
-  to track this project"); revisit if the friction bites.
-- **D3 — Marker.** in-repo `.codevira/config.yaml` (RECOMMENDED, zero new state) vs
-  global.db column vs new sentinel file.
-- **D4 — Cleanup of the existing ~60 ghost dirs.** In scope (`codevira untrack` /
-  `clean --unopted`) or backlog? RECOMMENDED: **backlog** — the gate stops NEW
-  adoption; cleanup is a separate, safe follow-up.
+- **D1 — Default mode = `hint`.** For an un-adopted project: **reads** return an inert
+  valid payload + a `hint` to run `codevira init`; **writes** refuse + hint. Global
+  default lives in `~/.codevira/config.yaml`; env `CODEVIRA_AUTO_ADOPT` overrides
+  (`1`→`auto_adopt` restores old behavior, `0`→`strict`). Rejected: `auto_adopt`
+  default (the bug we're fixing) and `strict` reads (too abrupt — a bare error with no
+  guidance).
+- **D2 — Writes REFUSE until `init`.** A write tool (`record_decision`,
+  `update_phase_status`, …) on an un-adopted project returns a friendly refusal +
+  actionable hint ("run `codevira init` to track this project"), and creates NO dirs.
+  Rejected: first-write-auto-inits (implicit adoption is exactly what the user wants
+  control over). Known trade-off: the AI's first `record_decision` in a fresh repo
+  needs an explicit `init` first — acceptable for the control it buys.
+- **D3 — Marker = in-repo `.codevira/config.yaml`.** Created ONLY by explicit
+  `codevira init`. Zero new state; auto-grandfathers the 9 real projects; git-committed
+  so it travels across machines/IDEs. Rejected: global.db column (per-machine, doesn't
+  travel) and a new sentinel file (redundant with config.yaml).
+- **D4 — Ghost-dir cleanup = BACKLOG.** The gate stops NEW adoption; retroactively
+  removing the ~60 existing graph-only ghost dirs is a separate, safe `codevira untrack`
+  follow-up (Phase 8 is optional and NOT required for this release).
 
 ## Gate architecture
 

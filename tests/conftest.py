@@ -130,6 +130,16 @@ if not _ts_available:
         _indexer_pkg.treesitter_parser = _fake_ts
 
 import mcp_server.paths as paths  # noqa: E402 — must follow stub install
+
+# Eagerly import mcp_server.storage.paths so its module-level
+# ``from mcp_server.paths import get_project_root`` binding is established
+# against the REAL function once, at collection time, before any test patches
+# ``mcp_server.paths.get_project_root``. Otherwise a test that runs real code
+# which first-imports storage.paths WHILE get_project_root is patched (e.g.
+# test_server's main() test) would capture the mock into storage.paths and leak
+# it to every later test — a MagicMock decisions_path() → "Bad file descriptor".
+# Pre-loading here makes the leak impossible regardless of test order.
+import mcp_server.storage.paths  # noqa: E402,F401 — eager-load, see above
 from indexer.sqlite_graph import SQLiteGraph  # noqa: E402 — must follow stub install
 
 

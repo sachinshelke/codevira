@@ -665,3 +665,70 @@ class TestRefreshGraph:
         assert "status" in result
         assert "hint" in result
         assert len(calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# v3.7.0 opt-in gate — graph-read vector (the dominant ghost-dir source)
+# ---------------------------------------------------------------------------
+
+
+class TestGraphOptInGate:
+    """The graph-read vector must NOT adopt a project the user never init-ed.
+
+    SQLiteGraph.__init__ mkdir's the graph dir just by connecting, so merely
+    *reading* a non-opted project (e.g. get_impact before an edit) used to
+    create a ghost ~/.codevira/projects/<key>/graph/. These assert the gate
+    returns an inert hint and creates NOTHING.
+    """
+
+    def _ghost_project(self, tmp_path, monkeypatch):
+        from mcp_server import opt_in
+
+        monkeypatch.delenv("CODEVIRA_AUTO_ADOPT", raising=False)  # -> hint mode
+        project_root = tmp_path / "ghost"
+        project_root.mkdir()  # NO in-repo .codevira/config.yaml -> not opted in
+        centralized = tmp_path / "central"  # where get_data_dir would point
+        monkeypatch.setattr(paths, "_project_dir_override", None)
+        monkeypatch.chdir(project_root.resolve())
+        monkeypatch.setattr("mcp_server.tools.graph.get_data_dir", lambda: centralized)
+        opt_in.invalidate_opt_in_cache()
+        return project_root, centralized
+
+    def test_get_node_returns_hint_and_creates_nothing(self, tmp_path, monkeypatch):
+        _, centralized = self._ghost_project(tmp_path, monkeypatch)
+        result = graph.get_node("src/main.py")
+        assert result["not_opted_in"] is True
+        assert result["file_path"] == "src/main.py"
+        assert "codevira init" in result["fix_command"]
+        assert not centralized.exists()  # no ghost graph dir created
+
+    def test_get_impact_returns_hint_and_creates_nothing(self, tmp_path, monkeypatch):
+        _, centralized = self._ghost_project(tmp_path, monkeypatch)
+        result = graph.get_impact("src/main.py")
+        assert result["not_opted_in"] is True
+        assert not (centralized / "graph" / "graph.db").exists()
+        assert not centralized.exists()
+
+    def test_query_graph_returns_hint_and_creates_nothing(self, tmp_path, monkeypatch):
+        _, centralized = self._ghost_project(tmp_path, monkeypatch)
+        result = graph.query_graph("src/main.py", query_type="callees")
+        assert result["not_opted_in"] is True
+        assert not centralized.exists()
+
+    def test_refresh_graph_refuses_and_creates_nothing(self, tmp_path, monkeypatch):
+        _, centralized = self._ghost_project(tmp_path, monkeypatch)
+        result = graph.refresh_graph()
+        assert result["not_opted_in"] is True
+        assert result["status"] == "skipped"
+        assert not centralized.exists()
+
+    def test_opted_in_project_is_not_gated(self, tmp_path, monkeypatch):
+        from mcp_server import opt_in
+
+        monkeypatch.delenv("CODEVIRA_AUTO_ADOPT", raising=False)
+        _project_root, _data_dir, db = _setup_project(tmp_path, monkeypatch)
+        db.close()
+        opt_in.invalidate_opt_in_cache()
+        result = graph.get_node("src/whatever.py")
+        # Opted in -> normal not-found path, never the opt-in refusal.
+        assert result.get("not_opted_in") is not True

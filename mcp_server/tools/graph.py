@@ -24,6 +24,33 @@ def _get_db() -> SQLiteGraph:
     return SQLiteGraph(db_path)
 
 
+def _opt_in_gate() -> dict[str, Any] | None:
+    """Return an inert response if the project isn't opted in, else None.
+
+    v3.7.0 opt-in gate for the graph-READ vector — the DOMINANT ghost-dir
+    source (57 of 60 stray ~/.codevira/projects/<key>/ dirs were graph-only).
+    Called at the TOP of every graph tool, BEFORE _get_db(), because
+    ``SQLiteGraph.__init__`` does ``mkdir(parents=True)`` on the graph dir just
+    by connecting — so merely *reading* a project (e.g. get_impact before an
+    edit) would otherwise adopt it. Guarding here, not in SQLiteGraph, keeps the
+    high-blast-radius primitive untouched. See mcp_server/opt_in.py.
+    """
+    from mcp_server.opt_in import activation_allowed
+
+    if activation_allowed():
+        return None
+    return {
+        "found": False,
+        "not_opted_in": True,
+        "message": (
+            "This project isn't tracked by codevira yet, so no code graph "
+            "exists. Run `codevira init` to enable graph queries "
+            "(get_node / get_impact / query_graph)."
+        ),
+        "fix_command": "codevira init",
+    }
+
+
 def _last_indexed_file() -> Path:
     return _index_dir() / ".last_indexed"
 
@@ -98,6 +125,11 @@ def get_node(file_path: str, full: bool = False) -> dict[str, Any]:
 
     For source code itself, call get_signature(file) or get_code(file, symbol).
     """
+    _inert = _opt_in_gate()
+    if _inert is not None:
+        _inert["file_path"] = file_path
+        return _inert
+
     db = _get_db()
     node = db.get_node_by_path(file_path)
     if not node:
@@ -281,6 +313,11 @@ def get_impact(
     {blast_radius, protected_count, high_stability_count} — ~80 tokens.
     Use this as a gate check before deciding to modify.
     """
+    _inert = _opt_in_gate()
+    if _inert is not None:
+        _inert["file_path"] = file_path
+        return _inert
+
     db = _get_db()
 
     node = db.get_node_by_path(file_path)
@@ -490,6 +527,18 @@ def refresh_graph(file_paths: list[str] | None = None) -> dict[str, Any]:
     updates nodes whose file hash changed. For large projects, passing
     file_paths is much faster than a full rebuild.
     """
+    # Opt-in gate: refresh_graph WRITES the centralized graph.db (via
+    # generate_graph_sqlite) — another creation vector. Refuse for a project
+    # the user never `codevira init`-ed (D2: writes refuse + hint).
+    _inert = _opt_in_gate()
+    if _inert is not None:
+        return {
+            "status": "skipped",
+            "not_opted_in": True,
+            "message": _inert["message"],
+            "fix_command": "codevira init",
+        }
+
     from indexer.graph_generator import generate_graph_sqlite
     from mcp_server.paths import get_project_root
 
@@ -525,6 +574,11 @@ def query_graph(
     Query the call graph.
     query_type: 'callers' | 'callees' | 'tests' | 'dependents' | 'symbols'
     """
+    _inert = _opt_in_gate()
+    if _inert is not None:
+        _inert["file_path"] = file_path
+        return _inert
+
     db = _get_db()
 
     # Missed-2 (rc.5): pre-flight graph-emptiness check so we return the

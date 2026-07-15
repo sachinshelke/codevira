@@ -299,3 +299,56 @@ class TestSandboxedParent:
         payload = json.loads(content[0]["text"])
         assert "count" in payload, f"list_decisions payload missing 'count': {payload}"
         assert "decisions" in payload
+
+    def test_non_opted_project_creates_no_ghost_dir(self, tmp_path):
+        """v3.7.0 opt-in regression guard: launching the real MCP server in a
+        project the user never `codevira init`-ed must NOT create a centralized
+        ~/.codevira/projects/<key>/ ghost dir. The dominant vector was the
+        startup outcome-analysis thread opening the graph.db (invisible to unit
+        tests that don't spawn the real server). See test_opt_in.py for the
+        per-gate unit coverage.
+        """
+        home = tmp_path / "home"
+        home.mkdir()
+        project = tmp_path / "ghostproj"
+        project.mkdir()
+        (project / "pyproject.toml").write_text(
+            "[project]\nname = 'ghostproj'\nversion = '0.0.1'\n"
+        )
+        # NOTE: deliberately NO .codevira/config.yaml — this project is NOT
+        # opted in.
+        inputs = (
+            _mcp_request(
+                "initialize",
+                {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {"name": "ghost", "version": "0.0.1"},
+                },
+                req_id=1,
+            )
+            + _mcp_request("notifications/initialized", req_id=None)
+            + _mcp_request(
+                "tools/call",
+                {"name": "get_impact", "arguments": {"file_path": "pyproject.toml"}},
+                req_id=3,
+            )
+        )
+        rc, stdout, stderr = _spawn_codevira_mcp(
+            project, home, inputs=inputs, timeout_s=30.0
+        )
+        # The tool call returns the opt-in hint...
+        responses = _parse_jsonrpc_responses(stdout)
+        call_resp = next((r for r in responses if r.get("id") == 3), None)
+        assert call_resp is not None, f"no get_impact response. stderr: {stderr[-500:]}"
+        payload = json.loads(call_resp["result"]["content"][0]["text"])
+        assert (
+            payload.get("not_opted_in") is True
+        ), f"expected not_opted_in hint for un-init'd project, got: {payload}"
+        # ...and NOTHING is adopted: no centralized ghost dir, no in-repo store.
+        projects_dir = home / ".codevira" / "projects"
+        ghosts = list(projects_dir.iterdir()) if projects_dir.is_dir() else []
+        assert not ghosts, f"opt-in leak: server created ghost dir(s): {ghosts}"
+        assert not (
+            project / ".codevira"
+        ).exists(), "opt-in leak: in-repo store created"

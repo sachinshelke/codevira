@@ -2446,7 +2446,23 @@ def main():
     import os as _os
 
     watcher = None
-    if _os.environ.get("CODEVIRA_NO_WATCHER", "0") == "1":
+    # Opt-in gate (v3.7.0, D1-D4): the watcher builds/refreshes the graph index
+    # (creating ~/.codevira/projects/<key>/graph/) on startup and on every save,
+    # so skip it for a project the user never `codevira init`-ed — otherwise
+    # merely launching an IDE in an un-init'd project adopts it at startup.
+    # Fail-open so the gate never blocks server startup.
+    try:
+        from mcp_server.opt_in import activation_allowed
+
+        _opted_in = activation_allowed()
+    except Exception:
+        _opted_in = True
+    if not _opted_in:
+        logger.info(
+            "Background watcher skipped — project is not tracked by codevira "
+            "(run `codevira init` to enable live indexing)"
+        )
+    elif _os.environ.get("CODEVIRA_NO_WATCHER", "0") == "1":
         logger.info(
             "Background watcher disabled via CODEVIRA_NO_WATCHER=1 — "
             "graph will not auto-refresh on file save"
@@ -2517,11 +2533,22 @@ def main():
 
     import threading
 
-    threading.Thread(
-        target=_run_startup_outcome_analysis,
-        name="codevira-startup-outcome-analysis",
-        daemon=True,
-    ).start()
+    # Opt-in gate (v3.7.0, D1-D4): outcome analysis + the git fix-history scan
+    # both open the centralized graph.db (SQLiteGraph mkdir's
+    # ~/.codevira/projects/<key>/graph/), so they adopt the project at startup.
+    # Skip the whole thread for a project the user never `codevira init`-ed.
+    # (_opted_in is computed above at the watcher gate.)
+    if _opted_in:
+        threading.Thread(
+            target=_run_startup_outcome_analysis,
+            name="codevira-startup-outcome-analysis",
+            daemon=True,
+        ).start()
+    else:
+        logger.info(
+            "Startup outcome analysis skipped — project is not tracked by "
+            "codevira (run `codevira init` to enable)"
+        )
 
     # v3.0 (2026-05-23 RC-audit follow-up): register this MCP process in
     # the running-MCP registry so `codevira doctor` can detect when our

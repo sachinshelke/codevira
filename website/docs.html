@@ -186,6 +186,15 @@ codevira setup</pre>
     restart your AI tool so it picks up the new MCP server and (for Claude Code)
     lifecycle hooks.</div>
 
+    <div class="note"><span class="pill">3.7</span> <strong>Opt-in tracking.</strong>
+    <code>codevira init</code> is the explicit opt-in: codevira tracks <strong>only</strong>
+    the projects you <code>init</code>. A project you merely open in your editor stays
+    <em>inert</em> — its tools return a "run <code>codevira init</code>" hint and nothing
+    is written, so <code>~/.codevira/projects/</code> never fills with projects you never
+    chose. Existing tracked projects (they have an in-repo <code>.codevira/config.yaml</code>)
+    are grandfathered in with zero migration. Want the old track-everything behavior?
+    Set <span class="kbd">CODEVIRA_AUTO_ADOPT=1</span>.</div>
+
     <h2 id="connect">Connect your AI tools</h2>
     <p><code>codevira setup</code> auto-detects installed tools (strong signals: binary on
     PATH + valid config) and configures each one. <span class="pill">3.7</span> By default it
@@ -276,6 +285,12 @@ codevira setup</pre>
       <tr><th>Variable</th><th>Effect</th></tr>
       <tr><td><code>CODEVIRA_TOOL_PROFILE=lean</code></td><td>Advertise only the 12 daily-driver tools (~71% smaller <code>tools/list</code>)</td></tr>
       <tr><td><code>CODEVIRA_DECISION_DETAIL=full</code></td><td>Restore verbose (pre-v3.5) decision payloads instead of summary-first</td></tr>
+    </table>
+    <h3>Project tracking <span class="pill">3.7</span></h3>
+    <table>
+      <tr><th>Variable</th><th>Effect</th></tr>
+      <tr><td><code>CODEVIRA_AUTO_ADOPT=1</code></td><td>Track <strong>every</strong> project you open (pre-3.7 behavior), instead of only the ones you <code>codevira init</code></td></tr>
+      <tr><td><code>CODEVIRA_AUTO_ADOPT=0</code></td><td>Strict — un-init'd projects refuse without a hint (default is a friendly hint)</td></tr>
     </table>
     <h3>Enforcement engine</h3>
     <table>

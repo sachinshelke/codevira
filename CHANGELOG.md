@@ -7,7 +7,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [3.7.0] — 2026-07-10
+## [3.7.0] — 2026-07-16
 
 ### Changed — opt-in project tracking (no more silent auto-adopt)
 

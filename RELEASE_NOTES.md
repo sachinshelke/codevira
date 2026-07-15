@@ -1,10 +1,17 @@
-# v3.7.0 — Fresh memory, shared repos, one registration
+# v3.7.0 — Opt-in tracking, fresh memory, shared repos, one registration
 
-**Released:** 2026-07-10
-**Test status:** 3020 / 3020 passing
+**Released:** 2026-07-16
+**Test status:** 3075 / 3075 passing
 
-Three things users asked for, all model-free and local:
+Four things users asked for, all model-free and local:
 
+- **Opt-in project tracking.** codevira now tracks **only** projects you
+  `codevira init`. A project you merely open in your editor stays **inert** —
+  its tools return a "run `codevira init`" hint and nothing is written — so
+  `~/.codevira/projects/` stops filling with projects you never chose (the #1
+  dogfood complaint). Existing tracked projects are grandfathered in with
+  **zero migration**; `CODEVIRA_AUTO_ADOPT=1` restores the old
+  track-everything behavior.
 - **Memory stays fresh.** `record_decision` now *supersedes* a strong,
   unprotected near-duplicate (gated on symmetric jaccard) instead of appending
   a stale twin; `get_session_context` hides superseded / outdated /
@@ -24,7 +31,7 @@ Three things users asked for, all model-free and local:
 Also: the fix-history scan self-freshens on read; `NotebookEdit`/camelCase
 edits no longer log `<unknown>`; the D000118 intra-process id-drift is fixed.
 
-Full detail in [CHANGELOG.md](CHANGELOG.md#370--2026-07-10).
+Full detail in [CHANGELOG.md](CHANGELOG.md#370--2026-07-16).
 
 > Upgrading? `pipx install --upgrade codevira`. See [MIGRATING.md](MIGRATING.md).
 

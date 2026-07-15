@@ -63,13 +63,13 @@ The full toolkit installs out of the box — no ML stack, no embedding model, no
 
 ### Do I need to run `codevira init` for every project?
 
-You register the MCP server **once**, not per project. Since v3.7.0 `codevira init` (and `codevira setup`) writes a single **user-scope** server that resolves the active project from your editor's workspace at runtime — so N projects don't create N codevira entries in your IDE. Opening any project then auto-initializes its `.codevira/` on the first MCP tool call.
+You register the MCP server **once**, not per project. Since v3.7.0 `codevira init` (and `codevira setup`) writes a single **user-scope** server that resolves the active project from your editor's workspace at runtime — so N projects don't create N codevira entries in your IDE.
 
-You still run `codevira init` (or let auto-init handle it) in each repo to scaffold that project's `.codevira/` and detect its languages. Want a per-project MCP entry instead of the shared one (e.g. an IDE that can't advertise workspace roots)? Run `codevira init --per-project`.
+But you **do** run `codevira init` once in each repo you want tracked. As of v3.7.0 that's the explicit opt-in: codevira tracks **only** projects you've `init`-ed. A project you merely open in your editor stays **inert** — its tools return a "run `codevira init`" hint and nothing is written — so `~/.codevira/projects/` never fills with projects you never chose. `init` scaffolds that project's `.codevira/` and detects its languages. Want a per-project MCP entry instead of the shared one (e.g. an IDE that can't advertise workspace roots)? Run `codevira init --per-project`. Want the old track-everything behavior? Set `CODEVIRA_AUTO_ADOPT=1`.
 
 ### Do I need to run the indexer every time?
 
-No. Run `codevira init` once when you first set up a project (or just let auto-init handle it). After that:
+No. Run `codevira init` once when you first set up a project. After that:
 - The **live file watcher** auto-reindexes on every save (starts with the MCP server)
 - The **git post-commit hook** (auto-installed by init) reindexes on every commit
 - You can manually run `codevira index` or `codevira index --full` if needed

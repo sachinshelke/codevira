@@ -115,6 +115,13 @@ Then commit `.codevira/` + `AGENTS.md` + `.gitignore` to git so your
 teammates inherit the project memory. Open any IDE; codevira's MCP
 server is ready.
 
+> **Opt-in tracking (v3.7.0).** `codevira init` is the explicit opt-in:
+> codevira tracks **only** projects you've `init`-ed. A project you merely
+> open — but never `init` — stays inert (its tools return a "run `codevira
+> init`" hint and nothing is written), so `~/.codevira/projects/` never fills
+> with projects you didn't choose. Set `CODEVIRA_AUTO_ADOPT=1` to track every
+> project you open instead.
+
 **Verify:**
 
 ```bash

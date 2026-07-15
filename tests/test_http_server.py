@@ -12,6 +12,7 @@ Covers:
 
 from __future__ import annotations
 
+import importlib
 import os
 import stat
 import sys
@@ -38,7 +39,18 @@ _modules_to_mock = [
 
 _mock_mods_installed: set[str] = set()
 for _mod_name in _modules_to_mock:
-    if _mod_name not in sys.modules:
+    if _mod_name in sys.modules:
+        continue
+    # Prefer the REAL module when it's importable. The real mcp SDK's Server
+    # decorators already pass through (return the original function), so faking
+    # is unnecessary — and a fake `mcp.types` carrying only a partial symbol set
+    # (Tool/TextContent but not Resource/ToolAnnotations) leaks into the whole
+    # pytest session and breaks later `from mcp.types import Resource` in
+    # test_decision_replay / test_qa_round_week13. Fake ONLY as a fallback for
+    # environments where the real package genuinely can't be imported.
+    try:
+        importlib.import_module(_mod_name)
+    except Exception:
         sys.modules[_mod_name] = types.ModuleType(_mod_name)
         _mock_mods_installed.add(_mod_name)
 

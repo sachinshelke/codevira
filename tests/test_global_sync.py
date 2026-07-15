@@ -52,9 +52,17 @@ def isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     project = tmp_path / "myproject"
     project.mkdir()
     (project / "pyproject.toml").write_text("[project]\nname='roundtrip'\n")
+    # v3.7.0 opt-in: registration only fires for projects the user init-ed.
+    # These mechanics tests assert registered=True, so opt the project in.
+    (project / ".codevira").mkdir()
+    (project / ".codevira" / "config.yaml").write_text(
+        "schema_version: 1\n", encoding="utf-8"
+    )
 
     from mcp_server import paths as paths_mod
+    from mcp_server import opt_in
 
+    opt_in.invalidate_opt_in_cache()
     paths_mod.set_project_dir(project)
     paths_mod.invalidate_data_dir_cache()
     monkeypatch.setattr(paths_mod, "get_global_home", lambda: fake_home / ".codevira")
@@ -107,6 +115,38 @@ class TestRegisterCurrentProject:
         assert result["registered"] is False
         assert "error" in result
         assert "simulated" in result["error"]
+
+
+class TestRegisterOptInGate:
+    """v3.7.0: registration must SKIP a project the user never `codevira init`-ed."""
+
+    def test_non_opted_project_is_not_registered(
+        self, isolated_home: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from mcp_server import opt_in
+        from mcp_server import paths as paths_mod
+
+        monkeypatch.delenv("CODEVIRA_AUTO_ADOPT", raising=False)  # -> hint mode
+        # Undo the fixture's opt-in marker to simulate a never-init-ed project.
+        project = paths_mod.get_project_root()
+        (project / ".codevira" / "config.yaml").unlink()
+        opt_in.invalidate_opt_in_cache()
+
+        result = register_current_project()
+
+        assert result["registered"] is False
+        assert result["reason"] == "not opted in"
+
+        # And nothing landed in global.db.
+        from indexer.global_db import GlobalDB
+        from mcp_server.paths import get_global_db_path
+
+        gdb = GlobalDB(get_global_db_path())
+        try:
+            n = gdb.conn.execute("SELECT COUNT(*) FROM projects").fetchone()[0]
+        finally:
+            gdb.close()
+        assert n == 0
 
 
 class TestBackwardsCompatAlias:

@@ -56,6 +56,15 @@ def register_current_project() -> dict:
         ):
             return {"registered": False, "reason": "ephemeral project path"}
 
+        # Opt-in gate (v3.7.0, D1-D4): don't add a global.db inventory row for a
+        # project the user never `codevira init`-ed (unless auto_adopt mode).
+        # Startup registration is vector 4 — it creates no dir, but a row here
+        # would pollute `codevira projects` with every workspace ever opened.
+        from mcp_server.opt_in import activation_allowed
+
+        if not activation_allowed(project_root):
+            return {"registered": False, "reason": "not opted in"}
+
         global_db_path = get_global_db_path()
         global_db = GlobalDB(global_db_path)
         try:

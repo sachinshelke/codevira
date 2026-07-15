@@ -164,6 +164,12 @@ def _isolate_global_home(tmp_path_factory, monkeypatch):
     # Clear module-level caches that carry state between tests:
     paths._data_dir_cache.clear()
     paths.reset_pinned_root()  # D000118 pin (ContextVar) must not leak across tests
+    # v3.7.0: the opt-in cache is another per-process cache — clear it too so a
+    # test that resolves opt-in against a mocked get_project_root (e.g.
+    # test_server's main() test) can't leave a stray MagicMock-keyed entry.
+    from mcp_server import opt_in as _opt_in
+
+    _opt_in.invalidate_opt_in_cache()
     monkeypatch.setattr(paths, "_project_dir_override", None)
     iso_project = base / "project"
     (iso_project / ".codevira").mkdir(parents=True)

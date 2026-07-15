@@ -18,6 +18,9 @@ def _isolate(monkeypatch, tmp_path):
 
     # Mock environment
     monkeypatch.delenv("CODEVIRA_ENGINE", raising=False)
+    # Hook + fan-out mechanics run downstream of the v3.7.0 opt-in gate —
+    # enable auto_adopt so it's transparent here (gate covered by test_opt_in.py).
+    monkeypatch.setenv("CODEVIRA_AUTO_ADOPT", "1")
 
     # Mock stdout/stdin
     def _run_handler(event_name: str, raw_input: dict) -> tuple[int, str, str]:

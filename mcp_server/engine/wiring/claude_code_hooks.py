@@ -103,6 +103,20 @@ def handle(event_type_str: str) -> int:
         _write_response({"continue": True})
         return 0
 
+    # Opt-in gate (v3.7.0, D1-D4): the Claude Code hooks fire on every
+    # Edit/Write/Bash/prompt in whatever project is open. For a project the user
+    # never `codevira init`-ed, stay fully inert — no policy eval, no prompt
+    # capture, no memory fan-out — and allow the action. This is the single
+    # chokepoint for the CLI hook path (the MCP path is gated in call_tool).
+    try:
+        from mcp_server.opt_in import activation_allowed
+
+        if not activation_allowed(event.project_root):
+            _write_response({"continue": True})
+            return 0
+    except Exception:  # noqa: BLE001 — fail-open, never block the user
+        pass
+
     # 3. Dispatch — this never raises; it always returns a verdict.
     verdict = dispatch(event)
 

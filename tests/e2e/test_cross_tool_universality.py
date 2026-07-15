@@ -74,6 +74,10 @@ def _clean_engine_state(monkeypatch: pytest.MonkeyPatch):
         "CODEVIRA_CROSS_SESSION_MODE",
     ):
         monkeypatch.delenv(env, raising=False)
+    # Cross-tool universality simulates hooks + tool calls on an active project;
+    # enable auto_adopt so the v3.7.0 opt-in gate is transparent here (the gate
+    # itself is covered by tests/test_opt_in.py).
+    monkeypatch.setenv("CODEVIRA_AUTO_ADOPT", "1")
     yield
     reset_policies()
 

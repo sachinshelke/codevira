@@ -123,6 +123,20 @@ def flush() -> None:
     if not _BUFFER:
         return
 
+    # Opt-in gate (v3.7.0, D1-D4): the fan-out fires automatically on every
+    # Edit/Write/Bash for whatever project is open, so it's the main AUTOMATIC
+    # write vector the MCP dispatch gate can't see. Don't scaffold
+    # .codevira-cache/ (working.jsonl / activity.jsonl) for a project the user
+    # never `codevira init`-ed — drop the buffer and return.
+    try:
+        from mcp_server.opt_in import activation_allowed
+
+        if not activation_allowed():
+            _BUFFER = []
+            return
+    except Exception:  # noqa: BLE001 — fail-open, never break the caller
+        pass
+
     # Take ownership of the buffer atomically so a re-entrant call
     # (e.g., from a hook during another flush) doesn't double-write.
     drained = _BUFFER

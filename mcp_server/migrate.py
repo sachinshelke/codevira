@@ -373,6 +373,18 @@ def run_startup_migrations(project_root: Path | None = None) -> dict:
             logger.warning("run_startup_migrations: no project root (%s)", e)
             return {"applied": [], "ledger": []}
 
+    # Opt-in gate (v3.7.0, D1-D4): startup migrations write a ledger into the
+    # project's .codevira/. Skip for a project the user never `codevira init`-ed
+    # so codevira doesn't adopt it at server startup. A fresh init has nothing
+    # to migrate anyway, so gating is a no-op for the init caller.
+    try:
+        from mcp_server.opt_in import activation_allowed
+
+        if not activation_allowed(project_root):
+            return {"applied": [], "ledger": []}
+    except Exception as e:  # noqa: BLE001 — fail-open, never block startup
+        logger.debug("run_startup_migrations opt-in check skipped: %s", e)
+
     applied_now: list[str] = []
     try:
         ledger_path = _ledger_path()

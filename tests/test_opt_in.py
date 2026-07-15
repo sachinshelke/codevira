@@ -273,3 +273,184 @@ class TestDispatchGateEndToEnd:
         assert payload["not_opted_in"] is True
         # And nothing was written to an in-repo store.
         assert not (project / ".codevira").exists()
+
+
+# ---------------------------------------------------------------------------
+# Phase 6 — defense-in-depth for the AUTOMATIC non-MCP write vectors.
+#
+# NB: we deliberately do NOT gate the low-level ensure_dirs — hundreds of
+# direct/CLI writes legitimately scaffold tmp projects, and the MCP write
+# surface is already refused at the dispatch gate (Phase 5). Instead we gate
+# the paths that fire AUTOMATICALLY for a project the user merely opened:
+# the engine memory fan-out and startup migrations, plus the roadmap stub.
+# ---------------------------------------------------------------------------
+
+
+class TestRoadmapStubOptInGuard:
+    """_load_roadmap must not PERSIST a stub for a non-opted project."""
+
+    def test_non_opted_returns_stub_without_persisting(
+        self, tmp_path, no_env, monkeypatch, clean_cache
+    ):
+        from mcp_server import paths as paths_mod
+        from mcp_server.tools import roadmap
+
+        project = tmp_path / "ghost"
+        project.mkdir()
+        data_dir = tmp_path / "central"
+        monkeypatch.setattr(roadmap, "_roadmap_file", lambda: data_dir / "roadmap.yaml")
+        paths_mod.reset_pinned_root()
+        monkeypatch.chdir(project.resolve())
+        opt_in.invalidate_opt_in_cache()
+
+        result = roadmap._load_roadmap()
+
+        assert isinstance(result, dict)  # valid in-memory shape for read callers
+        assert not (data_dir / "roadmap.yaml").exists()  # NOT persisted
+        assert not data_dir.exists()  # nothing adopted
+
+
+class TestMemoryFanoutOptInGuard:
+    """The engine memory fan-out (auto-fires on every Edit/Write/Bash) must not
+    scaffold .codevira-cache/ for a project the user never init-ed."""
+
+    def _chdir(self, project, monkeypatch):
+        from mcp_server import paths as paths_mod
+
+        paths_mod.reset_pinned_root()
+        monkeypatch.setattr(paths_mod, "_project_dir_override", None)
+        monkeypatch.chdir(project.resolve())
+        opt_in.invalidate_opt_in_cache()
+
+    def test_non_opted_flush_drops_buffer_no_adoption(
+        self, tmp_path, no_env, monkeypatch, clean_cache
+    ):
+        from mcp_server.engine import memory_fanout
+
+        project = tmp_path / "ghost"
+        project.mkdir()
+        self._chdir(project, monkeypatch)
+
+        memory_fanout.reset_buffer()
+        memory_fanout._BUFFER.append({"content": "obs", "kind": "observation"})
+        memory_fanout.flush()
+
+        assert memory_fanout.buffer_size() == 0  # buffer drained, not written
+        assert not (project / ".codevira-cache").exists()  # nothing adopted
+        assert not (project / ".codevira").exists()
+
+    def test_opted_in_flush_writes(self, tmp_path, no_env, monkeypatch, clean_cache):
+        from mcp_server.engine import memory_fanout
+
+        project = tmp_path / "proj"
+        (project / ".codevira").mkdir(parents=True)
+        (project / ".codevira" / "config.yaml").write_text(
+            "schema_version: 1\n", encoding="utf-8"
+        )
+        self._chdir(project, monkeypatch)
+
+        memory_fanout.reset_buffer()
+        memory_fanout._BUFFER.append(
+            {"content": "obs", "kind": "observation", "importance": 4}
+        )
+        memory_fanout.flush()
+
+        assert (project / ".codevira-cache" / "working.jsonl").is_file()
+
+
+class TestStartupMigrationOptInGuard:
+    """run_startup_migrations must not write a ledger (adopt) for a non-opted
+    project at server startup."""
+
+    def _chdir(self, project, monkeypatch):
+        from mcp_server import paths as paths_mod
+
+        paths_mod.reset_pinned_root()
+        monkeypatch.setattr(paths_mod, "_project_dir_override", None)
+        monkeypatch.chdir(project.resolve())
+        opt_in.invalidate_opt_in_cache()
+
+    def test_non_opted_skips(self, tmp_path, no_env, monkeypatch, clean_cache):
+        from mcp_server import migrate
+
+        project = tmp_path / "ghost"
+        project.mkdir()
+        self._chdir(project, monkeypatch)
+
+        result = migrate.run_startup_migrations(project)
+
+        assert result == {"applied": [], "ledger": []}
+        assert not (project / ".codevira").exists()  # no ledger adoption
+
+    def test_opted_in_runs(self, tmp_path, no_env, monkeypatch, clean_cache):
+        from mcp_server import migrate
+
+        project = tmp_path / "proj"
+        (project / ".codevira").mkdir(parents=True)
+        (project / ".codevira" / "config.yaml").write_text(
+            "schema_version: 1\n", encoding="utf-8"
+        )
+        self._chdir(project, monkeypatch)
+
+        result = migrate.run_startup_migrations(project)
+
+        assert "applied" in result and "ledger" in result
+        assert (project / ".codevira" / "migration_ledger.json").is_file()
+
+
+class TestHookHandleOptInGuard:
+    """The Claude Code hook entry (SOLE CLI hook chokepoint) must no-op for a
+    project the user never init-ed — no policy eval, no prompt capture."""
+
+    def _chdir(self, project, monkeypatch):
+        import io
+
+        from mcp_server import paths as paths_mod
+
+        paths_mod.reset_pinned_root()
+        monkeypatch.setattr(paths_mod, "_project_dir_override", None)
+        monkeypatch.chdir(project.resolve())
+        monkeypatch.setattr("sys.stdin", io.StringIO(""))  # empty hook payload
+        opt_in.invalidate_opt_in_cache()
+
+    def test_non_opted_no_ops(self, tmp_path, no_env, monkeypatch, clean_cache):
+        from mcp_server.engine.wiring import claude_code_hooks
+
+        project = tmp_path / "ghost"
+        project.mkdir()
+        self._chdir(project, monkeypatch)
+
+        dispatched = []
+        monkeypatch.setattr(
+            claude_code_hooks, "dispatch", lambda ev: dispatched.append(ev)
+        )
+
+        rc = claude_code_hooks.handle("PreToolUse")
+
+        assert rc == 0  # allow
+        assert dispatched == []  # policies NOT run for a non-opted project
+        assert not (project / ".codevira-cache").exists()  # nothing adopted
+
+    def test_opted_in_runs_policies(self, tmp_path, no_env, monkeypatch, clean_cache):
+        from mcp_server.engine.policy import PolicyVerdict
+        from mcp_server.engine.wiring import claude_code_hooks
+
+        project = tmp_path / "proj"
+        (project / ".codevira").mkdir(parents=True)
+        (project / ".codevira" / "config.yaml").write_text(
+            "schema_version: 1\n", encoding="utf-8"
+        )
+        self._chdir(project, monkeypatch)
+
+        dispatched = []
+
+        def _spy(ev):
+            dispatched.append(ev)
+            return PolicyVerdict.allow()
+
+        monkeypatch.setattr(claude_code_hooks, "dispatch", _spy)
+
+        rc = claude_code_hooks.handle("PreToolUse")
+
+        assert rc == 0
+        assert len(dispatched) == 1  # opted-in -> policies DO run

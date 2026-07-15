@@ -8,6 +8,7 @@ The acceptance criterion from docs/heroes/00-engine.md:
 
 This file exercises both paths.
 """
+
 from __future__ import annotations
 
 import io
@@ -27,6 +28,9 @@ from mcp_server.engine.wiring import claude_code_hooks, mcp_dispatch
 def _isolate(monkeypatch):
     reset_policies()
     monkeypatch.delenv("CODEVIRA_ENGINE", raising=False)
+    # Hook mechanics run downstream of the v3.7.0 opt-in gate — enable
+    # auto_adopt so it's transparent here (gate covered by test_opt_in.py).
+    monkeypatch.setenv("CODEVIRA_AUTO_ADOPT", "1")
     yield
     reset_policies()
 
@@ -34,6 +38,7 @@ def _isolate(monkeypatch):
 # ----------------------------------------------------------------------
 # Direct dispatch path — register demo policy, fire event, expect block
 # ----------------------------------------------------------------------
+
 
 class TestDemoPolicyDirect:
     def test_blocks_py_bak_edit(self):
@@ -47,7 +52,9 @@ class TestDemoPolicyDirect:
         )
         verdict = dispatch(event)
         assert verdict.is_blocking()
-        assert "py.bak" in verdict.message.lower() or "backup" in verdict.message.lower()
+        assert (
+            "py.bak" in verdict.message.lower() or "backup" in verdict.message.lower()
+        )
         assert verdict.policy == "demo_backup_guard"
 
     def test_allows_normal_py_edit(self):
@@ -79,6 +86,7 @@ class TestDemoPolicyDirect:
 # Claude Code hook wiring path — feed JSON on stdin, expect proper response
 # ----------------------------------------------------------------------
 
+
 class TestClaudeCodeHookWiring:
     def _run_handler(self, event_name, raw_input, monkeypatch):
         """Helper: stub stdin with raw_input as JSON; capture stdout."""
@@ -106,14 +114,18 @@ class TestClaudeCodeHookWiring:
             "tool_name": "Edit",
             "tool_input": {
                 "file_path": str(target),
-                "old_string": "x", "new_string": "y",
+                "old_string": "x",
+                "new_string": "y",
             },
         }
         rc, out = self._run_handler("PreToolUse", raw, monkeypatch)
         assert rc == 2  # Claude Code semantics: 2 = blocked
         payload = json.loads(out)
         assert payload["continue"] is False
-        assert "py.bak" in payload["stopReason"].lower() or "backup" in payload["stopReason"].lower()
+        assert (
+            "py.bak" in payload["stopReason"].lower()
+            or "backup" in payload["stopReason"].lower()
+        )
 
     def test_pre_tool_use_allows_normal_edit(self, tmp_path, monkeypatch):
         proj = tmp_path / "proj"
@@ -126,7 +138,8 @@ class TestClaudeCodeHookWiring:
             "tool_name": "Edit",
             "tool_input": {
                 "file_path": str(target),
-                "old_string": "x", "new_string": "y",
+                "old_string": "x",
+                "new_string": "y",
             },
         }
         rc, out = self._run_handler("PreToolUse", raw, monkeypatch)
@@ -162,12 +175,11 @@ class TestClaudeCodeHookWiring:
 # MCP dispatch wiring path — pre_call/post_call adapter functions
 # ----------------------------------------------------------------------
 
+
 class TestMCPDispatchWiring:
     def test_pre_call_returns_block_for_py_bak(self, tmp_path, monkeypatch):
         # Make get_project_root resolve to a real dir (the wiring uses it).
-        monkeypatch.setattr(
-            "mcp_server.paths.get_project_root", lambda: tmp_path
-        )
+        monkeypatch.setattr("mcp_server.paths.get_project_root", lambda: tmp_path)
         register_policy(BackupExtensionGuard())
         # Demo policy keys off target_file derived from tool args.
         verdict = mcp_dispatch.pre_call(
@@ -177,9 +189,7 @@ class TestMCPDispatchWiring:
         assert verdict.is_blocking()
 
     def test_pre_call_allows_normal(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(
-            "mcp_server.paths.get_project_root", lambda: tmp_path
-        )
+        monkeypatch.setattr("mcp_server.paths.get_project_root", lambda: tmp_path)
         register_policy(BackupExtensionGuard())
         verdict = mcp_dispatch.pre_call(
             tool_name="Edit",
@@ -188,9 +198,7 @@ class TestMCPDispatchWiring:
         assert verdict.is_allowing()
 
     def test_post_call_safe_with_no_policies(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(
-            "mcp_server.paths.get_project_root", lambda: tmp_path
-        )
+        monkeypatch.setattr("mcp_server.paths.get_project_root", lambda: tmp_path)
         verdict = mcp_dispatch.post_call(
             tool_name="get_node",
             arguments={"file_path": "src/foo.py"},
@@ -201,9 +209,7 @@ class TestMCPDispatchWiring:
     def test_pre_call_swallows_engine_errors(self, tmp_path, monkeypatch):
         # Even if dispatch raises, the wiring layer must return allow —
         # MCP call_tool must NEVER break because of engine bugs.
-        monkeypatch.setattr(
-            "mcp_server.paths.get_project_root", lambda: tmp_path
-        )
+        monkeypatch.setattr("mcp_server.paths.get_project_root", lambda: tmp_path)
         # Force dispatch to raise:
         monkeypatch.setattr(
             "mcp_server.engine.wiring.mcp_dispatch.dispatch",
@@ -217,15 +223,18 @@ class TestMCPDispatchWiring:
 # Maybe-register helper (env-var-gated demo policy activation)
 # ----------------------------------------------------------------------
 
+
 class TestMaybeRegister:
     def test_off_by_default(self, monkeypatch):
         from mcp_server.engine.runner import registered_policies
+
         monkeypatch.delenv("CODEVIRA_DEMO_POLICY", raising=False)
         maybe_register()
         assert "demo_backup_guard" not in [p.name for p in registered_policies()]
 
     def test_on_when_env_var_set(self, monkeypatch):
         from mcp_server.engine.runner import registered_policies
+
         monkeypatch.setenv("CODEVIRA_DEMO_POLICY", "1")
         maybe_register()
         assert "demo_backup_guard" in [p.name for p in registered_policies()]

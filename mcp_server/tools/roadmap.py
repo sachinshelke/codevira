@@ -183,6 +183,14 @@ def _load_roadmap() -> dict:
     roadmap_file = _roadmap_file()
     if not roadmap_file.exists():
         stub = _create_stub_roadmap()
+        # Opt-in gate (v3.7.0, D1-D4): don't PERSIST a roadmap stub (a write,
+        # and _roadmap_file() may resolve to the centralized store) for a
+        # project the user never `codevira init`-ed. Return the stub in-memory
+        # so internal read callers still get a valid shape, but adopt nothing.
+        from mcp_server.opt_in import activation_allowed
+
+        if not activation_allowed():
+            return stub
         _save_roadmap(stub)
         return stub
     with open(roadmap_file) as f:

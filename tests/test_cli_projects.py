@@ -185,13 +185,13 @@ class TestGhostsOnly:
         data = json.loads(capsys.readouterr().out)
         # The only ghost is project B (has graph but no config/metadata).
         slugs = {r["slug"] for r in data["projects"]}
-        assert "Users_alice_proj_a_aaaa" not in slugs, (
-            "Project A is tracked/orphan, not a ghost"
-        )
+        assert (
+            "Users_alice_proj_a_aaaa" not in slugs
+        ), "Project A is tracked/orphan, not a ghost"
         assert "Users_bob_proj_b_bbbb" in slugs, "Project B is the ghost"
-        assert "Users_carol_stale_cccc" not in slugs, (
-            "Project C is stale, not ghost — handled by --orphans / manual cleanup"
-        )
+        assert (
+            "Users_carol_stale_cccc" not in slugs
+        ), "Project C is stale, not ghost — handled by --orphans / manual cleanup"
 
     def test_no_ghosts_message(self, tmp_path, monkeypatch, capsys):
         """When everything is complete, --ghosts-only prints a clean-state message."""
@@ -443,6 +443,15 @@ class TestRegistrationGuard:
         home.mkdir(parents=True)
         eph = tmp_path / "proj"
         eph.mkdir()
+        # v3.7.0 opt-in: registration also requires the project be init-ed. This
+        # test targets the *ephemeral* guard, so opt the project in too.
+        (eph / ".codevira").mkdir()
+        (eph / ".codevira" / "config.yaml").write_text(
+            "schema_version: 1\n", encoding="utf-8"
+        )
+        from mcp_server import opt_in
+
+        opt_in.invalidate_opt_in_cache()
         monkeypatch.setattr(paths_mod, "get_project_root", lambda: eph)
         monkeypatch.setattr(paths_mod, "get_global_db_path", lambda: home / "global.db")
         monkeypatch.setattr(paths_mod, "get_data_dir", lambda: eph / ".codevira")

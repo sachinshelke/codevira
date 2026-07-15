@@ -1860,6 +1860,26 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     # tool call's file_path drive which project's memory we use.
     _maybe_bind_from_tool_path(arguments)
 
+    # Opt-in gate (v3.7.0, D1-D4): the PRIMARY chokepoint. If the user never
+    # `codevira init`-ed this project (and auto_adopt mode is off), no tool
+    # adopts or mutates it — reads return an inert payload + hint, writes
+    # refuse + hint (D2). Runs before auto-init / engine / dispatch so a single
+    # global MCP registration stays fully inert outside opted-in projects. The
+    # per-vector guards (Phases 2-4, 6) are defense-in-depth behind this.
+    # Fail-open: a gate error must never break tool dispatch.
+    try:
+        from mcp_server.opt_in import activation_allowed, opt_in_hint_payload
+
+        if not activation_allowed():
+            return [
+                TextContent(
+                    type="text",
+                    text=json.dumps(opt_in_hint_payload(name), indent=2),
+                )
+            ]
+    except Exception:
+        pass  # opt-in gate must never break tool dispatch (fail-open)
+
     # v1.6: Auto-init check — triggers background init on first call if needed.
     # This is a no-op (<1ms) on every subsequent call after initialization.
     try:

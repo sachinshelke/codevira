@@ -159,6 +159,13 @@ def sandboxed_project(tmp_path: Path) -> tuple[Path, Path]:
     (project / "pyproject.toml").write_text(
         "[project]\nname = 'sandboxed-smoke'\nversion = '0.0.1'\n"
     )
+    # v3.7.0 opt-in: this spawns a real MCP server and calls tools on the
+    # project, so opt it in (the marker only explicit `codevira init` writes)
+    # or the dispatch gate returns inert hints instead of real tool output.
+    (project / ".codevira").mkdir()
+    (project / ".codevira" / "config.yaml").write_text(
+        "schema_version: 1\n", encoding="utf-8"
+    )
     return project, home
 
 

@@ -51,9 +51,18 @@ def isolated_codevira(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     (project / "pyproject.toml").write_text(
         "[project]\nname = 'roundtrip-smoke'\nversion = '0.0.1'\n"
     )
+    # v3.7.0 opt-in: these roundtrip tests exercise the full tool surface on an
+    # active, tracked project — opt it in (the in-repo marker only explicit
+    # `codevira init` writes) so the dispatch gate lets tool calls through.
+    (project / ".codevira").mkdir()
+    (project / ".codevira" / "config.yaml").write_text(
+        "schema_version: 1\n", encoding="utf-8"
+    )
 
     from mcp_server import paths as paths_mod
+    from mcp_server import opt_in
 
+    opt_in.invalidate_opt_in_cache()
     paths_mod.set_project_dir(project)
     paths_mod.invalidate_data_dir_cache()
     # Set fake home for the paths module too — get_global_home() reads

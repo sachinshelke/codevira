@@ -50,11 +50,23 @@ def _reset_ai_globals():
 
 
 @pytest.fixture(autouse=True)
-def reset_auto_init():
-    """Reset module-level state before AND after each test."""
+def reset_auto_init(monkeypatch):
+    """Reset module-level state before AND after each test.
+
+    Also enables auto_adopt mode (v3.7.0): this file tests the auto-INIT
+    MECHANICS, which by definition only run once the opt-in gate has allowed
+    adoption. The gate itself is covered by TestEnsureProjectInitializedOptInGate
+    below and tests/test_opt_in.py. Individual gate tests delenv this to
+    exercise the blocked path.
+    """
+    from mcp_server import opt_in
+
+    monkeypatch.setenv("CODEVIRA_AUTO_ADOPT", "1")
+    opt_in.invalidate_opt_in_cache()
     _reset_ai_globals()
     yield
     _reset_ai_globals()
+    opt_in.invalidate_opt_in_cache()
 
 
 def _stub_graph_generator():
@@ -277,6 +289,70 @@ class TestEnsureProjectInitialized:
         assert isinstance(s2, InitStatus)
         assert isinstance(s3, InitStatus)
         # All return without error — fast-path doesn't re-trigger init
+
+
+# ---------------------------------------------------------------
+# v3.7.0 opt-in gate — ensure_project_initialized (vector 2)
+# ---------------------------------------------------------------
+
+
+class TestEnsureProjectInitializedOptInGate:
+    """A project the user never `codevira init`-ed must NOT be auto-adopted.
+
+    Regression guard for the ~60 ghost dirs a single global MCP registration
+    accumulated by adopting every project it merely touched.
+    """
+
+    def test_non_opted_project_creates_nothing_and_does_not_latch(
+        self, tmp_path, monkeypatch
+    ):
+        # hint mode (no auto_adopt) — the shipped default.
+        monkeypatch.delenv("CODEVIRA_AUTO_ADOPT", raising=False)
+        from mcp_server import opt_in
+
+        opt_in.invalidate_opt_in_cache()
+
+        project_root = tmp_path / "ghost"
+        project_root.mkdir()  # NO in-repo .codevira/config.yaml -> not opted in
+        data_dir = tmp_path / "data"  # must stay untouched (no bootstrap)
+
+        with patch(
+            "mcp_server.paths.get_project_root", return_value=project_root
+        ), patch("mcp_server.paths.get_data_dir", return_value=data_dir):
+            status = ensure_project_initialized(project_root)
+
+        assert status.ready is False
+        assert status.indexing is False
+        assert not data_dir.exists()  # no centralized bootstrap
+        assert not (data_dir / "config.yaml").exists()
+        assert ai._indexing_thread is None  # no background thread started
+        # Gate must NOT latch — a `codevira init` later this process is picked up.
+        assert ai._init_started is False
+
+    def test_opted_in_project_is_adopted(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("CODEVIRA_AUTO_ADOPT", raising=False)
+        from mcp_server import opt_in
+
+        opt_in.invalidate_opt_in_cache()
+
+        project_root = tmp_path / "proj"
+        (project_root / ".codevira").mkdir(parents=True)
+        (project_root / ".codevira" / "config.yaml").write_text(
+            "schema_version: 1\n", encoding="utf-8"
+        )
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+
+        with patch(
+            "mcp_server.paths.get_project_root", return_value=project_root
+        ), patch(
+            "mcp_server.paths.get_data_dir", return_value=data_dir
+        ), _bg_init_patches(DEFAULT_DETECTED):
+            status = ensure_project_initialized(project_root)
+
+        # Opted-in -> the gate allows -> background init runs.
+        assert status.indexing is True
+        assert ai._init_started is True
 
 
 # ---------------------------------------------------------------

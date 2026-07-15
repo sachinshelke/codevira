@@ -118,6 +118,20 @@ def ensure_project_initialized(project_root: Path | None = None) -> InitStatus:
         # Refuse system top-levels FIRST (same v1.8.1 guard as the heavy
         # path uses) — we don't want to repair-bootstrap $HOME etc.
         rejection = is_invalid_project_root(root)
+
+        # Opt-in gate (v3.7.0, D1-D4): don't bootstrap the centralized store
+        # for a project the user never `codevira init`-ed (unless auto_adopt
+        # mode). No config.yaml / metadata.json / global.db row / background
+        # index — the project stays inert. This is what makes a single global
+        # MCP registration stop auto-adopting every project it merely touches.
+        # Deliberately does NOT set _init_started, so a `codevira init` later
+        # in this process is picked up on the next tool call (init invalidates
+        # the opt-in cache). See mcp_server/opt_in.py.
+        from mcp_server.opt_in import activation_allowed
+
+        if not activation_allowed(root):
+            return InitStatus(ready=False, indexing=False)
+
         if not rejection:
             try:
                 from mcp_server._repair_init import repair_incomplete_init

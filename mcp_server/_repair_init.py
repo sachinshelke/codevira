@@ -60,6 +60,21 @@ def repair_incomplete_init(data_dir: Path, project_root: Path) -> dict:
         ``{"config_written": bool, "metadata_written": bool,
         "registered": bool}`` — caller can log what was repaired.
     """
+    # Opt-in gate (v3.7.0, D1-D4): defense-in-depth for the second caller
+    # (cli.py self-heal). Never re-populate a ghost dir for a project the user
+    # never `codevira init`-ed (unless auto_adopt mode).
+    # ensure_project_initialized already gates its own call; this covers the
+    # CLI self-heal path that repairs any existing-on-disk data dir.
+    from mcp_server.opt_in import activation_allowed
+
+    if not activation_allowed(project_root):
+        return {
+            "config_written": False,
+            "metadata_written": False,
+            "registered": False,
+            "skipped_not_opted_in": True,
+        }
+
     repaired = {
         "config_written": False,
         "metadata_written": False,

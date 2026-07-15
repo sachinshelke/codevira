@@ -23,6 +23,7 @@ This file pins the post-fix contract:
 * global.db failure → other two pieces still get written; no crash.
 * Detection failure → reports the failure but doesn't crash the caller.
 """
+
 from __future__ import annotations
 
 import json
@@ -42,6 +43,21 @@ DETECTED = {
 }
 
 
+@pytest.fixture(autouse=True)
+def _adopt_mode(monkeypatch):
+    """Enable auto_adopt (v3.7.0): this file tests repair MECHANICS, which run
+    for projects the opt-in gate has allowed. The gate itself — repair skipping
+    a non-opted project — is covered by TestRepairOptInGate below. Gate tests
+    delenv this to exercise the blocked path.
+    """
+    from mcp_server import opt_in
+
+    monkeypatch.setenv("CODEVIRA_AUTO_ADOPT", "1")
+    opt_in.invalidate_opt_in_cache()
+    yield
+    opt_in.invalidate_opt_in_cache()
+
+
 @pytest.fixture
 def ghost_dirs(tmp_path, monkeypatch):
     """Project root + data dir with only graph/ + roadmap.yaml — Bug 21a shape."""
@@ -52,7 +68,9 @@ def ghost_dirs(tmp_path, monkeypatch):
     (data_dir / "roadmap.yaml").write_text("project: demo\n")
     global_db_path = tmp_path / ".codevira" / "global.db"
     monkeypatch.setattr("mcp_server.paths.get_global_db_path", lambda: global_db_path)
-    monkeypatch.setattr("mcp_server.paths._get_git_remote_url", lambda _p: "git@host:demo.git")
+    monkeypatch.setattr(
+        "mcp_server.paths._get_git_remote_url", lambda _p: "git@host:demo.git"
+    )
     monkeypatch.setattr("mcp_server.detect.auto_detect_project", lambda _p: DETECTED)
     return project_root, data_dir, global_db_path
 
@@ -147,10 +165,49 @@ class TestRepairIdempotent:
         assert n == 1
 
 
+class TestRepairOptInGate:
+    """v3.7.0: repair must SKIP a project the user never `codevira init`-ed."""
+
+    def test_non_opted_project_is_not_repaired(self, ghost_dirs, monkeypatch):
+        # hint mode (no auto_adopt). project_root has no in-repo
+        # .codevira/config.yaml -> not opted in -> repair is a no-op.
+        monkeypatch.delenv("CODEVIRA_AUTO_ADOPT", raising=False)
+        from mcp_server import opt_in
+
+        opt_in.invalidate_opt_in_cache()
+        project_root, data_dir, _global_db_path = ghost_dirs
+
+        result = repair_incomplete_init(data_dir, project_root)
+
+        assert result.get("skipped_not_opted_in") is True
+        assert not (data_dir / "config.yaml").is_file()
+        assert not (data_dir / "metadata.json").is_file()
+
+    def test_opted_in_project_is_repaired(self, ghost_dirs, monkeypatch):
+        monkeypatch.delenv("CODEVIRA_AUTO_ADOPT", raising=False)
+        from mcp_server import opt_in
+
+        project_root, data_dir, _global_db_path = ghost_dirs
+        # Opt the project in (explicit init writes this in-repo marker).
+        (project_root / ".codevira").mkdir(parents=True)
+        (project_root / ".codevira" / "config.yaml").write_text(
+            "schema_version: 1\n", encoding="utf-8"
+        )
+        opt_in.invalidate_opt_in_cache()
+
+        result = repair_incomplete_init(data_dir, project_root)
+
+        assert "skipped_not_opted_in" not in result
+        assert result["config_written"] is True
+        assert (data_dir / "config.yaml").is_file()
+
+
 class TestRepairResilience:
     """Failures in one piece must not prevent the others from completing."""
 
-    def test_global_db_failure_does_not_block_config_write(self, ghost_dirs, monkeypatch):
+    def test_global_db_failure_does_not_block_config_write(
+        self, ghost_dirs, monkeypatch
+    ):
         """If GlobalDB raises, config + metadata still land — partial repair beats no repair."""
         project_root, data_dir, _global_db_path = ghost_dirs
         # Make GlobalDB.__init__ raise.
@@ -180,7 +237,9 @@ class TestRepairResilience:
             "mcp_server.paths._get_git_remote_url",
             lambda _p: None,
         )
-        monkeypatch.setattr("mcp_server.detect.auto_detect_project", lambda _p: DETECTED)
+        monkeypatch.setattr(
+            "mcp_server.detect.auto_detect_project", lambda _p: DETECTED
+        )
         result = repair_incomplete_init(data_dir, project_root)
         assert data_dir.is_dir()
         assert (data_dir / "config.yaml").is_file()

@@ -28,6 +28,16 @@ No data migration: existing `.codevira/decisions.jsonl` and
 
 ### Default-behavior changes worth knowing
 
+- **Opt-in project tracking (no more silent auto-adopt).** Codevira now tracks
+  only projects you explicitly `codevira init`. Your existing tracked projects
+  keep working with **zero migration** — a committed in-repo
+  `.codevira/config.yaml` grandfathers them in. What changes: a project you
+  merely open in your IDE (but never `init`) stays **inert** — its tools return
+  a "run `codevira init`" hint instead of silently creating a
+  `~/.codevira/projects/<key>/` dir. This is what stops `~/.codevira/projects/`
+  from filling with dirs you never chose. To restore the old
+  track-everything behavior set `CODEVIRA_AUTO_ADOPT=1`; existing stray dirs are
+  left untouched (a future `codevira untrack` will clean them up).
 - **Single user-scope MCP registration.** `codevira init` registers ONE
   user-scope `codevira` server that resolves the active project from your
   editor's workspace roots at runtime, instead of a per-project entry — so N

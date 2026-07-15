@@ -9,6 +9,28 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [3.7.0] — 2026-07-10
 
+### Changed — opt-in project tracking (no more silent auto-adopt)
+
+Codevira now tracks **only projects you explicitly `codevira init`**. With a
+single global MCP registration its tools are available in every IDE window — but
+previously *any* project you merely opened got a data dir and started being
+tracked (the graph-read path alone — e.g. `get_impact` before an edit — adopted
+it, which is how `~/.codevira/projects/` filled with dirs you never chose).
+
+- **Un-init'd projects are inert.** Read tools return an empty payload + a
+  "run `codevira init`" hint; write tools refuse with the same hint; the engine
+  hooks (blast-radius, prompt-capture, memory fan-out) don't fire; nothing is
+  written — no `~/.codevira/projects/<key>/` dir, no `global.db` row, no
+  `.codevira-cache/`.
+- **Existing tracked projects keep working, zero migration.** A committed
+  in-repo `.codevira/config.yaml` (or its centralized equivalent) grandfathers
+  a project in. The marker travels via git, so teammates and other IDEs inherit
+  the opt-in.
+- **`codevira init`** is the one-time, per-project opt-in.
+- **Escape hatch:** `CODEVIRA_AUTO_ADOPT=1` restores the pre-3.7 behavior (track
+  every project you open); `=0` is strict (refuse without hints). Default is
+  `hint`.
+
 ### Fixed
 - **Decision-id drift within a process (D000118).** `get_project_root()`
   re-resolved from `cwd` on every call, so a `cwd` change between `record()`

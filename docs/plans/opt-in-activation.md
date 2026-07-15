@@ -1,14 +1,56 @@
 # Plan — Opt-in project activation (stop auto-adopt)
 
-> Status: **APPROVED — D1–D4 LOCKED (Sachin, 2026-07-15). Executing phase-by-phase.**
-> Written 2026-07-15. Grounded in a 3-agent code map (workflow
-> `opt-in-activation-mapping`). Each phase is independently committable with a
-> failing-first test.
+> Status: **IMPLEMENTED — Phases 1–6 shipped (2026-07-15). Phase 7 dropped
+> (redundant), Phase 8 backlog.** D1–D4 LOCKED. See "Execution outcome" below.
 >
 > **Locked decisions:** D1 = `hint` (reads empty+hint, writes refuse+hint) ·
 > D2 = **refuse writes** until `codevira init`, with actionable hint ·
 > D3 = marker is the in-repo `.codevira/config.yaml` · D4 = ghost-dir cleanup
 > is **backlog** (a separate `codevira untrack` follow-up; the gate stops NEW adoption).
+
+## Execution outcome (2026-07-15)
+
+Shipped on `main` as 6 commits (`4d8ecbe` Phase 1 → Phase 6). Full suite: **3058
+passed**; the only red is a **pre-existing** `mcp.types`-mock test-isolation
+leak unrelated to opt-in (14 tests, all green in isolation — decision `D00011E`).
+
+- **Phase 1 — predicate** (`mcp_server/opt_in.py`): `is_project_opted_in`,
+  `tracking_mode`, `activation_allowed`. **Hardened during Phase 5:** the marker
+  is accepted in the in-repo **OR** centralized `config.yaml` — the v1.6
+  `migrate_to_centralized` renames an in-repo `.codevira/` →
+  `.codevira.migrated/` and moves the store to the centralized dir, which
+  destroyed an in-repo-only marker (also bites a git-clone onto a fresh
+  machine). Cache is **positive-only**: a negative is always re-stat'd, so a
+  fresh `codevira init` (CLI) is seen immediately by a long-lived MCP server —
+  this subsumed the Phase-7 cache-invalidation work.
+- **Phase 2 — centralized bootstrap** gated (`auto_init` + `_repair_init`).
+- **Phase 3 — graph-read** gated (the dominant vector; `tools/graph.py`
+  get_node/get_impact/query_graph/refresh_graph guard before `_get_db()`).
+  The engine blast-radius signal reads `get_impact`, so the engine goes inert
+  for un-init'd projects automatically.
+- **Phase 4 — startup registration** gated (`global_sync`).
+- **Phase 5 — dispatch gate** (`server.py call_tool`): the PRIMARY chokepoint —
+  reads inert+hint, writes refuse+hint; every dispatched tool classified
+  (READ_TOOLS/WRITE_TOOLS + a completeness test).
+- **Phase 6 — automatic non-MCP write vectors.** The plan's blanket
+  `ensure_dirs` guard was **reverted** — too blast-heavy (hundreds of direct/CLI
+  writes legitimately scaffold tmp projects, and the MCP write surface is
+  already refused at the dispatch gate). Instead gated the paths that fire
+  AUTOMATICALLY for a merely-opened project: the **Claude Code hook entry**
+  (`claude_code_hooks.handle` — the sole CLI hook chokepoint: no policy eval,
+  no prompt-capture, no memory fan-out for non-opted), **`memory_fanout.flush`**,
+  **`run_startup_migrations`**, and the **roadmap stub** persistence.
+- **Phase 7 — DROPPED as redundant.** The hardened marker (`is_project_opted_in`,
+  in-repo OR centralized `config.yaml`) already distinguishes real projects from
+  ghosts, so a `global.db explicit_init` column adds nothing a future
+  `codevira untrack` (D4) can't get from the predicate. The cache-invalidation
+  half was subsumed by positive-only caching.
+- **Phase 8 — backlog (D4).** ~60 existing graph-only ghost dirs stay on disk;
+  a separate `codevira untrack` removes them. The gate stops NEW adoption.
+
+**Grandfathering:** existing real projects (in-repo `.codevira/config.yaml`)
+classify as opted-in with zero migration; graph-only ghosts classify as
+not-opted-in and go inert. `CODEVIRA_AUTO_ADOPT=1` restores pre-v3.7.0 behavior.
 
 ## Problem
 

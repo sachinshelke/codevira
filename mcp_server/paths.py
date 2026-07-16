@@ -165,15 +165,27 @@ def _get_git_remote_url(project_root: Path) -> str | None:
     return None
 
 
-def _find_project_by_git_remote(remote_url: str) -> Path | None:
-    """Scan ~/.codevira/projects/ for a project whose metadata.json matches remote_url."""
+def _find_project_by_git_remote(remote_url: str | None) -> Path | None:
+    """Scan ~/.codevira/projects/ for a project whose metadata.json matches remote_url.
+
+    v3.7.1 fix E (cross-project memory bleed): match ONLY on a non-empty
+    remote. A None/empty ``remote_url`` must never match — otherwise it
+    equals the ``git_remote: null`` stored for EVERY project without a git
+    remote, so the first-scanned no-remote project's data dir is returned for
+    all of them, silently sharing decisions across unrelated projects. We also
+    skip stored empty/None ``git_remote`` values for the same reason (only a
+    real remote-to-remote match is meaningful for rename-survival).
+    """
+    if not remote_url:
+        return None
     projects_dir = get_global_home() / "projects"
     if not projects_dir.exists():
         return None
     for meta_file in projects_dir.glob("*/metadata.json"):
         try:
             meta = json.loads(meta_file.read_text())
-            if meta.get("git_remote") == remote_url:
+            stored = meta.get("git_remote")
+            if stored and stored == remote_url:
                 # Return the centralized data dir (the directory containing metadata.json)
                 return meta_file.parent
         except (json.JSONDecodeError, OSError):

@@ -750,6 +750,31 @@ class TestFindProjectByGitRemote:
         result = _find_project_by_git_remote("https://github.com/org/repo.git")
         assert result is None
 
+    def test_none_remote_never_matches_null_remote_projects(
+        self, tmp_path, monkeypatch
+    ):
+        """v3.7.1 fix E (cross-project bleed): a None/empty remote must NEVER
+        match projects whose metadata has ``git_remote: null``. Otherwise every
+        no-remote project resolves to the SAME (first-scanned) no-remote
+        project's data dir — sharing decisions across unrelated projects.
+        Real-world: the user had 17 projects with git_remote=null; a lookup for
+        None returned the first one (SMILE), bleeding its memory everywhere.
+        """
+        fake_home = tmp_path / "home"
+        monkeypatch.setattr(paths, "get_global_home", lambda: fake_home)
+
+        # Two DIFFERENT projects, both with git_remote=null in metadata.
+        for slug in ("smile_aaaa1111", "uniratecard_bbbb2222"):
+            d = fake_home / "projects" / slug
+            d.mkdir(parents=True)
+            (d / "metadata.json").write_text(
+                json.dumps({"path_key": slug, "git_remote": None})
+            )
+
+        # A no-remote lookup must NOT collapse them onto one dir.
+        assert _find_project_by_git_remote(None) is None
+        assert _find_project_by_git_remote("") is None
+
     def test_handles_os_error_on_read(self, tmp_path, monkeypatch):
         """OSError reading metadata.json -> skipped gracefully."""
         fake_home = tmp_path / "home"

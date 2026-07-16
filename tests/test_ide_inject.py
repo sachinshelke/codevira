@@ -1916,6 +1916,86 @@ class TestM1OriginStampAntigravity:
         assert entry["env"]["CODEVIRA_IDE"] == "antigravity"
 
 
+class TestRemoveCodeviraProjectFromConfig:
+    """v3.7.1 fix C: remove_codevira_project_from_config is project-SCOPED —
+    it removes only the entries binding to one project (via --project-dir),
+    leaving the bare global entry and other projects' entries intact. Backs
+    `codevira untrack <project>`."""
+
+    def test_removes_only_matching_project_entry(self, tmp_path):
+        cfg = tmp_path / "mcp_config.json"
+        proj_a = tmp_path / "alpha"
+        proj_a.mkdir()
+        proj_b = tmp_path / "beta"
+        proj_b.mkdir()
+        cfg.write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "codevira": {"command": "cv", "args": []},
+                        "codevira-alpha": {
+                            "command": "cv",
+                            "args": ["--project-dir", str(proj_a)],
+                        },
+                        "codevira-beta": {
+                            "command": "cv",
+                            "args": ["--project-dir", str(proj_b)],
+                        },
+                        "other-server": {"command": "x"},
+                    }
+                }
+            )
+        )
+        removed = ide_inject.remove_codevira_project_from_config(cfg, proj_a)
+        assert removed == ["codevira-alpha"]
+        servers = json.loads(cfg.read_text())["mcpServers"]
+        # bare global, beta, and the unrelated server all survive.
+        assert set(servers) == {"codevira", "codevira-beta", "other-server"}
+
+    def test_dry_run_reports_without_writing(self, tmp_path):
+        cfg = tmp_path / "mcp_config.json"
+        proj = tmp_path / "alpha"
+        proj.mkdir()
+        cfg.write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "codevira-alpha": {
+                            "command": "cv",
+                            "args": ["--project-dir", str(proj)],
+                        }
+                    }
+                }
+            )
+        )
+        before = cfg.read_text()
+        removed = ide_inject.remove_codevira_project_from_config(
+            cfg, proj, dry_run=True
+        )
+        assert removed == ["codevira-alpha"]
+        assert cfg.read_text() == before  # nothing written
+
+    def test_returns_empty_when_no_match(self, tmp_path):
+        cfg = tmp_path / "mcp_config.json"
+        proj = tmp_path / "alpha"
+        proj.mkdir()
+        other = tmp_path / "beta"
+        other.mkdir()
+        cfg.write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "codevira-beta": {
+                            "command": "cv",
+                            "args": ["--project-dir", str(other)],
+                        }
+                    }
+                }
+            )
+        )
+        assert ide_inject.remove_codevira_project_from_config(cfg, proj) == []
+
+
 class TestRemoveCodeviraFromConfig:
     """remove_codevira_from_config is a public uninstall surface with
     documented semantics — removes 'codevira' AND any 'codevira-<x>'

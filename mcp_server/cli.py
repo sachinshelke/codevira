@@ -1125,6 +1125,42 @@ def main() -> None:
         "projects and their indexes.",
     )
 
+    # v3.7.1 fix C: `codevira untrack` — the surgical inverse of `codevira
+    # init` for ONE project. Prunes that project's per-project IDE-config
+    # entries (chiefly the Antigravity `codevira-<name>` entries fix B writes)
+    # and its centralized data dir, leaving every other project and the bare
+    # global entries untouched. Retires the manual mcp_config hand-editing the
+    # v3.7.0 Antigravity crash forced on users.
+    untrack_parser = subparsers.add_parser(
+        "untrack",
+        help="Stop tracking ONE project: remove its IDE-config entries + data dir",
+        description=(
+            "Surgically un-register a single project: removes the project's "
+            "per-project codevira entries (matched by --project-dir) from every "
+            "detected IDE config surface — including both Antigravity "
+            "mcp_config.json surfaces — and deletes its centralized data dir "
+            "under ~/.codevira/projects/. The bare global entry and all OTHER "
+            "projects' entries are left intact. Preview with --dry-run first."
+        ),
+    )
+    untrack_parser.add_argument(
+        "path",
+        nargs="?",
+        default=None,
+        help="Project directory to untrack (default: current directory)",
+    )
+    untrack_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be removed without deleting anything",
+    )
+    untrack_parser.add_argument(
+        "-y",
+        "--yes",
+        action="store_true",
+        help="Skip confirmation prompt",
+    )
+
     # v2.2.0+: `heal` deleted per 2026-05-22 surface-cut audit. The
     # destructive paths (heal --vectors/--graph/--all) graduated to
     # `codevira reset` in v2.1.2; the only remaining `heal --decisions`
@@ -1821,6 +1857,14 @@ def main() -> None:
             orphans_only=getattr(args, "orphans", False),
             ghosts_only=getattr(args, "ghosts", False),
         )
+    elif args.command == "untrack":
+        sys.exit(
+            cmd_untrack(
+                path=getattr(args, "path", None),
+                dry_run=getattr(args, "dry_run", False),
+                yes=getattr(args, "yes", False),
+            )
+        )
     # v2.2.0+: `heal` dispatch deleted (command removed).
     elif args.command == "reset":
         # 2026-05-18 v2.1.2 Item 3b: destructive operations split from heal.
@@ -2315,6 +2359,120 @@ def cmd_reset(
 # v2.2.0+: cmd_heal deleted per 2026-05-22 surface-cut audit.
 # Use `codevira reset` for destructive recovery; non-destructive
 # --decisions backfill targeted the (removed) ChromaDB embedding index.
+
+
+def cmd_untrack(
+    path: str | None = None,
+    dry_run: bool = False,
+    yes: bool = False,
+) -> int:
+    """v3.7.1 fix C: stop tracking ONE project — remove its per-project IDE
+    entries + centralized data dir, leaving other projects untouched.
+
+    The surgical inverse of `codevira init`. Retires the manual mcp_config
+    editing the v3.7.0 Antigravity crash forced on users.
+    """
+    import shutil
+    from pathlib import Path
+
+    from mcp_server.ide_inject import (
+        _antigravity_write_targets,
+        _claude_config_path,
+        _claude_desktop_config_path,
+        _claude_global_config_path,
+        _cursor_config_path,
+        _cursor_global_config_path,
+        _windsurf_config_path,
+        _windsurf_global_config_path,
+        remove_codevira_project_from_config,
+    )
+    from mcp_server.paths import (
+        _sanitize_path_key,
+        get_global_home,
+        get_project_root,
+    )
+
+    root = Path(path).resolve() if path else get_project_root()
+
+    # Every config surface a per-project entry could live in: global files
+    # (Antigravity per-project entries live in the shared/global mcp_config),
+    # per-project files, and BOTH Antigravity surfaces.
+    surfaces: list[Path] = []
+    for zero_arg in (
+        _claude_global_config_path,
+        _cursor_global_config_path,
+        _windsurf_global_config_path,
+        _claude_desktop_config_path,
+    ):
+        try:
+            surfaces.append(zero_arg())
+        except Exception:  # noqa: BLE001 — best-effort surface discovery
+            pass
+    for per_project in (
+        _claude_config_path,
+        _cursor_config_path,
+        _windsurf_config_path,
+    ):
+        try:
+            surfaces.append(per_project(root))
+        except Exception:  # noqa: BLE001
+            pass
+    try:
+        surfaces.extend(_antigravity_write_targets())
+    except Exception:  # noqa: BLE001
+        pass
+
+    # De-dup while preserving order.
+    seen: set[str] = set()
+    uniq: list[Path] = []
+    for s in surfaces:
+        if str(s) not in seen:
+            seen.add(str(s))
+            uniq.append(s)
+
+    # Preview (dry_run=True never writes).
+    removals: list[tuple[Path, list[str]]] = []
+    for cfg in uniq:
+        keys = remove_codevira_project_from_config(cfg, root, dry_run=True)
+        if keys:
+            removals.append((cfg, keys))
+
+    data_dir = get_global_home() / "projects" / _sanitize_path_key(root)
+    data_exists = data_dir.is_dir()
+
+    if not removals and not data_exists:
+        print(
+            f"Nothing to untrack for {root} — no per-project codevira IDE "
+            "entries or data dir found."
+        )
+        return 0
+
+    print(f"Untrack {root}:")
+    for cfg, keys in removals:
+        print(f"    • {cfg}  ({', '.join(keys)})")
+    if data_exists:
+        print(f"    • data dir {data_dir}")
+
+    if dry_run:
+        print("  (dry-run — nothing removed)")
+        return 0
+
+    if not yes:
+        try:
+            resp = input("  Proceed? [y/N] ").strip().lower()
+        except EOFError:
+            resp = ""
+        if resp != "y":
+            print("  Aborted.")
+            return 1
+
+    for cfg, _keys in removals:
+        remove_codevira_project_from_config(cfg, root)
+    if data_exists:
+        shutil.rmtree(data_dir, ignore_errors=True)
+
+    print(f"  ✓ Untracked {root}. Restart your IDE(s) to drop the stale server(s).")
+    return 0
 
 
 def cmd_clean(

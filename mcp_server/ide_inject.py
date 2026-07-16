@@ -403,6 +403,57 @@ def remove_codevira_from_config(
     return True
 
 
+def remove_codevira_project_from_config(
+    config_path: Path, project_root: Path, *, dry_run: bool = False
+) -> list[str]:
+    """Remove ONLY the codevira entries in ``config_path`` that bind to
+    ``project_root`` via ``--project-dir <project_root>``.
+
+    Unlike :func:`remove_codevira_from_config` (which strips every codevira
+    key), this is project-scoped: the bare global ``codevira`` entry and every
+    other project's ``codevira-<name>`` entry are left untouched. This is what
+    ``codevira untrack <project>`` uses to prune a single project's entries
+    (chiefly the per-project Antigravity entries fix B now writes) without
+    disturbing the rest.
+
+    Returns the list of removed server keys (computed even in ``dry_run``,
+    but nothing is written then).
+    """
+    if not config_path.exists():
+        return []
+    data = _read_json_safe(config_path)
+    servers = data.get("mcpServers", {})
+    if not servers:
+        return []
+
+    def _norm(p: str | Path) -> str:
+        try:
+            return str(Path(p).resolve())
+        except (OSError, RuntimeError, ValueError):
+            return str(p)
+
+    target = _norm(project_root)
+    removed: list[str] = []
+    for key in list(servers):
+        if not (key == "codevira" or key.startswith("codevira-")):
+            continue
+        args = servers[key].get("args", []) or []
+        if "--project-dir" not in args:
+            continue  # bare global entry — not project-scoped, leave it
+        idx = args.index("--project-dir")
+        if idx + 1 >= len(args):
+            continue
+        bound = args[idx + 1]
+        if _norm(bound) == target or str(bound) == str(project_root):
+            removed.append(key)
+
+    if removed and not dry_run:
+        for key in removed:
+            del servers[key]
+        _write_json_safe(config_path, data)
+    return removed
+
+
 def _has_codevira_entry(config_path: Path) -> bool:
     """True if `config_path` has a `codevira` (or `codevira-*`) mcpServers key."""
     if not config_path.exists():

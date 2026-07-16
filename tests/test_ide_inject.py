@@ -1493,6 +1493,48 @@ class TestClaudeCodeCliShellOut:
             f"argv was {add_argv}"
         )
 
+    def test_cli_argv_positionals_precede_variadic_env(self, tmp_path, monkeypatch):
+        """REGRESSION (claude 2.1.x): `claude mcp add`'s `-e/--env <env...>` is a
+        VARIADIC option — placed before the positional name/commandOrUrl it
+        greedily swallows them, so the CLI dies with 'missing required argument
+        name' and Claude Code is never registered (the setup failure Sachin hit
+        on the v3.7.0 dogfood). The positional `codevira` name MUST appear
+        before any `--env` flag in the argv.
+        """
+        config_file = tmp_path / "claude.json"
+        monkeypatch.setattr(
+            ide_inject, "_claude_global_config_path", lambda: config_file
+        )
+        monkeypatch.setattr(ide_inject, "_claude_cli_path", lambda: "/fake/claude")
+
+        captured: list[list[str]] = []
+
+        def fake_run(cmd, *args, **kwargs):
+            captured.append(list(cmd))
+
+            class _R:
+                returncode = 0
+                stderr = ""
+                stdout = "Added"
+
+            return _R()
+
+        monkeypatch.setattr("subprocess.run", fake_run)
+        inject_global_claude_code("/usr/bin/codevira", "python3")
+
+        add_argv = captured[1]  # [0] is the remove
+        name_idx = add_argv.index("codevira")
+        env_idxs = [i for i, tok in enumerate(add_argv) if tok == "--env"]
+        assert env_idxs, f"expected an --env flag in argv: {add_argv}"
+        assert name_idx < min(env_idxs), (
+            "positional name 'codevira' must precede the variadic --env flag, "
+            f"or the CLI swallows it as an env value; argv was {add_argv}"
+        )
+        # And the command path is the very next token after the name.
+        assert (
+            add_argv[name_idx + 1] == "/usr/bin/codevira"
+        ), f"commandOrUrl must immediately follow the name; argv was {add_argv}"
+
     def test_falls_back_to_direct_merge_when_cli_missing(self, tmp_path, monkeypatch):
         """When claude CLI is NOT on PATH, fall back to direct merge of
         ~/.claude.json."""

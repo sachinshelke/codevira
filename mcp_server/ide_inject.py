@@ -790,15 +790,23 @@ def _claude_cli_add_codevira(
     for k, v in (server_config.get("env") or {}).items():
         env_pairs.extend(["--env", f"{k}={v}"])
 
+    # IMPORTANT (arg order): the claude CLI's `-e, --env <env...>` is a
+    # VARIADIC option — it greedily consumes every following non-flag token.
+    # If `--env K=V` precedes the positional `name` / `commandOrUrl`, the CLI
+    # swallows `codevira` and `<cmd_path>` as extra env values and dies with
+    # "error: missing required argument 'name'" (observed on claude 2.1.x —
+    # this is exactly why `codevira setup` failed to register Claude Code).
+    # So the positionals MUST come first; the variadic `--env` goes last
+    # (immediately before the `--` server-args separator, if any).
     cmd = [
         cli,
         "mcp",
         "add",
         "--scope",
         "user",
-        *env_pairs,
         "codevira",
         cmd_path,
+        *env_pairs,
     ]
     if extra_args:
         cmd.extend(["--", *extra_args])

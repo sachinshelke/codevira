@@ -1651,6 +1651,14 @@ def main() -> None:
         help="Claude Code event name (PreToolUse, PostToolUse, SessionStart, "
         "UserPromptSubmit, Stop)",
     )
+    handle_parser.add_argument(
+        "--ide",
+        default="claude",
+        choices=["claude", "antigravity"],
+        help="Which IDE's hook protocol to speak (default: claude). "
+        "'antigravity' reads Antigravity's toolCall JSON on stdin and emits "
+        'its {"decision": ...} response — same enforcement engine.',
+    )
     engine_sub.add_parser(
         "disable",
         help="Persistently disable hook engine policies (creates "
@@ -2054,11 +2062,13 @@ def main() -> None:
                 _maybe_demo()
             except Exception:
                 pass  # never let demo policy registration break the hook
-            from mcp_server.engine.wiring.claude_code_hooks import (
-                handle as engine_handle,
-            )
+            if getattr(args, "ide", "claude") == "antigravity":
+                from mcp_server.engine.wiring import antigravity_hooks
 
-            sys.exit(engine_handle(args.event_type))
+                sys.exit(antigravity_hooks.handle(args.event_type))
+            from mcp_server.engine.wiring import claude_code_hooks
+
+            sys.exit(claude_code_hooks.handle(args.event_type))
         # v3.0 persistent on/off switch backed by ~/.codevira/engine.disabled.
         # The hook scripts check this sentinel and fast-exit ~5ms when
         # present — useful for users who want the MCP server without

@@ -126,7 +126,7 @@ server is ready.
 
 ```bash
 codevira doctor          # 18 health checks, ✓/⚠/✗
-codevira list-decisions  # any decisions recorded yet?
+codevira replay          # browse the decisions timeline (any recorded yet?)
 codevira sync            # regen AGENTS.md from current decisions.jsonl
 ```
 

@@ -1358,16 +1358,19 @@ def main() -> None:
         "merge-driver",
         help="git merge driver for the decision log (invoked by git)",
         description=(
+            # NB: %% is escaped — argparse %-formats help/description text, so a
+            # bare %O/%A/%B (git's merge-driver placeholders) crashes
+            # `merge-driver --help` with "unsupported format character".
             "Custom git merge driver for the append-only decision log. git "
-            "calls `codevira merge-driver %O %A %B`; this unions both sides, "
+            "calls `codevira merge-driver %%O %%A %%B`; this unions both sides, "
             "drops exact duplicates, resolves id collisions deterministically, "
             "and writes the result. Registered by `codevira init` via "
             ".gitattributes + git config."
         ),
     )
-    merge_driver_parser.add_argument("base", help="%O — common-ancestor version")
-    merge_driver_parser.add_argument("ours", help="%A — current version (output)")
-    merge_driver_parser.add_argument("theirs", help="%B — other version")
+    merge_driver_parser.add_argument("base", help="%%O — common-ancestor version")
+    merge_driver_parser.add_argument("ours", help="%%A — current version (output)")
+    merge_driver_parser.add_argument("theirs", help="%%B — other version")
 
     # v2.2.0 Phase F: `codevira observe-git` — git-observed outcome tracker.
     observe_parser = subparsers.add_parser(

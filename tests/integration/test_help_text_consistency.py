@@ -198,3 +198,39 @@ class TestHelpTextConsistency:
                 f"CHANGELOG.md has no section for version {version!r} "
                 f"nor [Unreleased]. Add one or revert the version bump."
             )
+
+
+class TestAllSubcommandHelpRenders:
+    """Every subcommand's --help must render without raising.
+
+    Regression guard (v3.7.0 dogfood): `codevira merge-driver --help` crashed
+    with `ValueError: unsupported format character 'O'` because its help /
+    description text contained git's literal `%O %A %B` placeholders — argparse
+    %-formats help strings, so a bare `%` blows up format_help(). Any future
+    subcommand that puts a raw `%` in help/description text is caught here.
+    """
+
+    def test_every_subparser_format_help_ok(self):
+        parser = _build_cli_parser()
+        # Locate the subparsers action and format_help() each choice.
+        failures = []
+        for action in parser._actions:  # noqa: SLF001
+            choices = getattr(action, "choices", None)
+            if not isinstance(choices, dict):
+                continue
+            for name, sub in choices.items():
+                try:
+                    sub.format_help()
+                except Exception as e:  # noqa: BLE001
+                    failures.append(f"{name}: {type(e).__name__}: {e}")
+        assert not failures, "subcommand --help failed to render:\n" + "\n".join(
+            failures
+        )
+
+    def test_merge_driver_help_renders(self):
+        """Direct guard for the specific v3.7.0 crash."""
+        parser = _build_cli_parser()
+        md = _find_subparser(parser, "merge-driver")
+        assert md is not None, "merge-driver subparser not registered"
+        text = md.format_help()  # must not raise
+        assert "base" in text and "theirs" in text

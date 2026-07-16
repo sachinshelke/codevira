@@ -165,6 +165,66 @@ def _get_git_remote_url(project_root: Path) -> str | None:
     return None
 
 
+#: In-repo ``.codevira/`` files that hold MEMORY (not the opt-in marker).
+#: These must never be git-tracked: if committed, they travel to any clone
+#: or copy of the repo, silently sharing one project's decisions/sessions
+#: with an unrelated project (the v3.7.1 cross-project-bleed root cause).
+_MEMORY_FILES = ("decisions.jsonl", "sessions.jsonl", "outcomes.jsonl")
+
+
+def git_tracked_memory_files(project_root: Path) -> list[str]:
+    """Return the ``.codevira/`` memory files git currently tracks, if any.
+
+    ``.gitignore`` does NOT untrack a file that was committed before the
+    ignore rule existed (older codevira versions committed
+    ``.codevira/decisions.jsonl``). Such a file keeps traveling via git —
+    so a project copied/cloned from another inherits its memory. This detects
+    that condition. Best-effort: returns ``[]`` when not a git repo / git is
+    unavailable. Paths are returned as git reports them (repo-relative).
+    """
+    try:
+        result = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(project_root),
+                "ls-files",
+                *[f".codevira/{f}" for f in _MEMORY_FILES],
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return []
+    if result.returncode != 0:
+        return []
+    return [line for line in result.stdout.splitlines() if line.strip()]
+
+
+def untrack_git_memory_files(project_root: Path) -> list[str]:
+    """Stop git from tracking ``.codevira/`` memory files (keep them on disk).
+
+    Runs ``git rm --cached`` on each tracked memory file so it is removed from
+    the index (and future clones) while the local copy — the actual memory —
+    is preserved. Returns the list of files untracked (``[]`` if none were
+    tracked). Best-effort; never raises.
+    """
+    tracked = git_tracked_memory_files(project_root)
+    if not tracked:
+        return []
+    try:
+        subprocess.run(
+            ["git", "-C", str(project_root), "rm", "--cached", "--quiet", *tracked],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return []
+    return tracked
+
+
 def _find_project_by_git_remote(remote_url: str | None) -> Path | None:
     """Scan ~/.codevira/projects/ for a project whose metadata.json matches remote_url.
 

@@ -233,12 +233,31 @@ def cmd_init(*, yes: bool = False, dry_run: bool = False) -> int:
 
     decisions_store.rebuild_indexes()
 
+    # Step 8 (v3.7.1 fix E): stop git from tracking any .codevira/ MEMORY files.
+    # Older codevira versions committed .codevira/decisions.jsonl before the
+    # gitignore rule existed; .gitignore can't untrack an already-committed
+    # file, so that memory travels to every clone/copy — an unrelated new
+    # project then inherits this project's decisions. Untrack them here (the
+    # local files, i.e. the actual memory, are preserved).
+    from mcp_server.paths import untrack_git_memory_files
+
+    _untracked = untrack_git_memory_files(project)
+    if _untracked:
+        print()
+        print(
+            f"  ⚠ Stopped git-tracking {len(_untracked)} committed memory file(s) "
+            "so they don't leak to clones/copies:"
+        )
+        for _f in _untracked:
+            print(f"      {_f}")
+        print("      (local files kept — commit the removal: git commit)")
+
     # Success summary
     print()
     print("  ✓ Initialized.")
     print()
     print("  Next steps:")
-    print("    1. git add .codevira/ AGENTS.md .gitignore && git commit")
+    print("    1. git add AGENTS.md .gitignore && git commit")
     print("    2. Open Claude Code / Cursor / Antigravity in this project;")
     print("       codevira's MCP server is ready.")
     print("    3. Record your first decision:")

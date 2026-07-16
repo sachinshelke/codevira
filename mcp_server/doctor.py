@@ -829,6 +829,40 @@ def check_codevira_dir() -> CheckResult:
     )
 
 
+def check_committed_memory() -> CheckResult:
+    """v3.7.1 fix E: warn when .codevira/ MEMORY files are git-tracked.
+
+    A committed decisions.jsonl / sessions.jsonl travels to every clone or
+    copy of the repo, silently sharing this project's memory with unrelated
+    projects. .gitignore can't undo it (it never untracks already-tracked
+    files) — the fix is `git rm --cached`.
+    """
+    from mcp_server.paths import get_project_root, git_tracked_memory_files
+
+    try:
+        root = get_project_root()
+    except Exception:
+        return CheckResult("committed_memory", _PASS, "no project bound (skipped)")
+    tracked = git_tracked_memory_files(root)
+    if not tracked:
+        return CheckResult(
+            "committed_memory",
+            _PASS,
+            "no codevira memory files are git-tracked",
+        )
+    return CheckResult(
+        "committed_memory",
+        _WARN,
+        f"{len(tracked)} codevira memory file(s) are git-tracked "
+        f"({', '.join(tracked)}) — they leak this project's memory to any "
+        f"clone/copy of the repo",
+        fix_command=(
+            "git rm -r --cached .codevira/ && "
+            "git commit -m 'stop tracking codevira memory'  # or: codevira init"
+        ),
+    )
+
+
 def check_agents_md_size() -> CheckResult:
     """v2.2.0: AGENTS.md is generated; warn if it exceeds the 10 KB safety
     threshold (5 KB cap on the codevira block + reasonable user content)."""
@@ -964,6 +998,7 @@ _CHECKS: tuple[Callable[[], CheckResult], ...] = (
     check_project_root,
     check_project_binding,  # v3.4.0 — surface pin vs workspace resolution
     check_codevira_dir,  # v2.2.0 — replaces check_codeindex_freshness
+    check_committed_memory,  # v3.7.1 — cross-project bleed via git-tracked memory
     check_agents_md_size,  # v2.2.0 — new
     check_graph_db,
     check_global_db,

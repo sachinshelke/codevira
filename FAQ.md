@@ -59,7 +59,7 @@ pipx install codevira
 pip install codevira
 ```
 
-The full toolkit installs out of the box — no ML stack, no embedding model, no download on first use. Codevira ships with no vectors and no machine-learning dependencies, so the install stays small and cold start is under 100 ms. A typical project's memory is ~1–2 MB on disk.
+The full toolkit installs out of the box — no ML stack, no embedding model, no download on first use. Codevira ships with no vectors and no machine-learning dependencies, so the production install stays small (~66 MB pipx venv) and there's no model to load — warm tool calls return in ~2 ms and the server cold-starts in well under a second. A typical project's memory is ~1–2 MB on disk.
 
 ### Do I need to run `codevira init` for every project?
 
@@ -76,18 +76,18 @@ No. Run `codevira init` once when you first set up a project. After that:
 
 ### Does codevira use embeddings or semantic search?
 
-No — not in the default install, and that's deliberate. Decision search is pure keyword/BM25 ranking via SQLite FTS5 (`search_decisions(query)`). There are no vectors, no `sentence-transformers`, no ChromaDB, and nothing to download on first use. That's why a project's memory is ~1–2 MB and cold start is under 100 ms.
+No — not in the default install, and that's deliberate. Decision search is pure keyword/BM25 ranking via SQLite FTS5 (`search_decisions(query)`). There are no vectors, no `sentence-transformers`, no ChromaDB, and nothing to download on first use. That's why a project's memory is ~1–2 MB, the production install is ~66 MB, and warm tool calls return in ~2 ms (no model to load).
 
 An opt-in, off-by-default `[semantic]` path is on the roadmap for users who want vector recall on top of keyword search, but it does not ship in the default install — everything above works with zero ML dependencies.
 
 ### Does this work with non-Python projects?
 
-Yes. Codevira supports 15+ languages with zero-config auto-detection:
+Yes — with an honest split between two axes:
 
-- **Full support** (AST parsing, get_signature, get_code, call graph): Python, TypeScript, JavaScript/JSX, Go, Rust
-- **Standard support** (graph, search, roadmap, code reader): Java, Kotlin, C#, Ruby, PHP, C, C++, Swift, Solidity, Vue
+- **Full code intelligence** (code graph, blast-radius, `get_signature`, `get_code`): Python (stdlib `ast`) plus TypeScript, TSX, JavaScript, JSX, Go, and Rust (bundled tree-sitter grammars).
+- **Language-agnostic memory** (decision capture + search, cross-IDE `AGENTS.md`, roadmap, sessions, skills, preferences): works for **any** language. For a language outside the code-graph set, the graph/symbol tools don't apply — the AI just `Read`s the file directly — but all of codevira's decision memory and enforcement still work.
 
-`codevira init` auto-detects the language from project markers (`Cargo.toml`, `go.mod`, `tsconfig.json`, `pyproject.toml`, `package.json`, etc.).
+So a Java, Ruby, or C# project gets the full cross-IDE decision memory and enforcement; it just doesn't get the tree-sitter code graph. `codevira init` auto-detects the language from project markers (`Cargo.toml`, `go.mod`, `tsconfig.json`, `pyproject.toml`, `package.json`, etc.) for the memory layer regardless.
 
 ### Can I use Codevira on a monorepo?
 

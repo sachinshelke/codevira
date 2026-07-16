@@ -181,7 +181,7 @@
   <main>
     <h1>Docs &amp; usage</h1>
     <p class="lead">Everything a developer needs to install Codevira, wire it into every
-    AI tool, and use the CLI + MCP surface. Local-first, MIT, ~83&nbsp;MB — no cloud,
+    AI tool, and use the CLI + MCP surface. Local-first, MIT, ~66&nbsp;MB — no cloud,
     no vectors, no account.</p>
 
     <h2 id="install">Install</h2>
@@ -197,7 +197,7 @@ codevira init
 codevira setup</pre>
     <p>That's it. Decisions live in <code>&lt;repo&gt;/.codevira/decisions.jsonl</code> —
     git-committed and team-shareable. The code graph lives in a rebuildable, gitignored
-    cache. The MCP server starts in under 100&nbsp;ms.</p>
+    cache. With no ML model to load, warm tool calls return in a few milliseconds.</p>
     <div class="note">Requires Python ≥ 3.10. After <code>codevira setup</code>,
     restart your AI tool so it picks up the new MCP server and (for Claude Code)
     lifecycle hooks.</div>

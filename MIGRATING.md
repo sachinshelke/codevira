@@ -214,7 +214,8 @@ through them if needed.
 - **AGENTS.md auto-generated** with 5 KB cap, marker-bounded (preserves
   user content outside `<!-- codevira:begin -->` / `<!-- codevira:end -->`).
 - **Per-project disk drops from 40-80 MB to ~1-2 MB**; pipx install drops
-  from ~200 MB to ~50 MB; MCP startup drops from 1-3s to <100ms.
+  from ~200 MB to well under 100 MB; MCP startup drops from 1-3s to well under
+  a second (no torch to load; warm tool calls ~2ms).
 
 See `docs/plans/v2.2.0.md` for the full architectural plan + rationale.
 

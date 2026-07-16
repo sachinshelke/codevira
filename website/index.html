@@ -73,7 +73,7 @@
     {
       "@type": "Question",
       "name": "Does Codevira use embeddings or semantic search?",
-      "acceptedAnswer": {"@type": "Answer", "text": "No, not in the default install. Decision search is pure keyword/BM25 ranking via SQLite FTS5 — no vectors, no sentence-transformers, no ChromaDB, nothing to download on first use. A project's memory is about 1 MB and cold start is under 100 ms."}
+      "acceptedAnswer": {"@type": "Answer", "text": "No, not in the default install. Decision search is pure keyword/BM25 ranking via SQLite FTS5 — no vectors, no sentence-transformers, no ChromaDB, nothing to download on first use. A project's memory is about 1 MB, the production install is about 66 MB, and with no model to load, warm tool calls return in about 2 ms."}
     },
     {
       "@type": "Question",
@@ -441,7 +441,7 @@
   <div class="inner glass">
     <div class="stat"><b data-count="51">51</b><span>MCP tools</span><small>the full agent surface</small></div>
     <div class="stat"><b data-count="8">8</b><span>hook policies</span><small>enforcing memory live</small></div>
-    <div class="stat"><b>&lt;100&hairsp;ms</b><span>cold start</span><small>never blocks your IDE</small></div>
+    <div class="stat"><b>~2&hairsp;ms</b><span>warm tool call</span><small>never blocks your IDE</small></div>
     <div class="stat"><b data-count="0">0</b><span>cloud dependencies</span><small>your code stays home</small></div>
   </div>
 </div>
@@ -880,7 +880,7 @@ params = StdioServerParameters(command=<span class="yy">"codevira-python"</span>
       </details>
       <details>
         <summary style="cursor:pointer;padding:16px 0;font-weight:600;border-top:1px solid var(--glass-edge)">Does Codevira use embeddings or semantic search?</summary>
-        <p style="padding:0 0 16px;color:var(--dim)">No, not in the default install. Decision search is pure keyword/BM25 ranking via SQLite FTS5 — no vectors, no sentence-transformers, no ChromaDB, nothing to download on first use. That's why a project's memory is ~1&nbsp;MB and cold start is under 100&nbsp;ms.</p>
+        <p style="padding:0 0 16px;color:var(--dim)">No, not in the default install. Decision search is pure keyword/BM25 ranking via SQLite FTS5 — no vectors, no sentence-transformers, no ChromaDB, nothing to download on first use. That's why a project's memory is ~1&nbsp;MB, the production install is ~66&nbsp;MB, and — with no model to load — warm tool calls return in ~2&nbsp;ms.</p>
       </details>
       <details>
         <summary style="cursor:pointer;padding:16px 0;font-weight:600;border-top:1px solid var(--glass-edge)">Which AI coding tools does it work with?</summary>

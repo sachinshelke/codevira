@@ -42,7 +42,7 @@
                             ↓
 ┌───────────────────────────────────────────────────────────────────┐
 │  CODEVIRA MCP SERVER                                              │
-│  ~85 MB pipx install, <100ms cold start                           │
+│  ~66 MB pipx install, ~0.6s cold start, ~2ms warm calls           │
 │                                                                   │
 │  Tools (51 surfaced to AI clients):                               │
 │    Decisions: record_decision / search_decisions / list_decisions │
@@ -263,8 +263,8 @@ These survived the v2.2.0 surgery untouched:
 
 | Measurement | v2.1.2 | v2.2.0 |
 |---|---|---|
-| Pipx install size | ~450 MB | **~85 MB** |
-| MCP server cold-start time | 1-3s | **<100ms** |
+| Pipx install size | ~450 MB | **~66 MB** |
+| MCP server cold-start time | 1-3s | **~0.6s** (no torch to load; warm tool calls ~2ms) |
 | Per-project disk (active project) | 40-80 MB | **~1-2 MB** |
 | Worst-case disk explosion (v2.1.2 HNSW) | up to 64 GB | **structurally impossible** |
 | ChromaDB / sentence-transformers / torch | required | **gone** |

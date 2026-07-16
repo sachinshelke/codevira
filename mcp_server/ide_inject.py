@@ -403,6 +403,60 @@ def remove_codevira_from_config(
     return True
 
 
+#: The codevira PreToolUse hook entry Antigravity's hooks.json needs. The
+#: matcher is a REGEX over Antigravity's file-mutating tool names (from the
+#: language_server binary); the hook command speaks Antigravity's stdout-JSON
+#: decision protocol via ``codevira engine handle --ide antigravity``.
+_ANTIGRAVITY_HOOK_NAME = "codevira-enforcement"
+_ANTIGRAVITY_EDIT_MATCHER = (
+    "write_to_file|replace_file_content|multi_replace_file_content"
+    "|edit_file|create_file"
+)
+
+
+def install_antigravity_enforcement_hook(
+    project_root: Path, cmd_path: str
+) -> str | None:
+    """Write the codevira PreToolUse enforcement hook into ``.agents/hooks.json``.
+
+    v3.7.1 fix D. Antigravity runs file-based hooks from
+    ``<workspace>/.agents/hooks.json``; a PreToolUse hook can hard-block an
+    edit by printing ``{"decision":"deny"}``. This installs a codevira entry
+    that routes edit tools through the shared enforcement engine
+    (``codevira engine handle --ide antigravity PreToolUse``), merging with any
+    existing hooks the user already has. Idempotent. Returns the path written,
+    or None on failure.
+    """
+    hooks_path = project_root / ".agents" / "hooks.json"
+    try:
+        hooks_path.parent.mkdir(parents=True, exist_ok=True)
+        existing = _read_json_safe(hooks_path)
+        if not isinstance(existing, dict):
+            existing = {}
+        existing[_ANTIGRAVITY_HOOK_NAME] = {
+            "PreToolUse": [
+                {
+                    "matcher": _ANTIGRAVITY_EDIT_MATCHER,
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": (
+                                f'"{cmd_path}" engine handle '
+                                "--ide antigravity PreToolUse"
+                            ),
+                            "timeout": 15,
+                        }
+                    ],
+                }
+            ]
+        }
+        _write_json_safe(hooks_path, existing)
+        return str(hooks_path)
+    except OSError as e:
+        logger.warning("Could not install Antigravity enforcement hook: %s", e)
+        return None
+
+
 def remove_codevira_project_from_config(
     config_path: Path, project_root: Path, *, dry_run: bool = False
 ) -> list[str]:
@@ -758,6 +812,13 @@ def _inject_antigravity(
             except OSError:
                 pass
         raise
+    # v3.7.1 fix D: also install the PreToolUse enforcement hook so a
+    # do_not_revert / policy block hard-stops edits in Antigravity (not just
+    # advisory AGENTS.md). Best-effort — never fail the MCP registration on it.
+    try:
+        install_antigravity_enforcement_hook(project_root, cmd_path)
+    except Exception:  # noqa: BLE001
+        pass
     return "; ".join(str(p) for p in written) if written else None
 
 

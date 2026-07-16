@@ -109,6 +109,59 @@ class TestAntigravityEnforcement:
         assert resp["decision"] == "deny"
 
 
+class TestHookInstaller:
+    """v3.7.1 fix D: install_antigravity_enforcement_hook writes a valid
+    .agents/hooks.json that routes edit tools to the codevira adapter."""
+
+    def test_writes_valid_hooks_json(self, tmp_path):
+        import json as _json
+
+        from mcp_server import ide_inject
+
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        path = ide_inject.install_antigravity_enforcement_hook(
+            proj, "/usr/local/bin/codevira"
+        )
+        assert path is not None
+        hooks = _json.loads((proj / ".agents" / "hooks.json").read_text())
+        entry = hooks["codevira-enforcement"]["PreToolUse"][0]
+        assert "write_to_file" in entry["matcher"]
+        assert "replace_file_content" in entry["matcher"]
+        cmd = entry["hooks"][0]["command"]
+        assert "engine handle" in cmd and "--ide antigravity" in cmd
+        assert "PreToolUse" in cmd
+
+    def test_merges_with_existing_hooks(self, tmp_path):
+        import json as _json
+
+        from mcp_server import ide_inject
+
+        proj = tmp_path / "proj"
+        (proj / ".agents").mkdir(parents=True)
+        (proj / ".agents" / "hooks.json").write_text(
+            _json.dumps({"user-hook": {"PreToolUse": []}})
+        )
+        ide_inject.install_antigravity_enforcement_hook(proj, "/bin/codevira")
+        hooks = _json.loads((proj / ".agents" / "hooks.json").read_text())
+        # User's hook preserved; codevira's added.
+        assert "user-hook" in hooks
+        assert "codevira-enforcement" in hooks
+
+    def test_idempotent(self, tmp_path):
+        import json as _json
+
+        from mcp_server import ide_inject
+
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        ide_inject.install_antigravity_enforcement_hook(proj, "/bin/codevira")
+        ide_inject.install_antigravity_enforcement_hook(proj, "/bin/codevira")
+        hooks = _json.loads((proj / ".agents" / "hooks.json").read_text())
+        # Exactly one codevira entry (dict key, not duplicated).
+        assert list(hooks).count("codevira-enforcement") == 1
+
+
 class TestFailOpen:
     def test_empty_stdin_allows(self):
         _, resp = _run("")

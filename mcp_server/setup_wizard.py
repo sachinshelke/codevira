@@ -466,7 +466,9 @@ def _execute_step(
 ) -> StepResult:
     try:
         if step.kind == "mcp_config":
-            return _execute_mcp_config(step, cmd_path, python_exe, dry_run=dry_run)
+            return _execute_mcp_config(
+                step, cmd_path, python_exe, plan.project_root, dry_run=dry_run
+            )
         if step.kind == "hook":
             return _execute_hook(step, dry_run=dry_run)
         if step.kind == "nudge_file":
@@ -482,6 +484,7 @@ def _execute_mcp_config(
     step: SetupStep,
     cmd_path: str | None,
     python_exe: str | None,
+    project_root: Path,
     *,
     dry_run: bool,
 ) -> StepResult:
@@ -496,11 +499,11 @@ def _execute_mcp_config(
         )
 
     from mcp_server.ide_inject import (
+        _inject_antigravity,
         inject_global_claude_code,
         inject_global_claude_desktop,
         inject_global_cursor,
         inject_global_windsurf,
-        inject_global_antigravity,
     )
 
     handler = {
@@ -508,7 +511,11 @@ def _execute_mcp_config(
         "claude_desktop": lambda: inject_global_claude_desktop(cmd_path, python_exe),
         "cursor": lambda: inject_global_cursor(cmd_path, python_exe),
         "windsurf": lambda: inject_global_windsurf(cmd_path, python_exe),
-        "antigravity": lambda: inject_global_antigravity(cmd_path, python_exe),
+        # v3.7.1 fix B: Antigravity can't use a bare global entry (no cwd/roots
+        # — D00011M / D00011N); write a working per-project --project-dir entry.
+        "antigravity": lambda: _inject_antigravity(
+            project_root, cmd_path, python_exe, project_root.name
+        ),
     }.get(step.ide)
     if handler is None:
         return StepResult(

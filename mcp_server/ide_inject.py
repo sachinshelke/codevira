@@ -921,8 +921,17 @@ def inject_global_windsurf(cmd_path: str, python_exe: str) -> str | None:
 def inject_global_antigravity(cmd_path: str, python_exe: str) -> str | None:
     """Inject global codevira config into Google Antigravity.
 
-    Uses a single 'codevira' entry with no project path. Antigravity
-    sets the working directory when it starts the MCP server process.
+    Uses a single 'codevira' entry with no project path.
+
+    DEPRECATED (v3.7.1 fix B): DO NOT USE for the injection path. Antigravity
+    has no `cwd` field and does not send MCP `roots` (confirmed against the
+    shipped binary + official docs — D00011M / D00011N), so a project-less
+    entry resolves the root to `/` and hits the forbidden-root guard — the
+    server can't bind a project and every tool goes inert. The premise
+    'Antigravity sets the working directory' is false. `inject_ide_config`
+    and the setup wizard now write per-project `_inject_antigravity` entries
+    instead. Retained only so existing origin-stamp / rollback unit tests keep
+    exercising the multi-surface write helper.
     """
     base_config = _build_global_server_config(cmd_path, python_exe)
     # v3.1.0 M1: origin.ide stamp.
@@ -1043,14 +1052,21 @@ def inject_ide_config(
                     if path:
                         results["Claude Desktop (per-project)"] = path
                 elif ide == "antigravity":
-                    # v3.7.0 fix (SB3): use the CONSTANT-key global helper, not
-                    # the per-project `codevira-<name>` one — otherwise N
-                    # projects create N Antigravity entries, re-opening the very
-                    # N-entries problem single-registration exists to close.
-                    # Antigravity sets the working dir when it spawns the server.
-                    path = inject_global_antigravity(cmd_path, python_exe)
+                    # v3.7.1 fix B (corrects SB3): Antigravity CANNOT use a bare
+                    # global 'codevira' entry. It has no `cwd` field and does
+                    # not send MCP `roots` (confirmed against the shipped
+                    # binary + official docs — D00011M / D00011N), so a
+                    # project-less entry resolves the root to `/` and the
+                    # forbidden-root guard refuses it (server now degrades to
+                    # inert instead of crashing — fix A — but it is still
+                    # useless). Only a per-project `--project-dir` entry works.
+                    # The N-entries tradeoff SB3 worried about is handled by
+                    # `codevira untrack` (fix C), which prunes stale entries.
+                    path = _inject_antigravity(
+                        project_root, cmd_path, python_exe, project_name
+                    )
                     if path:
-                        results["Antigravity (global)"] = path
+                        results["Antigravity"] = path
             else:
                 # Per-project mode (existing behavior)
                 if ide == "claude":

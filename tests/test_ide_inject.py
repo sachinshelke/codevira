@@ -1060,9 +1060,11 @@ class TestInjectIdeConfigIntegration:
         results = inject_ide_config(project, global_mode=True)
         assert "Claude Desktop (per-project)" in results
 
-    def test_global_mode_registers_antigravity_global(self, tmp_path, monkeypatch):
-        """SB3: global mode registers Antigravity under the CONSTANT-key global
-        helper (one 'codevira' entry), not the per-project one."""
+    def test_global_mode_registers_antigravity_per_project(self, tmp_path, monkeypatch):
+        """v3.7.1 fix B (corrects SB3): global mode registers Antigravity via
+        the PER-PROJECT injector, not the bare global helper. Antigravity has
+        no cwd/roots support (D00011M / D00011N), so a bare 'codevira' entry
+        can never resolve a project — only a --project-dir entry works."""
         project = tmp_path / "proj"
         project.mkdir()
 
@@ -1076,21 +1078,21 @@ class TestInjectIdeConfigIntegration:
         )
         monkeypatch.setattr(
             ide_inject,
-            "inject_global_antigravity",
+            "_inject_antigravity",
             lambda *a, **k: "/fake/antigravity.json",
         )
 
         results = inject_ide_config(project, global_mode=True)
-        assert "Antigravity (global)" in results
+        assert "Antigravity" in results
 
-    def test_global_mode_antigravity_uses_single_constant_key(
-        self, tmp_path, monkeypatch
-    ):
-        """SB3 regression: global_mode must register Antigravity under the
-        CONSTANT 'codevira' key, not a per-project 'codevira-<name>' key —
-        otherwise N projects create N Antigravity entries (the very problem
-        the single-registration release exists to kill). Does NOT mock the
-        inject fn — exercises the real write path against a temp config."""
+    def test_global_mode_antigravity_uses_per_project_keys(self, tmp_path, monkeypatch):
+        """v3.7.1 fix B (corrects SB3): Antigravity cannot use a bare global
+        'codevira' entry — it has no cwd/roots support, so that entry can never
+        resolve a project (D00011M / D00011N) and lands the forbidden-root
+        guard. Global mode must therefore register Antigravity under WORKING
+        per-project 'codevira-<name>' keys (each carrying --project-dir), and
+        must NOT write a bare 'codevira' key. The resulting N entries are
+        pruned by `codevira untrack` (fix C)."""
         import json as _json
 
         cfg = tmp_path / "gemini" / "config.json"
@@ -1113,11 +1115,21 @@ class TestInjectIdeConfigIntegration:
         inject_ide_config(proj_b, project_name="beta", global_mode=True)
 
         servers = _json.loads(cfg.read_text()).get("mcpServers", {})
-        keys = [k for k in servers if k.startswith("codevira")]
-        assert keys == ["codevira"], (
-            f"expected exactly one constant 'codevira' key, got {keys} "
-            "— N projects created N Antigravity entries"
-        )
+        keys = sorted(k for k in servers if k.startswith("codevira"))
+        assert keys == [
+            "codevira-alpha",
+            "codevira-beta",
+        ], f"expected per-project keys, got {keys}"
+        # The bare global entry (which crashes / goes inert) must NOT be written.
+        assert (
+            "codevira" not in servers
+        ), "bare global 'codevira' entry must NOT be written for Antigravity"
+        # Each per-project entry carries a WORKING --project-dir binding.
+        for name, proj in (("codevira-alpha", proj_a), ("codevira-beta", proj_b)):
+            args = servers[name]["args"]
+            assert (
+                "--project-dir" in args and str(proj) in args
+            ), f"{name} missing --project-dir binding: {args}"
 
     def test_global_mode_claude_is_single_global_registration(
         self, tmp_path, monkeypatch

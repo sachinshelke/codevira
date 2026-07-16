@@ -4,11 +4,11 @@
 
 <h1 align="center">Codevira</h1>
 
-> **Cross-IDE decision memory for AI coding agents.** One in-repo memory
-> layer that every AI tool you use can read — plus PreToolUse hooks that
-> physically block violating edits **in Claude Code** (other IDEs get the
-> same decisions as AGENTS.md guidance, not a hard block). Local-first,
-> MIT-licensed, ~83 MB pipx install.
+<p align="center"><strong>Stop re-explaining your codebase to every AI tool. Make the decisions stick.</strong></p>
+
+<p align="center">
+One local, in-repo memory layer that every AI coding agent you use can read and write — decisions, fix history, a code graph, your preferences — so what one tool learns, all of them know.
+</p>
 
 [![PyPI version](https://img.shields.io/pypi/v/codevira?color=orange)](https://pypi.org/project/codevira/)
 [![Python](https://img.shields.io/pypi/pyversions/codevira?color=blue)](https://pypi.org/project/codevira/)
@@ -17,93 +17,99 @@
 [![MCP](https://img.shields.io/badge/protocol-MCP-purple)](https://modelcontextprotocol.io)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](CONTRIBUTING.md)
 
-**Built for solo developers** working on local projects with AI agents.
-Decisions live in `<repo>/.codevira/decisions.jsonl` — git-committed,
-team-shareable, visible in `git diff`. Every modern AI tool reads
-AGENTS.md, which codevira auto-generates as a slim 5 KB contract.
-Claude Code gets enforcement: PreToolUse hooks block `Edit`/`Write`
-calls that contradict decisions you marked `do_not_revert`.
+Codevira also **enforces** those decisions: in **Claude Code**, a `PreToolUse`
+hook physically blocks an `Edit`/`Write` that would revert a decision you marked
+`do_not_revert` or re-introduce a fixed bug — before the file changes. Other IDEs
+read the same decisions as `AGENTS.md` guidance (advisory, not a hard block —
+their edits never route through codevira's hook engine). Local-first, MIT, no
+cloud, no vectors, no account. A production pipx install is ~66 MB.
 
-**Works with:** Claude Code · Claude Desktop · Cursor · Windsurf ·
-Google Antigravity · OpenAI Codex · GitHub Copilot · any MCP-compatible
-AI tool.
+**Works with:** Claude Code · Claude Desktop · Cursor · Windsurf · Google
+Antigravity · OpenAI Codex · GitHub Copilot · any MCP-compatible AI tool.
 
----
-
-## What you get
-
-* 🧠 **One memory across every AI tool.** A decision logged in Claude
-  Code is visible to Cursor, Windsurf, Antigravity — all of them read
-  the same `.codevira/decisions.jsonl` in your repo. No per-tool
-  re-onboarding, no cloud sync.
-* 🛡️ **Hard enforcement, not soft hints.** Decisions you mark
-  `do_not_revert` get a PreToolUse hook (Claude Code) that physically
-  refuses any `Edit`/`Write` call violating them. Other IDEs see the
-  decision in AGENTS.md; Claude Code is the only one with hard hooks
-  today.
-* ⚡ **One-command setup.** `pipx install codevira && codevira setup`.
-  Auto-detects installed AI tools (strong signals: binary on PATH +
-  valid config file); only configures what's actually installed. Pass
-  `--force` when the detector misses an install.
-* 🔒 **Local-first, MIT-licensed.** Decisions in
-  `<repo>/.codevira/*.jsonl`, code graph in `.codevira-cache/` (rebuildable,
-  gitignored), nothing leaves your machine. No SaaS, no account, no
-  telemetry.
-* 📦 **Slim install (~83 MB pipx venv).** No ChromaDB, no
-  sentence-transformers, no torch. FTS5 SQLite for decision search,
-  individual tree-sitter grammars (TS/JS/Go/Rust) for the code graph.
-  MCP server starts in <100 ms.
-* 🔐 **Concurrent-safe under multi-IDE load.** Every on-disk write
-  goes through `mcp_server/storage/atomic.py` — crash-safe atomic
-  writes + Posix `fcntl.flock` (Windows sentinel fallback). Two
-  IDEs hitting the same project don't race on `manifest.yaml` /
-  `roadmap.yaml` / `AGENTS.md`. Pinned by an in-process 50-thread
-  stress test, a 20-subprocess cross-process stress test, and an
-  adversarial chaos harness (`scripts/chaos_smoke.py` — 29 attacks
-  including SIGKILL during lock, symlink traversal, malformed
-  MCP payloads). See [`docs/architecture.md`](docs/architecture.md)
-  § "Concurrent-write safety".
+<!-- demo coming soon: a short GIF of a blocked edit + cross-tool recall will go here -->
 
 ---
 
-## The Problem (Four Pains Codevira Solves)
+## The problem — four pains, every AI project
 
-If you code with AI agents on a project longer than a week, you've felt all of these:
+If you've coded with AI agents on one project for longer than a week, you've felt all four:
 
-### 1. Re-explaining your codebase every session
-Every new chat starts from zero. The AI doesn't know your
-architecture, your conventions, your "we don't do it that way"
-decisions. You waste the first 10 minutes (and thousands of tokens)
-catching it up — only to do it again tomorrow.
+1. **Re-explaining your codebase every session.** Every new chat starts from
+   zero. You spend the first ten minutes (and thousands of tokens) catching the
+   AI up on your architecture and conventions — then do it again tomorrow.
+2. **AI quietly undoing your careful decisions.** You debugged a tricky retry
+   policy for three hours last week. Today's session "simplifies" it, because
+   nothing remembered *why* the complexity existed. Now it's broken again.
+3. **Cross-tool amnesia.** Plan in Claude Code, autocomplete in Cursor, run
+   tests in Antigravity — three agents, three blind copies of your project
+   state, nothing carried over.
+4. **Token budget burned on re-discovery.** The agent reads the same dozen
+   files every session before doing any real work. You pay for the same lookups
+   over and over.
 
-### 2. AI undoing your careful decisions
-Last week you debugged a tricky retry policy for 3 hours. Today's AI
-session refactors it to a simpler version because it has no idea why
-the complexity exists. Now it's broken again.
+Codevira is a persistent memory layer that fixes all four — for every AI tool,
+on every project, on your local machine.
 
-### 3. Cross-tool amnesia
-You started planning in Claude Code. Switched to Cursor for
-autocomplete. Opened Antigravity to run tests. Three different agents,
-three different blind copies of your project state. Nothing carries
-over.
+---
 
-### 4. Token budget burned on re-discovery
-Your AI agent reads the same 12 files every session before doing any
-actual work. You're paying API costs for the same lookups, over and
-over.
+## What using it looks like
 
-**Codevira is a persistent memory layer that fixes all four — for
-every AI tool, on every project, on your local machine.**
+The payoff is a loop: **record once → shared everywhere → enforced later.**
+
+**1. You (or the AI) record a decision — one MCP call, ~50 tokens.**
+
+```text
+record_decision(
+  decision="Use bcrypt for password hashing",
+  context="md5 considered and rejected — rainbow-table risk. Re-examine only if NIST guidance changes.",
+  tags=["auth", "security"],
+  do_not_revert=true,
+)
+→ D000412 recorded and locked.
+```
+
+It lands in `<repo>/.codevira/decisions.jsonl` — human-readable, git-committed,
+visible in `git diff`. Codevira regenerates a slim `AGENTS.md` contract from it.
+
+**2. Weeks later, a fresh Claude Code session tries to swap bcrypt for md5.**
+
+The `Edit` goes through Claude Code's `PreToolUse` hook first. Because the diff
+touches the locked decision's subject, the hook **denies the tool call** and
+hands the agent the original reasoning:
+
+```text
+✗ Edit blocked — decision_lock (do_not_revert)
+  D000412: "Use bcrypt for password hashing"
+  context: md5 rejected — rainbow-table risk.
+  The file was not modified. Surface this to the human and re-decide deliberately.
+```
+
+The regression never reaches disk. (An orthogonal edit to the same file — one
+whose diff doesn't touch the decision's subject — is *allowed* through and
+downgraded to a warn. Precision, not paranoia.)
+
+**3. You switch to Cursor the next morning — and it already knows.**
+
+You never re-explained anything. Cursor reads the same repo `AGENTS.md` (and,
+over MCP, can call `search_decisions("auth")`) and sees D000412 with its full
+context. A decision recorded in one tool is visible to every tool. The hard
+*block* is Claude Code only today; the shared *memory* is universal.
+
+> The honest caveat: only Claude Code's `PreToolUse` hook hard-blocks, because
+> only its edits route through codevira's engine. In Cursor / Windsurf / Codex /
+> Copilot the decision is strong advisory context in `AGENTS.md`, not a physical
+> veto.
 
 ---
 
 ## Quick Start — three commands
 
 ```bash
-# 1. Install
+# 1. Install (production install: ~66 MB pipx venv, no ML deps)
 pipx install codevira
 
-# 2. Bootstrap the project (writes .codevira/, AGENTS.md, .gitignore)
+# 2. Opt this project in (writes .codevira/, AGENTS.md, .gitignore)
 cd ~/Projects/my-project
 codevira init
 
@@ -111,200 +117,76 @@ codevira init
 codevira setup
 ```
 
-Then commit `.codevira/` + `AGENTS.md` + `.gitignore` to git so your
-teammates inherit the project memory. Open any IDE; codevira's MCP
-server is ready.
+Commit `.codevira/` + `AGENTS.md` + `.gitignore` so teammates inherit the
+memory. Open any IDE — codevira's MCP server is ready.
 
-> **Opt-in tracking (v3.7.0).** `codevira init` is the explicit opt-in:
-> codevira tracks **only** projects you've `init`-ed. A project you merely
-> open — but never `init` — stays inert (its tools return a "run `codevira
-> init`" hint and nothing is written), so `~/.codevira/projects/` never fills
-> with projects you didn't choose. Set `CODEVIRA_AUTO_ADOPT=1` to track every
-> project you open instead.
+> **Opt-in tracking (v3.7.0).** `codevira init` is the explicit opt-in.
+> Codevira tracks **only** projects you've `init`-ed; a project you merely open
+> stays inert (its tools return a "run `codevira init`" hint and nothing is
+> written), so `~/.codevira/projects/` never fills with projects you didn't
+> choose. Existing tracked projects are grandfathered — zero migration. Set
+> `CODEVIRA_AUTO_ADOPT=1` to track every project you open instead.
 
 **Verify:**
 
 ```bash
-codevira doctor          # 18 health checks, ✓/⚠/✗
-codevira replay          # browse the decisions timeline (any recorded yet?)
-codevira sync            # regen AGENTS.md from current decisions.jsonl
+codevira doctor          # 18 health checks, ✓/⚠/✗ + a fix command for each
+codevira replay          # browse the decisions timeline
+codevira sync            # regenerate AGENTS.md from current decisions.jsonl
 ```
 
-**Try it.** In your AI tool, ask: *"Use `get_session_context` to brief
-me on this project."* You'll get a structured project state in one
-tool call instead of the AI re-reading docs.
-
-### What `codevira setup` actually does
-
-The one command above replaces what used to take 5+ steps in v1.x:
-
-* **Detects installed AI tools** via STRONG signals:
-  - **Claude Code**: `claude` on PATH
-  - **Claude Desktop**: `~/Library/Application Support/Claude/config.json` exists + parses
-  - **Cursor**: `~/.cursor/` + (`cursor` on PATH OR `mcp.json` exists)
-  - **Windsurf**: `mcp_config.json` in `~/.windsurf/` or `~/.codeium/windsurf/`
-  - **Antigravity**: `~/.gemini/antigravity/mcp_config.json`
-* **Injects MCP server config** into each detected tool's config file
-  (per-IDE schema handled automatically; no JSON to hand-edit).
-* **Installs Claude Code lifecycle hooks** (`SessionStart`,
-  `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `Stop`) — these are
-  what turn codevira from passive memory into the active guardian that
-  blocks edits violating `do_not_revert` decisions.
-* **Writes AGENTS.md** with the slim codevira-managed block (5 KB
-  cap; preserves user content outside the marker boundaries).
-
-Flags:
-
-- `--dry-run` — preview without writing
-- `--ide <name>` — narrow to one IDE (`claude`, `claude_desktop`,
-  `cursor`, `windsurf`, `antigravity`, `agents_md`)
-- `--force` — configure an `--ide` value even if codevira didn't
-  auto-detect it (escape hatch for portable binaries / unusual config
-  locations)
-- `-y` / `--yes` — skip the confirmation prompt
-- `--no-hooks` / `--no-mcp` / `--no-nudge-files` — scope-narrow the
-  steps
-
-### What `codevira doctor` reports
-
-18 health checks in one run, each with a concrete `fix_command` for
-any WARN or FAIL. Read-only — never modifies anything.
-
-```text
-$ codevira doctor
-Codevira health check
-────────────────────────────────────────────────────────────
-✓  python_version         Python 3.13 (≥ 3.10 required)
-✓  codevira_data_dir      /Users/you/.codevira exists and is writable
-✓  project_root           /Users/you/Projects/my-project is a valid project root
-✓  project_binding        resolved from workspace → /Users/you/Projects/my-project
-✓  codevira_dir           .codevira/ present (4 decision(s))
-✓  agents_md_size         AGENTS.md is 1,234 bytes (≤10 KB safety threshold)
-✓  graph_db               graph.db has all 4 expected tables
-✓  global_db              ~/.codevira/global.db opens cleanly
-✓  detected_ides          2 AI tool(s) detected: claude, cursor
-✓  nudge_files            AGENTS.md present with codevira block
-✓  watcher_circuit        watcher circuit clean (no recent failures)
-✓  engine_kill_switch     engine ON (default; CODEVIRA_ENGINE not set)
-✓  claude_mcp_visibility  codevira visible to Claude Code
-✓  mcp_running_versions   in-memory server matches installed wheel
-✓  ghost_projects         no stale project registrations
-✓  crash_log_size         no crash log (clean state)
-✓  merge_driver           decision-log merge driver configured
-────────────────────────────────────────────────────────────
-summary: 17 pass · 0 warn · 0 fail
-```
-
-### Daily-use commands
-
-The CLI surface is 26 commands (the daily-use ones below):
-
-| Command | What it does |
-|---|---|
-| `codevira init` | Bootstrap `.codevira/` + AGENTS.md + .gitignore in this project |
-| `codevira setup` | Detect installed AI tools + write MCP configs + Claude Code hooks |
-| `codevira doctor` | Health check (read-only; ✓/⚠/✗ + fix commands) |
-| `codevira status` | Show index health + project state |
-| `codevira projects` | List tracked projects with staleness (`today` / `5d ago` / `stale 45d`); `projects archive <name>` drops one from the registry |
-| `codevira index` | Build / refresh the code graph cache |
-| `codevira sync` | Regenerate AGENTS.md + manifest + digest from `decisions.jsonl` |
-| `codevira repair-ids` | **v3.7** — detect/repair cross-engineer decision-id collisions (`--apply` to rewrite; `--semantic` also reports near-duplicate decisions for review) |
-| `codevira observe-git` | Classify past decisions as kept/modified/reverted from git history |
-| `codevira replay` | Browse the decisions timeline (terminal / markdown / HTML) |
-| `codevira search <query>` | Search decisions from the terminal (FTS5/BM25); `--all-projects` searches every registered repo, `--json` for scripts |
-| `codevira clean` | Remove orphaned project data |
-| `codevira reset` | Destructive cleanup (auto-exports decisions first) |
-| `codevira export` | Standalone decision backup (JSON / SQL); `export setup` bundles project memory + global learning for machine transfer |
-| `codevira import` | Restore a `codevira export setup` archive on a new machine (merges global learning) |
-| `codevira graph` | Render an interactive, self-contained HTML viewer of decision memory (offline, queryable) |
-| `codevira uninstall` | Reverse every system write codevira made (see ["Uninstall"](#uninstall)) |
-| `codevira serve` | Start MCP HTTP server (single-project; stdio is the daily mode) |
-| `codevira engine` | Internal — invoked by Claude Code lifecycle hook scripts |
-
-Run `codevira <cmd> --help` for the full flag list on any subcommand.
-
-### Uninstall
-
-```bash
-# Reverse every system write made by init/setup. Preserves user content
-# outside codevira marker blocks byte-for-byte.
-codevira uninstall
-
-# Common flags:
-codevira uninstall --dry-run     # preview the plan; touch nothing
-codevira uninstall --yes          # skip confirmation
-codevira uninstall --keep-data    # uninstall the binary's footprint but
-                                  # leave ~/.codevira/ and per-project
-                                  # .codevira/ dirs alone
-# Then remove the binary:
-pipx uninstall codevira
-```
-
-Uninstall also strips legacy v2.1.x per-IDE nudge files (CLAUDE.md /
-GEMINI.md / .windsurfrules / .cursor/rules/codevira.mdc /
-.github/copilot-instructions.md) for users upgrading from older
-versions. User content outside the codevira markers stays.
+**Try it.** In your AI tool, ask: *"Use `get_session_context` to brief me on
+this project."* You get a ~500-token structured project state in one tool call
+instead of the AI re-reading docs.
 
 ---
 
-## What's new in v3.7.0 — fresh memory, shared repos, one registration
+## What you get
 
-> Three things users asked for: memory that *updates* instead of piling up
-> stale decisions, memory that survives *two engineers on one repo*, and *one*
-> MCP entry instead of one-per-project. All model-free, all local.
+* **One memory across every AI tool.** A decision logged in Claude Code is
+  visible to Cursor, Windsurf, Antigravity, Codex, Copilot — all read the same
+  `.codevira/decisions.jsonl` and generated `AGENTS.md` in your repo. No
+  per-tool re-onboarding, no cloud sync.
+* **Enforcement, not just notes (Claude Code).** Decisions you mark
+  `do_not_revert` get a `PreToolUse` hook that refuses violating edits, plus an
+  Anti-Regression guard that blocks re-introducing a previously-fixed bug. Every
+  guard ships a per-policy warn/off env kill-switch and a global
+  `CODEVIRA_ENGINE=0`. Other IDEs get the same decisions as advisory `AGENTS.md`.
+* **One-command setup.** `pipx install codevira && codevira setup` detects
+  installed AI tools via strong signals (binary on PATH + valid config file) and
+  configures only what's actually installed. `--force` overrides a missed detect.
+* **Local-first, no ML.** Everything lives in `<repo>/.codevira/*.jsonl` (git),
+  with rebuildable caches under `~/.codevira/`. Decision search is pure
+  keyword/BM25 (SQLite FTS5) — no vectors, no ChromaDB, no sentence-transformers,
+  no torch, nothing phones home. ~1–2 MB of committed memory per project.
+* **Frugal by design.** Tools return summaries by default; warm tool calls
+  return in a few milliseconds; the server cold-starts in well under a second
+  with no ML model to load.
+* **Concurrent-safe under multi-IDE load.** Every write is a crash-safe atomic
+  write behind a Posix `fcntl.flock` (Windows sentinel fallback), so two IDEs on
+  one project don't race — verified by thread, subprocess, and adversarial chaos
+  tests. Details in [Concurrency & safety](#concurrency--safety).
 
-| Area | What you get |
-|---|---|
-| **Memory stays fresh** | `record_decision` now **supersedes** a strong, unprotected near-duplicate instead of appending a parallel twin, so stale copies stop accumulating. `get_session_context` hides superseded / outdated / reverted decisions. New `mark_decision_outdated(id)` retires a decision that's simply no longer true (reversible). Protected `do_not_revert` decisions are never auto-retired — the conflict is surfaced. |
-| **Two engineers, one repo** | Decision ids used to collide silently when two branches merged (one decision shadowed on read). Now `read_merged` warns, `codevira repair-ids [--apply]` deterministically repairs (earliest writer keeps the id; losers get content-derived ids; a *fixed point*, so it can't oscillate), and a git **merge driver** — installed by `codevira init` — resolves collisions automatically on `git merge`. `--semantic` also reports near-duplicate decisions for review (never auto-merged). |
-| **One MCP for all projects** | `codevira init` registers **one** user-scope server by default instead of one-per-project; it resolves the active project from the MCP client's workspace roots at runtime, so N projects no longer mean N entries in your IDE. Opt back with `--per-project`. The project-root pin is now per-request (`ContextVar`) so it can't leak across requests. |
-| **Fixes** | Decision-id drift within a process (D000118) — record/search no longer split across two stores. `NotebookEdit` / camelCase edits no longer log `<unknown>` to the activity heatmap. Anti-Regression fix-history self-freshens on read instead of going stale until restart. |
-
-Full v3.7.0 release notes: [CHANGELOG.md](CHANGELOG.md#370--2026-07-10).
-
----
-
-## What's new in v3.5.0 — the read side gets intelligent
-
-> Codevira's leverage is the **read** side: does it surface the *right*
-> memory at the right moment, with low noise? v3.5.0 makes that side
-> measurable, leaner, and self-tuning — and grew the smarts without
-> bundling a model or adding a single runtime dependency.
-
-| Area | What you get |
-|---|---|
-| **Summary-first decisions + `expand`** | `search_decisions` / `list_decisions` now default to compact one-line rows; a new `expand(ids=[…])` tool fetches full records only for the few you care about. `full=true` still works; `CODEVIRA_DECISION_DETAIL=full` restores the old verbose default. |
-| **Content-aware decision lock** | A `do_not_revert` file no longer hard-blocks *every* edit. An edit blocks only when its diff actually touches the locked decision's subject; a provably-orthogonal edit downgrades to a warn (the decision is still surfaced). Restore strict file-level locking with `CODEVIRA_DECISION_LOCK_CONTENT_AWARE=0`. |
-| **It learns from real sessions** | `codevira reflect --from-sessions` reads your local Claude Code / Codex / Gemini transcripts (read-only), flags failures + user corrections with no LLM, and folds a sanitized digest into reflection candidates — never auto-creating decisions. |
-| **Measured + self-tuning recall** | `codevira eval` scores read-side relevance (recall@k / MRR) on cases self-derived from your own memory — no fixtures to rot. `codevira tune-weights` learns the ranking weights against that eval and persists only a proven win (opt in at the hot path via `CODEVIRA_LEARNED_WEIGHTS`). |
-| **More managed memory files** | Beyond `AGENTS.md`, codevira can maintain `CLAUDE.md`, `GEMINI.md`, and `.cursor/rules/codevira.mdc` from one canonical block — opt in via `.codevira/config.yaml: managed_files`. Content outside the markers is preserved byte-for-byte. |
-| **Opt-in synonym recall** | A no-dependency synonym map widens a query so `database` can recall a decision recorded about `postgres`. Off by default (`CODEVIRA_SYNONYM_WIDENING=1`) — it trades a little ranking precision for recall. |
-| **Polish** | `get_signature` JS/JSX accuracy fixed; the two git outcome stores (confidence + replay) reconciled into one classifier; the `doctor` `ghost_projects` false positive fixed (empty leftover dirs are *stale*, not ghosts). |
-
-Full v3.5.0 release notes: [CHANGELOG.md](CHANGELOG.md#350--2026-06-19).
-
-**Earlier releases** — full history in the [CHANGELOG](CHANGELOG.md):
-**v3.4** reliable per-call project binding (one user-scope server, no
-cross-project contamination) · **v3.1** five memory subsystems (working
-memory, skills, spatial, consensus, reflections) · **v3.0** the lean
-audit (46 → 24 tools, AGENTS.md-only nudge, ~83 MB install down from
-~450 MB) · **v2.2** dropped ChromaDB/vectors for SQLite FTS5.
+**Latest:** **v3.7.0** — opt-in tracking, fresh memory (supersede-on-write +
+freshness-ranked reads + `mark_decision_outdated`), shared-repo decision-id
+collision repair (`repair-ids` + a git merge driver), and one user-scope MCP
+registration for all your projects. All model-free, all local. See the
+[CHANGELOG](CHANGELOG.md#370--2026-07-10).
 
 ---
 
 ## How It Works
 
-Codevira is a [Model Context Protocol](https://modelcontextprotocol.io)
-server that runs locally and gives any AI tool a structured, queryable
-memory of your codebase.
+Codevira is a [Model Context Protocol](https://modelcontextprotocol.io) server
+that runs locally and gives any AI tool a structured, queryable memory of your
+codebase.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  IN THE PROJECT REPO (committed to git)                         │
+│  IN THE PROJECT REPO (committed to git)          (selected)     │
 │                                                                 │
 │   AGENTS.md                  ≤5 KB slim contract, auto-generated │
 │      ↑                                                          │
-│      │                                                          │
 │   .codevira/                                                    │
 │     decisions.jsonl          full text + metadata (append-only) │
 │     digest.jsonl             slim summary for prompt injection  │
@@ -314,80 +196,81 @@ memory of your codebase.
 │     config.yaml              project settings                   │
 │     sessions.jsonl           session events                     │
 │     roadmap.yaml             phase tracking                     │
+│     (also: skills / reflections / preferences / learned rules)  │
 │                                                                 │
-│   .codevira-cache/           gitignored, rebuildable             │
-│     graph.sqlite             code graph (tree-sitter)           │
+│   .codevira-cache/           gitignored, rebuildable            │
 │     fts5.sqlite              FTS5 index over decisions.jsonl    │
 │     hash-cache.db            file change detection              │
+│     working.jsonl            intra-session scratchpad           │
+│   (the code graph is a per-project SQLite db under ~/.codevira/)│
 └─────────────────────────────────────────────────────────────────┘
-                              ↑ MCP / hooks
-                              ↓
+                              ↑ MCP / hooks ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│  PIPX INSTALL (~83 MB venv, ~/.local/pipx/venvs/codevira)       │
-│                                                                 │
+│  PIPX INSTALL (~66 MB venv, ~/.local/pipx/venvs/codevira)      │
 │   codevira (CLI + MCP server)                                   │
-│      - pure Python, <100 ms startup                             │
-│      - no chromadb / sentence-transformers / torch              │
+│      - pure Python; no chromadb / sentence-transformers / torch │
+│      - server cold-start well under 1 s; warm tool calls ~2 ms  │
 └─────────────────────────────────────────────────────────────────┘
-                              ↑ stdio MCP
-                              ↓
+                              ↑ stdio MCP ↓
 ┌─────────────────────────────────────────────────────────────────┐
 │  IDE (Claude Code / Cursor / Windsurf / Antigravity / Codex /…) │
 │                                                                 │
 │   UserPromptSubmit → codevira hook → relevance-gated inject     │
 │   Edit / Write → PreToolUse → block if do_not_revert violated   │
-│   Stop → PostToolUse → optional outcome tracking                 │
+│   PostToolUse → Post-Edit Graph Refresh (+ working-mem fanout)  │
+│   Stop → Token Budget / Session-Log Enforcer                    │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 ### Token-efficient by design
 
-Codevira is built around the principle that AI agent context windows
-are precious. Tools return **summaries by default** with opt-in full
-data:
+AI context windows are precious. Tools return **summaries by default** with
+opt-in full data:
 
-- `get_node(path)` — ~100 tokens by default (counts + flags). Pass
-  `full=true` for the entire rules array.
-- `get_impact(path)` — 10 affected files. Pass `summary_only=true`
-  for just counts (~80 tokens) before deciding to dig deeper.
-- `search_decisions(query)` / `list_decisions()` — truncated matches
-  by default. Pass `full=true` for verbatim text; pass
-  `summary_only=true` for just IDs and one-line summaries.
+- `get_node(path)` — ~100 tokens by default (counts + flags); `full=true` for
+  the full rules array.
+- `get_impact(path)` — up to 10 affected files; `summary_only=true` for just
+  counts (~80 tokens) before you dig deeper.
+- `search_decisions(query)` / `list_decisions()` — top 5 truncated matches by
+  default; `full=true` for verbatim text, `summary_only=true` for one-line
+  summaries, then `expand(ids=[…])` to pull only the few full records you want.
 
-The agent always asks for what it needs, in the size it needs.
-
-**Shrink the tool surface itself.** The advertised MCP `tools/list` is a
-fixed per-session cost (~8K tokens for the full 51-tool surface). Set
-`CODEVIRA_TOOL_PROFILE=lean` in the MCP server's `env` block to advertise
-only the 12 daily-driver tools (~71% smaller); hidden tools still work
-when called explicitly. Bigger wins usually come from disabling MCP
-servers you aren't actively using.
+**Shrink the tool surface itself.** The advertised `tools/list` is a fixed
+per-session cost (~8K tokens for the full 51-tool surface). Set
+`CODEVIRA_TOOL_PROFILE=lean` in the MCP server's `env` block to advertise only
+the 12 daily-driver tools — a ~71% token trim of `tools/list`. Hidden tools
+still work when called explicitly.
 
 ---
 
-## MCP Tools
+## MCP tool surface (deep dive)
 
-**51 tools** surfaced to AI clients via `tools/list` (token-optimized,
-summary-first): the core decision/roadmap/graph surface plus the
-v3.1.0 memory subsystems (working memory, skills, spatial, consensus,
-reflections), the v3.3.0 preference tools, v3.5.0's `expand`, and v3.7.0's
-`mark_decision_outdated`. One additional admin
-tool (`refresh_graph`) is registered but hidden from `tools/list`
-because it runs automatically in the background — humans invoke it via
-`codevira sync`. Set `CODEVIRA_TOOL_PROFILE=lean` to advertise only
-the daily-driver subset. v3.0.0 cut 21 v2.x tools that produced noise
-or had no real users — see [CHANGELOG.md](CHANGELOG.md) for the full
-kill list.
+**51 tools** are surfaced to AI clients via `tools/list` (a 52nd, `refresh_graph`,
+is registered but hidden — humans invoke it via `codevira sync`). All 51 carry
+MCP `ToolAnnotations`
+(`readOnlyHint` / `destructiveHint=false` / `idempotentHint`): 29 are read-only
+and can run without a confirmation prompt, and **no MCP tool is destructive** —
+the only destructive ops (`reset` / `uninstall`) are CLI-only, never exposed over
+MCP. Good to know for anyone wiring codevira into an autonomous agent.
+
+The **lean 12** (`CODEVIRA_TOOL_PROFILE=lean`) are deterministic and worth
+knowing verbatim, since they're what you keep:
+
+```text
+get_session_context · get_impact · get_node · get_roadmap · search_decisions
+list_decisions · expand · record_decision · update_phase_status
+complete_phase · update_next_action · write_session_log
+```
 
 ### Reads — the memory surface
 
 | Tool | Description |
 |---|---|
-| `get_session_context` | **THE main "catch me up" call.** Returns ~500 tokens: current phase, next action, recent decisions, top tags, last session brief. |
-| `search_decisions(query)` | FTS5 BM25 search over `decisions.jsonl`. Default: top 5 truncated; pass `full=true` or `summary_only=true`. **`all_projects=true`** (v3.6) searches every registered repo, tagging each result with its project. |
-| `record_decision(decision, …)` | Record a decision; `do_not_revert=true` locks it. **`symbol="login"`** (v3.6) scopes the lock to one function/class — edits elsewhere in the file warn instead of block. |
+| `get_session_context` | **THE "catch me up" call.** ~500 tokens: current phase, next action, recent decisions, top tags, last session brief. |
+| `search_decisions(query)` | FTS5/BM25 over `decisions.jsonl`. Top 5 truncated by default; `full=true` / `summary_only=true`. `all_projects=true` searches every registered repo, tagging each result with its project. |
+| `expand(ids=[…])` | Fetch full records for just the ids you care about — the summary-first complement to `search_decisions` / `list_decisions`. Read-only; in the lean 12. |
 | `list_decisions` | Paginate / filter: `since_date`, `file_pattern`, `protected_only`, `tags`, `include_superseded`. |
-| `list_tags` | Enumerate all tags with decision counts. |
+| `list_tags` | All tags with decision counts. |
 | `get_history(file_path)` | Recent decisions touching a file. |
 | `check_conflict(decision_text)` | Surface duplicate / contradictory decisions BEFORE you write. |
 
@@ -395,83 +278,143 @@ kill list.
 
 | Tool | Description |
 |---|---|
-| `record_decision` | Capture an architectural decision. Optional `do_not_revert=true` triggers hard enforcement at the Claude Code PreToolUse hook. Supports `tags`, `force`, `session_id`. |
-| `supersede_decision(old_id, new_decision, reason)` | Retire an old decision and link to its replacement. Audit trail preserved. |
-| `mark_decision_outdated(decision_id, reason)` | **v3.7** — tombstone a decision that's no longer true (with no successor) so it stops surfacing. Reversible via `set_decision_flag(is_outdated=false)`. |
-| `reaffirm_decision(decision_id)` | Re-confirm a soft-expired `do_not_revert` lock is still wanted. |
-| `set_decision_flag(decision_id, ...)` | Toggle `do_not_revert` / tags / `is_outdated` on an existing decision. |
+| `record_decision` | Capture a decision. `do_not_revert=true` triggers Claude Code `PreToolUse` enforcement; `symbol="login"` scopes the lock to one function/class. In v3.7.0 it **supersedes** a strong unprotected near-duplicate instead of appending a twin. |
+| `supersede_decision(old_id, new_decision, reason)` | Retire an old decision, link to its replacement, keep the audit trail. |
+| `mark_decision_outdated(decision_id, reason)` | **v3.7** — retire a decision that's simply no longer true (no successor) so it stops surfacing. Reversible via `set_decision_flag`. `do_not_revert` needs `force=True`. |
+| `reaffirm_decision(decision_id)` | Re-confirm a soft-expired `do_not_revert` lock. |
+| `set_decision_flag(decision_id, …)` | Toggle `do_not_revert` / tags / `is_outdated`. |
 | `write_session_log` | Structured session record. |
 
 ### Roadmap
 
-| Tool | Description |
-|---|---|
-| `get_roadmap` | Current phase, next action, upcoming phases. |
-| `get_phase(number)` | Full details of any phase. |
-| `add_phase` | Queue new upcoming work. |
-| `update_phase_status` | Mark in_progress / blocked. |
-| `update_next_action` | Set what the next agent should do. |
-| `complete_phase` | Mark done + record key_decisions. |
-| `defer_phase` | Move a phase to the deferred list. |
-| `bulk_import_phases` | One-call import of multi-phase git history. |
+`get_roadmap` · `get_phase` · `add_phase` · `update_phase_status` ·
+`update_next_action` · `complete_phase` · `defer_phase` · `bulk_import_phases`.
 
-### Code graph (Python + TS/JS + Go + Rust via tree-sitter)
+### Code graph
 
-| Tool | Description |
-|---|---|
-| `get_node(file_path)` | File-level metadata (role, layer, stability, dependencies). |
-| `get_impact(file_path)` | Blast radius — who depends on this file. |
-| `query_graph(file_path, query_type)` | Function-level: callers, callees, tests, dependents, symbols. |
-| `refresh_graph(file_paths?)` | Background reindex (fire-and-forget). |
-| `get_signature(file_path)` | All public symbols, signatures, line numbers. |
-| `get_code(file_path, symbol)` | Full source of one function or class. |
-| `get_playbook(task_type)` | Curated rules for: `add_tool`, `add_service`, `add_schema`, `debug_pipeline`, `commit`, `write_test`. |
+`get_node` (file metadata) · `get_impact` (blast radius) · `query_graph`
+(function-level callers/callees/tests/dependents/symbols) · `get_signature`
+(all public symbols) · `get_code` (source of one symbol) · `get_playbook`
+(curated rules for `add_tool` / `add_service` / `add_schema` / `debug_pipeline`
+/ `commit` / `write_test`). Plus the hidden `refresh_graph`.
 
 ### Memory subsystems (v3.1.0)
 
 | Subsystem | Tools | What it covers |
 |---|---|---|
-| Working memory | `working_add`, `working_get`, `working_promote`, `get_working_context` | Intra-session scratchpad (decay-scored, capacity-bounded). |
-| Skill library | `record_skill`, `get_skill`, `apply_skill_outcome`, `list_skills`, `supersede_skill`, `promote_skill_to_playbook` | Reusable procedures with composite-ranked retrieval and git-driven reinforcement. |
-| Spatial | `spatial_nearby`, `spatial_heat`, `spatial_neighborhood`, `spatial_affordances` | Code-as-space: activity heatmap, neighborhoods, what task types apply where. |
-| Consensus | `consensus_check`, `consensus_status`, `consensus_propose_supersession`, `consensus_resolve`, `origin_of` | Cross-IDE conflict detection + provenance. |
-| Reflections | `reflect`, `get_reflections`, `list_reflections` | LLM-generated abstractions over recent decisions + sessions (MCP sampling). |
+| Working memory (4) | `working_add`, `working_get`, `working_promote`, `get_working_context` | Intra-session scratchpad, decay-scored (`importance × e^(−Δt/τ=6h) + 0.5·access_count`), capacity-bounded. Auto-populated by the `PostToolUse` fan-out. |
+| Skill library (6) | `record_skill`, `get_skill`, `apply_skill_outcome`, `list_skills`, `supersede_skill`, `promote_skill_to_playbook` | Reusable procedures; FTS5 composite ranking (BM25 + tag-Jaccard + recency); auto-archive at 5 consecutive failures or 90 unused days (`do_not_revert` exempt). |
+| Spatial (4) | `spatial_nearby`, `spatial_heat`, `spatial_neighborhood`, `spatial_affordances` | Code-as-space: activity heatmap, folder neighborhoods, what task types each area affords. |
+| Consensus (5) | `consensus_check`, `consensus_status`, `consensus_propose_supersession`, `consensus_resolve`, `origin_of` | Tracks which IDE wrote each decision so cross-IDE contradictions surface. (Provenance is a cooperative signal — `CODEVIRA_IDE` is spoofable, not a security boundary.) |
+| Reflections (3) | `reflect`, `get_reflections`, `list_reflections` | LLM-generated abstractions over recent decisions + sessions via MCP sampling. `reflect --from-sessions` folds local transcripts as candidates only (nothing auto-committed). |
+| Preferences (2) | `distill_preferences`, `search_preferences` | Session-end distillation of your prompts into durable, user-scoped preferences in `~/.codevira/global.db`, visible from every project. |
 
-### Preferences (v3.3.0)
+### MCP Workflow Prompt
 
-| Tool | Description |
-|---|---|
-| `distill_preferences` | Session-end LLM distillation of captured prompts into durable, user-scoped preferences (`~/.codevira/global.db`). |
-| `search_preferences(category?)` | Retrieve learned preferences — communication style, workflow habits — across all projects. |
-
-### MCP Workflow Prompts
-
-| Prompt | Description |
-|---|---|
-| `onboard_session` | Full project context catch-up for new sessions. Wraps `get_session_context()`. |
-
-> v3.0.0 removed 4 v2.x prompts (`review_changes`, `debug_issue`,
-> `pre_commit_check`, `architecture_overview`) because they referenced
-> deleted MCP tools. The slim surface means the AI can synthesize
-> these workflows from the kept tools directly.
+`onboard_session` — full project catch-up for new sessions; wraps
+`get_session_context()`.
 
 ---
 
 ## Language support
 
-| Feature                       | Python | TS/JS | Go | Rust | Others |
-|-------------------------------|:------:|:-----:|:--:|:----:|:------:|
-| Decision capture + search     | ✓      | ✓     | ✓  | ✓    | ✓      |
-| Cross-IDE memory via AGENTS.md| ✓      | ✓     | ✓  | ✓    | ✓      |
-| Roadmap / sessions            | ✓      | ✓     | ✓  | ✓    | ✓      |
-| Code graph + blast radius     | ✓      | ✓     | ✓  | ✓    | —      |
-| `get_signature` / `get_code`  | ✓      | ✓     | ✓  | ✓    | —      |
+| Feature | Python | TS/JS | Go | Rust | Others |
+|---|:---:|:---:|:---:|:---:|:---:|
+| Decision capture + search | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Cross-IDE memory via AGENTS.md | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Roadmap / sessions | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Code graph + blast radius | ✓ | ✓ | ✓ | ✓ | — |
+| `get_signature` / `get_code` | ✓ | ✓ | ✓ | ✓ | — |
 
-Decisions / AGENTS.md / roadmap are language-agnostic. Code-graph
-features require a tree-sitter grammar; codevira ships Python, TS, JS,
-Go, Rust. For other languages the AI `Read`s the file directly — the
-legacy 17-grammar `[all-languages]` pack was removed in v2.2.0 to keep
-the install lean (v2.3.0 may re-add specific grammars on demand).
+Decisions / `AGENTS.md` / roadmap are **language-agnostic** — they work for any
+language. **Code-graph and symbol tools** cover exactly Python (stdlib `ast`)
+plus TS / TSX / JS / JSX / Go / Rust (bundled tree-sitter grammars — 4 pip
+packages, since TSX ships inside the TypeScript grammar). For any other language
+the AI `Read`s the file directly. The legacy 17-grammar `[all-languages]` pack
+was removed in v2.2.0 to keep the install lean.
+
+---
+
+## Enforcement engine (deep dive)
+
+Codevira ships **8 default engine policies** ("heroes"), each hooked to Claude
+Code lifecycle events: `SessionStart`, `PreToolUse`, `PostToolUse`,
+`UserPromptSubmit`, `Stop`.
+
+| Policy | Event | What it does |
+|---|---|---|
+| **Decision Lock** | PreToolUse | Blocks an edit that touches a `do_not_revert` decision's subject. **Content-aware** (v3.5): a provably-orthogonal edit downgrades to a warn; a token-touching edit blocks. Strict file-level locking via `CODEVIRA_DECISION_LOCK_CONTENT_AWARE=0`. |
+| **Anti-Regression** | PreToolUse | Blocks edits that look like reverts of previously-fixed bugs. Fix-history is scanned from `fix:` / `bug:` / `hotfix:` / `fixes #N` commit messages and self-freshens on read when git HEAD advances. *Caveat: heuristic is calibrated for small `Edit`/`MultiEdit` hunks; full-file `Write` reverts are deliberately exempt (future work).* |
+| **Blast-Radius Veto** | PreToolUse | Blocks a signature-*removing/modifying* edit to a high-fan-in file (purely-additive signatures pass since v3.3). Shows the callers. |
+| **Relevance Inject** | UserPromptSubmit | Injects ≤3 relevant decisions per prompt; 0 tokens when off-topic. |
+| **Prompt Capture** | UserPromptSubmit + Stop | Records sanitized prompts for later preference distillation. |
+| **Session-Log Enforcer** | SessionStart + Stop | Nudges (or blocks) a session that shipped commits without a `write_session_log`. |
+| **Post-Edit Graph Refresh** | PostToolUse | Reindexes edited files in the background. |
+| **Token Budget / telemetry** | Stop | Records outcome telemetry. |
+
+**How verdicts combine.** The three edit guards compose into a single verdict —
+**first block wins by priority** (Decision Lock 100 > Anti-Regression 80 >
+Blast-Radius 50). The highest-priority block's message is what you see; the rest
+are recorded as telemetry.
+
+**Fail-open and opt-in.** The dispatcher never raises: each policy is wrapped in
+try/except and returns *allow* on failure. `CODEVIRA_ENGINE=0` disables all
+policies; each edit guard also has a per-policy `off|warn|block` env override
+(`CODEVIRA_DECISION_LOCK_MODE`, `CODEVIRA_ANTI_REGRESSION_MODE`,
+`CODEVIRA_BLAST_RADIUS_MODE`). And enforcement is **not** global across all
+Claude Code projects — in any project you never ran `codevira init` on, the
+hooks stay fully inert.
+
+**Why "Claude Code only."** The hard-block path is Claude Code's real
+`PreToolUse` hook. Edits from Cursor / Windsurf / Codex / Copilot go straight to
+the filesystem — they never reach codevira's `PreToolUse` engine at all — so
+those IDEs get the decisions as advisory `AGENTS.md` context instead.
+
+---
+
+## Concurrency & safety
+
+Every on-disk write goes through `mcp_server/storage/atomic.py`: a crash-safe
+atomic write (`mkstemp` + `fsync` + `os.replace`) behind a Posix `fcntl.flock`
+(with an in-process `threading.Lock` first, and a Windows `O_EXCL` sentinel
+fallback). Appends to the JSONL logs are line-atomic — concurrent appenders never
+interleave bytes. Result: two IDEs hitting the same project don't race on
+`manifest.yaml` / `roadmap.yaml` / `AGENTS.md`.
+
+This is exercised by a 50-operation stress over a 10-thread pool, a 20-subprocess
+cross-process stress (`spawn`), and an adversarial chaos harness
+(`scripts/chaos_smoke.py` — 8 scenarios / 29 checks including SIGKILL during a
+held lock, symlink traversal, malformed MCP payloads, corrupt-JSONL graceful
+degradation, and read-only-directory hostility). See
+[`docs/architecture.md`](docs/architecture.md) § "Concurrent-write safety".
+
+---
+
+## CLI
+
+~26 user-facing commands; the daily-use ones:
+
+| Command | What it does |
+|---|---|
+| `codevira init` | Opt this project in: `.codevira/` + AGENTS.md + .gitignore + git merge driver |
+| `codevira setup` | Detect installed AI tools + write MCP configs + Claude Code hooks |
+| `codevira doctor` | 18 health checks (read-only; ✓/⚠/✗ + a fix command each) |
+| `codevira status` | Index health + project state |
+| `codevira projects` | List tracked projects with staleness; `projects archive <name>` drops one |
+| `codevira index` | Build / refresh the code-graph cache |
+| `codevira sync` | Regenerate AGENTS.md + manifest + digest from `decisions.jsonl` |
+| `codevira repair-ids` | **v3.7** — detect/repair cross-engineer decision-id collisions (`--apply`; `--semantic` reports near-duplicates) |
+| `codevira observe-git` | Classify past decisions as kept/modified/reverted from git history |
+| `codevira replay` | Browse the decisions timeline (terminal / markdown / HTML) |
+| `codevira search <query>` | Search decisions from the terminal (FTS5/BM25); `--all-projects`, `--json` |
+| `codevira graph` | Render an interactive, offline HTML viewer of decision memory |
+| `codevira export` / `import` | Back up / restore project memory + global learning across machines |
+| `codevira clean` / `reset` | Remove orphaned data / destructive cleanup (auto-exports first) |
+| `codevira uninstall` | Reverse every system write codevira made (preserves user content outside markers) |
+| `codevira serve` | Start the single-project MCP HTTP server (stdio is the daily mode) |
+
+Run `codevira <cmd> --help` for full flags. Uninstall with `codevira uninstall`
+then `pipx uninstall codevira`.
 
 ---
 
@@ -479,69 +422,39 @@ the install lean (v2.3.0 may re-add specific grammars on demand).
 
 | Production-stable | Known-limited |
 |---|---|
-| Cross-IDE decision memory via in-repo JSONL | The PreToolUse hook enforcement is Claude Code only today. Other IDEs read AGENTS.md (soft signal), but don't have hard blocks |
-| `do_not_revert` enforcement at Claude Code PreToolUse | Symbol tools (`get_signature` / `get_code`) cover Python / TS / JS / Go / Rust; for other languages the AI `Read`s the file directly (the legacy `[all-languages]` grammar pack was removed in v2.2.0) |
-| FTS5 decision search with BM25 ranking | Real-time multi-machine sync — by design, codevira is local-first; for team sharing, commit `.codevira/` to git |
-| Per-project + cross-machine project inventory (`global.db`) | Web UI for browsing decisions — use the `codevira://decisions` MCP resource in Claude Desktop, or `codevira replay --format html` for a static file |
-| All 51 surfaced MCP tools + 26 CLI commands + 8 engine policies | The HTTP server (`codevira serve`) is single-project per launch — for daily use, stick with stdio via `codevira setup` |
-| Concurrent-safe storage layer (Posix `fcntl.flock` + Windows sentinel fallback). Proven against 50-thread + 20-subprocess stress + 29-attack chaos harness | The cross-process file-lock contract has been exercised on macOS + Linux CI; the Windows sentinel-file fallback is verified via unit-test simulation but hasn't been load-tested on real Windows yet |
-| Code graph data store is functional but the v3.0.0 spec target (`<project>/.codevira-cache/graph.sqlite`) and the actual location (`<data_dir>/graph/graph.db`) drifted during the surface-cut audit. Tracked for v3.1 reconciliation | n/a (functional today; spec-truthfulness gap only) |
+| Cross-IDE decision memory via in-repo JSONL | Hard `PreToolUse` enforcement is Claude Code only; other IDEs read `AGENTS.md` (advisory, not a hard block) |
+| `do_not_revert` enforcement at the Claude Code hook | Symbol tools cover Python / TS / JS / Go / Rust; other languages → the AI `Read`s the file directly |
+| FTS5/BM25 decision search | Real-time multi-machine sync — by design local-first; for team sharing, commit `.codevira/` to git |
+| Per-project + cross-machine project inventory (`global.db`) | No web UI — use the `codevira://decisions` MCP resource, or `codevira replay --format html` |
+| 51 MCP tools + ~26 CLI commands + 8 engine policies | The HTTP server (`codevira serve`) is single-project per launch — for daily use, stick with stdio |
+| Concurrent-safe storage (Posix `fcntl.flock` + Windows sentinel), thread + subprocess + chaos-tested | Windows sentinel fallback is verified in unit tests but not yet load-tested on real Windows |
+| Anti-Regression on small `Edit`/`MultiEdit` hunks | Anti-Regression does not yet detect full-file `Write` reverts; accuracy depends on `fix:` commit hygiene |
 
 ---
 
 ## Background
 
-Want to understand the full story behind why this was built, the
-design decisions, what didn't work, and how it compares to other tools
-in the ecosystem?
-
-Read the full write-up:
-[How I Built Persistent Memory for AI Coding Agents](docs/how-i-built-persistent-memory-for-ai-agents.md)
-
----
+Want the full story — why this was built, what didn't work, how it compares to
+other memory tools? Read
+[How I Built Persistent Memory for AI Coding Agents](docs/how-i-built-persistent-memory-for-ai-agents.md).
 
 ## Contributing
 
-Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) for
-the full guide.
+Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-- **Reporting a bug?** [Open a bug report](https://github.com/sachinshelke/codevira/issues/new?template=bug_report.md)
-- **Requesting a feature?** [Open a feature request](https://github.com/sachinshelke/codevira/issues/new?template=feature_request.md)
-- **Found a security issue?** Read [SECURITY.md](SECURITY.md) — please
-  don't use public issues for vulnerabilities.
+- **Bug?** [Open a bug report](https://github.com/sachinshelke/codevira/issues/new?template=bug_report.md)
+- **Feature?** [Open a feature request](https://github.com/sachinshelke/codevira/issues/new?template=feature_request.md)
+- **Security issue?** Read [SECURITY.md](SECURITY.md) — please don't use public issues for vulnerabilities.
 
----
+## FAQ & Roadmap
 
-## FAQ
-
-Common questions about setup, usage, architecture, and troubleshooting
-— see [FAQ.md](FAQ.md).
-
-## Roadmap
-
-**Current release:** **v3.7.0** — fresh memory, shared repos, one
-registration: supersede-on-write + freshness-ranked reads +
-`mark_decision_outdated` (stale decisions stop piling up), deterministic
-cross-engineer decision-id collision repair (`repair-ids` + a git merge
-driver), and one user-scope MCP registration for all your projects — all
-model-free, all local.
-
-**Next up** (directional, not dated):
-
-- **Opt-in `[semantic]` recall** — off by default; the base install
-  stays pure-keyword, no vectors, no model download
-- **Symbol / region-level decision locking** — lock a function or
-  block, not just the whole file
-- **Cross-project decision search** — `search_decisions` across all
-  your local projects, not just the current one
-
-What's built, the full upcoming list, and the long-term vision —
-**[ROADMAP.md](ROADMAP.md)**.
+Common questions on setup, usage, and troubleshooting: [FAQ.md](FAQ.md).
+What's built, what's next, and the long-term vision: [ROADMAP.md](ROADMAP.md).
+Full release history: [CHANGELOG.md](CHANGELOG.md).
 
 ## Star History
 
-If Codevira saves you tokens or sanity, a star helps other developers
-find it.
+If Codevira saves you tokens or sanity, a star helps other developers find it.
 
 <a href="https://star-history.com/#sachinshelke/codevira&Date">
   <img src="https://api.star-history.com/svg?repos=sachinshelke/codevira&type=Date" alt="Star History Chart" width="600"/>

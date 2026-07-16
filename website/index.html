@@ -50,6 +50,44 @@
   "author": {"@type": "Person", "name": "Sachin Shelke"}
 }
 </script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "What is Codevira?",
+      "acceptedAnswer": {"@type": "Answer", "text": "A persistent memory layer for AI coding agents — so Claude Code, Cursor, Windsurf, and Antigravity all share the same project context, decisions, and history on your local machine. It also enforces past decisions, blocking edits that would revert them or re-introduce a fixed bug."}
+    },
+    {
+      "@type": "Question",
+      "name": "Does Codevira send my code anywhere?",
+      "acceptedAnswer": {"@type": "Answer", "text": "No. Everything runs locally. Decisions live in <repo>/.codevira/decisions.jsonl and the code graph is a SQLite cache under ~/.codevira/. Search is pure keyword/BM25 (SQLite FTS5) — no embeddings, no model download, nothing phones home. Your code never leaves your machine."}
+    },
+    {
+      "@type": "Question",
+      "name": "Do I need to run codevira init for every project?",
+      "acceptedAnswer": {"@type": "Answer", "text": "Yes — as of v3.7.0, codevira init is the explicit opt-in. Codevira tracks only the projects you initialize; a project you merely open stays inert and nothing is written, so ~/.codevira/projects/ never fills with projects you never chose. You register the MCP server once, not per project. Set CODEVIRA_AUTO_ADOPT=1 to track every project you open instead."}
+    },
+    {
+      "@type": "Question",
+      "name": "Does Codevira use embeddings or semantic search?",
+      "acceptedAnswer": {"@type": "Answer", "text": "No, not in the default install. Decision search is pure keyword/BM25 ranking via SQLite FTS5 — no vectors, no sentence-transformers, no ChromaDB, nothing to download on first use. A project's memory is about 1 MB and cold start is under 100 ms."}
+    },
+    {
+      "@type": "Question",
+      "name": "Which AI coding tools does Codevira work with?",
+      "acceptedAnswer": {"@type": "Answer", "text": "Claude Code, Claude Desktop, Cursor, Windsurf, and Google Antigravity via MCP; OpenAI Codex and GitHub Copilot read the generated AGENTS.md natively. One codevira setup configures every tool it detects on your machine. Claude Code additionally gets lifecycle hooks, where hard enforcement lives."}
+    },
+    {
+      "@type": "Question",
+      "name": "How much does Codevira cost?",
+      "acceptedAnswer": {"@type": "Answer", "text": "Free and open source under the MIT license. No account, no API key, no cloud, no subscription — pipx install codevira and you're done."}
+    }
+  ]
+}
+</script>
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -354,6 +392,7 @@
       <a href="#how">How it works</a>
       <a href="#graph">The graph</a>
       <a href="#integrate">Integrate</a>
+      <a href="#faq">FAQ</a>
       <a href="docs.html">Docs</a>
       <a href="https://github.com/sachinshelke/codevira">GitHub</a>
       <button id="font-toggle" title="Try a different font" aria-label="Font options">Aa</button>
@@ -822,6 +861,38 @@ params = StdioServerParameters(command=<span class="yy">"codevira-python"</span>
     <p class="tabnote reveal" style="text-align:center">Python, TypeScript, JS/JSX, Go, and Rust get full symbol tools; for other languages the agent reads the file directly.</p>
   </section>
 
+  <!-- FAQ -->
+  <section id="faq">
+    <div class="kicker reveal">Questions</div>
+    <h2 class="reveal">Frequently asked</h2>
+    <div class="glass reveal" style="margin-top:36px;padding:8px 22px">
+      <details>
+        <summary style="cursor:pointer;padding:16px 0;font-weight:600">What is Codevira?</summary>
+        <p style="padding:0 0 16px;color:var(--dim)">A persistent memory layer for AI coding agents — so Claude Code, Cursor, Windsurf, and Antigravity all share the same project context, decisions, and history on your local machine. It also enforces past decisions, blocking edits that would revert them or re-introduce a fixed bug.</p>
+      </details>
+      <details>
+        <summary style="cursor:pointer;padding:16px 0;font-weight:600;border-top:1px solid var(--glass-edge)">Does Codevira send my code anywhere?</summary>
+        <p style="padding:0 0 16px;color:var(--dim)">No. Everything runs locally. Decisions live in <code style="font-family:var(--mono)">&lt;repo&gt;/.codevira/decisions.jsonl</code> and the code graph is a SQLite cache under <code style="font-family:var(--mono)">~/.codevira/</code>. Search is pure keyword/BM25 (SQLite FTS5) — no embeddings, no model download, nothing phones home. Your code never leaves your machine.</p>
+      </details>
+      <details>
+        <summary style="cursor:pointer;padding:16px 0;font-weight:600;border-top:1px solid var(--glass-edge)">Do I need to run <code style="font-family:var(--mono)">codevira init</code> for every project?</summary>
+        <p style="padding:0 0 16px;color:var(--dim)">Yes — as of v3.7.0, <code style="font-family:var(--mono)">codevira init</code> is the explicit opt-in. Codevira tracks only the projects you initialize; a project you merely open stays inert (its tools return a "run codevira init" hint and nothing is written), so <code style="font-family:var(--mono)">~/.codevira/projects/</code> never fills with projects you never chose. You register the MCP server once, not per project. Set <code style="font-family:var(--mono)">CODEVIRA_AUTO_ADOPT=1</code> to track every project you open instead.</p>
+      </details>
+      <details>
+        <summary style="cursor:pointer;padding:16px 0;font-weight:600;border-top:1px solid var(--glass-edge)">Does Codevira use embeddings or semantic search?</summary>
+        <p style="padding:0 0 16px;color:var(--dim)">No, not in the default install. Decision search is pure keyword/BM25 ranking via SQLite FTS5 — no vectors, no sentence-transformers, no ChromaDB, nothing to download on first use. That's why a project's memory is ~1&nbsp;MB and cold start is under 100&nbsp;ms.</p>
+      </details>
+      <details>
+        <summary style="cursor:pointer;padding:16px 0;font-weight:600;border-top:1px solid var(--glass-edge)">Which AI coding tools does it work with?</summary>
+        <p style="padding:0 0 16px;color:var(--dim)">Claude Code, Claude Desktop, Cursor, Windsurf, and Google Antigravity via MCP; OpenAI Codex and GitHub Copilot read the generated <code style="font-family:var(--mono)">AGENTS.md</code> natively. One <code style="font-family:var(--mono)">codevira setup</code> configures every tool it detects on your machine. Claude Code additionally gets lifecycle hooks — that's where hard enforcement lives.</p>
+      </details>
+      <details>
+        <summary style="cursor:pointer;padding:16px 0;font-weight:600;border-top:1px solid var(--glass-edge)">How much does it cost?</summary>
+        <p style="padding:0 0 16px;color:var(--dim)">Free and open source under the MIT license. No account, no API key, no cloud, no subscription — <code style="font-family:var(--mono)">pipx install codevira</code> and you're done.</p>
+      </details>
+    </div>
+  </section>
+
   <div class="cta glass reveal">
     <h2>Give your agents a memory.</h2>
     <p>Open source, MIT, local-first. Two commands and every AI tool on your machine shares it.</p>
@@ -836,7 +907,7 @@ params = StdioServerParameters(command=<span class="yy">"codevira-python"</span>
 <footer>
   <div class="wrap">
     <span>© 2026 Codevira · MIT License · <span style="font-family:var(--mono)">v3.7.0</span></span>
-    <span><a href="https://github.com/sachinshelke/codevira">GitHub</a> · <a href="https://pypi.org/project/codevira/">PyPI</a> · <a href="https://github.com/sachinshelke/codevira/blob/main/CHANGELOG.md">Changelog</a> · <a href="https://github.com/sachinshelke/codevira/blob/main/FAQ.md">FAQ</a></span>
+    <span><a href="https://github.com/sachinshelke/codevira">GitHub</a> · <a href="https://pypi.org/project/codevira/">PyPI</a> · <a href="https://github.com/sachinshelke/codevira/blob/main/CHANGELOG.md">Changelog</a> · <a href="#faq">FAQ</a></span>
   </div>
 </footer>
 

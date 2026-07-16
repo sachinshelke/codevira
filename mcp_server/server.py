@@ -2381,21 +2381,31 @@ def main():
     # InterruptedError crashes were logged. cmd_configure / cmd_init /
     # auto_init guards prevent NEW rogues; this guard prevents the
     # existing-rogue path from spinning up the watcher.
+    #
+    # v3.7.1 (fix A): DEGRADE GRACEFULLY instead of sys.exit(1). Antigravity
+    # (and any client that can't pass a cwd/workspace root) spawns the server
+    # with cwd=`/`; the old hard exit surfaced to the client as
+    # `initialize: EOF` and killed EVERY codevira tool. We now start the
+    # server in LIMITED MODE: the MCP handshake completes and tools return the
+    # inert "open a project" hint (the v3.7.0 opt-in dispatch gate already does
+    # this for any non-opted root, and a forbidden root is never opted in). The
+    # background watcher — the original reason for this guard — is already gated
+    # on activation_allowed(), which is False for an unresolved root, so it
+    # still never spins up.
     try:
         from mcp_server.paths import get_project_root, is_invalid_project_root
 
         _early_root = get_project_root()
         _rejection = is_invalid_project_root(_early_root)
         if _rejection:
-            print(f"Error: {_rejection}", file=sys.stderr)
             print(
-                "  The MCP server cannot start with this project root.\n"
-                "  Move into a real project directory and relaunch your IDE,\n"
-                "  or run `codevira clean --orphans` to remove leftover\n"
-                "  rogue project data from a previous version.",
+                f"Notice: {_rejection}\n"
+                "  codevira is starting in LIMITED MODE (no project bound).\n"
+                "  Open a project folder and relaunch your IDE, or run\n"
+                "  `codevira init` in a project. Memory tools return an\n"
+                "  'open a project' hint until a valid project is bound.",
                 file=sys.stderr,
             )
-            sys.exit(1)
     except SystemExit:
         raise
     except Exception as e:
@@ -2457,6 +2467,19 @@ def main():
         _opted_in = activation_allowed()
     except Exception:
         _opted_in = True
+    # v3.7.1 (fix A): an invalid/forbidden root (`/`, $HOME, system tops) must
+    # NEVER start the watcher or the outcome-analysis thread — either would
+    # walk huge unrelated trees (the original 41-InterruptedError vector that
+    # the startup guard used to prevent by exiting). Now that the server
+    # degrades gracefully instead of exiting, this is the guard. Fail CLOSED:
+    # if we can't prove the root is valid, skip the background work.
+    try:
+        from mcp_server.paths import get_project_root, is_invalid_project_root
+
+        _root_ok = is_invalid_project_root(get_project_root()) is None
+    except Exception:
+        _root_ok = False
+    _opted_in = _opted_in and _root_ok
     if not _opted_in:
         logger.info(
             "Background watcher skipped — project is not tracked by codevira "

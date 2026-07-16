@@ -300,6 +300,57 @@ class TestSandboxedParent:
         assert "count" in payload, f"list_decisions payload missing 'count': {payload}"
         assert "decisions" in payload
 
+    def test_invalid_root_degrades_gracefully_instead_of_crashing(self, tmp_path):
+        """v3.7.1 fix A: launching with a forbidden/system project root — the
+        exact condition Antigravity creates (it spawns the MCP server at cwd=/
+        with no cwd/roots support) — must NOT sys.exit(1) with an EOF that
+        kills every codevira tool. The server must complete the MCP
+        ``initialize`` handshake and serve an inert 'open a project' hint.
+
+        Before this fix, server.main() printed 'is a system directory' and
+        sys.exit(1) before the handshake, so the client saw `initialize: EOF`.
+        """
+        home = tmp_path / "home"
+        home.mkdir()
+        inputs = (
+            _mcp_request(
+                "initialize",
+                {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {"name": "badroot", "version": "0.0.1"},
+                },
+                req_id=1,
+            )
+            + _mcp_request("notifications/initialized", req_id=None)
+            + _mcp_request(
+                "tools/call",
+                {"name": "get_session_context", "arguments": {}},
+                req_id=3,
+            )
+        )
+        # Spawn with a FORBIDDEN root ("/") — the Antigravity crash condition.
+        rc, stdout, stderr = _spawn_codevira_mcp(
+            Path("/"), home, inputs=inputs, timeout_s=30.0
+        )
+        responses = _parse_jsonrpc_responses(stdout)
+        init = next((r for r in responses if r.get("id") == 1), None)
+        assert init is not None and "result" in init, (
+            f"initialize did NOT complete — server crashed on an invalid root "
+            f"instead of degrading. rc={rc} stderr(last 700): {stderr[-700:]}"
+        )
+        assert init["result"].get("serverInfo", {}).get("name") == "codevira"
+        # A tool call must return an inert hint, not a crash / no-response.
+        call = next((r for r in responses if r.get("id") == 3), None)
+        assert call is not None and "result" in call, (
+            f"tool call did not return under an invalid root: {call}. "
+            f"stderr(last 500): {stderr[-500:]}"
+        )
+        payload = json.loads(call["result"]["content"][0]["text"])
+        assert (
+            payload.get("not_opted_in") is True or payload.get("no_project") is True
+        ), f"expected an inert 'open a project' hint under invalid root, got: {payload}"
+
     def test_non_opted_project_creates_no_ghost_dir(self, tmp_path):
         """v3.7.0 opt-in regression guard: launching the real MCP server in a
         project the user never `codevira init`-ed must NOT create a centralized

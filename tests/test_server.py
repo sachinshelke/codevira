@@ -986,15 +986,19 @@ class TestServerMain:
     # leftover rogue project. Without it, even with all upstream guards,
     # `start_background_watcher` would still fire from the rogue config.yaml
     # and walk ~/Library/... — which is the actual production crash mode.
-    def test_main_refuses_home_root(self, tmp_path, monkeypatch, capsys):
-        import pytest as _pytest
-
+    def test_main_degrades_gracefully_on_home_root(self, tmp_path, monkeypatch, capsys):
+        """v3.7.1 fix A: launching from $HOME no longer sys.exit(1)s (the
+        client saw that as `initialize: EOF`, killing every codevira tool).
+        The server starts in LIMITED MODE and the background watcher — the
+        original reason for this guard — still never spins up, because it is
+        gated on activation_allowed(), which is False for an unbound root.
+        """
         fake_home = tmp_path / "fake-home"
         fake_home.mkdir()
         monkeypatch.setattr("pathlib.Path.home", lambda: fake_home)
         monkeypatch.setattr("mcp_server.paths.get_project_root", lambda: fake_home)
 
-        # The watcher MUST NOT be invoked when the guard fires.
+        # The watcher MUST NOT spin up on an unbound root.
         mock_watcher = MagicMock()
         with (
             patch("mcp_server.crash_logger.install_global_handler"),
@@ -1004,22 +1008,24 @@ class TestServerMain:
                 return_value=mock_watcher,
             ) as mock_start_watcher,
             patch("mcp_server.migrate.detect_migration_needed", return_value=False),
-            _pytest.raises(SystemExit) as exc,
         ):
             from mcp_server.server import main
 
-            main()
+            main()  # must NOT raise SystemExit
 
-        assert exc.value.code == 1
-        # Watcher and asyncio loop never reached.
+        # Protective invariant preserved: watcher never started.
         mock_start_watcher.assert_not_called()
-        mock_asyncio.assert_not_called()
+        # But the server DID proceed to start (reached the serving loop).
+        mock_asyncio.assert_called_once()
         err = capsys.readouterr().err
         assert "$HOME" in err
-        assert "clean --orphans" in err
+        assert "LIMITED MODE" in err
 
-    def test_main_refuses_root_slash(self, monkeypatch, capsys):
-        import pytest as _pytest
+    def test_main_degrades_gracefully_on_root_slash(self, monkeypatch, capsys):
+        """v3.7.1 fix A: root `/` (the exact cwd Antigravity spawns with) no
+        longer crashes the server; it starts in LIMITED MODE with the watcher
+        still gated off.
+        """
         from pathlib import Path
 
         monkeypatch.setattr("mcp_server.paths.get_project_root", lambda: Path("/"))
@@ -1027,20 +1033,21 @@ class TestServerMain:
         mock_watcher = MagicMock()
         with (
             patch("mcp_server.crash_logger.install_global_handler"),
-            patch("asyncio.run"),
+            patch("asyncio.run") as mock_asyncio,
             patch(
                 "indexer.index_codebase.start_background_watcher",
                 return_value=mock_watcher,
             ) as mock_start_watcher,
             patch("mcp_server.migrate.detect_migration_needed", return_value=False),
-            _pytest.raises(SystemExit) as exc,
         ):
             from mcp_server.server import main
 
-            main()
+            main()  # must NOT raise SystemExit
 
-        assert exc.value.code == 1
         mock_start_watcher.assert_not_called()
+        mock_asyncio.assert_called_once()
+        err = capsys.readouterr().err
+        assert "LIMITED MODE" in err
 
 
 # v2.2.0+: TestUpdateNodeDescriptionContract removed (update_node tool

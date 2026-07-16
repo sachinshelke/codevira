@@ -410,8 +410,9 @@
   <div class="hero">
     <h1 class="reveal">Your AI coding agent<br>has <span class="grad">amnesia</span>.</h1>
     <p class="sub reveal">Codevira gives every AI tool you use a shared, persistent memory of your
-    project — decisions, fix history, code graph, your preferences — and
-    <strong>enforces</strong> it, blocking the edit before the regression ships.</p>
+    project — decisions, fix history, code graph, your preferences — and, in
+    <strong>Claude Code</strong>, <strong>enforces</strong> it: blocking the edit before the
+    regression ships. Other IDEs read the same decisions as guidance.</p>
     <div class="btns reveal">
       <a class="btn primary" href="https://github.com/sachinshelke/codevira">Get started free</a>
       <a class="btn ghost" href="#how">See how it works ↓</a>
@@ -481,8 +482,8 @@
     <blockquote class="glass reveal">
       <span class="qmark">“</span>
       Every AI tool you open reads and writes the same project memory.
-      What one learns, all of them know. What one is forbidden to break,
-      none of them can.
+      What one learns, all of them know — and what you lock, an agent in
+      Claude Code can't quietly revert.
       <footer>The Codevira design contract</footer>
     </blockquote>
   </section>
@@ -616,6 +617,7 @@
         the new machine. Memory and learning come with you.</p>
       </div>
     </div>
+    <p class="tabnote reveal" style="text-align:center">The <strong>hard block</strong> — the edit actually refused before it touches disk — runs in <strong>Claude Code</strong>, via its <code style="font-family:var(--mono)">PreToolUse</code> hook. In Cursor, Windsurf, Codex and Copilot the same decisions ride along as strong <code style="font-family:var(--mono)">AGENTS.md</code> guidance (advisory, not a physical veto) — their edits don't route through codevira's hook engine. The shared <em>memory</em> is universal; the hard <em>enforcement</em> is Claude Code today.</p>
   </section>
 
   <!-- WORKS WITH -->
@@ -853,8 +855,8 @@ params = StdioServerParameters(command=<span class="yy">"codevira-python"</span>
           <tr><td>Decision capture, search &amp; enforcement</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
           <tr><td>Cross-IDE memory via AGENTS.md</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
           <tr><td>Roadmap, sessions, skills, preferences</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
-          <tr><td>Code graph + blast-radius analysis</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="n">extra install</td></tr>
-          <tr><td>Symbol-level tools (get_signature / get_code)</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="n">extra install</td></tr>
+          <tr><td>Code graph + blast-radius analysis</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="n">reads file</td></tr>
+          <tr><td>Symbol-level tools (get_signature / get_code)</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="n">reads file</td></tr>
         </tbody>
       </table>
     </div>

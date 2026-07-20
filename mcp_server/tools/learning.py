@@ -875,6 +875,9 @@ def get_session_context(since: str | None = None) -> dict:
             ],
             "recent_decisions": [
                 {
+                    # Include the id so an agent can expand() / search what the
+                    # brief showed it — without it, the summary is a dead end.
+                    "id": d.get("id"),
                     # E1 (Phase 19): one-line summary (collapses newlines) so
                     # the brief stays genuinely single-line, not just ≤120 chars.
                     "decision": decisions_store.one_line_summary(

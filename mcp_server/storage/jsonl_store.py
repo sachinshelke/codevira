@@ -385,8 +385,18 @@ def _compute_next_id_locked(
             val = rec.get(id_field)
             if not isinstance(val, str) or not val.startswith(prefix):
                 continue
+            body = val[len(prefix) :]
+            # Skip content-derived loser ids. id_repair mints these from a sha1
+            # hexdigest (lowercase 0-9a-f) when resolving a cross-engineer id
+            # collision; sequential ids are uppercase base36 (_to_base36). A
+            # loser id parsed as base36 is a ~62-bit number, so it would set
+            # max_n astronomically high and every subsequent decision would get
+            # a 12-char blob id — silently ending the human-readable D0000NN
+            # scheme after a single merge repair. A lowercase char marks a loser.
+            if any(c.islower() for c in body):
+                continue
             try:
-                n = int(val[len(prefix) :], 36)
+                n = int(body, 36)
             except ValueError:
                 continue
             if n > max_n:
@@ -494,16 +504,35 @@ def read_merged(
                     }
                 )
         else:
-            # v3.7.0 (Phase 25): two BASE records sharing an id is a
-            # cross-machine mint collision (see storage/id_repair). read_merged
-            # would silently overwrite one — collect the collided ids and warn
-            # ONCE after the loop (M9: not N-1 identical lines per read, which
-            # would drown real warnings on every session-context / search).
-            if did in by_id and not by_id[did].get(amendment_field):
-                collided.add(did)
-            if did not in by_id:
-                order.append(did)
-            by_id[did] = dict(rec)
+            incumbent = by_id.get(did)
+            if incumbent is not None and incumbent.get(amendment_field):
+                # An orphan amendment arrived BEFORE its base — the file was
+                # reordered (a git union-merge, a hand-edit, an id_repair remap).
+                # The base is the foundation; re-apply the amendment's overlay on
+                # top so its fields (do_not_revert, is_superseded, is_outdated…)
+                # are NOT lost. Previously the base overwrote the orphan wholesale
+                # and the amendment silently vanished. Same ts-protection as the
+                # forward overlay. `did` is already in `order` from the orphan.
+                merged = dict(rec)
+                merged.update(
+                    {
+                        k: v
+                        for k, v in incumbent.items()
+                        if not k.startswith("_") and (k != "ts" or not merged.get("ts"))
+                    }
+                )
+                by_id[did] = merged
+            else:
+                # v3.7.0 (Phase 25): two BASE records sharing an id is a
+                # cross-machine mint collision (see storage/id_repair).
+                # read_merged would silently overwrite one — collect the collided
+                # ids and warn ONCE after the loop (M9: not N-1 identical lines
+                # per read, which would drown real warnings on every read).
+                if incumbent is not None:
+                    collided.add(did)
+                if did not in by_id:
+                    order.append(did)
+                by_id[did] = dict(rec)
 
     if collided:
         logger.warning(

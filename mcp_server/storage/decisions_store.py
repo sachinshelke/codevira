@@ -907,6 +907,26 @@ def supersede(
     if old is None:
         return {"success": False, "error": f"decision {old_id} not found"}
 
+    # Refuse to supersede a decision that is ALREADY superseded. Without this,
+    # two stale views (two IDEs, or a retried call) each supersede the same
+    # decision and produce TWO contradictory ACTIVE decisions, while the old
+    # record's `superseded_by` is overwritten to point at only the last one —
+    # a forked chain. Callers must supersede the current HEAD of the chain, so
+    # we point them at it. (Concurrent cross-IDE supersession that races through
+    # a git merge is the consensus subsystem's job; this closes the common
+    # local/sequential fork.)
+    if old.get("is_superseded") or old.get("superseded_by"):
+        successor = old.get("superseded_by")
+        return {
+            "success": False,
+            "error": (
+                f"decision {old_id} is already superseded"
+                + (f" by {successor}" if successor else "")
+                + "; supersede the current decision instead"
+            ),
+            "superseded_by": successor,
+        }
+
     effective_file_path = file_path if file_path is not None else old.get("file_path")
     effective_tags = tags if tags is not None else old.get("tags")
     effective_symbol = symbol if symbol is not None else old.get("symbol")

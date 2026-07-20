@@ -19,22 +19,76 @@ Observed in the wild: a project with 496 decisions showed 0 after an IDE
 restart. The migration predates the JSONL memory files (added in 2.2.0) and was
 never updated for them.
 
-- The migration now copies every remaining store file/dir **by exclusion**
-  rather than an allow-list — the allow-list omission is precisely how this bug
-  arose, so files added in future carry over automatically.
-- A guard refuses to rename the legacy directory when any store file failed to
-  land, so an incomplete copy is retried instead of stranding memory behind a
-  rename.
-- New startup migration `v371_recover_orphaned_memory` **self-heals projects
-  already broken**, copying from `.codevira.migrated/` into the centralized
-  store and never clobbering a newer central copy.
-- The migration now **skips a store that deliberately lives in the repo** —
-  either `git_shared: true` or a git-tracked store. Renaming those away broke
-  team sharing and showed up as a wall of deletions that reads like data loss.
+The root cause is that the centralized store is **write-only for memory**:
+`storage/paths.py::codevira_dir()` hardcodes `<project>/.codevira` and is the
+sole route for decisions, sessions, outcomes, skills, digest and manifest.
+`get_data_dir()` — the centralized resolver — is consulted only for `graph.db`,
+`codeindex/`, `logs/` and `config.yaml`. So the memory was copied somewhere
+nothing reads, and the rename removed the copy that mattered.
+
+- **Migration is now non-destructive.** It never moves memory and never renames
+  `.codevira/`. Centralization is a *mirror* of derived/global artifacts, not a
+  move of the source of truth — so nothing can be stranded, and no
+  `.codevira.migrated/` is created at all.
+- **Self-heal on every start.** `v371_recover_orphaned_memory` restores
+  stranded memory **into the in-repo store**, checking both stranding sites,
+  never clobbering a live file, and never dragging a 20M+ graph into the repo.
+  It is exempt from the migration ledger so it can't be sealed shut by a run
+  that found nothing to do.
+- **Backups are no longer destroyed.** A second migration used to `rmtree` an
+  existing `.codevira.migrated/` — which fired whenever a project directory was
+  renamed (new path key) and destroyed the last copy. `cleanup_legacy_dir` (and
+  therefore `codevira clean --legacy`, which described these as "harmless")
+  now refuses to delete a backup holding the only copy of a memory file.
+- **In-repo stores are never migrated** — `git_shared: true` or a git-tracked
+  store stays put. Renaming those away broke team sharing and showed up as a
+  wall of deletions that reads like data loss.
 
 If a project was hit before upgrading and its store was git-tracked, recover it
 with `git checkout -- .codevira/`; otherwise the new migration restores it
 automatically on next start.
+
+### Fixed — sessions bound to the wrong project
+
+Several independent defects could make a session read or write **another
+project's** store. All were found by an adversarial review pass.
+
+- **A rebind only bound one tool call.** The MCP SDK starts a fresh task per
+  message, and `main()` pinned the project root in the *root* context before
+  `asyncio.run`, so every task inherited that pin and clearing it only affected
+  the calling task. `set_project_dir()` therefore took effect once and every
+  later call silently reverted — the "my LH session returns UDAP's decisions"
+  symptom. A pin generation counter now invalidates inherited pins across tasks.
+- **A shared git remote hijacked an initialized project.** The remote lookup ran
+  before the in-repo check, so any clone, fork or second checkout could be
+  routed to a sibling's store. An explicit local init now outranks a remote
+  match; the remote lookup keeps its real job (finding the store after a rename).
+- **A ghost directory beat a real store.** The lookup matched on `metadata.json`
+  alone, so a metadata-only directory out-ranked a genuinely initialized project;
+  `glob()` order also made the winner vary between runs. Candidates now require
+  a real store and are chosen deterministically.
+- **Git worktrees and submodules were unrecognized.** `.git` is a *file* there,
+  not a directory, so binding declined and the server kept the wrong project.
+- **A stale cache was never re-resolved.** The "no store yet" guess was cached
+  forever, so a server already running when you ran `codevira init` kept using a
+  directory the CLI never reads.
+
+### Fixed — `repair_ids` could destroy a concurrent decision
+
+`repair_ids` released its read lock before taking the write lock, so a decision
+appended in that window was overwritten by the full-file rewrite. It runs at
+**every server start**, so a user with several IDE windows open could lose a
+decision recorded in one while another booted. Read, transform and rewrite now
+happen under a single exclusive lock, and a clean store is left byte-identical
+instead of being rewritten on every boot.
+
+### Fixed — IDE config could be replaced wholesale
+
+`~/.claude.json` holds your OAuth account, full project history, telemetry and
+every other MCP server. A momentarily unparseable file (a concurrent write by
+the IDE itself, a partial sync) was treated as "missing" and the whole file was
+replaced with a one-key document. Codevira now refuses to overwrite a config it
+cannot read.
 
 ### Added — `codevira init --shared` (team-shared memory)
 

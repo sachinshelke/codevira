@@ -14,6 +14,8 @@
 - **D000009** CODEVIRA_NO_WATCHER=1 env var skips start_background_watcher() in both stdio and HTTP MCP servers. Each codevira proces…  ·  `mcp_server/server.py`  ·  _env-var, fsevents, perf, v3.0, watcher_
 - **D000010** Any change to a hero policy (mcp_server/engine/policies/*.py) — especially relevance_inject and decision_lock — MUST ru…  ·  `mcp_server/engine/policies/relevance_inject.py`  ·  _e2e, hero-policy, regression, relevance-inject, testing, v3.0, wedge_
 - **D000012** The v3.0.0 JSONL store WRITE path now validates the resolved project root via is_invalid_project_root() inside storage/…  ·  `mcp_server/storage/paths.py`  ·  _claude-desktop, forbidden-root, g5, ship-blocker, storage, v3.0.0, write-path_
+- **D00011V** RELEASE BLOCKER #2 (found 2026-07-20): codevira re-injects a BARE global Claude Code entry (`mcpServers.codevira` with …  ·  `mcp_server/ide_inject.py`  ·  _claude-code, claude-desktop, high-severity, ide-inject, project-binding, release-blocker, v3.7.1_
+- **D00011W** [supersedes D00011U: D00011U diagnosed the SYMPTOM (an empty centralized store shadowing populated in-repo memory) and …  ·  `mcp_server/migrate.py`  ·  _data-loss, fixed, high-severity, migration, release-blocker, root-cause, v3.7.1_
 
 ### Active conventions
 
@@ -27,12 +29,8 @@
 - **D000016** v3.0.1 will add an interactive, queryable HTML viewer for codevira memory. Design (agreed 2026-05-26): self-contained S…  ·  _cli, cytoscape, export, feature, memory-viewer, v3.0.1, visualization_
 - **D000017** [supersedes D000014: D000014 premise was factually wrong: verified the committed code uses ~/.gemini/antigravity/, neve…  ·  `mcp_server/ide_inject.py`  ·  _antigravity, broken-integration, cross-tool, ide-inject, setup-wizard, v3.0.1_
 - **D000018** Measured codevira startup token footprint (2026-05-26, chars/4 estimate): MCP tools/list = 16,454 chars ≈ 4,100 tokens …
-- **D000019** IMPLEMENTED (commit 7a2bdd4) the D000018 token reduction. New env var CODEVIRA_TOOL_PROFILE=lean trims the advertised M…
-- **D00001A** RELEASE SCOPING (per Sachin 2026-05-26): ALL of this session's work ships in the SINGLE 3.0.0 release — there is no sep…
-- **D00001B** CORRECTION: the release gauntlet is GREEN, not broken. The 53 'failures' I reported earlier were NOT test rot, NOT test…
-- **D00001C** Antigravity 2.0 shared-config support BUILT (commit c83cddf), resolving the open item from D000017. ide_inject.py now d…  ·  _antigravity, cross-tool, ide-inject, v3.0.0_
 
-_+69 more decision(s) — full log in `.codevira/decisions.jsonl`._
+_+74 more decision(s) — full log in `.codevira/decisions.jsonl`._
 
 
 For the full decision log, use `search_decisions` / `list_decisions` (or the `codevira` CLI) — don't read `.codevira/*.jsonl` directly.

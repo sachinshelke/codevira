@@ -43,8 +43,57 @@ from pathlib import Path
 from mcp_server.storage import paths
 
 
-def cmd_init(*, yes: bool = False, dry_run: bool = False) -> int:
+def _read_git_shared(cfg_path: Path) -> bool:
+    """True when config.yaml sets ``git_shared: true`` (team-shared memory).
+
+    When set, the project's memory is deliberately committed so teammates on
+    the SAME repo inherit each other's decisions (the decision-log merge driver
+    reconciles concurrent appends). Fail-safe: any read/parse error → False.
+    """
+    if not cfg_path.is_file():
+        return False
+    try:
+        import yaml
+
+        data = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 — unreadable config → safe default
+        return False
+    return bool(isinstance(data, dict) and data.get("git_shared") is True)
+
+
+def _set_git_shared(cfg_path: Path) -> None:
+    """Persist ``git_shared: true`` into config.yaml (idempotent).
+
+    Loads the current mapping, sets the flag, rewrites atomically. No-op if
+    already set. Works whether config.yaml was just created or pre-existed.
+    """
+    import yaml
+
+    from mcp_server.storage.atomic import atomic_write_text
+
+    data: dict = {}
+    if cfg_path.is_file():
+        try:
+            loaded = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                data = loaded
+        except Exception:  # noqa: BLE001
+            data = {}
+    if data.get("git_shared") is True:
+        return
+    data["git_shared"] = True
+    atomic_write_text(
+        cfg_path,
+        yaml.safe_dump(data, sort_keys=False, default_flow_style=False),
+    )
+
+
+def cmd_init(*, yes: bool = False, dry_run: bool = False, shared: bool = False) -> int:
     """Scaffold .codevira/ + .codevira-cache/ + update AGENTS.md / .gitignore.
+
+    ``shared=True`` (``codevira init --shared``) marks a TEAM repo: it writes
+    ``git_shared: true`` and keeps the project's memory committed so teammates
+    inherit the decision log. Default (False) keeps the per-machine behavior.
 
     Returns POSIX exit code (0 success, 1 error).
     """
@@ -187,6 +236,13 @@ def cmd_init(*, yes: bool = False, dry_run: bool = False) -> int:
             yaml.safe_dump(cfg, sort_keys=False, default_flow_style=False),
         )
 
+    # Step 3b (v3.7.1): if --shared, persist git_shared:true so this repo's
+    # memory stays committed for teammates. effective_shared also honors a flag
+    # a previous `init --shared` already wrote, so a plain re-init won't undo it.
+    if shared:
+        _set_git_shared(cfg_path)
+    effective_shared = _read_git_shared(cfg_path)
+
     # Step 4: write default enforcement.yaml (idempotent).
     if not enf_path.is_file():
         from mcp_server.storage.atomic import atomic_write_text
@@ -233,31 +289,46 @@ def cmd_init(*, yes: bool = False, dry_run: bool = False) -> int:
 
     decisions_store.rebuild_indexes()
 
-    # Step 8 (v3.7.1 fix E): stop git from tracking any .codevira/ MEMORY files.
-    # Older codevira versions committed .codevira/decisions.jsonl before the
-    # gitignore rule existed; .gitignore can't untrack an already-committed
-    # file, so that memory travels to every clone/copy — an unrelated new
-    # project then inherits this project's decisions. Untrack them here (the
-    # local files, i.e. the actual memory, are preserved).
-    from mcp_server.paths import untrack_git_memory_files
-
-    _untracked = untrack_git_memory_files(project)
-    if _untracked:
+    # Step 8 (v3.7.1 fix E): by default, stop git from tracking any .codevira/
+    # MEMORY files. Older codevira versions committed .codevira/decisions.jsonl
+    # before the gitignore rule existed; .gitignore can't untrack an
+    # already-committed file, so that memory travels to every clone/copy — an
+    # unrelated new project then inherits this project's decisions. Untrack them
+    # here (the local files, i.e. the actual memory, are preserved).
+    #
+    # EXCEPTION — git_shared:true (a team repo via `init --shared`): the memory
+    # is committed ON PURPOSE so teammates on the SAME repo inherit each other's
+    # decisions; the decision-log merge driver reconciles concurrent appends. In
+    # that mode we must NOT untrack, or team memory would vanish on the next
+    # commit.
+    if effective_shared:
         print()
-        print(
-            f"  ⚠ Stopped git-tracking {len(_untracked)} committed memory file(s) "
-            "so they don't leak to clones/copies:"
-        )
-        for _f in _untracked:
-            print(f"      {_f}")
-        print("      (local files kept — commit the removal: git commit)")
+        print("  ✓ Team mode (git_shared: true) — .codevira/ memory stays")
+        print("    committed so teammates on this repo share the decision log.")
+    else:
+        from mcp_server.paths import untrack_git_memory_files
+
+        _untracked = untrack_git_memory_files(project)
+        if _untracked:
+            print()
+            print(
+                f"  ⚠ Stopped git-tracking {len(_untracked)} committed memory file(s) "
+                "so they don't leak to clones/copies:"
+            )
+            for _f in _untracked:
+                print(f"      {_f}")
+            print("      (local files kept — commit the removal: git commit)")
 
     # Success summary
     print()
     print("  ✓ Initialized.")
     print()
     print("  Next steps:")
-    print("    1. git add AGENTS.md .gitignore && git commit")
+    if effective_shared:
+        print("    1. git add .codevira/ AGENTS.md .gitignore && git commit")
+        print("       (teammates pull this to inherit the shared memory)")
+    else:
+        print("    1. git add AGENTS.md .gitignore && git commit")
     print("    2. Open Claude Code / Cursor / Antigravity in this project;")
     print("       codevira's MCP server is ready.")
     print("    3. Record your first decision:")

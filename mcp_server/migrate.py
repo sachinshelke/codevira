@@ -90,6 +90,36 @@ def migrate_to_centralized(project_root: Path) -> dict:
     if (centralized / "metadata.json").is_file():
         return {"migrated": False, "reason": "Already migrated"}
 
+    # v3.7.1: NEVER migrate a store that deliberately lives in the repo.
+    #
+    # Two cases, same conclusion — leave it alone:
+    #   * git_shared: true  — the team model (`codevira init --shared`): memory
+    #     is committed on purpose so teammates share the decision log.
+    #   * the store is git-tracked — even without the flag, renaming it away
+    #     shows up as a wall of deletions in the user's working tree, which
+    #     reads exactly like data loss.
+    # Migrating either case would break in-repo/team sharing and alarm the user.
+    try:
+        from mcp_server.cli_init import _read_git_shared
+
+        if _read_git_shared(legacy / "config.yaml"):
+            return {
+                "migrated": False,
+                "reason": "git_shared: in-repo store is intentional",
+            }
+    except Exception:  # noqa: BLE001 — never let this check block startup
+        pass
+    try:
+        from mcp_server.paths import git_tracked_memory_files
+
+        if git_tracked_memory_files(project_root):
+            return {
+                "migrated": False,
+                "reason": "store is git-tracked; keeping it in-repo",
+            }
+    except Exception:  # noqa: BLE001
+        pass
+
     logger.info("Migrating %s → %s", legacy, centralized)
 
     # Create directory structure

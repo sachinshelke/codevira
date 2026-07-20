@@ -850,6 +850,18 @@ def check_committed_memory() -> CheckResult:
             _PASS,
             "no codevira memory files are git-tracked",
         )
+    # git_shared:true (a team repo via `codevira init --shared`) commits memory
+    # ON PURPOSE so teammates on the SAME repo inherit the decision log — that is
+    # correct, not a leak, so don't warn about it.
+    from mcp_server.storage import config
+
+    if config.is_enabled("git_shared", default=False):
+        return CheckResult(
+            "committed_memory",
+            _PASS,
+            f"{len(tracked)} codevira memory file(s) git-tracked — intentional "
+            f"(git_shared: true; team-shared repo)",
+        )
     return CheckResult(
         "committed_memory",
         _WARN,

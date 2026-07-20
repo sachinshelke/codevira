@@ -720,6 +720,16 @@ def main() -> None:
         action="store_true",
         help="Print the init plan but don't write any files.",
     )
+    init_parser.add_argument(
+        "--shared",
+        action="store_true",
+        help=(
+            "Team repo: keep .codevira/ memory committed so teammates on the "
+            "SAME repo share the decision log (sets git_shared: true; the "
+            "decision-log merge driver reconciles concurrent edits). Default "
+            "keeps memory per-machine so it can't leak into unrelated projects."
+        ),
+    )
 
     # index (P2-1 rc.5: added description)
     index_parser = subparsers.add_parser(
@@ -1761,6 +1771,7 @@ def main() -> None:
             cmd_init_v22(
                 yes=True,
                 dry_run=getattr(args, "dry_run", False),
+                shared=getattr(args, "shared", False),
             )
         except Exception as e:
             print(f"  ⚠ v2.2.0 .codevira/ scaffold failed: {e}", file=sys.stderr)

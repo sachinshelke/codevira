@@ -171,3 +171,35 @@ class TestOrphanRecovery:
         proj = tmp_path / "clean"
         proj.mkdir()
         assert migrate._mig_v371_recover_orphaned_memory(proj) is False
+
+
+class TestInRepoStoreIsNotMigrated:
+    """v3.7.1: a store that deliberately lives in the repo must never be
+    migrated away — it would break team sharing and look like data loss."""
+
+    def test_git_shared_store_is_left_alone(self, legacy_project):
+        proj, gh = legacy_project
+        cfg = proj / ".codevira" / "config.yaml"
+        cfg.write_text("schema_version: 1\ngit_shared: true\n")
+
+        result = migrate.migrate_to_centralized(proj)
+        assert result["migrated"] is False
+        assert "git_shared" in result["reason"]
+        # Store stays exactly where the team expects it.
+        assert (proj / ".codevira" / "decisions.jsonl").is_file()
+        assert not (proj / ".codevira.migrated").exists()
+
+    def test_git_tracked_store_is_left_alone(self, legacy_project, monkeypatch):
+        proj, gh = legacy_project
+        import mcp_server.paths as paths_mod
+
+        monkeypatch.setattr(
+            paths_mod,
+            "git_tracked_memory_files",
+            lambda p: [".codevira/decisions.jsonl"],
+        )
+        result = migrate.migrate_to_centralized(proj)
+        assert result["migrated"] is False
+        assert "git-tracked" in result["reason"]
+        assert (proj / ".codevira" / "decisions.jsonl").is_file()
+        assert not (proj / ".codevira.migrated").exists()

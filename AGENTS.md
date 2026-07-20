@@ -31,7 +31,7 @@
 - **D000019** IMPLEMENTED (commit 7a2bdd4) the D000018 token reduction. New env var CODEVIRA_TOOL_PROFILE=lean trims the advertised M…
 - **D00001A** RELEASE SCOPING (per Sachin 2026-05-26): ALL of this session's work ships in the SINGLE 3.0.0 release — there is no sep…
 
-_+73 more decision(s) — full log in `.codevira/decisions.jsonl`._
+_+74 more decision(s) — full log in `.codevira/decisions.jsonl`._
 
 
 For the full decision log, use `search_decisions` / `list_decisions` (or the `codevira` CLI) — don't read `.codevira/*.jsonl` directly.

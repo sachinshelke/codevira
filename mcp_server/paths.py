@@ -266,16 +266,49 @@ def _find_project_by_git_remote(remote_url: str | None) -> Path | None:
     projects_dir = get_global_home() / "projects"
     if not projects_dir.exists():
         return None
-    for meta_file in projects_dir.glob("*/metadata.json"):
+
+    # v3.7.1: collect ALL matches, then choose deterministically.
+    #
+    # Two problems with returning the first glob hit:
+    #   1. A match on metadata.json ALONE let a GHOST dir (metadata written by a
+    #      scan, no config.yaml, no real store) out-rank a genuinely initialized
+    #      project — "a populated store loses to an empty one".
+    #   2. glob() order is filesystem-dependent, so with several matching dirs
+    #      (clones and forks share an `origin`) the winner varied between runs
+    #      and between machines.
+    # We now require a real store (config.yaml present) and sort by path so the
+    # result is stable.
+    matches: list[Path] = []
+    for meta_file in sorted(projects_dir.glob("*/metadata.json")):
         try:
             meta = json.loads(meta_file.read_text())
-            stored = meta.get("git_remote")
-            if stored and stored == remote_url:
-                # Return the centralized data dir (the directory containing metadata.json)
-                return meta_file.parent
         except (json.JSONDecodeError, OSError):
             continue
-    return None
+        stored = meta.get("git_remote")
+        if not (stored and stored == remote_url):
+            continue
+        candidate = meta_file.parent
+        if not (candidate / "config.yaml").is_file():
+            logger.debug(
+                "git-remote match at %s ignored: no config.yaml (ghost dir).",
+                candidate,
+            )
+            continue
+        matches.append(candidate)
+
+    if not matches:
+        return None
+    if len(matches) > 1:
+        logger.warning(
+            "git remote %s matches %d centralized stores (%s); using %s. "
+            "Clones/forks of one repo share a remote — pass --project-dir or "
+            "set CODEVIRA_PROJECT_DIR to bind explicitly.",
+            remote_url,
+            len(matches),
+            ", ".join(m.name for m in matches),
+            matches[0].name,
+        )
+    return matches[0]
 
 
 # ---------------------------------------------------------------------------
@@ -573,7 +606,23 @@ def _resolve_data_dir(project_root: Path) -> Path:
     if (centralized / "config.yaml").is_file():
         return centralized
 
-    # 2. Try git remote lookup (survives directory renames).
+    # 2. THIS project's own in-repo store, if it was explicitly initialized.
+    #
+    # v3.7.1: this used to run AFTER the git-remote lookup below, which meant a
+    # project with its own `codevira init`-created .codevira/config.yaml could
+    # still be routed to a DIFFERENT project's centralized dir whenever the two
+    # shared a git remote — i.e. any clone, fork or second checkout of one repo.
+    # The consequence is a session reading another project's graph/index, so
+    # get_impact / query_graph / search_codebase answer about the wrong code.
+    # An explicit local init is the strongest signal of intent we have, so it
+    # must outrank a remote match. The remote lookup keeps its real purpose
+    # (finding the store again after the directory was renamed) for projects
+    # that have no in-repo marker.
+    legacy = project_root / ".codevira"
+    if (legacy / "config.yaml").is_file():
+        return legacy
+
+    # 3. Git remote lookup (survives directory renames).
     #    _get_git_remote_url() and _find_project_by_git_remote() are the
     #    potentially expensive operations — subprocess + metadata file scan.
     #    They only run once per project root thanks to the cache above.
@@ -582,11 +631,6 @@ def _resolve_data_dir(project_root: Path) -> Path:
         found = _find_project_by_git_remote(remote_url)
         if found is not None:
             return found
-
-    # 3. Legacy in-project .codevira/ (backward compat for v1.5 and earlier)
-    legacy = project_root / ".codevira"
-    if (legacy / "config.yaml").is_file():
-        return legacy
 
     # 4. Default to centralized path — new project, will be created on init
     return centralized

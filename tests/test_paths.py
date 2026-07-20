@@ -663,7 +663,12 @@ class TestFindProjectByGitRemote:
     """Test scanning metadata.json files for git remote match."""
 
     def test_finds_matching_project(self, tmp_path, monkeypatch):
-        """Returns centralized dir when metadata.json has matching git_remote."""
+        """Returns centralized dir when metadata.json has matching git_remote.
+
+        v3.7.1: the candidate must be a REAL store (config.yaml present). A
+        metadata-only dir is a ghost and is skipped — otherwise it out-ranks a
+        genuinely initialized project. See tests/test_remote_hijack.py.
+        """
         fake_home = tmp_path / "home"
         monkeypatch.setattr(paths, "get_global_home", lambda: fake_home)
 
@@ -676,6 +681,7 @@ class TestFindProjectByGitRemote:
                 }
             )
         )
+        (proj_dir / "config.yaml").write_text("schema_version: 1\n")
 
         result = _find_project_by_git_remote("https://github.com/org/repo.git")
         assert result == proj_dir
@@ -717,7 +723,8 @@ class TestFindProjectByGitRemote:
         corrupt_dir.mkdir(parents=True)
         (corrupt_dir / "metadata.json").write_text("{{not json at all")
 
-        # Valid metadata
+        # Valid metadata (+ config.yaml: v3.7.1 requires a REAL store, not a
+        # metadata-only ghost dir — see tests/test_remote_hijack.py)
         valid_dir = fake_home / "projects" / "valid_proj_22222222"
         valid_dir.mkdir(parents=True)
         (valid_dir / "metadata.json").write_text(
@@ -727,6 +734,7 @@ class TestFindProjectByGitRemote:
                 }
             )
         )
+        (valid_dir / "config.yaml").write_text("schema_version: 1\n")
 
         result = _find_project_by_git_remote("https://github.com/org/target.git")
         assert result == valid_dir

@@ -122,9 +122,23 @@ def pick_project_root(candidates: list[Path | None]) -> Path | None:
     if codevira_roots:
         return codevira_roots[0]
     for c in valid:
-        if (c / ".git").is_dir():
+        if _is_git_repo(c):
             return c
     return valid[0]
+
+
+def _is_git_repo(path: Path) -> bool:
+    """True if ``path`` is a git working tree.
+
+    Uses ``.exists()``, NOT ``.is_dir()``. In a **worktree** or a **submodule**
+    ``.git`` is a FILE containing ``gitdir: <path>``, not a directory — so an
+    ``is_dir()`` check silently classified them as "not a repo". The binder then
+    declined to bind and the server kept its inherited cwd, i.e. the wrong
+    project. It also disagreed with ``paths._discover_project_root``, which
+    treats ``.git`` as a marker via ``.exists()`` and accepts worktrees — two
+    layers answering "is this a project?" differently.
+    """
+    return (path / ".git").exists()
 
 
 def _has_codevira(path: Path) -> bool:
@@ -244,7 +258,9 @@ def choose_binding(
     if is_initialized_codevira_project(workspace_root):
         return workspace_root
     try:
-        is_repo = (workspace_root / ".git").is_dir()
+        # .exists() not .is_dir() — in a worktree/submodule `.git` is a file.
+        # See _is_git_repo.
+        is_repo = _is_git_repo(workspace_root)
     except OSError:
         is_repo = False
     if is_repo and not is_initialized_codevira_project(cwd_root):

@@ -584,13 +584,48 @@ def get_data_dir() -> Path:
             f"or cd into a real project subdirectory."
         )
 
-    # Fast path — already resolved for this root
-    if project_root in _data_dir_cache:
-        return _data_dir_cache[project_root]
+    # Fast path — already resolved for this root.
+    #
+    # v3.7.1: a cached rule-4 result is PROVISIONAL. Rule 4 is "no store exists
+    # yet, assume the default centralized path", and that answer goes stale the
+    # moment a store actually appears — which routinely happens in ANOTHER
+    # process: the MCP server is already running when the user runs
+    # `codevira init` in a terminal. Nothing invalidates this process's cache
+    # cross-process, so the live server kept writing to a directory the CLI
+    # never reads. (opt_in.py deliberately re-reads negatives from disk for the
+    # same reason.) That staleness is also what masked today's data-loss bug:
+    # a session looked healthy purely because it had resolved before the store
+    # moved.
+    #
+    # Re-checking costs two is_file() calls — the expensive parts of resolution
+    # (a git subprocess and a metadata scan) only run if a real store appeared.
+    cached = _data_dir_cache.get(project_root)
+    if cached is not None:
+        if not _is_provisional(project_root, cached):
+            return cached
+        refreshed = _resolve_data_dir(project_root)
+        _data_dir_cache[project_root] = refreshed
+        return refreshed
 
     result = _resolve_data_dir(project_root)
     _data_dir_cache[project_root] = result
     return result
+
+
+def _is_provisional(project_root: Path, cached: Path) -> bool:
+    """True when ``cached`` was a rule-4 guess that may now be wrong.
+
+    A resolution is settled once the directory it points at is a real store
+    (has ``config.yaml``). Until then the answer is "nothing exists yet", which
+    any other process can invalidate at any moment.
+    """
+    try:
+        # Settled iff the cached location is a real store. Otherwise it was a
+        # "nothing exists yet" guess and must be re-resolved, because a store
+        # may have appeared (in-repo or centralized) in another process since.
+        return not (cached / "config.yaml").is_file()
+    except OSError:
+        return False
 
 
 def _resolve_data_dir(project_root: Path) -> Path:

@@ -111,6 +111,34 @@ def migrate_to_centralized(project_root: Path) -> dict:
         shutil.copy2(src_roadmap, centralized / "roadmap.yaml")
         files_copied += 1
 
+    # 2b. Copy EVERY remaining store file/dir (v3.7.1 fix).
+    #
+    # This step used to not exist, and it orphaned every project's memory: the
+    # migration copied config/roadmap/graph/codeindex, then renamed the legacy
+    # dir away — so decisions.jsonl, sessions.jsonl, outcomes.jsonl,
+    # skills.jsonl, digest.jsonl and manifest.yaml never reached the
+    # destination. The centralized store then read as ZERO decisions while the
+    # real history sat unreachable in .codevira.migrated/.
+    #
+    # We deliberately copy by EXCLUSION rather than an allow-list: the original
+    # bug happened because the JSONL memory files were added to the store after
+    # this migration was written and nobody updated a hard-coded list. Anything
+    # added in future is carried over automatically.
+    _ALREADY_HANDLED_FILES = {"config.yaml", "roadmap.yaml", "metadata.json"}
+    _ALREADY_HANDLED_DIRS = {"graph", "codeindex", "logs"}
+    for entry in legacy.iterdir():
+        if entry.name.endswith(".lock"):
+            continue  # stale lock files must never travel
+        if entry.is_file() and entry.name not in _ALREADY_HANDLED_FILES:
+            shutil.copy2(entry, centralized / entry.name)
+            files_copied += 1
+        elif entry.is_dir() and entry.name not in _ALREADY_HANDLED_DIRS:
+            dst_dir = centralized / entry.name
+            if dst_dir.exists():
+                shutil.rmtree(dst_dir)
+            shutil.copytree(entry, dst_dir)
+            files_copied += 1
+
     # 3. Copy graph.db via sqlite3 backup API (safe under WAL mode)
     src_db = legacy / "graph" / "graph.db"
     dst_db = centralized / "graph" / "graph.db"
@@ -190,6 +218,35 @@ def migrate_to_centralized(project_root: Path) -> dict:
         pass  # Cache invalidation is best-effort; migration proceeds regardless
 
     # 7. Rename old .codevira/ → .codevira.migrated/ (safety net, not deleted)
+    #
+    # GUARD (v3.7.1): refuse to rename the source away unless the memory files
+    # verifiably landed. Renaming after an incomplete copy is what made the
+    # original data-orphaning bug unrecoverable-looking: codevira read an empty
+    # centralized store while the real history was hidden in .codevira.migrated/.
+    # If verification fails we keep the legacy dir in place, so the NEXT run
+    # re-attempts a complete migration instead of silently stranding memory.
+    _unmigrated = [
+        e.name
+        for e in legacy.iterdir()
+        if e.is_file()
+        and not e.name.endswith(".lock")
+        and e.name != "metadata.json"
+        and not (centralized / e.name).exists()
+    ]
+    if _unmigrated:
+        logger.error(
+            "Migration INCOMPLETE for %s — these store files did not reach %s: "
+            "%s. Leaving the legacy directory in place; it will be retried.",
+            project_root,
+            centralized,
+            ", ".join(sorted(_unmigrated)),
+        )
+        return {
+            "migrated": False,
+            "reason": f"incomplete copy, legacy kept: {', '.join(sorted(_unmigrated))}",
+            "files_copied": files_copied,
+        }
+
     migrated_backup = project_root / ".codevira.migrated"
     if migrated_backup.exists():
         shutil.rmtree(migrated_backup)
@@ -316,6 +373,54 @@ def _mig_v370_repair_collisions(project_root: Path) -> bool:
     return True
 
 
+def _mig_v371_recover_orphaned_memory(project_root: Path) -> bool:
+    """Recover memory orphaned by the pre-3.7.1 centralization migration.
+
+    That migration copied config/roadmap/graph/codeindex, then renamed
+    ``.codevira/`` to ``.codevira.migrated/`` WITHOUT copying the store's
+    memory files — so the centralized store read as zero decisions while the
+    real history was stranded in the renamed directory.
+
+    This heals it: for every store file present in ``.codevira.migrated/`` but
+    missing from the centralized dir, copy it across. Never overwrites a file
+    that already exists centrally (a newer store always wins), so it is safe to
+    re-run and cannot clobber post-migration work. Returns True if anything was
+    recovered.
+    """
+    orphan = project_root / ".codevira.migrated"
+    if not orphan.is_dir():
+        return False
+
+    from mcp_server.paths import _sanitize_path_key, get_global_home
+
+    centralized = get_global_home() / "projects" / _sanitize_path_key(project_root)
+    if not centralized.is_dir():
+        return False
+
+    recovered: list[str] = []
+    for entry in orphan.iterdir():
+        if entry.name.endswith(".lock") or entry.name == "metadata.json":
+            continue
+        dst = centralized / entry.name
+        if dst.exists():
+            continue  # newer centralized copy wins — never clobber
+        if entry.is_file():
+            shutil.copy2(entry, dst)
+            recovered.append(entry.name)
+        elif entry.is_dir():
+            shutil.copytree(entry, dst)
+            recovered.append(entry.name + "/")
+
+    if recovered:
+        logger.warning(
+            "Recovered %d orphaned store item(s) for %s from .codevira.migrated/: %s",
+            len(recovered),
+            project_root,
+            ", ".join(sorted(recovered)),
+        )
+    return bool(recovered)
+
+
 def _mig_v370_merge_driver(project_root: Path) -> bool:
     """Self-install the decision-log git merge driver so future cross-engineer
     id collisions resolve automatically on merge/rebase. Idempotent; no-op
@@ -346,6 +451,9 @@ def _mig_v370_dedupe_registration(project_root: Path) -> bool:
 # Ordered ledger of named startup migrations. APPEND new entries; never rename
 # or renumber an existing one — the name is the idempotency key.
 _STARTUP_MIGRATIONS = (
+    # Runs FIRST: heal memory orphaned by the pre-3.7.1 centralization
+    # migration before any other migration reads the store.
+    ("v371_recover_orphaned_memory", _mig_v371_recover_orphaned_memory),
     ("v370_repair_collisions", _mig_v370_repair_collisions),
     ("v370_merge_driver", _mig_v370_merge_driver),
     ("v370_dedupe_registration", _mig_v370_dedupe_registration),

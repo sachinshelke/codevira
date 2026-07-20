@@ -622,6 +622,84 @@ def rewrite_all(
     return len(lines)
 
 
+def transform_all(
+    path: Path,
+    transform: Callable[[list[dict[str, Any]]], dict[str, Any]],
+    *,
+    records_key: str = "records",
+    should_write: Callable[[dict[str, Any]], bool] | None = None,
+) -> dict[str, Any]:
+    """Read, transform and rewrite ``path`` under ONE exclusive lock.
+
+    v3.7.1. ``repair_ids`` previously did::
+
+        raw, malformed = read_records_and_malformed(path)   # shared lock, RELEASED
+        result = id_repair.normalize(raw)
+        rewrite_all(path, result["records"], ...)           # exclusive lock
+
+    Any record appended in the gap between those two locks was silently
+    destroyed by the full-file rewrite. That is not theoretical: this repair
+    runs automatically at EVERY server start (``_mig_v370_repair_collisions``),
+    and a user running several MCP servers at once can have one window record a
+    decision while another boots. ``compact`` already holds one lock across its
+    whole read-filter-write; this gives the same guarantee to any
+    read-transform-write caller.
+
+    ``transform`` receives the parsed records and must return a dict containing
+    ``records_key`` (the records to write). It should be PURE — it runs while
+    the exclusive lock is held, so anything slow or re-entrant blocks writers.
+    Malformed lines are preserved verbatim after the records, matching
+    ``rewrite_all`` and ``compact``'s no-data-loss contract.
+
+    Returns the transform's result dict, plus ``malformed_preserved``.
+    ``atomic_write_text`` does not take the file lock, so writing inside the
+    lock cannot deadlock (same reasoning as ``compact``).
+    """
+    records: list[dict[str, Any]] = []
+    malformed: list[str] = []
+
+    with _file_lock(path, exclusive=True):
+        if path.is_file():
+            with open(path, encoding="utf-8") as fh:
+                for raw in fh:
+                    s = raw.rstrip("\n")
+                    if not s:
+                        continue
+                    try:
+                        rec = json.loads(s)
+                    except json.JSONDecodeError:
+                        malformed.append(s)
+                        continue
+                    if not isinstance(rec, dict):
+                        malformed.append(s)
+                        continue
+                    records.append(rec)
+
+        result = transform(records)
+
+        # Skip the rewrite when the transform changed nothing. Without this a
+        # no-op repair would rewrite the whole store on every server start,
+        # churning mtime and re-serializing a large file for no reason. The
+        # lock is still held across read+decide, so the guarantee is unchanged.
+        wrote = should_write is None or should_write(result)
+        if wrote:
+            lines: list[str] = []
+            for rec in result[records_key]:
+                line = json.dumps(rec, ensure_ascii=False, separators=(",", ":"))
+                if "\n" in line:
+                    raise ValueError(
+                        "jsonl_store.transform_all: serialization contains newline"
+                    )
+                lines.append(line)
+            lines.extend(malformed)
+            atomic_write_text(path, ("\n".join(lines) + "\n") if lines else "")
+
+    out = dict(result)
+    out["malformed_preserved"] = len(malformed)
+    out["wrote"] = wrote
+    return out
+
+
 def read_recent(
     path: Path,
     *,

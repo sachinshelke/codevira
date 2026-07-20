@@ -984,20 +984,45 @@ def repair_ids(*, apply: bool = False) -> dict[str, Any]:
     from mcp_server.storage import id_repair
 
     path = paths.decisions_path()
-    # Read raw AND malformed so a repair rewrite can preserve unparseable lines
-    # (a git-conflict marker, a truncated write) — never silent data loss.
-    raw, malformed = jsonl_store.read_records_and_malformed(path)
-    result = id_repair.normalize(raw)
+
+    if not apply:
+        # Report-only: a shared-lock read is enough because nothing is written,
+        # so there is no read-vs-write window to lose an append in.
+        raw, malformed = jsonl_store.read_records_and_malformed(path)
+        result = id_repair.normalize(raw)
+        return {
+            "collisions": result["collisions"],
+            "deduped": result["deduped"],
+            "remap": result["remap"],
+            "malformed_preserved": len(malformed),
+            "changed": bool(result["collisions"] or result["deduped"]),
+            "applied": False,
+        }
+
+    # Applying: read + normalize + rewrite must happen under ONE exclusive lock.
+    # Previously the read released its shared lock before the rewrite took the
+    # exclusive one, so any decision appended in that window was destroyed by
+    # the full-file rewrite. This repair runs at EVERY server start
+    # (_mig_v370_repair_collisions), and this user runs several MCP servers
+    # concurrently — one window recording a decision while another boots was
+    # enough to lose it. transform_all closes the window (same discipline as
+    # jsonl_store.compact).
+    result = jsonl_store.transform_all(
+        path,
+        id_repair.normalize,
+        # A clean store is left untouched — no rewrite on every boot.
+        should_write=lambda r: bool(r["collisions"] or r["deduped"]),
+    )
     changed = bool(result["collisions"] or result["deduped"])
+    malformed_count = result.get("malformed_preserved", 0)
 
     applied = False
-    if apply and changed:
-        jsonl_store.rewrite_all(path, result["records"], extra_lines=malformed)
-        if malformed:
+    if changed:
+        if malformed_count:
             logger.warning(
                 "decisions_store.repair_ids: preserved %d malformed line(s) "
                 "verbatim through the rewrite (run `codevira doctor` to clean).",
-                len(malformed),
+                malformed_count,
             )
         rebuild_indexes()
         applied = True
@@ -1006,7 +1031,7 @@ def repair_ids(*, apply: bool = False) -> dict[str, Any]:
         "collisions": result["collisions"],
         "deduped": result["deduped"],
         "remap": result["remap"],
-        "malformed_preserved": len(malformed),
+        "malformed_preserved": malformed_count,
         "changed": changed,
         "applied": applied,
     }

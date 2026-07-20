@@ -386,14 +386,24 @@ def _compute_next_id_locked(
             if not isinstance(val, str) or not val.startswith(prefix):
                 continue
             body = val[len(prefix) :]
-            # Skip content-derived loser ids. id_repair mints these from a sha1
-            # hexdigest (lowercase 0-9a-f) when resolving a cross-engineer id
-            # collision; sequential ids are uppercase base36 (_to_base36). A
-            # loser id parsed as base36 is a ~62-bit number, so it would set
-            # max_n astronomically high and every subsequent decision would get
-            # a 12-char blob id — silently ending the human-readable D0000NN
-            # scheme after a single merge repair. A lowercase char marks a loser.
-            if any(c.islower() for c in body):
+            # Ignore content-derived ids so they can't inflate max_n. id_repair
+            # mints a "loser" id from a sha1 hexdigest (≥12 chars, e.g.
+            # `Dab12cd34ef56`) when resolving a cross-engineer id collision;
+            # sequential ids are `width`-char uppercase base36 (_to_base36).
+            # Parsing a loser as base36 yields a ~62-bit number, so max_n goes
+            # astronomically high and EVERY later decision gets a 12-char blob id
+            # — silently ending the human-readable D0000NN scheme after one merge
+            # repair. We guard on BOTH:
+            #   * len > width  — catches a loser (always ≥12) AND an uppercase
+            #     blob already minted by a store poisoned under released v3.7.0
+            #     (that bug re-encoded max_n+1 uppercase, so a lowercase-only
+            #     check would not heal existing damage — the final review's one
+            #     residual finding).
+            #   * a lowercase char — belt-and-braces for any short loser.
+            # A legitimately-overflowed sequential id would also exceed width,
+            # but that needs 36**width (~2.2 billion at width=6) decisions, so in
+            # any real store "longer than width" means "not sequential".
+            if len(body) > width or any(c.islower() for c in body):
                 continue
             try:
                 n = int(body, 36)

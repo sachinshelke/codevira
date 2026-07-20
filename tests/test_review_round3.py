@@ -140,3 +140,29 @@ class TestLoserIdDoesNotEndTheScheme:
         )
         # 'Z' base36 = 35, so next is 36 -> '10' -> padded 'D000010'.
         assert nxt == "D000010", nxt
+
+
+class TestLoserIdHealsExistingDamage:
+    """The final review's residual: a store poisoned under released v3.7.0 holds
+    an UPPERCASE 12-char blob (the old bug re-encoded max_n+1 uppercase), which a
+    lowercase-only guard would not heal. A length guard heals both."""
+
+    def test_uppercase_blob_from_prefix_poisoning_is_ignored(self, store):
+        path = paths.decisions_path()
+        # D000001 + an uppercase blob a pre-fix store would have minted.
+        path.write_text(
+            '{"id":"D000001","decision":"a"}\n{"id":"DAB12CD34EF57","decision":"b"}\n'
+        )
+        nxt = jsonl_store._compute_next_id_locked(
+            path, prefix="D", width=6, id_field="id"
+        )
+        assert nxt == "D000002", f"uppercase blob not healed: next={nxt}"
+
+    def test_width_length_sequential_ids_still_counted(self, store):
+        """A normal 6-char sequential id must still set the max."""
+        path = paths.decisions_path()
+        path.write_text('{"id":"D000042","decision":"a"}\n')
+        nxt = jsonl_store._compute_next_id_locked(
+            path, prefix="D", width=6, id_field="id"
+        )
+        assert nxt == "D000043", nxt

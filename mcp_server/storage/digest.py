@@ -115,12 +115,22 @@ def regenerate(
 
     from mcp_server.storage import atomic
 
-    decisions = jsonl_store.read_all(decisions_path)
+    # read_MERGED, not read_all. Reading raw lines emitted a digest row per
+    # AMENDMENT as well as per decision, and the amendment row (which carries
+    # only the changed keys) sorted last — so relevance_inject, which keys by
+    # id and lets the later row win, injected protected decisions as
+    # content-free noise: `🔒 **D000001** ` with no text at all.
+    decisions = jsonl_store.read_merged(decisions_path)
     digest_records: list[dict[str, Any]] = []
     for d in decisions:
         if exclude_superseded and d.get("is_superseded"):
             continue
         if exclude_superseded and d.get("superseded_by"):
+            continue
+        # Retired decisions must not reach the digest either — otherwise
+        # mark_decision_outdated hides them from search while they keep being
+        # injected into prompts.
+        if d.get("is_outdated"):
             continue
         digest_records.append(digest_record(d))
 

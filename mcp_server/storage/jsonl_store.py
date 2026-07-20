@@ -469,7 +469,24 @@ def read_merged(
                 by_id[did] = dict(rec)
                 order.append(did)
             else:
-                base.update({k: v for k, v in rec.items() if not k.startswith("_")})
+                # `ts` is the record's CREATION time and must survive
+                # amendment. Every amendment writer (set_flag, reaffirm,
+                # mark_protected, mark_outdated, supersede) stamps its own
+                # `ts`, and this overlay used to copy it over the base — so
+                # merely tagging a 2024 decision made it look created today.
+                # Consequences: it jumped to the top of recent-decisions and
+                # get_session_context; `since=` filters returned it wrongly;
+                # and compute_dnr_soft_expire reads max(reaffirmed_at, ts), so
+                # ANY unrelated edit silently reset the 180-day do_not_revert
+                # staleness clock. Amendment timestamps live in their own
+                # fields (reaffirmed_at, outdated_at) where callers expect them.
+                base.update(
+                    {
+                        k: v
+                        for k, v in rec.items()
+                        if not k.startswith("_") and k != "ts"
+                    }
+                )
         else:
             # v3.7.0 (Phase 25): two BASE records sharing an id is a
             # cross-machine mint collision (see storage/id_repair). read_merged

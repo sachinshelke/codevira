@@ -96,7 +96,12 @@ def save(path: Path, manifest: dict[str, Any]) -> None:
 
 def regenerate(decisions_path: Path, manifest_path: Path) -> dict[str, Any]:
     """Rebuild manifest from decisions.jsonl. Returns the new manifest."""
-    decisions = jsonl_store.read_all(decisions_path)
+    # read_MERGED, not read_all: amendments (set_flag, reaffirm, mark_outdated,
+    # supersede) are appended as overlay records. Reading raw lines meant a
+    # decision you UNPROTECTED stayed in do_not_revert_ids forever, the
+    # amendment lines were counted as extra decisions, and retired decisions
+    # kept their tag/file entries — so relevance_inject went on surfacing them.
+    decisions = jsonl_store.read_merged(decisions_path)
     manifest = _empty_manifest()
 
     tags_map: dict[str, list[str]] = {}
@@ -107,9 +112,12 @@ def regenerate(decisions_path: Path, manifest_path: Path) -> dict[str, Any]:
 
     for d in decisions:
         total += 1
-        # Skip superseded for active count + do_not_revert list, but
-        # still count them in total_decisions.
-        if d.get("is_superseded") or d.get("superseded_by"):
+        # Skip RETIRED decisions for active count + do_not_revert list, but
+        # still count them in total_decisions. `is_outdated` was previously
+        # missing here, so `mark_decision_outdated` hid a decision from search
+        # while its tags/files stayed in the manifest — and relevance_inject
+        # kept injecting it into every prompt.
+        if d.get("is_superseded") or d.get("superseded_by") or d.get("is_outdated"):
             continue
         active_count += 1
 

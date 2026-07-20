@@ -155,14 +155,20 @@ def rebuild_from_jsonl(decisions_path: Path, index_path: Path) -> int:
     conn = _connect(index_path)
     try:
         _ensure_tables(conn)
-        records = jsonl_store.read_all(decisions_path)
+        # read_MERGED so amendments are folded in rather than indexed as
+        # separate rows with empty text and a duplicate decision_id.
+        records = jsonl_store.read_merged(decisions_path)
 
         with conn:  # single transaction (auto-commit on exit)
             conn.execute(f"DELETE FROM {_TABLE}")
             for r in records:
-                if r.get("is_superseded") or r.get("superseded_by"):
-                    # Skip superseded so search results match list_decisions
-                    # default (hide superseded).
+                if (
+                    r.get("is_superseded")
+                    or r.get("superseded_by")
+                    or r.get("is_outdated")
+                ):
+                    # Skip retired decisions so search results match
+                    # list_decisions' default (hide superseded AND outdated).
                     continue
                 conn.execute(
                     f"INSERT INTO {_TABLE} "

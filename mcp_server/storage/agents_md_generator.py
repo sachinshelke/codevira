@@ -87,10 +87,16 @@ def _render_block(decisions: list[dict[str, Any]], project_name: str | None) -> 
     """
     # Partition: do_not_revert decisions are always preserved (sorted by
     # id within); others get cut first when over budget.
+    # `is_outdated` was missing here, so a decision retired via
+    # mark_decision_outdated was hidden from search yet still PUBLISHED to
+    # AGENTS.md — i.e. still shown to Cursor, Copilot, Codex and Windsurf,
+    # which read that file. Retiring a decision has to retire it everywhere.
     active = [
         d
         for d in decisions
-        if not d.get("is_superseded") and not d.get("superseded_by")
+        if not d.get("is_superseded")
+        and not d.get("superseded_by")
+        and not d.get("is_outdated")
     ]
     locked = sorted(
         (d for d in active if d.get("do_not_revert")),
@@ -299,25 +305,20 @@ def _merge_into_file(target_path: Path, block: str) -> None:
 def _merged_decisions() -> list[dict[str, Any]]:
     """Current decision state with amendments applied (same logic as
     ``decisions_store``). Shared by the single- and multi-file writers."""
-    decisions = jsonl_store.read_all(paths.decisions_path())
-    merged_by_id: dict[str, dict[str, Any]] = {}
-    insertion_order: list[str] = []
-    for rec in decisions:
-        did = str(rec.get("id", ""))
-        if not did:
-            continue
-        if rec.get("_amendment_to_id"):
-            base = merged_by_id.get(did)
-            if base is None:
-                merged_by_id[did] = dict(rec)
-                insertion_order.append(did)
-            else:
-                base.update({k: v for k, v in rec.items() if not k.startswith("_")})
-        else:
-            if did not in merged_by_id:
-                insertion_order.append(did)
-            merged_by_id[did] = dict(rec)
-    return [merged_by_id[did] for did in insertion_order]
+    # Use the SHARED implementation. This used to be a local copy of the
+    # folding logic, and the copy was broken: it keyed every record by
+    # ``rec["id"]``, but an amendment record carries no ``id`` — it identifies
+    # its base through ``_amendment_to_id``. So ``did`` was empty for every
+    # amendment and the `if not did: continue` above dropped them all.
+    #
+    # Consequence: AGENTS.md — the file Cursor, Copilot, Codex and Windsurf read
+    # on every prompt — reflected NO amendment whatsoever. Unprotecting a
+    # decision, marking it outdated, or superseding it left the original text
+    # published to every other AI tool indefinitely.
+    #
+    # jsonl_store.read_merged is the canonical folder (it also preserves the
+    # base's creation `ts`), so there is now one implementation, not two.
+    return jsonl_store.read_merged(paths.decisions_path())
 
 
 def _managed_targets() -> list[tuple[str, str]]:
@@ -442,6 +443,7 @@ def regenerate(*, target_path: Path | None = None) -> dict[str, Any]:
         if d.get("do_not_revert")
         and not d.get("is_superseded")
         and not d.get("superseded_by")
+        and not d.get("is_outdated")
     )
     unlocked_count = sum(
         1
@@ -449,6 +451,7 @@ def regenerate(*, target_path: Path | None = None) -> dict[str, Any]:
         if not d.get("do_not_revert")
         and not d.get("is_superseded")
         and not d.get("superseded_by")
+        and not d.get("is_outdated")
     )
 
     block = _render_block(merged, _project_name())

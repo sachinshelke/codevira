@@ -56,13 +56,38 @@ _PROJECT_DIR_ENV = "CODEVIRA_PROJECT_DIR"
 _pinned_root: ContextVar[Path | None] = ContextVar("codevira_pinned_root", default=None)
 _drift_warned: set[Path] = set()
 
+# v3.7.1 — pin GENERATION. A ContextVar set in an ancestor context (e.g. by the
+# `get_project_root()` call `main()` makes BEFORE `asyncio.run`) is inherited by
+# every task the server spawns, and `_pinned_root.set(None)` can only clear it
+# for the CURRENT task — it cannot unset an ancestor's value for siblings. The
+# MCP SDK starts a fresh task per message (`tg.start_soon(self._handle_message,
+# ...)`), so an explicit rebind took effect for exactly ONE tool call and every
+# later call silently reverted to the inherited pin — the "my LH session returns
+# UDAP's decisions" symptom.
+#
+# This counter is a PLAIN MODULE GLOBAL, so bumping it is visible from every
+# task regardless of context inheritance. A pin whose generation is stale is
+# ignored and re-resolved. The per-request isolation the ContextVar provides
+# (Phase 31 multiplex) is unchanged: within one request the first resolution
+# still wins, which is the D000118 guarantee.
+_pin_generation: int = 0
+_pinned_gen: ContextVar[int] = ContextVar("codevira_pinned_gen", default=-1)
+
 
 def reset_pinned_root() -> None:
-    """Clear the project-root pin in the current context (+ drift warnings).
+    """Clear the project-root pin (+ drift warnings), across ALL contexts.
 
     Called by set_project_dir / invalidate_data_dir_cache and by tests to keep
-    the per-request pin from leaking. Idempotent."""
+    the per-request pin from leaking. Idempotent.
+
+    Bumping the generation is what makes this effective for sibling tasks that
+    inherited a pin from an ancestor context — clearing the ContextVar alone
+    only ever affected the calling task.
+    """
+    global _pin_generation
+    _pin_generation += 1
     _pinned_root.set(None)
+    _pinned_gen.set(_pin_generation)
     _drift_warned.clear()
 
 
@@ -321,8 +346,12 @@ def get_project_root() -> Path:
     """
     resolved = _resolve_project_root()
     pinned = _pinned_root.get()
-    if pinned is None:
+    # A pin from an older generation was inherited from an ancestor context and
+    # predates an explicit rebind — treat it as absent and re-resolve. Without
+    # this, set_project_dir() bound only the task that called it.
+    if pinned is None or _pinned_gen.get() != _pin_generation:
         _pinned_root.set(resolved)
+        _pinned_gen.set(_pin_generation)
         return resolved
     if resolved != pinned and resolved not in _drift_warned:
         _drift_warned.add(resolved)

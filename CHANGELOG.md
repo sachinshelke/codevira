@@ -90,6 +90,36 @@ the IDE itself, a partial sync) was treated as "missing" and the whole file was
 replaced with a one-key document. Codevira now refuses to overwrite a config it
 cannot read.
 
+### Fixed — decision memory correctness
+
+A cluster of read-layer defects, all found by adversarial review, that made
+memory wrong rather than lost.
+
+- **Retiring a decision now retires it everywhere.** `mark_decision_outdated`
+  hid a decision from search but the index regenerators and the AGENTS.md
+  writer ignored `is_outdated`, so it was still injected into every prompt and
+  still published to the file Cursor / Copilot / Codex / Windsurf read.
+- **Amendments no longer inject as blank noise or reset timestamps.** The
+  regenerators read raw lines instead of the merged view, so unprotecting a
+  decision never took effect, protected decisions injected with no text, and an
+  amendment overwrote the base's creation time — silently resetting the 180-day
+  `do_not_revert` staleness clock. `ts` is now preserved (and a missing base
+  `ts` is healed rather than nulled).
+- **A decision on a path with glob characters is findable and protectable.**
+  `list_decisions` treated the literal path as an `fnmatch` pattern, so a
+  decision on `app/[slug]/page.tsx` (every Next.js / SvelteKit / Remix dynamic
+  route) was invisible and its lock never fired.
+- **`record_many` scrubs secrets** — it bypassed sanitization, so a credential
+  in a bulk-imported decision could reach `decisions.jsonl`, the index and the
+  committed `AGENTS.md`.
+- **`supersede` no longer forks a chain.** Superseding an already-superseded
+  decision is refused (and points at the current head) instead of producing two
+  contradictory active decisions.
+- **An orphan amendment survives a reordered file** (e.g. a git union-merge),
+  the human-readable `D0000NN` id scheme survives a cross-engineer merge repair,
+  and `get_session_context` now includes each decision's `id` so it can be
+  expanded.
+
 ### Added — `codevira init --shared` (team-shared memory)
 
 Two engineers on the same repo need to see each other's decisions, which

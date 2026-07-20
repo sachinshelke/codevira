@@ -49,6 +49,23 @@ that same file in one run, so the driver could never fire.
 - Default (no flag) still untracks, so cross-project bleed stays fixed for every
   project that did not opt in. The flag persists, so a plain re-init won't undo it.
 
+### Fixed — Claude Code bound sessions to the wrong project
+
+A **bare** global `codevira` entry (no `--project-dir`) in `~/.claude.json`
+out-ranks project-scoped registrations, so a session bound to a guessed project
+instead of the one you opened — surfacing as "my LH session returns UDAP's
+decisions". Deleting the bare entry by hand didn't stick, because every
+subsequent `init` re-added it.
+
+- Writing a project-scoped registration now **displaces** the conflicting bare
+  global entry.
+- Global registration is **skipped** when project-scoped entries already exist.
+- A global entry that deliberately pins `--project-dir` is left alone.
+- New `doctor` check `claude_binding_conflict` reports the coexistence.
+
+Note: Claude Desktop has a single global MCP config with no per-project scope,
+so it can only ever point at one project.
+
 ### Fixed — Antigravity
 - Server **degrades gracefully** ("limited mode") instead of EOF-crashing when
   launched on an invalid root — the `/ is a system directory` crash.

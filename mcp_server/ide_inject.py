@@ -675,6 +675,56 @@ def _build_global_server_config(cmd_path: str, python_exe: str) -> dict:
     return {"command": cmd_path, "args": []}
 
 
+def claude_scoped_entries() -> list[str]:
+    """Return project paths that have their OWN codevira entry in ~/.claude.json.
+
+    Claude Code reads MCP servers from three surfaces: the top-level
+    ``mcpServers`` (user scope), ``projects.<path>.mcpServers`` (project scope)
+    and ``<project>/.mcp.json``. This reports the project-scope ones.
+    """
+    data = _read_json_safe(_claude_global_config_path())
+    out: list[str] = []
+    for proj, pdata in (data.get("projects") or {}).items():
+        if isinstance(pdata, dict) and "codevira" in (pdata.get("mcpServers") or {}):
+            out.append(proj)
+    return out
+
+
+def bare_global_claude_entry() -> dict | None:
+    """Return the BARE (project-less) top-level codevira entry, if present.
+
+    "Bare" = no ``--project-dir`` argument, so the server must guess the project
+    from workspace roots / cwd. Harmless when it is the ONLY registration, but
+    it out-ranks per-project entries — so when both exist, sessions bind to the
+    wrong project's memory.
+    """
+    data = _read_json_safe(_claude_global_config_path())
+    entry = (data.get("mcpServers") or {}).get("codevira")
+    if not isinstance(entry, dict):
+        return None
+    args = entry.get("args") or []
+    return entry if "--project-dir" not in args else None
+
+
+def remove_bare_global_claude_entry(*, dry_run: bool = False) -> dict | None:
+    """Remove the bare top-level codevira entry from ~/.claude.json.
+
+    Returns the removed entry, or None if there was nothing to remove. Only ever
+    removes a BARE entry — a global entry that pins ``--project-dir`` is a
+    deliberate choice and is left alone.
+    """
+    entry = bare_global_claude_entry()
+    if entry is None:
+        return None
+    if dry_run:
+        return entry
+    config_path = _claude_global_config_path()
+    data = _read_json_safe(config_path)
+    (data.get("mcpServers") or {}).pop("codevira", None)
+    _write_json_safe(config_path, data)
+    return entry
+
+
 def _inject_claude(project_root: Path, cmd_path: str, python_exe: str) -> str | None:
     """Inject MCP config into Claude Code per-project settings."""
     config_path = _claude_config_path(project_root)
@@ -690,6 +740,22 @@ def _inject_claude(project_root: Path, cmd_path: str, python_exe: str) -> str | 
     }
     merged = _merge_mcp_config(existing, "codevira", server_config)
     _write_json_safe(config_path, merged)
+
+    # v3.7.1 fix (D00011V): a project-scoped registration and a BARE global one
+    # must never coexist — the bare one out-ranks the scoped entry, so the
+    # session binds to whatever project it guesses instead of this one. Users
+    # hit this as "my LH session returns UDAP's memory", and deleting the global
+    # entry by hand didn't stick because the next init re-added it. Now writing
+    # a scoped entry displaces the conflicting bare one.
+    try:
+        removed = remove_bare_global_claude_entry()
+        if removed:
+            logger.info(
+                "Removed the bare global 'codevira' entry from ~/.claude.json — "
+                "it would out-rank this project-scoped registration."
+            )
+    except Exception:  # noqa: BLE001 — never let cleanup break injection
+        pass
     return str(config_path)
 
 
@@ -847,6 +913,24 @@ def inject_global_claude_code(cmd_path: str, python_exe: str) -> str | None:
     (always ``~/.claude.json`` regardless of which tier wrote it).
     """
     config_path = _claude_global_config_path()
+
+    # v3.7.1 fix (D00011V): do NOT add a bare global entry when project-scoped
+    # codevira entries already exist. The bare entry out-ranks them, so adding
+    # it silently re-breaks project binding — and because every init re-ran this,
+    # a user who deleted the bad entry by hand saw it reappear. Scoped wins.
+    try:
+        scoped = claude_scoped_entries()
+        if scoped:
+            logger.info(
+                "Skipping the bare global 'codevira' entry: %d project-scoped "
+                "registration(s) already exist and a bare entry would out-rank "
+                "them (binding the session to the wrong project).",
+                len(scoped),
+            )
+            return str(config_path)
+    except Exception:  # noqa: BLE001 — never block registration on this check
+        pass
+
     server_config = _build_global_server_config(cmd_path, python_exe)
     # v3.1.0 M1: origin.ide stamp (global Claude Code).
     server_config["env"] = {

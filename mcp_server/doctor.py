@@ -955,6 +955,43 @@ def check_mcp_running_versions() -> CheckResult:
     )
 
 
+def check_claude_binding_conflict() -> CheckResult:
+    """v3.7.1 (D00011V) — a BARE global codevira entry must not coexist with
+    project-scoped ones in ~/.claude.json.
+
+    The bare entry (no ``--project-dir``) out-ranks scoped entries, so sessions
+    bind to a guessed project instead of the one you opened — surfacing as
+    "project A's session returns project B's decisions".
+    """
+    try:
+        from mcp_server.ide_inject import (
+            bare_global_claude_entry,
+            claude_scoped_entries,
+        )
+
+        bare = bare_global_claude_entry()
+        scoped = claude_scoped_entries()
+    except Exception as e:  # noqa: BLE001
+        return CheckResult(
+            "claude_binding_conflict", _WARN, f"could not check Claude config: {e}"
+        )
+
+    if bare is not None and scoped:
+        return CheckResult(
+            "claude_binding_conflict",
+            _WARN,
+            f"~/.claude.json has a BARE global 'codevira' entry alongside "
+            f"{len(scoped)} project-scoped one(s) — the bare entry wins, so "
+            f"sessions can bind to the wrong project's memory",
+            fix_command="codevira init  # displaces the bare entry automatically",
+        )
+    return CheckResult(
+        "claude_binding_conflict",
+        _PASS,
+        "no conflicting Claude Code codevira registrations",
+    )
+
+
 def check_merge_driver() -> CheckResult:
     """v3.7.0 — the decision-log git merge driver is configured in THIS clone
     when .gitattributes references it. Catches the fresh-clone gap where a
@@ -1025,6 +1062,7 @@ _CHECKS: tuple[Callable[[], CheckResult], ...] = (
     check_ghost_projects,  # rc.4 (Bug 21c)
     check_crash_log_size,
     check_merge_driver,  # v3.7.0 — cross-engineer decision-log merge driver
+    check_claude_binding_conflict,  # v3.7.1 — bare global vs scoped entries
     check_decision_collisions,  # v3.7.0 — surface un-healed base-id collisions
 )
 

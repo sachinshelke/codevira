@@ -628,6 +628,15 @@ def get_data_dir() -> Path:
     if cached is not None:
         if not _is_provisional(project_root, cached):
             return cached
+        # A provisional entry means "no store existed when we last looked".
+        # Re-check CHEAPLY (two is_file calls) before paying for a full
+        # re-resolution: the earlier version re-resolved unconditionally, which
+        # meant a `git remote get-url` subprocess (~12ms, 3s timeout) plus a
+        # scan of every ~/.codevira/projects/*/metadata.json on EVERY call for
+        # any not-yet-initialized project — a permanent 100% cache miss on the
+        # hot path, the opposite of what the change claimed.
+        if not _store_appeared(project_root):
+            return cached
         refreshed = _resolve_data_dir(project_root)
         _data_dir_cache[project_root] = refreshed
         return refreshed
@@ -646,9 +655,25 @@ def _is_provisional(project_root: Path, cached: Path) -> bool:
     """
     try:
         # Settled iff the cached location is a real store. Otherwise it was a
-        # "nothing exists yet" guess and must be re-resolved, because a store
-        # may have appeared (in-repo or centralized) in another process since.
+        # "nothing exists yet" guess and may need re-resolving, because a store
+        # can appear (in-repo or centralized) in another process at any time.
         return not (cached / "config.yaml").is_file()
+    except OSError:
+        return False
+
+
+def _store_appeared(project_root: Path) -> bool:
+    """Cheap check: has a real store shown up since we guessed?
+
+    Two ``is_file()`` calls, no subprocess and no directory scan — so a
+    provisional cache entry costs a couple of stats per call instead of a full
+    re-resolution. Only when this returns True do we pay for ``_resolve_data_dir``.
+    """
+    try:
+        key = _sanitize_path_key(project_root)
+        if (get_global_home() / "projects" / key / "config.yaml").is_file():
+            return True
+        return (project_root / ".codevira" / "config.yaml").is_file()
     except OSError:
         return False
 
@@ -675,14 +700,31 @@ def _resolve_data_dir(project_root: Path) -> Path:
     # The consequence is a session reading another project's graph/index, so
     # get_impact / query_graph / search_codebase answer about the wrong code.
     # An explicit local init is the strongest signal of intent we have, so it
-    # must outrank a remote match. The remote lookup keeps its real purpose
-    # (finding the store again after the directory was renamed) for projects
-    # that have no in-repo marker.
+    # must outrank a remote match.
+    #
+    # HONEST CAVEAT (do not repeat the earlier claim that rule 3 still covers
+    # renames "for projects with no in-repo marker"): that is FALSE now.
+    # Migration became non-destructive in the same release, so
+    # <project>/.codevira/config.yaml effectively always survives and this
+    # branch nearly always wins — making rule 3 unreachable in practice.
+    #
+    # The consequence is bounded and non-destructive: after a directory rename
+    # the path key changes, so the project resolves to its in-repo store and the
+    # code graph/index must be rebuilt (`codevira index`). Memory is unaffected
+    # because it lives in the repo and moves with it. The previous centralized
+    # dir is left orphaned on disk until `codevira clean --orphans`.
+    #
+    # Deliberately NOT "fixed" by preferring a remote-matched centralized store
+    # here: get_data_dir() returns ONE directory, so doing that would put the
+    # graph in one place and the memory in another, which is precisely the
+    # split-brain that caused this release's data-loss bug. Rebuilding a
+    # derived index is the cheaper, safer trade.
     legacy = project_root / ".codevira"
     if (legacy / "config.yaml").is_file():
         return legacy
 
-    # 3. Git remote lookup (survives directory renames).
+    # 3. Git remote lookup — finds a centralized store for a project that has no
+    #    in-repo marker at all (see the caveat above: rarely reached today).
     #    _get_git_remote_url() and _find_project_by_git_remote() are the
     #    potentially expensive operations — subprocess + metadata file scan.
     #    They only run once per project root thanks to the cache above.

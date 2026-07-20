@@ -297,13 +297,12 @@ def cleanup_legacy_dir(project_root: Path) -> bool:
         return False
 
     in_repo = project_root / ".codevira"
+    # Same definition the recovery migration restores from, so the guard can
+    # never protect less than recovery replaces (which silently deleted
+    # checkpoints/, learned_weights.json and working_archived/) nor demand more
+    # than it can restore (which wedged the guard shut permanently).
     unsafe = [
-        e.name
-        for e in backup.iterdir()
-        if e.is_file()
-        and e.name.endswith((".jsonl", ".yaml"))
-        and not e.name.endswith(".lock")
-        and not (in_repo / e.name).exists()
+        e.name for e in belongs_in_repo(backup) if not (in_repo / e.name).exists()
     ]
     if unsafe:
         logger.warning(
@@ -413,6 +412,44 @@ def _mig_v370_repair_collisions(project_root: Path) -> bool:
     return True
 
 
+#: Entries that are DERIVED (rebuildable) or purely centralized bookkeeping.
+#: Everything else in a store belongs in the repo — that includes files a
+#: hardcoded memory list would miss: checkpoints/, learned_weights.json,
+#: working_archived/, neighborhoods.yaml, affordances.yaml,
+#: induction_proposals.jsonl, pending_conflicts.jsonl, decisions.jsonl.bak-*.
+#:
+#: Defining it by EXCLUSION, in one place, is deliberate. An earlier revision
+#: had a 10-name allowlist for recovery and a separate ".jsonl/.yaml top-level"
+#: rule for the deletion guard. The two disagreed, so `clean --legacy`
+#: permanently deleted checkpoints/, learned_weights.json and working_archived/
+#: (documented as canonical, team-shareable) — and a name in neither set could
+#: wedge the guard shut forever while telling the user to run a recovery that
+#: would never restore it. Both sides now read this single definition, so they
+#: cannot drift apart again.
+_DERIVED_OR_CENTRAL = frozenset(
+    {"graph", "codeindex", "logs", "metadata.json", ".registered"}
+)
+
+
+def belongs_in_repo(src: Path) -> list[Path]:
+    """Entries in ``src`` that belong in a project's in-repo ``.codevira/``.
+
+    Excludes derived/centralized artifacts (see ``_DERIVED_OR_CENTRAL``) and
+    transient lock files. Used by BOTH the recovery migration (what to restore)
+    and ``cleanup_legacy_dir`` (what must exist in-repo before deleting a
+    backup), so the two can never disagree about what is precious.
+    """
+    try:
+        entries = list(src.iterdir())
+    except OSError:
+        return []
+    return [
+        e
+        for e in entries
+        if e.name not in _DERIVED_OR_CENTRAL and not e.name.endswith(".lock")
+    ]
+
+
 def _mig_v371_recover_orphaned_memory(project_root: Path) -> bool:
     """Restore memory stranded by the pre-3.7.1 centralization migration.
 
@@ -450,32 +487,27 @@ def _mig_v371_recover_orphaned_memory(project_root: Path) -> bool:
     if not sources:
         return False
 
-    # Only these belong in-repo. graph/codeindex/logs are derived and stay
-    # centralized; copying them back would bloat the repo (a real graph is 20M+).
-    _MEMORY_NAMES = {
-        "decisions.jsonl",
-        "sessions.jsonl",
-        "outcomes.jsonl",
-        "skills.jsonl",
-        "digest.jsonl",
-        "reflections.jsonl",
-        "manifest.yaml",
-        "enforcement.yaml",
-        "roadmap.yaml",
-        "config.yaml",
-    }
-
     restored: list[str] = []
     for src in sources:
-        for entry in src.iterdir():
-            if not entry.is_file() or entry.name not in _MEMORY_NAMES:
+        is_central = src != orphan
+        for entry in belongs_in_repo(src):
+            # v3.7.1: never fabricate an in-repo config.yaml from the
+            # CENTRALIZED dir. opt_in.py states a config.yaml is written ONLY by
+            # explicit init — creating one here would silently mark a
+            # centralized-only project as initialized, changing binding
+            # decisions. A config.yaml inside .codevira.migrated/ is different:
+            # that WAS an in-repo store, so restoring it is correct.
+            if is_central and entry.name == "config.yaml":
                 continue
             dst = in_repo / entry.name
             if dst.exists():
                 continue  # live in-repo store wins — never clobber
             try:
                 in_repo.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(entry, dst)
+                if entry.is_dir():
+                    shutil.copytree(entry, dst)
+                else:
+                    shutil.copy2(entry, dst)
                 restored.append(entry.name)
             except OSError as e:  # noqa: PERF203 — per-file best effort
                 logger.warning("Could not restore %s: %s", entry, e)

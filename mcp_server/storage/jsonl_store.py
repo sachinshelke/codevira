@@ -484,7 +484,13 @@ def read_merged(
                     {
                         k: v
                         for k, v in rec.items()
-                        if not k.startswith("_") and k != "ts"
+                        # Protect the base's creation `ts` from the amendment's
+                        # own timestamp — BUT only if the base actually has one.
+                        # A base record with no `ts` (legacy/imported/hand-edited
+                        # data) would otherwise merge to ts=None, which sorts to
+                        # the bottom, is dropped by `since=` filters, and never
+                        # soft-expires. Let the amendment heal a missing ts.
+                        if not k.startswith("_") and (k != "ts" or not base.get("ts"))
                     }
                 )
         else:

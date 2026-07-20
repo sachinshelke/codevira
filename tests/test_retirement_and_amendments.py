@@ -172,3 +172,37 @@ class TestAmendmentsPreserveCreationTime:
 
         merged = {d["id"]: d for d in jsonl_store.read_merged(path)}
         assert merged["D1"]["reaffirmed_at"].startswith("2026-07-20")
+
+
+class TestTsHealingEdgeCase:
+    def test_amendment_heals_a_missing_base_ts(self, store):
+        """A base record with NO ts must not merge to ts=None: the amendment's
+        timestamp heals it (else it sorts to the bottom, is dropped by since=,
+        and never soft-expires)."""
+        path = paths.decisions_path()
+        path.write_text('{"id":"D1","decision":"no ts here"}\n')  # base, no ts
+        jsonl_store.append(
+            path,
+            {
+                "id": "D1",
+                "_amendment_to_id": "D1",
+                "ts": "2026-07-20T00:00:00+00:00",
+                "do_not_revert": True,
+            },
+        )
+
+        merged = {d["id"]: d for d in jsonl_store.read_merged(path)}
+        assert (
+            merged["D1"].get("ts") == "2026-07-20T00:00:00+00:00"
+        ), "missing base ts was not healed by the amendment"
+
+    def test_present_base_ts_still_wins(self, store):
+        """The common case is unchanged: a real creation ts survives."""
+        path = paths.decisions_path()
+        path.write_text('{"id":"D1","decision":"x","ts":"2024-01-01T00:00:00+00:00"}\n')
+        jsonl_store.append(
+            path,
+            {"id": "D1", "_amendment_to_id": "D1", "ts": "2026-07-20T00:00:00+00:00"},
+        )
+        merged = {d["id"]: d for d in jsonl_store.read_merged(path)}
+        assert merged["D1"]["ts"].startswith("2024-01-01")

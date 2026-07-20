@@ -7,6 +7,66 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [3.7.1] — 2026-07-20
+
+### Fixed — the centralization migration silently orphaned ALL memory (critical)
+
+`migrate_to_centralized` copied `config.yaml`, `roadmap.yaml`, `graph.db` and
+`codeindex/`, then renamed `.codevira/` → `.codevira.migrated/` — but it never
+copied the store's memory files. Every migrated project then read as **zero
+decisions** while its real history sat stranded in the renamed directory.
+Observed in the wild: a project with 496 decisions showed 0 after an IDE
+restart. The migration predates the JSONL memory files (added in 2.2.0) and was
+never updated for them.
+
+- The migration now copies every remaining store file/dir **by exclusion**
+  rather than an allow-list — the allow-list omission is precisely how this bug
+  arose, so files added in future carry over automatically.
+- A guard refuses to rename the legacy directory when any store file failed to
+  land, so an incomplete copy is retried instead of stranding memory behind a
+  rename.
+- New startup migration `v371_recover_orphaned_memory` **self-heals projects
+  already broken**, copying from `.codevira.migrated/` into the centralized
+  store and never clobbering a newer central copy.
+- The migration now **skips a store that deliberately lives in the repo** —
+  either `git_shared: true` or a git-tracked store. Renaming those away broke
+  team sharing and showed up as a wall of deletions that reads like data loss.
+
+If a project was hit before upgrading and its store was git-tracked, recover it
+with `git checkout -- .codevira/`; otherwise the new migration restores it
+automatically on next start.
+
+### Added — `codevira init --shared` (team-shared memory)
+
+Two engineers on the same repo need to see each other's decisions, which
+requires `.codevira/` memory to stay committed. The 3.7.1 anti-bleed change
+untracked it unconditionally, which also defeated the cross-engineer merge
+driver: init registered a merge driver for `decisions.jsonl` *and* untracked
+that same file in one run, so the driver could never fire.
+
+- `codevira init --shared` writes `git_shared: true`, which keeps memory
+  git-tracked and makes `doctor`'s `committed_memory` check pass instead of warn.
+- Default (no flag) still untracks, so cross-project bleed stays fixed for every
+  project that did not opt in. The flag persists, so a plain re-init won't undo it.
+
+### Fixed — Antigravity
+- Server **degrades gracefully** ("limited mode") instead of EOF-crashing when
+  launched on an invalid root — the `/ is a system directory` crash.
+- Antigravity gets **per-project entries, never the bare global one**.
+- **PreToolUse hard-enforcement hook**: `do_not_revert` decisions are now
+  enforced in Antigravity, not just Claude Code.
+
+### Fixed — cross-project memory bleed
+- `_find_project_by_git_remote` never matches an empty/`None` remote, which had
+  made every remote-less project resolve to the same store.
+- `init` + a new `doctor` check stop memory travelling via git-tracked
+  `.codevira/` files.
+
+### Added
+- `codevira untrack <project>` — surgical per-project un-register.
+
+---
+
 ## [3.7.0] — 2026-07-16
 
 ### Changed — opt-in project tracking (no more silent auto-adopt)

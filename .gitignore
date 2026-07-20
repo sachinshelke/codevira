@@ -88,3 +88,7 @@ test_incremental.py
 # Understand-Anything plugin analysis output (ephemeral, rebuildable
 # via `/understand`); not meaningful to commit.
 .understand-anything/
+
+# Antigravity enforcement hook — contains an absolute, machine-specific path
+# to the codevira binary, so it is per-machine. `codevira init` regenerates it.
+.agents/hooks.json

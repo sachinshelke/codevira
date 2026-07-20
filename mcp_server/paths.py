@@ -56,38 +56,60 @@ _PROJECT_DIR_ENV = "CODEVIRA_PROJECT_DIR"
 _pinned_root: ContextVar[Path | None] = ContextVar("codevira_pinned_root", default=None)
 _drift_warned: set[Path] = set()
 
-# v3.7.1 — pin GENERATION. A ContextVar set in an ancestor context (e.g. by the
+# v3.7.1 — the pin is OWNED BY THE TASK THAT SET IT.
+#
+# Problem being solved: a ContextVar set in an ancestor context (e.g. the
 # `get_project_root()` call `main()` makes BEFORE `asyncio.run`) is inherited by
 # every task the server spawns, and `_pinned_root.set(None)` can only clear it
-# for the CURRENT task — it cannot unset an ancestor's value for siblings. The
-# MCP SDK starts a fresh task per message (`tg.start_soon(self._handle_message,
-# ...)`), so an explicit rebind took effect for exactly ONE tool call and every
-# later call silently reverted to the inherited pin — the "my LH session returns
-# UDAP's decisions" symptom.
+# for the CURRENT task. The MCP SDK starts a fresh task per message
+# (`tg.start_soon(self._handle_message, ...)`), so an explicit rebind took
+# effect for exactly ONE tool call and every later call silently reverted to the
+# inherited pin — the "my LH session returns UDAP's decisions" symptom.
 #
-# This counter is a PLAIN MODULE GLOBAL, so bumping it is visible from every
-# task regardless of context inheritance. A pin whose generation is stale is
-# ignored and re-resolved. The per-request isolation the ContextVar provides
-# (Phase 31 multiplex) is unchanged: within one request the first resolution
-# still wins, which is the D000118 guarantee.
-_pin_generation: int = 0
-_pinned_gen: ContextVar[int] = ContextVar("codevira_pinned_gen", default=-1)
+# The first attempt used a plain module-global generation counter. That was a
+# REGRESSION: bumping it invalidated the pin for every IN-FLIGHT task, so when
+# one request rebound, a concurrent request's next call re-resolved against the
+# other request's `_project_dir_override` (also a module global) and silently
+# drifted into the wrong project — worse than the bug it replaced, since the
+# drift warning below became unreachable.
+#
+# Recording the OWNER instead fixes both: a pin is only honored by the task that
+# created it. An inherited pin has a foreign owner, so a fresh request re-
+# resolves (fixing the original bug), while a task that pinned its own root
+# keeps it no matter what siblings do (preserving the Phase 31 multiplex and the
+# D000118 intra-request guarantee).
+_pinned_owner: ContextVar[int | None] = ContextVar(
+    "codevira_pinned_owner", default=None
+)
+
+
+def _current_owner() -> int | None:
+    """Identify the current asyncio task, or None when running synchronously.
+
+    Sync callers (CLI, tests) share the ``None`` owner, which preserves the
+    original process-wide pin semantics for them.
+    """
+    try:
+        import asyncio
+
+        task = asyncio.current_task()
+    except (RuntimeError, ImportError):
+        return None
+    return id(task) if task is not None else None
 
 
 def reset_pinned_root() -> None:
-    """Clear the project-root pin (+ drift warnings), across ALL contexts.
+    """Clear the project-root pin (+ drift warnings) for the current context.
 
     Called by set_project_dir / invalidate_data_dir_cache and by tests to keep
     the per-request pin from leaking. Idempotent.
 
-    Bumping the generation is what makes this effective for sibling tasks that
-    inherited a pin from an ancestor context — clearing the ContextVar alone
-    only ever affected the calling task.
+    Deliberately does NOT reach into other tasks: a concurrent request's binding
+    is its own business. Cross-task staleness is handled by pin ownership, not
+    by invalidating everyone.
     """
-    global _pin_generation
-    _pin_generation += 1
     _pinned_root.set(None)
-    _pinned_gen.set(_pin_generation)
+    _pinned_owner.set(None)
     _drift_warned.clear()
 
 
@@ -379,12 +401,15 @@ def get_project_root() -> Path:
     """
     resolved = _resolve_project_root()
     pinned = _pinned_root.get()
-    # A pin from an older generation was inherited from an ancestor context and
-    # predates an explicit rebind — treat it as absent and re-resolve. Without
-    # this, set_project_dir() bound only the task that called it.
-    if pinned is None or _pinned_gen.get() != _pin_generation:
+    # Only honor a pin this task set itself. A pin with a foreign owner was
+    # INHERITED from an ancestor context (asyncio copies the context into each
+    # task), so it says nothing about what THIS request should bind to — treat
+    # it as absent and resolve fresh. This is what makes an explicit rebind
+    # apply to every later request instead of just the one that performed it,
+    # without letting one request's rebind disturb a concurrent one.
+    if pinned is None or _pinned_owner.get() != _current_owner():
         _pinned_root.set(resolved)
-        _pinned_gen.set(_pin_generation)
+        _pinned_owner.set(_current_owner())
         return resolved
     if resolved != pinned and resolved not in _drift_warned:
         _drift_warned.add(resolved)

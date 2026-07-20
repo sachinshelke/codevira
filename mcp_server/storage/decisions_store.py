@@ -257,13 +257,19 @@ def record_many(
         norm_tags = sorted(
             {str(t).strip().lower() for t in (r.get("tags") or []) if str(t).strip()}
         )
+        # v3.7.1: scrub secrets, exactly as record() does. This path skipped
+        # sanitization entirely, so an API key pasted into a bulk-imported
+        # decision was written verbatim to decisions.jsonl, the FTS5 index, the
+        # digest AND AGENTS.md — a file that is COMMITTED to the repo. A
+        # credential could therefore reach git through the memory layer.
+        _context = r.get("context")
         valid_records.append(
             {
                 "ts": datetime.now(timezone.utc).isoformat(),
                 "session_id": r.get("session_id") or default_session_id(),
                 "file_path": r.get("file_path"),
-                "decision": text.strip(),
-                "context": r.get("context"),
+                "decision": sanitize.scrub_sensitive(text.strip()),
+                "context": sanitize.scrub_sensitive(_context) if _context else _context,
                 "do_not_revert": bool(r.get("do_not_revert", False)),
                 "tags": norm_tags,
                 "supersedes": None,
@@ -359,7 +365,17 @@ def list_all(
             continue
         if file_pattern:
             fp = d.get("file_path") or ""
-            if not fnmatch.fnmatch(fp, file_pattern):
+            # Exact match FIRST, then glob. v3.7.1: this used to be fnmatch
+            # alone, which silently treats the caller's LITERAL path as a
+            # pattern. Any path containing fnmatch metacharacters ([ ] * ?)
+            # therefore failed to match itself — so a decision recorded against
+            # `app/[slug]/page.tsx` was invisible to list_decisions AND its
+            # do_not_revert lock never fired, because decision_lock passes the
+            # concrete target path here. That is every dynamic route in
+            # Next.js / SvelteKit / Remix: memory silently missing and
+            # protection silently off, with no error either way.
+            # Exact-first is additive — existing glob callers are unaffected.
+            if fp != file_pattern and not fnmatch.fnmatch(fp, file_pattern):
                 continue
         if norm_tags_filter is not None:
             d_tags = {str(t).lower() for t in (d.get("tags") or [])}

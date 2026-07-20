@@ -103,7 +103,13 @@ def test_rebind_visible_in_sibling_task_that_never_rebound(two_projects):
 
 def test_pin_still_prevents_drift_within_one_request(two_projects, monkeypatch):
     """D000118 must survive: inside ONE request the first resolution wins even
-    if cwd moves underneath us. The fix must not weaken this."""
+    if cwd moves underneath us.
+
+    NOTE: this exercises the cwd-drift branch with NO intervening rebind, which
+    is the easy half. The concurrent case below is the one that actually
+    discriminates — an earlier revision of this fix passed THIS test while
+    silently breaking cross-task isolation.
+    """
     right, wrong = two_projects
     paths._project_dir_override = None
 
@@ -115,6 +121,51 @@ def test_pin_still_prevents_drift_within_one_request(two_projects, monkeypatch):
     second = paths.get_project_root()
 
     assert second == first, "pin no longer protects against intra-request drift"
+
+
+def test_concurrent_request_rebind_does_not_drag_a_sibling(two_projects):
+    """A rebind in ONE request must not move a CONCURRENT request.
+
+    This is the Phase 31 multiplex guarantee: a single server process serves
+    several projects at once. A module-global invalidation scheme breaks it —
+    task B's rebind invalidated task A's pin, so A's next call re-resolved
+    against B's `_project_dir_override` (also a module global) and silently
+    landed in the wrong project's store. That is cross-project bleed, and it is
+    worse than the bug it replaced because the drift warning never fires.
+    """
+    right, wrong = two_projects
+
+    async def scenario():
+        a_seen: list[str] = []
+        # Explicit ordering — a bare `sleep(0)` let B rebind AFTER A's second
+        # read, so the race never happened and the test passed against the
+        # broken implementation too.
+        a_pinned = asyncio.Event()
+        b_rebound = asyncio.Event()
+
+        async def request_a():
+            paths.set_project_dir(right)
+            a_seen.append(str(paths.get_project_root()))  # pins `right` for A
+            a_pinned.set()
+            await b_rebound.wait()  # B has now rebound to `wrong`
+            a_seen.append(str(paths.get_project_root()))  # must STILL be `right`
+
+        async def request_b():
+            await a_pinned.wait()
+            paths.set_project_dir(wrong)
+            paths.get_project_root()
+            b_rebound.set()
+
+        await asyncio.gather(request_a(), request_b())
+        return a_seen
+
+    seen = asyncio.run(scenario())
+
+    assert seen[0] == str(right)
+    assert seen[1] == str(right), (
+        "a concurrent request's rebind dragged this request into another "
+        "project — cross-project bleed"
+    )
 
 
 def test_reset_clears_pin_for_sibling_tasks(two_projects):

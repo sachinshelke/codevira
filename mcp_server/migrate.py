@@ -247,45 +247,28 @@ def migrate_to_centralized(project_root: Path) -> dict:
     except Exception:
         pass  # Cache invalidation is best-effort; migration proceeds regardless
 
-    # 7. Rename old .codevira/ → .codevira.migrated/ (safety net, not deleted)
+    # 7. KEEP the in-repo store in place. NON-DESTRUCTIVE by design (v3.7.1).
     #
-    # GUARD (v3.7.1): refuse to rename the source away unless the memory files
-    # verifiably landed. Renaming after an incomplete copy is what made the
-    # original data-orphaning bug unrecoverable-looking: codevira read an empty
-    # centralized store while the real history was hidden in .codevira.migrated/.
-    # If verification fails we keep the legacy dir in place, so the NEXT run
-    # re-attempts a complete migration instead of silently stranding memory.
-    _unmigrated = [
-        e.name
-        for e in legacy.iterdir()
-        if e.is_file()
-        and not e.name.endswith(".lock")
-        and e.name != "metadata.json"
-        and not (centralized / e.name).exists()
-    ]
-    if _unmigrated:
-        logger.error(
-            "Migration INCOMPLETE for %s — these store files did not reach %s: "
-            "%s. Leaving the legacy directory in place; it will be retried.",
-            project_root,
-            centralized,
-            ", ".join(sorted(_unmigrated)),
-        )
-        return {
-            "migrated": False,
-            "reason": f"incomplete copy, legacy kept: {', '.join(sorted(_unmigrated))}",
-            "files_copied": files_copied,
-        }
-
-    migrated_backup = project_root / ".codevira.migrated"
-    if migrated_backup.exists():
-        shutil.rmtree(migrated_backup)
-    legacy.rename(migrated_backup)
-
+    # This step used to rename the in-repo dir to `.codevira.migrated/`, and
+    # that is what destroyed users' memory. The premise was wrong: the memory
+    # layer NEVER reads the centralized directory.
+    # `storage/paths.py::codevira_dir()` hardcodes `<project>/.codevira` and is
+    # the sole route for decisions / sessions / outcomes / skills / digest /
+    # manifest / roadmap / enforcement. `get_data_dir()` is consulted only for
+    # graph.db, codeindex/, logs/ and config.yaml. So writing the JSONL files
+    # centrally puts them where nothing will ever read them, and renaming the
+    # source away made every decision invisible on the next start (reproduced
+    # end-to-end: 5 decisions recorded, 0 readable afterwards).
+    #
+    # Centralization is a MIRROR of derived/global artifacts, never a move of
+    # the source of truth. With no rename there is nothing to strand, and no
+    # `.codevira.migrated/` for a later run — or `clean --legacy` — to delete.
     logger.info(
-        "Migration complete: %d files copied. Legacy dir renamed to %s",
+        "Centralized %d artifact(s) for %s → %s. The in-repo .codevira/ store "
+        "stays in place: it is the source of truth for memory.",
         files_copied,
-        migrated_backup,
+        project_root,
+        centralized,
     )
 
     return {
@@ -293,21 +276,48 @@ def migrate_to_centralized(project_root: Path) -> dict:
         "files_copied": files_copied,
         "old_path": str(legacy),
         "new_path": str(centralized),
+        "legacy_kept": True,
     }
 
 
 def cleanup_legacy_dir(project_root: Path) -> bool:
     """Remove the .codevira.migrated/ safety-net directory after confirmation.
 
-    Returns True if the directory was removed, False if it didn't exist.
-    Call only after verifying the migration was successful.
+    Returns True if the directory was removed, False if it didn't exist or was
+    REFUSED because it still holds the only copy of the project's memory.
+
+    v3.7.1 safety guard: for a project hit by the pre-3.7.1 migration bug this
+    directory is the ONLY surviving copy of the decision log, so deleting it is
+    unrecoverable. `codevira clean --legacy` describes these dirs as "harmless
+    but accumulate over time" and rmtree'd them unconditionally. We now refuse
+    unless every memory file it holds is already present in-repo.
     """
     backup = project_root / ".codevira.migrated"
-    if backup.exists():
-        shutil.rmtree(backup)
-        logger.info("Removed legacy backup dir: %s", backup)
-        return True
-    return False
+    if not backup.exists():
+        return False
+
+    in_repo = project_root / ".codevira"
+    unsafe = [
+        e.name
+        for e in backup.iterdir()
+        if e.is_file()
+        and e.name.endswith((".jsonl", ".yaml"))
+        and not e.name.endswith(".lock")
+        and not (in_repo / e.name).exists()
+    ]
+    if unsafe:
+        logger.warning(
+            "REFUSING to delete %s — it still holds the only copy of: %s. "
+            "Start codevira in this project (the recovery migration restores "
+            "them in-repo), then retry.",
+            backup,
+            ", ".join(sorted(unsafe)),
+        )
+        return False
+
+    shutil.rmtree(backup)
+    logger.info("Removed legacy backup dir: %s", backup)
+    return True
 
 
 def _ensure_git_remote_column(gdb) -> None:
@@ -404,51 +414,81 @@ def _mig_v370_repair_collisions(project_root: Path) -> bool:
 
 
 def _mig_v371_recover_orphaned_memory(project_root: Path) -> bool:
-    """Recover memory orphaned by the pre-3.7.1 centralization migration.
+    """Restore memory stranded by the pre-3.7.1 centralization migration.
 
-    That migration copied config/roadmap/graph/codeindex, then renamed
-    ``.codevira/`` to ``.codevira.migrated/`` WITHOUT copying the store's
-    memory files — so the centralized store read as zero decisions while the
-    real history was stranded in the renamed directory.
+    That migration renamed ``<project>/.codevira/`` to ``.codevira.migrated/``
+    while the read path (``storage/paths.py::codevira_dir()``) only ever looks
+    at ``<project>/.codevira/`` — so every decision went invisible.
 
-    This heals it: for every store file present in ``.codevira.migrated/`` but
-    missing from the centralized dir, copy it across. Never overwrites a file
-    that already exists centrally (a newer store always wins), so it is safe to
-    re-run and cannot clobber post-migration work. Returns True if anything was
-    recovered.
+    Recovery therefore restores INTO THE IN-REPO STORE, which is where the
+    memory layer actually reads. (An earlier revision copied into the
+    centralized dir instead — the same dead end that caused the bug, so it
+    recovered nothing.) Both stranding sites are checked:
+
+      * ``<project>/.codevira.migrated/`` — the renamed original
+      * the centralized dir — where the ineffective v3.7.1 copy landed
+
+    Never overwrites a file that already exists in-repo: a live store always
+    wins over a stale backup, so this is safe to re-run and cannot clobber
+    newer work. Runs automatically at server start. Returns True if anything
+    was restored.
     """
+    in_repo = project_root / ".codevira"
+
+    sources: list[Path] = []
     orphan = project_root / ".codevira.migrated"
-    if not orphan.is_dir():
+    if orphan.is_dir():
+        sources.append(orphan)
+    try:
+        from mcp_server.paths import _sanitize_path_key, get_global_home
+
+        centralized = get_global_home() / "projects" / _sanitize_path_key(project_root)
+        if centralized.is_dir():
+            sources.append(centralized)
+    except Exception:  # noqa: BLE001 — best effort
+        pass
+    if not sources:
         return False
 
-    from mcp_server.paths import _sanitize_path_key, get_global_home
+    # Only these belong in-repo. graph/codeindex/logs are derived and stay
+    # centralized; copying them back would bloat the repo (a real graph is 20M+).
+    _MEMORY_NAMES = {
+        "decisions.jsonl",
+        "sessions.jsonl",
+        "outcomes.jsonl",
+        "skills.jsonl",
+        "digest.jsonl",
+        "reflections.jsonl",
+        "manifest.yaml",
+        "enforcement.yaml",
+        "roadmap.yaml",
+        "config.yaml",
+    }
 
-    centralized = get_global_home() / "projects" / _sanitize_path_key(project_root)
-    if not centralized.is_dir():
-        return False
+    restored: list[str] = []
+    for src in sources:
+        for entry in src.iterdir():
+            if not entry.is_file() or entry.name not in _MEMORY_NAMES:
+                continue
+            dst = in_repo / entry.name
+            if dst.exists():
+                continue  # live in-repo store wins — never clobber
+            try:
+                in_repo.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(entry, dst)
+                restored.append(entry.name)
+            except OSError as e:  # noqa: PERF203 — per-file best effort
+                logger.warning("Could not restore %s: %s", entry, e)
 
-    recovered: list[str] = []
-    for entry in orphan.iterdir():
-        if entry.name.endswith(".lock") or entry.name == "metadata.json":
-            continue
-        dst = centralized / entry.name
-        if dst.exists():
-            continue  # newer centralized copy wins — never clobber
-        if entry.is_file():
-            shutil.copy2(entry, dst)
-            recovered.append(entry.name)
-        elif entry.is_dir():
-            shutil.copytree(entry, dst)
-            recovered.append(entry.name + "/")
-
-    if recovered:
+    if restored:
         logger.warning(
-            "Recovered %d orphaned store item(s) for %s from .codevira.migrated/: %s",
-            len(recovered),
+            "Restored %d stranded memory file(s) for %s into %s: %s",
+            len(restored),
             project_root,
-            ", ".join(sorted(recovered)),
+            in_repo,
+            ", ".join(sorted(restored)),
         )
-    return bool(recovered)
+    return bool(restored)
 
 
 def _mig_v370_merge_driver(project_root: Path) -> bool:
@@ -480,8 +520,13 @@ def _mig_v370_dedupe_registration(project_root: Path) -> bool:
 
 # Ordered ledger of named startup migrations. APPEND new entries; never rename
 # or renumber an existing one — the name is the idempotency key.
+#: Migrations that must run on EVERY start, never sealed by the ledger. They
+#: are cheap, idempotent and self-guarding (they no-op when there is nothing to
+#: do), and they heal conditions that can first appear long after the upgrade.
+_ALWAYS_RERUN = frozenset({"v371_recover_orphaned_memory"})
+
 _STARTUP_MIGRATIONS = (
-    # Runs FIRST: heal memory orphaned by the pre-3.7.1 centralization
+    # Runs FIRST: restore memory stranded by the pre-3.7.1 centralization
     # migration before any other migration reads the store.
     ("v371_recover_orphaned_memory", _mig_v371_recover_orphaned_memory),
     ("v370_repair_collisions", _mig_v370_repair_collisions),
@@ -531,7 +576,7 @@ def run_startup_migrations(project_root: Path | None = None) -> dict:
             ledger = _load_ledger(ledger_path)
             done = set(ledger.get("applied", []))
             for name, fn in _STARTUP_MIGRATIONS:
-                if name in done:
+                if name in done and name not in _ALWAYS_RERUN:
                     continue
                 try:
                     fn(project_root)
@@ -541,6 +586,13 @@ def run_startup_migrations(project_root: Path | None = None) -> dict:
                         name,
                         e,
                     )
+                    continue
+                # v3.7.1: never SEAL a self-guarding recovery. The ledger was
+                # appended even when a migration returned False (recovered
+                # nothing) — and since the ledger is the idempotency key, the
+                # recovery could never run again. A user whose memory became
+                # strandable only later would then never be healed.
+                if name in _ALWAYS_RERUN:
                     continue
                 ledger.setdefault("applied", []).append(name)
                 applied_now.append(name)

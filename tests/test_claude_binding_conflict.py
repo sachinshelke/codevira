@@ -89,18 +89,38 @@ class TestRemoval:
 
 
 class TestGlobalInjectionSkipsWhenScopedExists:
-    def test_does_not_readd_bare_entry_over_scoped(self, fake_claude_home, monkeypatch):
+    def test_does_not_readd_bare_entry_over_this_projects_scoped_entry(
+        self, fake_claude_home, monkeypatch, tmp_path
+    ):
         """THE recurrence bug: init re-added the bare entry the user deleted.
-        With scoped entries present, global registration must be skipped."""
-        _write(fake_claude_home, scoped=("/a", "/b"))
+
+        The check is PER PROJECT — see TestGuardIsPerProject for why asking
+        "does ANY project have one?" was itself a bug.
+        """
+        me = tmp_path / "me"
+        me.mkdir()
+        _write(fake_claude_home, scoped=(str(me), "/b"))
         monkeypatch.setattr(ide_inject, "_claude_cli_path", lambda: None)
 
-        ide_inject.inject_global_claude_code("/bin/codevira", "/bin/python")
+        ide_inject.inject_global_claude_code("/bin/codevira", "/bin/python", me)
 
         data = json.loads(fake_claude_home.read_text())
         assert "codevira" not in data.get(
             "mcpServers", {}
-        ), "bare global entry was re-added despite scoped entries existing"
+        ), "bare global entry was re-added despite this project having one"
+
+    def test_registers_when_called_without_project_context(
+        self, fake_claude_home, monkeypatch
+    ):
+        """With no project to reason about we cannot judge whether a bare entry
+        is harmful, so we must register rather than silently do nothing."""
+        _write(fake_claude_home, scoped=("/a",))
+        monkeypatch.setattr(ide_inject, "_claude_cli_path", lambda: None)
+
+        path = ide_inject.inject_global_claude_code("/bin/codevira", "/bin/python")
+
+        assert path is not None
+        assert "codevira" in json.loads(fake_claude_home.read_text())["mcpServers"]
 
     def test_still_registers_globally_when_no_scoped_entries(
         self, fake_claude_home, monkeypatch
@@ -136,3 +156,91 @@ class TestDoctorCheck:
 
         _write(fake_claude_home, bare=True)
         assert check_claude_binding_conflict().state == _PASS
+
+
+class TestGuardIsPerProject:
+    """v3.7.1 correction: the skip-guard must ask 'does THIS project have a
+    scoped entry?'. Asking 'does ANY project?' let an unrelated project's entry
+    suppress registration here — and combined with heal_stale_registration
+    deleting this project's own .mcp.json entry, init could leave a project with
+    NO registration at all while still printing success."""
+
+    def test_unrelated_scoped_entry_does_not_suppress_registration(
+        self, fake_claude_home, monkeypatch, tmp_path
+    ):
+        _write(fake_claude_home, scoped=("/some/other/project",))
+        monkeypatch.setattr(ide_inject, "_claude_cli_path", lambda: None)
+        me = tmp_path / "myproject"
+        me.mkdir()
+
+        path = ide_inject.inject_global_claude_code("/bin/codevira", "/bin/py", me)
+
+        assert path is not None, "registration was suppressed by another project"
+        data = json.loads(fake_claude_home.read_text())
+        assert "codevira" in data["mcpServers"]
+
+    def test_returns_none_when_nothing_written(
+        self, fake_claude_home, monkeypatch, tmp_path
+    ):
+        """Callers print success from the return value — it must not lie."""
+        me = tmp_path / "myproject"
+        me.mkdir()
+        _write(fake_claude_home, scoped=(str(me),))
+        monkeypatch.setattr(ide_inject, "_claude_cli_path", lambda: None)
+
+        path = ide_inject.inject_global_claude_code("/bin/codevira", "/bin/py", me)
+
+        assert path is None, "reported success without writing anything"
+        data = json.loads(fake_claude_home.read_text())
+        assert "codevira" not in data.get("mcpServers", {})
+
+    def test_sees_scoped_entry_in_mcp_json_surface(self, fake_claude_home, tmp_path):
+        """_inject_claude writes <project>/.mcp.json — the guard was blind to it."""
+        me = tmp_path / "myproject"
+        me.mkdir()
+        (me / ".mcp.json").write_text(json.dumps({"mcpServers": {"codevira": {}}}))
+        _write(fake_claude_home)
+
+        assert ide_inject.project_has_scoped_claude_entry(me) is True
+
+
+class TestNoCollateralRemoval:
+    def test_inject_claude_does_not_delete_the_bare_global(
+        self, fake_claude_home, tmp_path
+    ):
+        """The bare global serves every OTHER project; removing it while
+        initializing one project un-registers codevira everywhere else."""
+        _write(fake_claude_home, bare=True)
+        proj = tmp_path / "proj"
+        proj.mkdir()
+
+        ide_inject._inject_claude(proj, "/bin/codevira", "/bin/py")
+
+        data = json.loads(fake_claude_home.read_text())
+        assert (
+            "codevira" in data["mcpServers"]
+        ), "init orphaned every other project by deleting the bare global entry"
+
+
+class TestCorruptConfigIsNeverClobbered:
+    def test_refuses_to_overwrite_unparseable_config(self, tmp_path):
+        """~/.claude.json holds oauth, project history and other MCP servers.
+        A transient parse failure must never cause it to be replaced."""
+        cfg = tmp_path / ".claude.json"
+        cfg.write_text('{"mcpServers": {"other": {}}, "oauthAccount": {  BROKEN')
+        before = cfg.read_text()
+
+        with pytest.raises(ide_inject.ConfigUnreadableError):
+            ide_inject._write_json_safe(cfg, {"mcpServers": {"codevira": {}}})
+
+        assert cfg.read_text() == before, "corrupt config was overwritten"
+
+    def test_still_writes_when_file_missing_or_empty(self, tmp_path):
+        missing = tmp_path / "new.json"
+        ide_inject._write_json_safe(missing, {"a": 1})
+        assert json.loads(missing.read_text()) == {"a": 1}
+
+        empty = tmp_path / "empty.json"
+        empty.write_text("   ")
+        ide_inject._write_json_safe(empty, {"b": 2})
+        assert json.loads(empty.read_text()) == {"b": 2}

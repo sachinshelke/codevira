@@ -90,18 +90,34 @@ class TestMigrationCarriesMemory:
         migrate.migrate_to_centralized(proj)
         assert not (_centralized(gh, proj) / "stale.lock").exists()
 
-    def test_legacy_renamed_only_after_complete_copy(self, legacy_project):
+    def test_memory_stays_in_repo_and_is_mirrored(self, legacy_project):
+        """v3.7.1: the in-repo store is authoritative and is NOT moved.
+
+        Previously this asserted the source was renamed to .codevira.migrated/.
+        That rename is the data-loss bug — the memory layer only reads
+        <project>/.codevira/, so moving it made decisions invisible.
+        """
         proj, gh = legacy_project
         migrate.migrate_to_centralized(proj)
-        # Source renamed to the safety net, and the new store really has memory.
-        assert (proj / ".codevira.migrated" / "decisions.jsonl").is_file()
+
+        assert (
+            proj / ".codevira" / "decisions.jsonl"
+        ).is_file(), "memory left the repo"
+        assert not (proj / ".codevira.migrated").exists(), "source was renamed away"
+        # Still mirrored centrally (harmless backup; not the read path).
         assert (_centralized(gh, proj) / "decisions.jsonl").is_file()
 
 
-class TestIncompleteCopyGuard:
-    def test_refuses_to_rename_when_copy_incomplete(self, legacy_project, monkeypatch):
-        """If the copy fails to land a store file, the legacy dir MUST stay put
-        so the next run can retry — never strand memory behind a rename."""
+class TestIncompleteCopyIsHarmless:
+    def test_in_repo_memory_survives_a_failed_mirror(self, legacy_project, monkeypatch):
+        """A failed/partial mirror must never affect the in-repo store.
+
+        v3.7.1 made this structurally safe rather than guarded: since nothing is
+        renamed, an incomplete copy can only leave the CENTRAL mirror short —
+        the authoritative in-repo store is untouched either way. (The previous
+        version needed an explicit guard because it was about to rename the
+        source away.)
+        """
         proj, gh = legacy_project
 
         real_copy = migrate.shutil.copy2
@@ -112,19 +128,23 @@ class TestIncompleteCopyGuard:
             return real_copy(src, dst, *a, **k)
 
         monkeypatch.setattr(migrate.shutil, "copy2", _skip_decisions)
-        result = migrate.migrate_to_centralized(proj)
+        migrate.migrate_to_centralized(proj)
 
-        assert result["migrated"] is False
-        assert "incomplete" in result["reason"]
-        # Legacy store still intact and NOT renamed away.
-        assert (proj / ".codevira" / "decisions.jsonl").is_file()
+        # The store the read path uses is intact and complete.
+        decisions = proj / ".codevira" / "decisions.jsonl"
+        assert decisions.is_file()
+        assert "keep me" in decisions.read_text()
         assert not (proj / ".codevira.migrated").exists()
 
 
 class TestOrphanRecovery:
     def test_recovers_memory_stranded_by_old_migration(self, tmp_path, monkeypatch):
-        """A project already broken by the old migration self-heals: memory in
-        .codevira.migrated/ is copied into the empty centralized store."""
+        """A project already broken by the old migration self-heals INTO THE
+        IN-REPO STORE — where the read path actually looks.
+
+        The first version of this recovery restored into the centralized dir,
+        which is the same dead end that caused the bug, so it healed nothing.
+        """
         proj = tmp_path / "broken"
         proj.mkdir()
         orphan = proj / ".codevira.migrated"
@@ -136,15 +156,12 @@ class TestOrphanRecovery:
         import mcp_server.paths as paths_mod
 
         monkeypatch.setattr(paths_mod, "get_global_home", lambda: global_home)
-        from mcp_server.paths import _sanitize_path_key
-
-        dst = global_home / "projects" / _sanitize_path_key(proj)
-        dst.mkdir(parents=True)
-        (dst / "config.yaml").write_text("schema_version: 1\n")  # empty store
 
         assert migrate._mig_v371_recover_orphaned_memory(proj) is True
-        assert "stranded" in (dst / "decisions.jsonl").read_text()
-        assert (dst / "skills.jsonl").is_file()
+
+        in_repo = proj / ".codevira"
+        assert "stranded" in (in_repo / "decisions.jsonl").read_text()
+        assert (in_repo / "skills.jsonl").is_file()
 
     def test_never_clobbers_newer_central_copy(self, tmp_path, monkeypatch):
         proj = tmp_path / "p"

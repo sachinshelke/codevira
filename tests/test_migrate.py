@@ -252,7 +252,14 @@ class TestMigrateToCentralized:
         meta = json.loads((fake_home / "projects" / key / "metadata.json").read_text())
         assert meta["git_remote"] == "https://github.com/org/repo.git"
 
-    def test_renames_legacy_to_migrated(self, tmp_path, monkeypatch):
+    def test_keeps_legacy_in_place(self, tmp_path, monkeypatch):
+        """v3.7.1: migration is NON-DESTRUCTIVE — the in-repo store stays put.
+
+        This test previously asserted the OPPOSITE (that .codevira/ was renamed
+        to .codevira.migrated/). That rename was the data-loss bug: the memory
+        layer only ever reads <project>/.codevira/, so moving it made every
+        decision invisible. Centralization mirrors derived artifacts only.
+        """
         from mcp_server.migrate import migrate_to_centralized
 
         project = _create_legacy_project(tmp_path, "rename-test")
@@ -260,9 +267,10 @@ class TestMigrateToCentralized:
 
         migrate_to_centralized(project)
 
-        legacy = project / ".codevira"
-        assert not legacy.exists()
-        assert (project / ".codevira.migrated").exists()
+        assert (project / ".codevira").exists(), "in-repo store must stay"
+        assert not (
+            project / ".codevira.migrated"
+        ).exists(), "migration must not rename the source away"
 
     def test_no_legacy_returns_false(self, tmp_path, monkeypatch):
         from mcp_server.migrate import migrate_to_centralized
@@ -354,10 +362,9 @@ class TestMigrationIdempotency:
         result1 = migrate_to_centralized(project)
         assert result1["migrated"] is True
 
-        # Recreate legacy dir (simulating a race condition scenario)
-        legacy = project / ".codevira"
-        legacy.mkdir(parents=True)
-        (legacy / "config.yaml").write_text("project:\n  name: concurrent\n")
+        # v3.7.1: the legacy dir is no longer renamed away, so it is still
+        # present here — no need to recreate it as the old test did.
+        assert (project / ".codevira" / "config.yaml").is_file()
 
         # Second migration: metadata.json already present
         result2 = migrate_to_centralized(project)
@@ -372,20 +379,43 @@ class TestMigrationIdempotency:
 class TestCleanupLegacyDir:
     """Test removal of .codevira.migrated/ backup."""
 
-    def test_cleanup_removes_backup(self, tmp_path, monkeypatch):
-        from mcp_server.migrate import migrate_to_centralized, cleanup_legacy_dir
+    def test_cleanup_removes_backup_when_memory_is_safe_in_repo(
+        self, tmp_path, monkeypatch
+    ):
+        """Cleanup is allowed once every memory file also exists in-repo.
+
+        Migration no longer creates .codevira.migrated/, so this simulates one
+        left behind by a pre-3.7.1 version.
+        """
+        from mcp_server.migrate import cleanup_legacy_dir
 
         project = _create_legacy_project(tmp_path, "cleanup-test")
         _setup_fake_home(tmp_path, monkeypatch)
 
-        migrate_to_centralized(project)
+        backup = project / ".codevira.migrated"
+        backup.mkdir()
+        # Same filename already present in-repo -> nothing unique would be lost.
+        (backup / "config.yaml").write_text("stale copy")
+
+        assert cleanup_legacy_dir(project) is True
+        assert not backup.exists()
+
+    def test_cleanup_refuses_when_backup_holds_the_only_copy(
+        self, tmp_path, monkeypatch
+    ):
+        """v3.7.1 guard: for a project hit by the old bug this directory is the
+        ONLY copy of the decision log — deleting it is unrecoverable."""
+        from mcp_server.migrate import cleanup_legacy_dir
+
+        project = _create_legacy_project(tmp_path, "cleanup-guard")
+        _setup_fake_home(tmp_path, monkeypatch)
 
         backup = project / ".codevira.migrated"
-        assert backup.exists()
+        backup.mkdir()
+        (backup / "decisions.jsonl").write_text('{"id":"D1","decision":"only copy"}\n')
 
-        removed = cleanup_legacy_dir(project)
-        assert removed is True
-        assert not backup.exists()
+        assert cleanup_legacy_dir(project) is False
+        assert (backup / "decisions.jsonl").is_file(), "the only copy was deleted"
 
     def test_cleanup_returns_false_when_no_backup(self, tmp_path):
         """cleanup_legacy_dir returns False when .codevira.migrated/ does not exist."""
@@ -399,12 +429,14 @@ class TestCleanupLegacyDir:
 
     def test_cleanup_twice_second_returns_false(self, tmp_path, monkeypatch):
         """Calling cleanup twice: first True, second False."""
-        from mcp_server.migrate import migrate_to_centralized, cleanup_legacy_dir
+        from mcp_server.migrate import cleanup_legacy_dir
 
         project = _create_legacy_project(tmp_path, "cleanup-twice")
         _setup_fake_home(tmp_path, monkeypatch)
 
-        migrate_to_centralized(project)
+        backup = project / ".codevira.migrated"
+        backup.mkdir()
+        (backup / "config.yaml").write_text("stale copy")  # safe: exists in-repo
 
         assert cleanup_legacy_dir(project) is True
         assert cleanup_legacy_dir(project) is False
@@ -508,24 +540,31 @@ class TestPartialRecovery:
         assert result["migrated"] is True
         assert (partial / "metadata.json").exists()
 
-    def test_existing_migrated_backup_replaced(self, tmp_path, monkeypatch):
-        """If .codevira.migrated/ already exists from a prior attempt, it is replaced."""
+    def test_existing_migrated_backup_is_never_destroyed(self, tmp_path, monkeypatch):
+        """v3.7.1: an existing .codevira.migrated/ must SURVIVE a migration.
+
+        This test previously asserted it was REPLACED — i.e. `shutil.rmtree`d.
+        For a project hit by the pre-3.7.1 bug that directory holds the only
+        surviving copy of the decision log, and the rmtree fired whenever the
+        project directory was renamed (new path key -> migration re-runs), so
+        the replacement was silent, permanent data loss.
+        """
         from mcp_server.migrate import migrate_to_centralized
 
         project = _create_legacy_project(tmp_path, "backup-replace")
         _ = _setup_fake_home(tmp_path, monkeypatch)
 
-        # Create a stale backup from a prior interrupted migration
         stale_backup = project / ".codevira.migrated"
         stale_backup.mkdir(parents=True)
-        (stale_backup / "old-config.yaml").write_text("stale")
+        (stale_backup / "decisions.jsonl").write_text('{"id":"D1","decision":"old"}\n')
 
         result = migrate_to_centralized(project)
         assert result["migrated"] is True
 
-        # The old stale backup should be replaced
-        assert (project / ".codevira.migrated").exists()
-        assert not (project / ".codevira.migrated" / "old-config.yaml").exists()
+        assert (
+            stale_backup / "decisions.jsonl"
+        ).is_file(), "migration destroyed a pre-existing backup"
+        assert "old" in (stale_backup / "decisions.jsonl").read_text()
 
 
 # ===================================================================

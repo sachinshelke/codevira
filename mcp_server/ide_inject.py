@@ -291,14 +291,36 @@ def _antigravity_config_path() -> Path:
 # ---------------------------------------------------------------------------
 
 
+class ConfigUnreadableError(Exception):
+    """An existing config file could not be parsed.
+
+    Distinct from "file missing". Overwriting an unparseable file destroys
+    whatever it really contained, so callers must NOT fall back to writing a
+    fresh one — see ``_write_json_safe``'s clobber guard.
+    """
+
+
 def _read_json_safe(path: Path) -> dict:
-    """Read a JSON file, returning {} if missing or corrupt."""
+    """Read a JSON file, returning {} if missing or empty.
+
+    A file that EXISTS but does not parse returns {} for backwards
+    compatibility, but ``_write_json_safe`` refuses to overwrite it — so a
+    transiently-unparseable config can never be silently replaced by a
+    one-key file. See ``ConfigUnreadableError``.
+    """
     if not path.exists():
         return {}
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, UnicodeDecodeError) as e:
-        logger.warning("Could not parse %s: %s (will create fresh)", path, e)
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as e:
+        logger.warning("Could not read %s: %s", path, e)
+        return {}
+    if not text.strip():
+        return {}
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as e:
+        logger.warning("Could not parse %s: %s", path, e)
         return {}
 
 
@@ -321,6 +343,30 @@ def _write_json_safe(path: Path, data: dict) -> None:
     """
     import os
     import tempfile
+
+    # CLOBBER GUARD (v3.7.1): never overwrite a config that EXISTS but does not
+    # parse. `_read_json_safe` returns {} for such a file, so without this guard
+    # a caller merges its one key into {} and this write replaces the entire
+    # file — destroying oauthAccount, the whole `projects` history, telemetry
+    # and every other MCP server the user has. ~/.claude.json is ~43KB of state
+    # we do not own. A parse failure is usually TRANSIENT (a concurrent write by
+    # the IDE itself, a partial sync), so refusing is strictly safer than
+    # "recreating fresh": the caller reports a soft failure and the user's file
+    # survives untouched.
+    if path.exists():
+        try:
+            existing_text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            existing_text = ""
+        if existing_text.strip():
+            try:
+                json.loads(existing_text)
+            except json.JSONDecodeError as e:
+                raise ConfigUnreadableError(
+                    f"refusing to overwrite {path}: it exists but is not valid "
+                    f"JSON ({e}). Codevira will not replace a config it cannot "
+                    f"read — fix or move the file, then re-run."
+                )
 
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(data, indent=2) + "\n"
@@ -680,14 +726,56 @@ def claude_scoped_entries() -> list[str]:
 
     Claude Code reads MCP servers from three surfaces: the top-level
     ``mcpServers`` (user scope), ``projects.<path>.mcpServers`` (project scope)
-    and ``<project>/.mcp.json``. This reports the project-scope ones.
+    and ``<project>/.mcp.json``. This reports the project-scope ones recorded in
+    ``~/.claude.json`` only — use :func:`project_has_scoped_claude_entry` for a
+    per-project answer, which also covers the ``.mcp.json`` surface.
     """
     data = _read_json_safe(_claude_global_config_path())
     out: list[str] = []
     for proj, pdata in (data.get("projects") or {}).items():
-        if isinstance(pdata, dict) and "codevira" in (pdata.get("mcpServers") or {}):
+        if not isinstance(pdata, dict):
+            continue
+        servers = pdata.get("mcpServers")
+        if isinstance(servers, dict) and "codevira" in servers:
             out.append(proj)
     return out
+
+
+def project_has_scoped_claude_entry(project_root: Path) -> bool:
+    """True when THIS project already has its own codevira registration.
+
+    Checks BOTH project-scope surfaces:
+      * ``~/.claude.json`` → ``projects.<abs path>.mcpServers.codevira``
+      * ``<project>/.mcp.json`` → ``mcpServers.codevira`` (what ``_inject_claude``
+        writes — an earlier revision of this guard was blind to it)
+
+    Used to decide whether adding a BARE global entry would be harmful. The
+    question must be asked PER PROJECT: an earlier revision asked "does ANY
+    project have a scoped entry?", so an unrelated project's entry suppressed
+    registration for the project being initialized, leaving it with none.
+    """
+    try:
+        root = str(Path(project_root).resolve())
+    except Exception:  # noqa: BLE001
+        root = str(project_root)
+
+    data = _read_json_safe(_claude_global_config_path())
+    for proj, pdata in (data.get("projects") or {}).items():
+        if not isinstance(pdata, dict):
+            continue
+        servers = pdata.get("mcpServers")
+        if not (isinstance(servers, dict) and "codevira" in servers):
+            continue
+        try:
+            if str(Path(proj).resolve()) == root:
+                return True
+        except Exception:  # noqa: BLE001
+            if proj == root:
+                return True
+
+    mcp_json = _read_json_safe(_claude_config_path(Path(project_root)))
+    servers = mcp_json.get("mcpServers")
+    return isinstance(servers, dict) and "codevira" in servers
 
 
 def bare_global_claude_entry() -> dict | None:
@@ -741,20 +829,21 @@ def _inject_claude(project_root: Path, cmd_path: str, python_exe: str) -> str | 
     merged = _merge_mcp_config(existing, "codevira", server_config)
     _write_json_safe(config_path, merged)
 
-    # v3.7.1 fix (D00011V): a project-scoped registration and a BARE global one
-    # must never coexist — the bare one out-ranks the scoped entry, so the
-    # session binds to whatever project it guesses instead of this one. Users
-    # hit this as "my LH session returns UDAP's memory", and deleting the global
-    # entry by hand didn't stick because the next init re-added it. Now writing
-    # a scoped entry displaces the conflicting bare one.
+    # NOTE (v3.7.1): an earlier revision of this fix ALSO deleted the bare
+    # global entry here. That was wrong: the bare global entry is what serves
+    # every OTHER project the user has, so removing it while initializing one
+    # project silently un-registers codevira everywhere else. We only warn now;
+    # `codevira doctor`'s claude_binding_conflict check surfaces the conflict,
+    # and the user decides. Detection without collateral damage.
     try:
-        removed = remove_bare_global_claude_entry()
-        if removed:
-            logger.info(
-                "Removed the bare global 'codevira' entry from ~/.claude.json — "
-                "it would out-rank this project-scoped registration."
+        if bare_global_claude_entry() is not None:
+            logger.warning(
+                "A BARE global 'codevira' entry exists in ~/.claude.json. It "
+                "out-ranks this project-scoped registration, so sessions may "
+                "bind to the wrong project. Run `codevira doctor` for details; "
+                "remove it only if every project you use has its own entry."
             )
-    except Exception:  # noqa: BLE001 — never let cleanup break injection
+    except Exception:  # noqa: BLE001 — never let this check break injection
         pass
     return str(config_path)
 
@@ -893,7 +982,9 @@ def _inject_antigravity(
 # ---------------------------------------------------------------------------
 
 
-def inject_global_claude_code(cmd_path: str, python_exe: str) -> str | None:
+def inject_global_claude_code(
+    cmd_path: str, python_exe: str, project_root: Path | None = None
+) -> str | None:
     """Inject global codevira config into Claude Code (``~/.claude.json``).
 
     Two-tier strategy:
@@ -919,15 +1010,23 @@ def inject_global_claude_code(cmd_path: str, python_exe: str) -> str | None:
     # it silently re-breaks project binding — and because every init re-ran this,
     # a user who deleted the bad entry by hand saw it reappear. Scoped wins.
     try:
-        scoped = claude_scoped_entries()
-        if scoped:
+        # The question must be asked PER PROJECT. An earlier revision asked
+        # "does ANY project have a scoped entry?", so an unrelated project's
+        # entry suppressed registration for the project being initialized —
+        # which, combined with heal_stale_registration removing the project's
+        # own .mcp.json entry, could leave it with NO registration at all while
+        # init still printed success. Without a project to reason about we
+        # cannot make that judgement, so we register normally.
+        if project_root is not None and project_has_scoped_claude_entry(project_root):
             logger.info(
-                "Skipping the bare global 'codevira' entry: %d project-scoped "
-                "registration(s) already exist and a bare entry would out-rank "
-                "them (binding the session to the wrong project).",
-                len(scoped),
+                "Skipping the bare global 'codevira' entry: %s already has its "
+                "own project-scoped registration, and a bare entry would "
+                "out-rank it (binding the session to the wrong project).",
+                project_root,
             )
-            return str(config_path)
+            # Return None — nothing was written. Returning a path made callers
+            # report success for a registration that never happened.
+            return None
     except Exception:  # noqa: BLE001 — never block registration on this check
         pass
 
@@ -1228,7 +1327,7 @@ def inject_ide_config(
             if global_mode:
                 # Global mode: register once, works for every project
                 if ide == "claude":
-                    path = inject_global_claude_code(cmd_path, python_exe)
+                    path = inject_global_claude_code(cmd_path, python_exe, project_root)
                     if path:
                         results["Claude Code (global)"] = path
                 elif ide == "cursor":

@@ -1147,7 +1147,9 @@ class TestInjectIdeConfigIntegration:
         )
         captured = {}
 
-        def _fake_global(cmd_path, python_exe):
+        def _fake_global(cmd_path, python_exe, project_root=None):
+            # v3.7.1: takes the project so the bare-entry guard can be decided
+            # PER PROJECT rather than globally.
             captured["called"] = True
             return "/fake/.claude.json"
 

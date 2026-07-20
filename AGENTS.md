@@ -32,7 +32,7 @@
 - **D00001B** CORRECTION: the release gauntlet is GREEN, not broken. The 53 'failures' I reported earlier were NOT test rot, NOT test…
 - **D00001C** Antigravity 2.0 shared-config support BUILT (commit c83cddf), resolving the open item from D000017. ide_inject.py now d…  ·  _antigravity, cross-tool, ide-inject, v3.0.0_
 
-_+55 more decision(s) — full log in `.codevira/decisions.jsonl`._
+_+69 more decision(s) — full log in `.codevira/decisions.jsonl`._
 
 
 For the full decision log, use `search_decisions` / `list_decisions` (or the `codevira` CLI) — don't read `.codevira/*.jsonl` directly.

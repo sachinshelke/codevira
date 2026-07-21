@@ -117,8 +117,12 @@ codevira init
 codevira setup
 ```
 
-Commit `.codevira/` + `AGENTS.md` + `.gitignore` so teammates inherit the
-memory. Open any IDE — codevira's MCP server is ready.
+By default codevira keeps decision memory **per-machine** (not committed), so
+unrelated projects never bleed into each other; `AGENTS.md` and `.gitignore` are
+still committed. To share memory with teammates on the same GitHub repo, run
+`codevira init --shared` — it keeps `.codevira/` git-tracked, and a built-in git
+merge driver reconciles concurrent edits. Open any IDE — codevira's MCP server is
+ready.
 
 > **Opt-in tracking (v3.7.0).** `codevira init` is the explicit opt-in.
 > Codevira tracks **only** projects you've `init`-ed; a project you merely open
@@ -167,11 +171,14 @@ instead of the AI re-reading docs.
   one project don't race — verified by thread, subprocess, and adversarial chaos
   tests. Details in [Concurrency & safety](#concurrency--safety).
 
-**Latest:** **v3.7.0** — opt-in tracking, fresh memory (supersede-on-write +
-freshness-ranked reads + `mark_decision_outdated`), shared-repo decision-id
-collision repair (`repair-ids` + a git merge driver), and one user-scope MCP
-registration for all your projects. All model-free, all local. See the
-[CHANGELOG](CHANGELOG.md#370--2026-07-10).
+**Latest:** **v3.7.1** — a reliability release. Fixes a migration bug that could
+strand a project's memory, several defects that bound a session to the **wrong
+project**, and a cluster of decision-memory correctness bugs; makes IDE-config
+writes non-destructive. Adds `codevira init --shared` (opt-in **team-shared
+memory**) and a `PreToolUse` enforcement hook for **Antigravity** that surfaces
+and can block decision-reverting edits. Upgrading is automatic — codevira
+migrates on the first server start, no manual steps. All model-free, all local.
+See the [CHANGELOG](CHANGELOG.md#371--2026-07-20).
 
 ---
 
@@ -396,7 +403,7 @@ degradation, and read-only-directory hostility). See
 
 | Command | What it does |
 |---|---|
-| `codevira init` | Opt this project in: `.codevira/` + AGENTS.md + .gitignore + git merge driver |
+| `codevira init` | Opt this project in: `.codevira/` + AGENTS.md + .gitignore + git merge driver. Add `--shared` to commit memory for team sharing (default keeps it per-machine) |
 | `codevira setup` | Detect installed AI tools + write MCP configs + Claude Code hooks |
 | `codevira doctor` | 18 health checks (read-only; ✓/⚠/✗ + a fix command each) |
 | `codevira status` | Index health + project state |
@@ -424,7 +431,7 @@ then `pipx uninstall codevira`.
 |---|---|
 | Cross-IDE decision memory via in-repo JSONL | Hard `PreToolUse` enforcement is Claude Code only; other IDEs read `AGENTS.md` (advisory, not a hard block) |
 | `do_not_revert` enforcement at the Claude Code hook | Symbol tools cover Python / TS / JS / Go / Rust; other languages → the AI `Read`s the file directly |
-| FTS5/BM25 decision search | Real-time multi-machine sync — by design local-first; for team sharing, commit `.codevira/` to git |
+| FTS5/BM25 decision search | Real-time multi-machine sync — by design local-first; for team sharing, run `codevira init --shared` to commit `.codevira/` |
 | Per-project + cross-machine project inventory (`global.db`) | No web UI — use the `codevira://decisions` MCP resource, or `codevira replay --format html` |
 | 51 MCP tools + ~26 CLI commands + 8 engine policies | The HTTP server (`codevira serve`) is single-project per launch — for daily use, stick with stdio |
 | Concurrent-safe storage (Posix `fcntl.flock` + Windows sentinel), thread + subprocess + chaos-tested | Windows sentinel fallback is verified in unit tests but not yet load-tested on real Windows |
@@ -451,6 +458,17 @@ Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 Common questions on setup, usage, and troubleshooting: [FAQ.md](FAQ.md).
 What's built, what's next, and the long-term vision: [ROADMAP.md](ROADMAP.md).
 Full release history: [CHANGELOG.md](CHANGELOG.md).
+
+**Upgrading.** It's automatic — codevira migrates your memory on the first
+server start after an upgrade, with no manual steps, and your existing decisions
+stay put. If an IDE then shows the wrong project, doesn't show codevira at all,
+or memory looks missing, it's almost always a stale IDE-config entry rather than
+lost data. Two fixes cover most cases: remove a stray or temporary entry with
+`codevira untrack <path>` (or sweep dead ones with `codevira clean --ghosts`),
+then run `codevira doctor` — it names the bound project and ships the exact fix
+for each ⚠/✗. Full guides:
+[IDE config hygiene](docs/troubleshooting/config-hygiene.md) and
+[Antigravity](docs/troubleshooting/antigravity.md).
 
 ## Star History
 

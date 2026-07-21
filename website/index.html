@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Codevira — persistent memory &amp; decision enforcement for AI coding agents</title>
-<meta name="description" content="Codevira gives Claude Code, Cursor, Windsurf, Copilot and every AI coding tool a shared, persistent project memory — and enforces past decisions, blocking regressions before they ship. Local-first, ~1 MB per project, no cloud, MIT.">
+<meta name="description" content="Persistent, team-shareable memory for AI coding agents — shared across Claude Code, Cursor, Windsurf & Copilot. Enforces past decisions, blocks regressions. Local-first, MIT.">
 <link rel="canonical" href="https://sachinshelke.github.io/codevira/">
 <meta name="robots" content="index, follow">
 <meta name="theme-color" content="#0b0d12">
@@ -20,7 +20,7 @@
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Codevira">
 <meta property="og:title" content="Codevira — persistent memory for AI coding agents">
-<meta property="og:description" content="Cross-IDE persistent memory + decision enforcement for AI coding agents. Local-first, in your repo, no cloud. MIT.">
+<meta property="og:description" content="Cross-IDE persistent, team-shareable memory + decision enforcement for AI coding agents. Local-first, in your repo, no cloud. MIT.">
 <meta property="og:url" content="https://sachinshelke.github.io/codevira/">
 <meta property="og:image" content="https://sachinshelke.github.io/codevira/assets/og-image.png">
 <meta property="og:image:width" content="1200">
@@ -29,7 +29,7 @@
 <!-- Twitter -->
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Codevira — persistent memory for AI coding agents">
-<meta name="twitter:description" content="Cross-IDE persistent memory + decision enforcement for AI coding agents. Local-first, in your repo, no cloud. MIT.">
+<meta name="twitter:description" content="Cross-IDE persistent, team-shareable memory + decision enforcement for AI coding agents. Local-first, in your repo, no cloud. MIT.">
 <meta name="twitter:image" content="https://sachinshelke.github.io/codevira/assets/og-image.png">
 
 <!-- Structured data -->
@@ -40,7 +40,7 @@
   "name": "Codevira",
   "applicationCategory": "DeveloperApplication",
   "operatingSystem": "macOS, Linux, Windows",
-  "softwareVersion": "3.7.0",
+  "softwareVersion": "3.7.1",
   "description": "Cross-IDE persistent memory and decision enforcement for AI coding agents. Local-first, stored in your repo, no cloud, no vectors.",
   "url": "https://sachinshelke.github.io/codevira/",
   "image": "https://sachinshelke.github.io/codevira/assets/logo-512.png",
@@ -385,7 +385,7 @@
   <div class="inner">
     <div class="logo">
       <img class="mark" src="assets/logo.png" alt="Codevira" width="32" height="32"> codevira
-      <a class="version" href="https://github.com/sachinshelke/codevira/blob/main/CHANGELOG.md" title="Changelog">v3.7.0</a>
+      <a class="version" href="https://github.com/sachinshelke/codevira/blob/main/CHANGELOG.md" title="Changelog">v3.7.1</a>
     </div>
     <div class="links">
       <a href="#story">Why</a>
@@ -616,8 +616,16 @@
         <p><code>codevira export setup</code> → one archive → <code>codevira import</code> on
         the new machine. Memory and learning come with you.</p>
       </div>
+      <div class="card glass reveal">
+        <div class="icon">👥</div>
+        <h3>Team-shared memory <span class="tag">3.7.1</span></h3>
+        <p><code>codevira init --shared</code> commits the project's decision memory so
+        teammates on the same repo share it; a built-in git merge driver reconciles
+        concurrent edits. Default stays per-machine, so unrelated projects never bleed
+        together. Opt-in.</p>
+      </div>
     </div>
-    <p class="tabnote reveal" style="text-align:center">The <strong>hard block</strong> — the edit actually refused before it touches disk — runs in <strong>Claude Code</strong>, via its <code style="font-family:var(--mono)">PreToolUse</code> hook. In Cursor, Windsurf, Codex and Copilot the same decisions ride along as strong <code style="font-family:var(--mono)">AGENTS.md</code> guidance (advisory, not a physical veto) — their edits don't route through codevira's hook engine. The shared <em>memory</em> is universal; the hard <em>enforcement</em> is Claude Code today.</p>
+    <p class="tabnote reveal" style="text-align:center">The <strong>hard block</strong> — the edit actually refused before it touches disk — runs in <strong>Claude Code</strong>, via its <code style="font-family:var(--mono)">PreToolUse</code> hook. In Cursor, Windsurf, Codex and Copilot the same decisions ride along as strong <code style="font-family:var(--mono)">AGENTS.md</code> guidance (advisory, not a physical veto) — their edits don't route through codevira's hook engine. The shared <em>memory</em> is universal; the verified hard <em>enforcement</em> is Claude Code today. As of 3.7.1, Antigravity also gets a <code style="font-family:var(--mono)">PreToolUse</code> enforcement hook that surfaces and can block decision-reverting edits.</p>
   </section>
 
   <!-- WORKS WITH -->
@@ -908,7 +916,7 @@ params = StdioServerParameters(command=<span class="yy">"codevira-python"</span>
 
 <footer>
   <div class="wrap">
-    <span>© 2026 Codevira · MIT License · <span style="font-family:var(--mono)">v3.7.0</span></span>
+    <span>© 2026 Codevira · MIT License · <span style="font-family:var(--mono)">v3.7.1</span></span>
     <span><a href="https://github.com/sachinshelke/codevira">GitHub</a> · <a href="https://pypi.org/project/codevira/">PyPI</a> · <a href="https://github.com/sachinshelke/codevira/blob/main/CHANGELOG.md">Changelog</a> · <a href="#faq">FAQ</a></span>
   </div>
 </footer>

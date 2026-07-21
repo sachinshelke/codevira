@@ -152,7 +152,7 @@
   <div class="inner">
     <a class="logo" href="index.html" style="text-decoration:none">
       <img class="mark" src="assets/logo.png" alt="Codevira" width="30" height="30"> codevira
-      <span class="version">v3.7.0</span>
+      <span class="version">v3.7.1</span>
     </a>
     <div class="links">
       <a class="home" href="index.html">← Home</a>
@@ -195,9 +195,12 @@ codevira init
 
 <span class="c"># 3 — wire codevira into every AI tool detected on this machine</span>
 codevira setup</pre>
-    <p>That's it. Decisions live in <code>&lt;repo&gt;/.codevira/decisions.jsonl</code> —
-    git-committed and team-shareable. The code graph lives in a rebuildable, gitignored
-    cache. With no ML model to load, warm tool calls return in a few milliseconds.</p>
+    <p>That's it. Decisions live in <code>&lt;repo&gt;/.codevira/decisions.jsonl</code>. By
+    default that memory stays <strong>per-machine</strong> (not committed), so unrelated
+    projects never bleed into each other; run <code>codevira init --shared</code> to commit
+    it and share decisions with teammates on the same repo. The code graph lives in a
+    rebuildable, gitignored cache. With no ML model to load, warm tool calls return in a
+    few milliseconds.</p>
     <div class="note">Requires Python ≥ 3.10. After <code>codevira setup</code>,
     restart your AI tool so it picks up the new MCP server and (for Claude Code)
     lifecycle hooks.</div>
@@ -221,9 +224,9 @@ codevira setup</pre>
     <span class="kbd">--dry-run</span> to preview.</p>
     <table>
       <tr><th>Tool</th><th>What codevira writes</th></tr>
-      <tr><td>Claude Code</td><td>one user-scope MCP entry + PreToolUse / SessionStart lifecycle hooks (the only client with <strong>hard</strong> enforcement)</td></tr>
+      <tr><td>Claude Code</td><td>one user-scope MCP entry + PreToolUse / SessionStart lifecycle hooks (verified <strong>hard</strong> enforcement)</td></tr>
       <tr><td>Cursor · Windsurf</td><td>one user-scope MCP entry (stdio, roots-resolved) + reads <code>AGENTS.md</code></td></tr>
-      <tr><td>Antigravity</td><td>one constant-key MCP entry (sets its own working dir per window) + reads <code>AGENTS.md</code></td></tr>
+      <tr><td>Antigravity</td><td>per-project MCP entry (sets its own working dir per window) + a <code>PreToolUse</code> hook that surfaces and can block decision-reverting edits <span class="pill">3.7.1</span> + reads <code>AGENTS.md</code></td></tr>
       <tr><td>Claude Desktop</td><td>per-project stdio MCP entry (<code>--project-dir</code> — can't advertise roots)</td></tr>
       <tr><td>Codex · Copilot</td><td>read <code>AGENTS.md</code> natively — the decisions are portable, no MCP entry required</td></tr>
     </table>
@@ -333,13 +336,24 @@ codevira setup</pre>
       <tr><td>Stale code graph after edits</td><td>The live watcher + git post-commit hook normally keep it fresh; run <code>codevira index</code> to force a rebuild.</td></tr>
       <tr><td>Starting fresh</td><td><code>codevira reset</code> (auto-exports decisions first) or <code>codevira uninstall</code> to reverse every system write.</td></tr>
     </table>
+    <div class="note"><span class="pill">3.7.1</span> <strong>Upgrading is automatic.</strong>
+    Codevira migrates your memory on the first server start after an upgrade — no manual
+    steps, and your existing decisions stay put. If an IDE then shows the <em>wrong</em>
+    project, doesn't show codevira at all, or memory looks missing, it's almost always a
+    stale IDE-config entry, not lost data. Two fixes cover most cases: (1) remove a stray or
+    temporary codevira entry with <code>codevira untrack &lt;path&gt;</code> (or sweep dead
+    ones with <code>codevira clean --ghosts</code>); (2) run <code>codevira doctor</code>,
+    which names the bound project and ships the exact fix for each ⚠ / ✗. Full guides:
+    <a href="https://github.com/sachinshelke/codevira/blob/main/docs/troubleshooting/config-hygiene.md">IDE config hygiene</a>
+    and <a href="https://github.com/sachinshelke/codevira/blob/main/docs/troubleshooting/antigravity.md">Antigravity</a>.</div>
+
     <p>Still stuck? See the <a href="https://github.com/sachinshelke/codevira/blob/main/FAQ.md">FAQ</a>
     or open an <a href="https://github.com/sachinshelke/codevira/issues">issue</a>.</p>
   </main>
 </div>
 
 <footer>
-  <span>© 2026 Codevira · MIT License · <span style="font-family:var(--mono)">v3.7.0</span></span>
+  <span>© 2026 Codevira · MIT License · <span style="font-family:var(--mono)">v3.7.1</span></span>
   <span><a href="index.html">Home</a> · <a href="https://github.com/sachinshelke/codevira">GitHub</a> · <a href="https://pypi.org/project/codevira/">PyPI</a> · <a href="https://github.com/sachinshelke/codevira/blob/main/CHANGELOG.md">Changelog</a></span>
 </footer>
 

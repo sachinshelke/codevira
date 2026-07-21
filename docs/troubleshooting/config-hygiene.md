@@ -114,8 +114,10 @@ json.dump(d, open(p, "w"), indent=2)
 print("removed codevira from Claude Desktop")
 PY
 
-# OPTIONAL — re-pin Desktop to ONE project (e.g. the one you use it for):
-codevira init --project-dir "/Users/you/Documents/Projects/MyProject" --no-inject  # writes memory scaffold only
+# OPTIONAL — re-pin Desktop to ONE project (e.g. the one you use it for).
+# Note: --project-dir is a TOP-LEVEL arg (before the subcommand), and
+# --no-inject writes only the in-repo memory scaffold (no IDE config changes):
+codevira --project-dir "/Users/you/Documents/Projects/MyProject" init --no-inject
 python3 - "$CFG" "$(command -v codevira)" "/Users/you/Documents/Projects/MyProject" <<'PY'
 import json, sys
 cfg, cmd, proj = sys.argv[1], sys.argv[2], sys.argv[3]

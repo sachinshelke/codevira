@@ -28,9 +28,20 @@ the throwaway directory is later deleted, the entry is left pinned to a path tha
 no longer exists.
 
 **Claude Desktop is the most visible victim.** Its MCP config
-(`~/Library/Application Support/Claude/claude_desktop_config.json`) has **no
-per-project scope** — it can pin exactly **one** project via `--project-dir`. So
-whatever ran `init` last wins, and a stray `init` silently repoints it.
+(`~/Library/Application Support/Claude/claude_desktop_config.json`) is **not
+project-aware** — no open-folder concept, no per-project config scope, and it
+doesn't send workspace "roots" to the server. So a **single** `codevira` entry
+must be pinned to **one** project via `--project-dir`, and whatever ran `init`
+last wins — a stray `init` silently repoints it.
+
+> This is a *client* limitation, not codevira's. Claude Code **is**
+> project-aware, so one bare `codevira` entry (no `--project-dir`) auto-binds to
+> whichever project you have open — that is the "single MCP, many projects"
+> model. Desktop and Antigravity can't auto-detect, so to cover several projects
+> there you register **one named entry per project** (`codevira-lh`,
+> `codevira-udap`, …) — they run in parallel, at the cost of a longer tool list.
+> Either way, each project reads its **own** in-repo memory; only the auto-detect
+> convenience differs.
 
 > Prevention: don't run `codevira init` in scratch/temp directories. If you must,
 > run it with the IDE injection disabled: `codevira init --no-inject`.

@@ -4,6 +4,7 @@ Tests for the tree-sitter multi-language parser.
 Covers: TypeScript, Go, Rust parsing including symbols, imports,
 docstrings, visibility, and get_symbol_source.
 """
+
 import os
 import pytest
 import sys
@@ -24,6 +25,7 @@ FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
 # ---------------------------------------------------------------------------
 # Extension mapping
 # ---------------------------------------------------------------------------
+
 
 class TestGetLanguage:
     def test_typescript(self):
@@ -49,6 +51,7 @@ class TestGetLanguage:
 # TypeScript parsing
 # ---------------------------------------------------------------------------
 
+
 class TestTypeScriptParsing:
     @pytest.fixture
     def parsed(self) -> ParsedFile:
@@ -56,7 +59,10 @@ class TestTypeScriptParsing:
 
     def test_module_docstring(self, parsed: ParsedFile):
         assert parsed.module_docstring is not None
-        assert "Sample TypeScript module" in parsed.module_docstring or parsed.module_docstring.startswith("/**")
+        assert (
+            "Sample TypeScript module" in parsed.module_docstring
+            or parsed.module_docstring.startswith("/**")
+        )
 
     def test_symbol_count(self, parsed: ParsedFile):
         # greet, _privateHelper, calculateScore, UserService, AppConfig
@@ -101,6 +107,7 @@ class TestTypeScriptParsing:
 # ---------------------------------------------------------------------------
 # Go parsing
 # ---------------------------------------------------------------------------
+
 
 class TestGoParsing:
     @pytest.fixture
@@ -150,6 +157,7 @@ class TestGoParsing:
 # ---------------------------------------------------------------------------
 # Rust parsing
 # ---------------------------------------------------------------------------
+
 
 class TestRustParsing:
     @pytest.fixture
@@ -202,11 +210,10 @@ class TestRustParsing:
 # get_symbol_source
 # ---------------------------------------------------------------------------
 
+
 class TestGetSymbolSource:
     def test_found(self):
-        result = get_symbol_source(
-            os.path.join(FIXTURES_DIR, "sample.go"), "Greet"
-        )
+        result = get_symbol_source(os.path.join(FIXTURES_DIR, "sample.go"), "Greet")
         assert result["found"] is True
         assert result["kind"] == "function"
         assert "fmt.Sprintf" in result["source"]
@@ -232,6 +239,7 @@ class TestGetSymbolSource:
 # Error handling
 # ---------------------------------------------------------------------------
 
+
 class TestErrorHandling:
     def test_file_not_found(self):
         with pytest.raises(FileNotFoundError):
@@ -240,3 +248,45 @@ class TestErrorHandling:
     def test_unsupported_language(self):
         with pytest.raises(ValueError):
             parse_file(os.path.join(FIXTURES_DIR, "sample.ts"), "brainfuck")
+
+
+# ---------------------------------------------------------------------------
+# D000124: full chain — real parser -> extract_imports -> resolved alias edge
+# ---------------------------------------------------------------------------
+
+
+class TestAliasImportEdgeEndToEnd:
+    """Proves the whole chain with the REAL tree-sitter parser: three files
+    importing a module via the tsconfig `@/` alias each produce a dependency
+    edge to it. Before the D000124 fix these resolved to nothing, so
+    get_impact reported blast_radius:0 for a heavily-imported file."""
+
+    def test_aliased_imports_produce_edges(self, tmp_path):
+        from indexer.chunker import extract_imports, _load_tsconfig
+
+        (tmp_path / "src").mkdir(parents=True)
+        (tmp_path / "src" / "objective-spec.ts").write_text(
+            "export type Spec = { id: string };\n"
+        )
+        for i in range(3):
+            (tmp_path / "src" / f"consumer{i}.ts").write_text(
+                "import { Spec } from '@/objective-spec';\nexport const c = 1;\n"
+            )
+        (tmp_path / "tsconfig.json").write_text(
+            '{"compilerOptions": {"baseUrl": ".", "paths": {"@/*": ["src/*"]}}}'
+        )
+        _load_tsconfig.cache_clear()
+
+        incoming = 0
+        for i in range(3):
+            imps = extract_imports(
+                str(tmp_path / "src" / f"consumer{i}.ts"), str(tmp_path)
+            )
+            if any("objective-spec" in p for p in imps):
+                incoming += 1
+        _load_tsconfig.cache_clear()
+
+        assert incoming == 3, (
+            f"aliased imports produced {incoming}/3 edges — before the D000124 "
+            f"fix this was 0, giving blast_radius:0 for a heavily-imported file"
+        )

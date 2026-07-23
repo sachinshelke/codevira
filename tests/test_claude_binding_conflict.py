@@ -244,3 +244,75 @@ class TestCorruptConfigIsNeverClobbered:
         empty.write_text("   ")
         ide_inject._write_json_safe(empty, {"b": 2})
         assert json.loads(empty.read_text()) == {"b": 2}
+
+
+# ---------------------------------------------------------------------------
+# `codevira doctor --fix` — auto-remove the bare entry (closes the gap where
+# the doctor recommended a fix that `init` never actually performed).
+# ---------------------------------------------------------------------------
+
+
+class TestDoctorAutofix:
+    def test_autofix_removes_bare_keeps_scoped_and_backs_up(self, fake_claude_home):
+        from mcp_server import doctor
+
+        _write(fake_claude_home, bare=True, scoped=["/proj/a", "/proj/b"])
+        summary = doctor._autofix_claude_binding()
+
+        assert summary is not None and "removed bare" in summary
+        data = json.loads(fake_claude_home.read_text())
+        # bare gone, both scoped entries preserved
+        assert "codevira" not in (data.get("mcpServers") or {})
+        assert "codevira" in data["projects"]["/proj/a"]["mcpServers"]
+        assert "codevira" in data["projects"]["/proj/b"]["mcpServers"]
+        # a timestamped backup was written next to the config
+        backups = list(fake_claude_home.parent.glob(".claude.json.bak-doctorfix-*"))
+        assert backups, "expected a backup file"
+
+    def test_autofix_noop_when_no_bare(self, fake_claude_home):
+        from mcp_server import doctor
+
+        _write(fake_claude_home, scoped=["/proj/a"])  # scoped only, no bare
+        assert doctor._autofix_claude_binding() is None
+
+    def test_autofix_leaves_deliberate_pinned_global(self, fake_claude_home):
+        from mcp_server import doctor
+
+        _write(fake_claude_home, pinned=True)  # global entry WITH --project-dir
+        assert doctor._autofix_claude_binding() is None
+        data = json.loads(fake_claude_home.read_text())
+        assert "codevira" in data["mcpServers"], "pinned global must be left alone"
+
+    def test_apply_autofixes_acts_only_on_warn_fail_with_fixer(self, fake_claude_home):
+        from mcp_server import doctor
+        import io
+
+        _write(fake_claude_home, bare=True, scoped=["/proj/a"])
+        report = doctor.DoctorReport(
+            results=(
+                doctor.CheckResult("claude_binding_conflict", doctor._WARN, "conflict"),
+                doctor.CheckResult("python_version", doctor._PASS, "ok"),
+            )
+        )
+        out = io.StringIO()
+        changed = doctor.apply_autofixes(report, out)
+        assert changed is True
+        data = json.loads(fake_claude_home.read_text())
+        assert "codevira" not in (data.get("mcpServers") or {})
+
+    def test_apply_autofixes_noop_when_check_passes(self, fake_claude_home):
+        from mcp_server import doctor
+        import io
+
+        _write(fake_claude_home, bare=True, scoped=["/proj/a"])
+        # binding check is PASS in the report -> fixer must NOT run
+        report = doctor.DoctorReport(
+            results=(
+                doctor.CheckResult("claude_binding_conflict", doctor._PASS, "clean"),
+            )
+        )
+        out = io.StringIO()
+        changed = doctor.apply_autofixes(report, out)
+        assert changed is False
+        data = json.loads(fake_claude_home.read_text())
+        assert "codevira" in data["mcpServers"], "must not fix a PASS check"

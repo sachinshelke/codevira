@@ -925,6 +925,15 @@ def main() -> None:
         action="store_true",
         help="Show extra details under each warning / failure",
     )
+    doctor_parser.add_argument(
+        "--fix",
+        action="store_true",
+        help=(
+            "Auto-fix the safely-fixable warnings (currently: remove a bare "
+            "global Claude Code 'codevira' entry that shadows project pins). "
+            "Backs up ~/.claude.json first; only touches the 'codevira' key."
+        ),
+    )
 
     # projects (Bug 21b, rc.4) — inventory of every tracked project on this machine
     projects_parser = subparsers.add_parser(
@@ -1819,7 +1828,10 @@ def main() -> None:
         # Pillar 1.3 — health check
         from mcp_server.doctor import cmd_doctor
 
-        rc = cmd_doctor(verbose=getattr(args, "verbose", False))
+        rc = cmd_doctor(
+            verbose=getattr(args, "verbose", False),
+            fix=getattr(args, "fix", False),
+        )
         sys.exit(rc)
     elif args.command == "projects":
         # Bug 21b (rc.4) — project inventory

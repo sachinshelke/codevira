@@ -935,6 +935,33 @@ def main() -> None:
         ),
     )
 
+    # register-all (v3.8.0) — clean-slate one-MCP-per-project registration
+    register_all_parser = subparsers.add_parser(
+        "register-all",
+        help="Register every existing project as its own named MCP (heals wrong-project binding)",
+        description=(
+            "Zero every codevira MCP entry across all detected IDEs, then "
+            "register each discovered project as its OWN uniquely-named MCP "
+            "(codevira-<slug>) pinned to --project-dir. Replaces the fragile "
+            "shared auto-detect entry that could bind sessions to the wrong "
+            "project's memory. Every config is backed up first; only "
+            "'codevira*' keys are touched. Nested monorepo sub-stores are "
+            "excluded automatically."
+        ),
+    )
+    register_all_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would change; write nothing.",
+    )
+    register_all_parser.add_argument(
+        "--scan-root",
+        action="append",
+        default=[],
+        metavar="DIR",
+        help="Extra directory to scan for codevira projects (repeatable).",
+    )
+
     # projects (Bug 21b, rc.4) — inventory of every tracked project on this machine
     projects_parser = subparsers.add_parser(
         "projects",
@@ -1831,6 +1858,15 @@ def main() -> None:
         rc = cmd_doctor(
             verbose=getattr(args, "verbose", False),
             fix=getattr(args, "fix", False),
+        )
+        sys.exit(rc)
+    elif args.command == "register-all":
+        # v3.8.0 — clean-slate one-MCP-per-project registration
+        from mcp_server.register_all import cmd_register_all
+
+        rc = cmd_register_all(
+            dry_run=getattr(args, "dry_run", False),
+            scan_root=getattr(args, "scan_root", []),
         )
         sys.exit(rc)
     elif args.command == "projects":

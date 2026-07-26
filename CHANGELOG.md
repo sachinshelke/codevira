@@ -7,6 +7,40 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [Unreleased] — 3.8.0
+
+### Added — `codevira register-all`: one MCP per project (heals wrong-project binding)
+
+The shared "single `codevira` entry that auto-detects the project" model proved
+fragile: a bare (project-less) entry out-ranks project-scoped ones, so a session
+opened in project A could read project B's memory (the "opened LH, got UDAP"
+class of bug). On non-project-aware clients (Claude Desktop, Antigravity) there
+is no reliable auto-detect at all.
+
+`codevira register-all` abandons auto-detect for the reliable model: it **zeroes
+every `codevira*` MCP entry** across all detected IDEs, then registers each
+discovered project as its **own uniquely-named MCP** (`codevira-<slug>`)
+hard-pinned to `--project-dir`. One MCP per project — no collisions.
+
+- **Dynamic discovery, nothing hardcoded.** Projects are the union of dirs
+  already registered in an IDE config and dirs with a `.codevira/` store found
+  by scanning the ancestors of those (plus any `--scan-root`). Nested monorepo
+  sub-stores (e.g. `repo/packages/db/.codevira`) are excluded automatically.
+- **Safe.** Every config is backed up (`*.bak-registerall-*`) before it is
+  rewritten, and only `codevira*` keys are touched — all other MCP servers and
+  settings are preserved. `--dry-run` shows the plan and writes nothing.
+- Spans Claude Code (project-scope), Claude Desktop, and Antigravity.
+
+### Added — `codevira doctor --fix`
+
+`doctor` flagged a bare-global-entry binding conflict and told users to run
+`codevira init`, but `init` only warned and never removed the bare entry.
+`codevira doctor --fix` now applies the auto-fixer for any WARN/FAIL check that
+has one (currently: remove the bare `codevira` entry that shadows project pins),
+backing up `~/.claude.json` first and touching only the `codevira` key.
+
+---
+
 ## [3.7.1] — 2026-07-20
 
 ### Fixed — the centralization migration silently orphaned ALL memory (critical)

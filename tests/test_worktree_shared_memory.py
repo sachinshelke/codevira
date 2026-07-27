@@ -83,3 +83,70 @@ class TestWorktreeSharedMemory:
         (wt / ".git").write_text(f"gitdir: {home}/.git/worktrees/x\n")
         monkeypatch.setattr(sp, "is_invalid_project_root", lambda p: p == home)
         assert sp._main_worktree_root(wt) == wt  # fell back, did not use $HOME
+
+
+# ---------------------------------------------------------------------------
+# Migration: fold a PRE-EXISTING worktree-local .codevira into the main store
+# (so the D00012A redirect never orphans decisions written before the upgrade)
+# ---------------------------------------------------------------------------
+
+
+class TestWorktreeMemoryMergeMigration:
+    def _read_ids(self, jsonl: Path) -> set[str]:
+        import json
+
+        return {
+            json.loads(ln)["id"] for ln in jsonl.read_text().splitlines() if ln.strip()
+        }
+
+    def test_folds_worktree_decisions_into_main_nondestructively(
+        self, repo_with_worktree
+    ):
+        from mcp_server import migrate
+
+        main, wt = repo_with_worktree
+        # main already has D1 (from the fixture). Simulate a PRE-FIX worktree
+        # that wrote its own D2 into its own local .codevira/.
+        (wt / ".codevira").mkdir()
+        (wt / ".codevira" / "decisions.jsonl").write_text(
+            '{"id":"D2","decision":"made in worktree"}\n'
+        )
+
+        assert migrate._mig_v380_worktree_memory_merge(wt) is True
+
+        # main store now holds BOTH decisions (union)
+        main_ids = self._read_ids(main / ".codevira" / "decisions.jsonl")
+        assert {"D1", "D2"} <= main_ids
+        # non-destructive: worktree store renamed to a premerge backup, not deleted
+        assert not (wt / ".codevira").exists()
+        backups = list(wt.glob(".codevira.premerge-*"))
+        assert backups and (backups[0] / "decisions.jsonl").exists()
+
+    def test_noop_on_main_checkout(self, repo_with_worktree):
+        from mcp_server import migrate
+
+        main, _wt = repo_with_worktree
+        assert migrate._mig_v380_worktree_memory_merge(main) is False
+
+    def test_noop_when_worktree_has_no_local_store(self, repo_with_worktree):
+        from mcp_server import migrate
+
+        _main, wt = repo_with_worktree
+        # worktree has no OWN .codevira (the post-fix normal state)
+        assert not (wt / ".codevira").exists()
+        assert migrate._mig_v380_worktree_memory_merge(wt) is False
+
+    def test_dedups_shared_decision(self, repo_with_worktree):
+        from mcp_server import migrate
+
+        main, wt = repo_with_worktree
+        # both stores contain the SAME D1 record → union must not duplicate it
+        (wt / ".codevira").mkdir()
+        (wt / ".codevira" / "decisions.jsonl").write_text('{"id":"D1"}\n{"id":"D9"}\n')
+        migrate._mig_v380_worktree_memory_merge(wt)
+        lines = [
+            ln
+            for ln in (main / ".codevira" / "decisions.jsonl").read_text().splitlines()
+            if '"id":"D1"' in ln.replace(" ", "")
+        ]
+        assert len(lines) == 1, "D1 must appear once after union, not duplicated"

@@ -550,17 +550,118 @@ def _mig_v370_dedupe_registration(project_root: Path) -> bool:
     return True
 
 
+def _mig_v380_worktree_memory_merge(project_root: Path) -> bool:
+    """Fold a git worktree's OWN ``.codevira/`` into the MAIN worktree's store.
+
+    v3.8.0 (D00012A) routes a worktree's memory to the main worktree's
+    ``.codevira/``, so a worktree's *pre-existing* local store would be
+    orphaned (written by an older codevira, no longer read). This migrates it:
+
+      * record-level UNION for every ``*.jsonl`` (the exact union the git merge
+        driver uses — ``_union_dedup`` + ``id_repair.normalize`` on the decision
+        log), so worktree decisions are folded into main without loss or dupes;
+      * file-copy for any non-jsonl memory file main lacks (never ``config.yaml``
+        — main owns that);
+      * then RENAME the worktree store to ``.codevira.premerge-<ts>`` — a
+        NON-DESTRUCTIVE backup (never delete the only copy; honors D00011Z) that
+        also stops re-detection.
+
+    No-op for a normal checkout or an empty/absent local store. Lives in
+    ``_ALWAYS_RERUN`` because the ledger now sits in the (shared) main store, so
+    each worktree must get a chance to run; the rename makes it self-guarding.
+    """
+    from mcp_server.storage.paths import _main_worktree_root
+
+    main_root = _main_worktree_root(project_root)
+    if main_root == project_root:
+        return False  # not a linked worktree — nothing to do
+
+    wt_store = project_root / ".codevira"
+    main_store = main_root / ".codevira"
+    try:
+        if not wt_store.is_dir() or wt_store.resolve() == main_store.resolve():
+            return False
+    except OSError:
+        return False
+
+    from mcp_server.cli_repair import _union_dedup
+    from mcp_server.storage import id_repair, jsonl_store
+
+    found_records = False
+    main_store.mkdir(parents=True, exist_ok=True)
+
+    for src in sorted(wt_store.glob("*.jsonl")):
+        wt_recs, wt_bad = jsonl_store.read_records_and_malformed(src)
+        if not wt_recs and not wt_bad:
+            continue
+        if wt_recs:
+            found_records = True
+        dst = main_store / src.name
+        main_recs, main_bad = (
+            ([], [])
+            if not dst.exists()
+            else jsonl_store.read_records_and_malformed(dst)
+        )
+        combined = _union_dedup(main_recs, wt_recs)
+        if src.name == "decisions.jsonl":
+            combined = id_repair.normalize(combined)["records"]
+        lines = [
+            json.dumps(r, ensure_ascii=False, separators=(",", ":")) for r in combined
+        ]
+        for bad in [*main_bad, *wt_bad]:
+            if bad not in lines:
+                lines.append(bad)
+        new_text = ("\n".join(lines) + "\n") if lines else ""
+        if not dst.exists() or dst.read_text(encoding="utf-8") != new_text:
+            dst.write_text(new_text, encoding="utf-8")
+
+    if not found_records:
+        return False  # empty worktree store — leave it untouched
+
+    # non-jsonl memory files main lacks (skip config.yaml — main owns it)
+    for src in wt_store.iterdir():
+        if src.suffix == ".jsonl" or src.name == "config.yaml":
+            continue
+        dst = main_store / src.name
+        if dst.exists():
+            continue
+        try:
+            shutil.copytree(src, dst) if src.is_dir() else shutil.copy2(src, dst)
+        except OSError as e:  # noqa: PERF203 — per-file best effort
+            logger.warning("worktree merge: could not copy %s: %s", src, e)
+
+    try:
+        ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        backup = project_root / f".codevira.premerge-{ts}"
+        wt_store.rename(backup)
+        logger.warning(
+            "Merged worktree memory %s -> %s; original backed up at %s",
+            wt_store,
+            main_store,
+            backup,
+        )
+    except OSError as e:
+        logger.warning("worktree merge: backup rename failed for %s: %s", wt_store, e)
+
+    return True
+
+
 # Ordered ledger of named startup migrations. APPEND new entries; never rename
 # or renumber an existing one — the name is the idempotency key.
 #: Migrations that must run on EVERY start, never sealed by the ledger. They
 #: are cheap, idempotent and self-guarding (they no-op when there is nothing to
 #: do), and they heal conditions that can first appear long after the upgrade.
-_ALWAYS_RERUN = frozenset({"v371_recover_orphaned_memory"})
+_ALWAYS_RERUN = frozenset(
+    {"v371_recover_orphaned_memory", "v380_worktree_memory_merge"}
+)
 
 _STARTUP_MIGRATIONS = (
     # Runs FIRST: restore memory stranded by the pre-3.7.1 centralization
     # migration before any other migration reads the store.
     ("v371_recover_orphaned_memory", _mig_v371_recover_orphaned_memory),
+    # Then fold any worktree-local store into the main worktree's store, so the
+    # collision repair below operates on the fully-merged decision log.
+    ("v380_worktree_memory_merge", _mig_v380_worktree_memory_merge),
     ("v370_repair_collisions", _mig_v370_repair_collisions),
     ("v370_merge_driver", _mig_v370_merge_driver),
     ("v370_dedupe_registration", _mig_v370_dedupe_registration),

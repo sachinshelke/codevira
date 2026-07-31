@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Codevira — persistent memory &amp; decision enforcement for AI coding agents</title>
-<meta name="description" content="Persistent, team-shareable memory for AI coding agents — shared across Claude Code, Cursor, Windsurf & Copilot. Enforces past decisions, blocks regressions. Local-first, MIT.">
+<meta name="description" content="Persistent, team-shareable memory for AI coding agents — shared across Claude Code, Cursor & Copilot. Enforces past decisions, blocks regressions. Local-first, MIT.">
 <link rel="canonical" href="https://sachinshelke.github.io/codevira/">
 <meta name="robots" content="index, follow">
 <meta name="theme-color" content="#0b0d12">
@@ -58,7 +58,7 @@
     {
       "@type": "Question",
       "name": "What is Codevira?",
-      "acceptedAnswer": {"@type": "Answer", "text": "A persistent memory layer for AI coding agents — so Claude Code, Cursor, Windsurf, and Antigravity all share the same project context, decisions, and history on your local machine. It also enforces past decisions, blocking edits that would revert them or re-introduce a fixed bug."}
+      "acceptedAnswer": {"@type": "Answer", "text": "A persistent memory layer for AI coding agents — so Claude Code, Cursor, and Antigravity all share the same project context, decisions, and history on your local machine. It also enforces past decisions, blocking edits that would revert them or re-introduce a fixed bug."}
     },
     {
       "@type": "Question",
@@ -78,7 +78,7 @@
     {
       "@type": "Question",
       "name": "Which AI coding tools does Codevira work with?",
-      "acceptedAnswer": {"@type": "Answer", "text": "Claude Code, Claude Desktop, Cursor, Windsurf, and Google Antigravity via MCP; OpenAI Codex and GitHub Copilot read the generated AGENTS.md natively. One codevira setup configures every tool it detects on your machine. Claude Code additionally gets lifecycle hooks, where hard enforcement lives."}
+      "acceptedAnswer": {"@type": "Answer", "text": "Claude Code, Claude Desktop, Cursor, and Google Antigravity via MCP; OpenAI Codex and GitHub Copilot read the generated AGENTS.md natively. One codevira setup configures every tool it detects on your machine. Claude Code additionally gets lifecycle hooks, where hard enforcement lives."}
     },
     {
       "@type": "Question",
@@ -625,7 +625,7 @@
         together. Opt-in.</p>
       </div>
     </div>
-    <p class="tabnote reveal" style="text-align:center">The <strong>hard block</strong> — the edit actually refused before it touches disk — runs in <strong>Claude Code</strong>, via its <code style="font-family:var(--mono)">PreToolUse</code> hook. In Cursor, Windsurf, Codex and Copilot the same decisions ride along as strong <code style="font-family:var(--mono)">AGENTS.md</code> guidance (advisory, not a physical veto) — their edits don't route through codevira's hook engine. The shared <em>memory</em> is universal; the verified hard <em>enforcement</em> is Claude Code today. As of 3.7.1, Antigravity also gets a <code style="font-family:var(--mono)">PreToolUse</code> enforcement hook that surfaces and can block decision-reverting edits.</p>
+    <p class="tabnote reveal" style="text-align:center">The <strong>hard block</strong> — the edit actually refused before it touches disk — runs in <strong>Claude Code</strong>, via its <code style="font-family:var(--mono)">PreToolUse</code> hook. In Cursor, Codex and Copilot the same decisions ride along as strong <code style="font-family:var(--mono)">AGENTS.md</code> guidance (advisory, not a physical veto) — their edits don't route through codevira's hook engine. The shared <em>memory</em> is universal; the verified hard <em>enforcement</em> is Claude Code today. As of 3.7.1, Antigravity also gets a <code style="font-family:var(--mono)">PreToolUse</code> enforcement hook that surfaces and can block decision-reverting edits.</p>
   </section>
 
   <!-- WORKS WITH -->
@@ -633,12 +633,11 @@
     <div class="kicker reveal">Cross-IDE</div>
     <h2 class="reveal">One memory. Every tool.</h2>
     <p class="lede reveal">A decision logged in Claude Code shows up in Cursor. A fix recorded today blocks
-    the same regression in Windsurf tomorrow — through MCP plus an auto-generated
+    the same regression in Cursor tomorrow — through MCP plus an auto-generated
     <code>AGENTS.md</code> every modern tool reads natively.</p>
     <div class="ides">
       <div class="ide glass reveal"><span class="chip"><img src="assets/claude.svg" alt="Claude Code"></span>Claude Code<small>MCP + hooks</small></div>
       <div class="ide glass reveal"><span class="chip"><img src="assets/cursor.png" alt="Cursor"></span>Cursor<small>MCP + AGENTS.md</small></div>
-      <div class="ide glass reveal"><span class="chip"><img src="assets/windsurf.svg" alt="Windsurf"></span>Windsurf<small>MCP + AGENTS.md</small></div>
       <div class="ide glass reveal"><span class="chip"><img src="assets/copilot.svg" alt="GitHub Copilot"></span>Copilot<small>AGENTS.md</small></div>
       <div class="ide glass reveal"><span class="chip"><img src="assets/gemini.svg" alt="Gemini CLI"></span>Gemini CLI<small>MCP + AGENTS.md</small></div>
       <div class="ide glass reveal"><span class="chip"><img src="assets/codex.png" alt="OpenAI Codex"></span>Codex<small>MCP + AGENTS.md</small></div>
@@ -778,7 +777,6 @@
       <button class="tab active" data-pane="p-auto">⚡ Automatic</button>
       <button class="tab" data-pane="p-claude">Claude Code</button>
       <button class="tab" data-pane="p-cursor">Cursor</button>
-      <button class="tab" data-pane="p-windsurf">Windsurf</button>
       <button class="tab" data-pane="p-any">Any MCP client</button>
       <button class="tab" data-pane="p-data">Raw data</button>
     </div>
@@ -790,7 +788,6 @@
 
 <span class="ok">✓</span> Claude Code    MCP config + 5 lifecycle hooks
 <span class="ok">✓</span> Cursor         MCP config + AGENTS.md
-<span class="ok">✓</span> Windsurf       MCP config + AGENTS.md
 <span class="ok">✓</span> Gemini CLI     MCP config + AGENTS.md</pre></div>
         <p class="tabnote">Fully reversible: <code style="font-family:var(--mono)">codevira uninstall</code> removes every system write.</p>
       </div>
@@ -817,18 +814,6 @@
   }
 }</pre></div>
         <p class="tabnote">One entry, project resolved from workspace roots at runtime. Cursor also reads the repo's <code style="font-family:var(--mono)">AGENTS.md</code> natively — the decision digest rides along with zero config.</p>
-      </div>
-      <div class="tabpane" id="p-windsurf">
-        <div class="codecard"><pre><span class="cm">// ~/.codeium/windsurf/mcp_config.json  — one user-scope entry</span>
-{
-  <span class="bb">"mcpServers"</span>: {
-    <span class="bb">"codevira"</span>: {
-      <span class="bb">"command"</span>: <span class="yy">"/path/to/codevira-python"</span>,
-      <span class="bb">"args"</span>: [<span class="yy">"-m"</span>, <span class="yy">"mcp_server"</span>]
-    }
-  }
-}</pre></div>
-        <p class="tabnote">To pin a specific project instead of resolving from workspace roots, add <code style="font-family:var(--mono)">"--project-dir", "/path/to/project"</code> to <code style="font-family:var(--mono)">args</code> (or run <code style="font-family:var(--mono)">codevira init --per-project</code>).</p>
       </div>
       <div class="tabpane" id="p-any">
         <div class="codecard"><pre><span class="cm"># Codevira is a standard MCP stdio server — any client in any</span>
@@ -878,7 +863,7 @@ params = StdioServerParameters(command=<span class="yy">"codevira-python"</span>
     <div class="glass reveal" style="margin-top:36px;padding:8px 22px">
       <details>
         <summary style="cursor:pointer;padding:16px 0;font-weight:600">What is Codevira?</summary>
-        <p style="padding:0 0 16px;color:var(--dim)">A persistent memory layer for AI coding agents — so Claude Code, Cursor, Windsurf, and Antigravity all share the same project context, decisions, and history on your local machine. It also enforces past decisions, blocking edits that would revert them or re-introduce a fixed bug.</p>
+        <p style="padding:0 0 16px;color:var(--dim)">A persistent memory layer for AI coding agents — so Claude Code, Cursor, and Antigravity all share the same project context, decisions, and history on your local machine. It also enforces past decisions, blocking edits that would revert them or re-introduce a fixed bug.</p>
       </details>
       <details>
         <summary style="cursor:pointer;padding:16px 0;font-weight:600;border-top:1px solid var(--glass-edge)">Does Codevira send my code anywhere?</summary>
@@ -894,7 +879,7 @@ params = StdioServerParameters(command=<span class="yy">"codevira-python"</span>
       </details>
       <details>
         <summary style="cursor:pointer;padding:16px 0;font-weight:600;border-top:1px solid var(--glass-edge)">Which AI coding tools does it work with?</summary>
-        <p style="padding:0 0 16px;color:var(--dim)">Claude Code, Claude Desktop, Cursor, Windsurf, and Google Antigravity via MCP; OpenAI Codex and GitHub Copilot read the generated <code style="font-family:var(--mono)">AGENTS.md</code> natively. One <code style="font-family:var(--mono)">codevira setup</code> configures every tool it detects on your machine. Claude Code additionally gets lifecycle hooks — that's where hard enforcement lives.</p>
+        <p style="padding:0 0 16px;color:var(--dim)">Claude Code, Claude Desktop, Cursor, and Google Antigravity via MCP; OpenAI Codex and GitHub Copilot read the generated <code style="font-family:var(--mono)">AGENTS.md</code> natively. One <code style="font-family:var(--mono)">codevira setup</code> configures every tool it detects on your machine. Claude Code additionally gets lifecycle hooks — that's where hard enforcement lives.</p>
       </details>
       <details>
         <summary style="cursor:pointer;padding:16px 0;font-weight:600;border-top:1px solid var(--glass-edge)">How much does it cost?</summary>

@@ -27,7 +27,7 @@ Usage (Claude Code .claude/settings.json):
     }
   }
 
-Usage (Cursor / Windsurf): configure via their MCP settings UI with same command.
+Usage (Cursor): configure via its MCP settings UI with same command.
 """
 
 from __future__ import annotations
@@ -1076,7 +1076,7 @@ async def list_tools() -> list[Tool]:
                 "Returns current roadmap phase, recent decisions with confidence, "
                 "learned preferences, and active rules — everything a new session needs. "
                 "Call this at the START of every session instead of multiple separate calls. "
-                "Works seamlessly across AI tools: Cursor, Claude Code, Windsurf, Antigravity."
+                "Works seamlessly across AI tools: Cursor, Claude Code, Antigravity."
             ),
             inputSchema={"type": "object", "properties": {}},
         ),
@@ -1832,7 +1832,7 @@ def _maybe_bind_from_tool_path(arguments: dict) -> None:
     invalidates the per-root data-dir cache, so subsequent reads come from
     the right project's ``.codevira/``). Sticky: a path-less follow-up tool
     keeps the last resolved project. Gated to ``CODEVIRA_IDE=claude_desktop``
-    so strictly workspace-bound IDEs (Claude Code / Cursor / Windsurf) are
+    so strictly workspace-bound IDEs (Claude Code / Cursor) are
     untouched. Best-effort, never raises, never blocks dispatch.
     """
     import os

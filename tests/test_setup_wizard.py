@@ -426,7 +426,7 @@ class TestPerformance:
             t = time.perf_counter()
             build_setup_plan(
                 isolated,
-                detected_ides=("claude", "cursor", "windsurf", "antigravity", "codex"),
+                detected_ides=("claude", "cursor", "antigravity", "codex"),
             )
             durations.append((time.perf_counter() - t) * 1000)
         p95 = sorted(durations)[18]
@@ -447,7 +447,7 @@ class TestPerformance:
 
         plan = build_setup_plan(
             isolated,
-            detected_ides=("claude", "cursor", "windsurf", "codex"),
+            detected_ides=("claude", "cursor", "codex"),
             install_mcp=False,  # avoids real ~/.codeium etc.
         )
         t = time.perf_counter()
@@ -624,15 +624,15 @@ class TestIntegrationFindings:
             _claude_global_config_path,
             _claude_desktop_config_path,
             _cursor_global_config_path,
-            _windsurf_global_config_path,
             _antigravity_config_path,
         )
 
         assert _mcp_config_path_for("claude") == _claude_global_config_path()
         assert _mcp_config_path_for("claude_desktop") == _claude_desktop_config_path()
         assert _mcp_config_path_for("cursor") == _cursor_global_config_path()
-        assert _mcp_config_path_for("windsurf") == _windsurf_global_config_path()
         assert _mcp_config_path_for("antigravity") == _antigravity_config_path()
+        # v3.8.0: windsurf is no longer a config target — no path mapping.
+        assert _mcp_config_path_for("windsurf") is None
 
     def test_claude_desktop_step_is_planned_when_detected(self, isolated: Path):
         """Bug 6b regression: when claude_desktop is in the detected list,

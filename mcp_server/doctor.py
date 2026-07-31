@@ -346,8 +346,7 @@ def check_detected_ides() -> CheckResult:
             _WARN,
             "No AI coding tools detected (Claude Code, Cursor, etc.)",
             fix_command=(
-                "Install at least one: claude.ai/download · cursor.sh · "
-                "windsurf.com · etc."
+                "Install at least one: claude.ai/download · cursor.sh · " "etc."
             ),
         )
     return CheckResult(
@@ -513,7 +512,7 @@ def check_claude_mcp_visibility() -> CheckResult:
             details=(
                 "This check verifies Claude Code's MCP runtime sees "
                 "codevira. Without the `claude` CLI we can't probe it. "
-                "If you only use Claude Desktop / Cursor / Windsurf, "
+                "If you only use Claude Desktop / Cursor, "
                 "this is fine — those tools have their own indicators."
             ),
         )

@@ -1,7 +1,7 @@
 """
 ide_inject.py — Auto-detect installed AI tools and inject MCP configuration.
 
-Detects Claude Code, Claude Desktop, Cursor, Windsurf, and Google Antigravity,
+Detects Claude Code, Claude Desktop, Cursor, and Google Antigravity,
 then writes the correct MCP server config to each tool's settings file.
 Non-destructive merge: only touches the 'codevira' entry, preserves everything else.
 
@@ -39,7 +39,7 @@ def detect_installed_ides(project_root: Path) -> list[str]:
     their meaning.
 
     Tier 1 (have specific MCP-config path support): claude,
-    claude_desktop, cursor, windsurf, antigravity.
+    claude_desktop, cursor, antigravity.
 
     Tier 2 (AGENTS.md-style integration, no MCP-config injection):
     codex, copilot.
@@ -82,16 +82,6 @@ def detect_installed_ides(project_root: Path) -> list[str]:
         shutil.which("cursor") is not None or (cursor_dir / "mcp.json").is_file()
     ):
         found.append("cursor")
-
-    # Windsurf: require the actual mcp_config.json to exist (not just
-    # the parent directory). Windsurf writes this file the first time
-    # the app runs.
-    windsurf_paths = (
-        Path.home() / ".windsurf" / "mcp_config.json",
-        Path.home() / ".codeium" / "windsurf" / "mcp_config.json",
-    )
-    if any(p.is_file() for p in windsurf_paths):
-        found.append("windsurf")
 
     # Google Antigravity 2.0: the MCP config lives in the shared
     # ~/.gemini/config/ dir and/or the per-app ~/.gemini/antigravity/ dir
@@ -711,7 +701,7 @@ def _build_server_config(
 
     If cmd_path is the Python interpreter (fallback), use `-m mcp_server --project-dir`.
     If cmd_path is the codevira binary:
-      - use_cwd=True:  {"command": ..., "args": [], "cwd": ...}   (Claude / Cursor / Windsurf)
+      - use_cwd=True:  {"command": ..., "args": [], "cwd": ...}   (Claude / Cursor)
       - use_cwd=False: {"command": ..., "args": ["--project-dir", ...]}  (tools that ignore cwd)
     """
     is_python_fallback = cmd_path == python_exe
@@ -925,23 +915,6 @@ def _inject_cursor(project_root: Path, cmd_path: str, python_exe: str) -> str | 
     server_config["env"] = {
         **(server_config.get("env") or {}),
         "CODEVIRA_IDE": "cursor",
-    }
-    merged = _merge_mcp_config(existing, "codevira", server_config)
-    _write_json_safe(config_path, merged)
-    return str(config_path)
-
-
-def _inject_windsurf(project_root: Path, cmd_path: str, python_exe: str) -> str | None:
-    """Inject MCP config into Windsurf per-project settings."""
-    config_path = _windsurf_config_path(project_root)
-    existing = _read_json_safe(config_path)
-    server_config = _build_server_config(
-        cmd_path, python_exe, project_root, use_cwd=True
-    )
-    # v3.1.0 M1: origin.ide stamp.
-    server_config["env"] = {
-        **(server_config.get("env") or {}),
-        "CODEVIRA_IDE": "windsurf",
     }
     merged = _merge_mcp_config(existing, "codevira", server_config)
     _write_json_safe(config_path, merged)
@@ -1236,21 +1209,6 @@ def inject_global_cursor(cmd_path: str, python_exe: str) -> str | None:
     return str(config_path)
 
 
-def inject_global_windsurf(cmd_path: str, python_exe: str) -> str | None:
-    """Inject global codevira config into Windsurf."""
-    config_path = _windsurf_global_config_path()
-    existing = _read_json_safe(config_path)
-    server_config = _build_global_server_config(cmd_path, python_exe)
-    # v3.1.0 M1: origin.ide stamp.
-    server_config["env"] = {
-        **(server_config.get("env") or {}),
-        "CODEVIRA_IDE": "windsurf",
-    }
-    merged = _merge_mcp_config(existing, "codevira", server_config)
-    _write_json_safe(config_path, merged)
-    return str(config_path)
-
-
 def inject_global_antigravity(cmd_path: str, python_exe: str) -> str | None:
     """Inject global codevira config into Google Antigravity.
 
@@ -1316,7 +1274,7 @@ def inject_global_antigravity(cmd_path: str, python_exe: str) -> str | None:
 def inject_claude_http_url(url: str) -> str | None:
     """Inject HTTP URL config into Claude Code global settings.
 
-    Only for Claude Code CLI — Cursor/Windsurf do not support URL format.
+    Only for Claude Code CLI — Cursor does not support URL format.
     Claude Desktop does not support URL format either (stdio only).
 
     Args:
@@ -1372,10 +1330,6 @@ def inject_ide_config(
                     path = inject_global_cursor(cmd_path, python_exe)
                     if path:
                         results["Cursor (global)"] = path
-                elif ide == "windsurf":
-                    path = inject_global_windsurf(cmd_path, python_exe)
-                    if path:
-                        results["Windsurf (global)"] = path
                 elif ide == "claude_desktop":
                     # Claude Desktop can't do project-agnostic config (no cwd,
                     # no workspace roots, no url). v3.7.0: rather than skip it
@@ -1414,10 +1368,6 @@ def inject_ide_config(
                     path = _inject_cursor(project_root, cmd_path, python_exe)
                     if path:
                         results["Cursor"] = path
-                elif ide == "windsurf":
-                    path = _inject_windsurf(project_root, cmd_path, python_exe)
-                    if path:
-                        results["Windsurf"] = path
                 elif ide == "antigravity":
                     path = _inject_antigravity(
                         project_root, cmd_path, python_exe, project_name

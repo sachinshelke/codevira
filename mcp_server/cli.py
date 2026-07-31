@@ -842,7 +842,7 @@ def main() -> None:
             "Detect every AI coding tool installed on this machine, then "
             "configure them all to use Codevira: MCP server entries, Claude "
             "Code lifecycle hooks, and per-IDE nudge files (CLAUDE.md, "
-            "AGENTS.md, .cursor/rules/codevira.mdc, .windsurfrules, "
+            "AGENTS.md, .cursor/rules/codevira.mdc, "
             "GEMINI.md, .github/copilot-instructions.md). Idempotent — "
             "re-run any time to re-sync."
         ),
@@ -864,7 +864,7 @@ def main() -> None:
         metavar="IDE",
         help=(
             "Only configure this IDE (repeatable). One of: claude, "
-            "claude_desktop, cursor, windsurf, antigravity, agents_md. "
+            "claude_desktop, cursor, antigravity, agents_md. "
             "By default the wizard configures ALL auto-detected IDEs; "
             "use this to scope down. Pairs with --force when the IDE "
             "you want isn't auto-detected."

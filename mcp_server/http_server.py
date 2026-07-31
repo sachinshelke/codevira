@@ -2,7 +2,7 @@
 http_server.py — HTTP/Streamable transport for Codevira MCP server.
 
 Runs the same 50 MCP tools as stdio mode but over HTTP, enabling:
-  - URL-based MCP registration in Claude Code, Cursor, Windsurf
+  - URL-based MCP registration in Claude Code, Cursor
   - HTTPS via mkcert for locally-trusted certificates (required by Claude.ai)
   - Parallel multi-client connections without spawning a process per client
 
@@ -68,7 +68,7 @@ a { color: #0969da; }
 
 <h2>This is not a web app</h2>
 <p>Codevira is a <strong>Model Context Protocol</strong> server. It's designed to
-be consumed by AI coding tools (Claude Code, Cursor, Windsurf), not visited in a browser.</p>
+be consumed by AI coding tools (Claude Code, Cursor), not visited in a browser.</p>
 
 <div class="note">
 <strong>Note:</strong> The <code>/mcp</code> endpoint requires <code>Accept: text/event-stream</code>

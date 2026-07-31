@@ -31,7 +31,7 @@
 - **D000019** IMPLEMENTED (commit 7a2bdd4) the D000018 token reduction. New env var CODEVIRA_TOOL_PROFILE=lean trims the advertised M…
 - **D00001A** RELEASE SCOPING (per Sachin 2026-05-26): ALL of this session's work ships in the SINGLE 3.0.0 release — there is no sep…
 
-_+78 more decision(s) — full log in `.codevira/decisions.jsonl`._
+_+88 more decision(s) — full log in `.codevira/decisions.jsonl`._
 
 
 For the full decision log, use `search_decisions` / `list_decisions` (or the `codevira` CLI) — don't read `.codevira/*.jsonl` directly.
@@ -110,12 +110,12 @@ Some decisions in this project are protected. If `search_decisions()` returns a 
 
 ## Cross-tool memory
 
-The user may open this project in multiple AI tools across the day — Claude Code, Cursor, Windsurf, Antigravity, Gemini, Codex, Copilot. **They all see the same project memory through Codevira.** What you record here is visible to whichever tool the user opens next.
+The user may open this project in multiple AI tools across the day — Claude Code, Cursor, Antigravity, Gemini, Codex, Copilot. **They all see the same project memory through Codevira.** What you record here is visible to whichever tool the user opens next.
 
 This means:
 
 - A decision you log in Claude Code shows up in Cursor.
-- A fix you record will block the same regression in Windsurf the next morning.
+- A fix you record will block the same regression in Cursor the next morning.
 - A style preference learned in one session enforces in the next.
 
 Be a good citizen: log decisions, respect existing ones, and assume the next AI to read this graph isn't you.

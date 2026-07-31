@@ -60,7 +60,7 @@ def default_session_id() -> str:
 
     v3.0.1 fix: prior to this, an unattributed ``record_decision`` /
     ``write_session_log`` defaulted to the LITERAL string ``"ad-hoc"``.
-    Every concurrent IDE (Claude Code, Cursor, Windsurf, Antigravity)
+    Every concurrent IDE (Claude Code, Cursor, Antigravity)
     that didn't pass a slug collided into the same bucket — masking
     session boundaries and breaking the v3.1.0 working-memory design
     (which keys observations by session_id). Generating a unique
@@ -226,7 +226,7 @@ def record(
             logger.warning("decisions_store.record: activity add failed: %s", exc)
 
     # Phase D — regenerate AGENTS.md so other AI tools (Copilot, Codex,
-    # Cursor, Gemini, Factory, Amp, Windsurf, Zed, RooCode, Jules) see
+    # Cursor, Gemini, Factory, Amp, Zed, RooCode, Jules) see
     # the new decision on their next prompt. Best-effort (P9).
     _sync_agents_md_best_effort()
 

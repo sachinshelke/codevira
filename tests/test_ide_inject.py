@@ -14,7 +14,7 @@ Covers:
   - detect_installed_ides
   - _resolve_command
   - inject_ide_config integration tests
-  - _inject_claude, _inject_cursor, _inject_windsurf per-project
+  - _inject_claude, _inject_cursor per-project
   - inject_ide_config global_mode=True (skips Desktop + Antigravity)
   - inject_ide_config exception handling
   - Chaos: corrupt files, read-only, concurrency, long paths
@@ -39,7 +39,6 @@ from mcp_server.ide_inject import (
     _inject_claude,
     _inject_claude_desktop,
     _inject_cursor,
-    _inject_windsurf,
     _merge_mcp_config,
     _read_json_safe,
     _resolve_command,
@@ -49,7 +48,6 @@ from mcp_server.ide_inject import (
     inject_global_claude_code,
     inject_global_claude_desktop,
     inject_global_cursor,
-    inject_global_windsurf,
     inject_ide_config,
 )
 
@@ -254,7 +252,7 @@ class TestClaudeDesktopInject:
 
 
 # ===========================================================================
-# Per-project injection: _inject_claude, _inject_cursor, _inject_windsurf
+# Per-project injection: _inject_claude, _inject_cursor
 # ===========================================================================
 
 
@@ -325,33 +323,6 @@ class TestInjectCursor:
         assert "codevira" in data["mcpServers"]
 
 
-class TestInjectWindsurf:
-    def test_writes_per_project_mcp_json(self, tmp_path):
-        project = tmp_path / "proj"
-        project.mkdir()
-        result = _inject_windsurf(project, "/usr/bin/codevira", "python3")
-        config_path = Path(result)
-        assert config_path.exists()
-        assert config_path == project / ".windsurf" / "mcp.json"
-        data = json.loads(config_path.read_text())
-        assert "codevira" in data["mcpServers"]
-        entry = data["mcpServers"]["codevira"]
-        assert entry["command"] == "/usr/bin/codevira"
-        assert entry["cwd"] == str(project)
-
-    def test_preserves_existing_windsurf_config(self, tmp_path):
-        project = tmp_path / "proj"
-        ws_dir = project / ".windsurf"
-        ws_dir.mkdir(parents=True)
-        mcp_json = ws_dir / "mcp.json"
-        mcp_json.write_text(json.dumps({"mcpServers": {"other-ws": {"command": "z"}}}))
-
-        _inject_windsurf(project, "/usr/bin/codevira", "python3")
-        data = json.loads(mcp_json.read_text())
-        assert "other-ws" in data["mcpServers"]
-        assert "codevira" in data["mcpServers"]
-
-
 # ===========================================================================
 # v3.1.0 M1: CODEVIRA_IDE env stamping (origin tagging Phase A)
 # ===========================================================================
@@ -396,13 +367,6 @@ class TestM1IdeEnvStamp:
         entry = self._read_codevira_entry(project / ".cursor" / "mcp.json")
         assert entry["env"]["CODEVIRA_IDE"] == "cursor"
 
-    def test_per_project_windsurf(self, tmp_path):
-        project = tmp_path / "proj"
-        project.mkdir()
-        _inject_windsurf(project, "/usr/bin/codevira", "python3")
-        entry = self._read_codevira_entry(project / ".windsurf" / "mcp.json")
-        assert entry["env"]["CODEVIRA_IDE"] == "windsurf"
-
     def test_global_claude_desktop(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
             ide_inject,
@@ -422,16 +386,6 @@ class TestM1IdeEnvStamp:
         inject_global_cursor("/usr/bin/codevira", "python3")
         entry = self._read_codevira_entry(tmp_path / "cursor-global.json")
         assert entry["env"]["CODEVIRA_IDE"] == "cursor"
-
-    def test_global_windsurf(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(
-            ide_inject,
-            "_windsurf_global_config_path",
-            lambda: tmp_path / "ws-global.json",
-        )
-        inject_global_windsurf("/usr/bin/codevira", "python3")
-        entry = self._read_codevira_entry(tmp_path / "ws-global.json")
-        assert entry["env"]["CODEVIRA_IDE"] == "windsurf"
 
     def test_env_preserves_existing_keys(self, tmp_path):
         """If a user has manually added other env vars to an existing
@@ -482,19 +436,6 @@ class TestGlobalModeInject:
         )
 
         inject_global_cursor("/usr/bin/codevira", "python3")
-
-        data = json.loads(config_file.read_text())
-        entry = data["mcpServers"]["codevira"]
-        assert entry["args"] == []
-        assert "cwd" not in entry
-
-    def test_global_windsurf_has_no_project_path(self, tmp_path, monkeypatch):
-        config_file = tmp_path / "mcp_config.json"
-        monkeypatch.setattr(
-            ide_inject, "_windsurf_global_config_path", lambda: config_file
-        )
-
-        inject_global_windsurf("/usr/bin/codevira", "python3")
 
         data = json.loads(config_file.read_text())
         entry = data["mcpServers"]["codevira"]
@@ -784,30 +725,15 @@ class TestDetectInstalledIdes:
         )
         assert "cursor" not in detect_installed_ides(tmp_path)
 
-    def test_windsurf_detected_via_mcp_config_json(self, tmp_path, monkeypatch):
-        """v3.0.0: Windsurf requires the actual mcp_config.json file
-        (in either standard location)."""
+    def test_windsurf_NOT_detected_after_removal(self, tmp_path, monkeypatch):
+        """v3.8.0: Windsurf was discontinued/folded into Cursor and is no
+        longer an injection target, so even a fully-populated ~/.windsurf/
+        mcp_config.json must NOT be auto-detected."""
         fakehome = tmp_path / "fakehome"
         fakehome.mkdir()
         windsurf_dir = fakehome / ".windsurf"
         windsurf_dir.mkdir()
         (windsurf_dir / "mcp_config.json").write_text("{}")
-        monkeypatch.setattr(Path, "home", lambda: fakehome)
-        monkeypatch.setattr("shutil.which", lambda name: None)
-        monkeypatch.setattr(
-            ide_inject,
-            "_claude_desktop_config_path",
-            lambda: fakehome / "nonexistent" / "config.json",
-        )
-        result = detect_installed_ides(tmp_path)
-        assert "windsurf" in result
-
-    def test_windsurf_NOT_detected_via_empty_dir(self, tmp_path, monkeypatch):
-        """Bare ~/.windsurf/ without mcp_config.json is a false
-        positive — explicitly NOT detected in v3.0.0."""
-        fakehome = tmp_path / "fakehome"
-        fakehome.mkdir()
-        (fakehome / ".windsurf").mkdir()  # empty
         monkeypatch.setattr(Path, "home", lambda: fakehome)
         monkeypatch.setattr("shutil.which", lambda name: None)
         monkeypatch.setattr(
@@ -1249,9 +1175,6 @@ class TestInjectIdeConfigIntegration:
         cursor_dir = fakehome / ".cursor"
         cursor_dir.mkdir()
         (cursor_dir / "mcp.json").write_text("{}")
-        windsurf_dir = fakehome / ".windsurf"
-        windsurf_dir.mkdir()
-        (windsurf_dir / "mcp_config.json").write_text("{}")
         antigravity_cfg = fakehome / ".gemini" / "antigravity" / "mcp_config.json"
         antigravity_cfg.parent.mkdir(parents=True)
         antigravity_cfg.write_text("{}")
@@ -1284,8 +1207,9 @@ class TestInjectIdeConfigIntegration:
         assert "Claude Code" in results
         assert "Claude Desktop" in results
         assert "Cursor" in results
-        assert "Windsurf" in results
         assert "Antigravity" in results
+        # v3.8.0: Windsurf is no longer an injection target even if present.
+        assert not any("Windsurf" in k for k in results)
 
     def test_project_name_defaults_to_dirname(self, tmp_path, monkeypatch):
         """When project_name is empty, it defaults to project_root.name."""

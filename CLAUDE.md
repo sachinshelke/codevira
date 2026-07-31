@@ -39,7 +39,7 @@ Codevira's promise is "the project remembers what you did." That promise breaks 
 
 A session that ships code WITHOUT a codevira write call leaves the project's memory stale for the next AI. That's the most common way the wedge breaks. Treat it as part of the definition-of-done.
 
-**Engine enforcement (v3.2.0+):** The `session_log_enforcer` policy fires on `Stop` events. If the session shipped commits AND no `write_session_log` was called between `SESSION_START` and now, it emits a `warn` via Claude Code's `systemMessage` channel. Default mode is `warn` (non-blocking nudge); set `CODEVIRA_SESSION_LOG_ENFORCER_MODE=block` to force the AI to retry, or `off` to disable. v3.3.0 instruments every Stop verdict to `.codevira-cache/enforcer_outcomes.jsonl`; the default flips to `block` once that data confirms warn-mode is low-noise. Logging is still your judgment call for what counts as "meaningful" — if you only answered a question with no commits, the policy stays silent.
+**Engine enforcement (v3.2.0+, blocking since v3.8.0):** The `session_log_enforcer` policy fires on `Stop` events. If the session shipped commits AND no `write_session_log` was called between `SESSION_START` and now, it **refuses the Stop** so you can write the log before finishing. Set `CODEVIRA_SESSION_LOG_ENFORCER_MODE=warn` for the pre-v3.8.0 non-blocking nudge, or `off` to disable. The flip was gated on the v3.3.0 instrumentation in `.codevira-cache/enforcer_outcomes.jsonl` (324 Stop evaluations / 7 weeks / 9% warn rate on commit-bearing sessions — a single-machine sample, so expect a higher rate elsewhere). A second consecutive block degrades to a warn, so a session that genuinely cannot write the log still finishes. Logging is still your judgment call for what counts as "meaningful" — if you only answered a question with no commits, the policy stays silent.
 
 ### When you see "Roadmap drift detected" in your SessionStart context
 
@@ -153,12 +153,12 @@ Some decisions in this project are protected. If `search_decisions()` returns a 
 
 ## Cross-tool memory
 
-The user may open this project in multiple AI tools across the day — Claude Code, Cursor, Windsurf, Antigravity, Gemini, Codex, Copilot. **They all see the same project memory through Codevira.** What you record here is visible to whichever tool the user opens next.
+The user may open this project in multiple AI tools across the day — Claude Code, Cursor, Antigravity, Gemini, Codex, Copilot. **They all see the same project memory through Codevira.** What you record here is visible to whichever tool the user opens next.
 
 This means:
 
 - A decision you log in Claude Code shows up in Cursor.
-- A fix you record will block the same regression in Windsurf the next morning.
+- A fix you record will block the same regression in Cursor the next morning.
 - A style preference learned in one session enforces in the next.
 
 Be a good citizen: log decisions, respect existing ones, and assume the next AI to read this graph isn't you.

@@ -34,7 +34,7 @@
 ```
 ┌───────────────────────────────────────────────────────────────────┐
 │  YOUR IDE                                                         │
-│  Claude Code / Cursor / Antigravity / Codex / Windsurf / Cline    │
+│  Claude Code / Cursor / Antigravity / Codex / Cline            │
 │  / Aider / Roo / Goose / Continue / Claude Desktop / etc.         │
 └───────────────────────────────────────────────────────────────────┘
                             │

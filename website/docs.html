@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Codevira Docs — install, connect AI tools, CLI &amp; MCP tool surface</title>
-<meta name="description" content="Install codevira, connect your AI tools (Claude Code, Cursor, Windsurf, Antigravity), and use the CLI + MCP tool surface. Local-first persistent memory for AI coding agents. Opt-in per project.">
+<meta name="description" content="Install codevira, connect your AI tools (Claude Code, Cursor, Antigravity), and use the CLI + MCP tool surface. Local-first persistent memory for AI coding agents. Opt-in per project.">
 <link rel="canonical" href="https://sachinshelke.github.io/codevira/docs.html">
 <meta name="robots" content="index, follow">
 <meta name="theme-color" content="#0b0d12">
@@ -225,14 +225,14 @@ codevira setup</pre>
     <table>
       <tr><th>Tool</th><th>What codevira writes</th></tr>
       <tr><td>Claude Code</td><td>one user-scope MCP entry + PreToolUse / SessionStart lifecycle hooks (verified <strong>hard</strong> enforcement)</td></tr>
-      <tr><td>Cursor · Windsurf</td><td>one user-scope MCP entry (stdio, roots-resolved) + reads <code>AGENTS.md</code></td></tr>
+      <tr><td>Cursor</td><td>one user-scope MCP entry (stdio, roots-resolved) + reads <code>AGENTS.md</code></td></tr>
       <tr><td>Antigravity</td><td>per-project MCP entry (sets its own working dir per window) + a <code>PreToolUse</code> hook that surfaces and can block decision-reverting edits <span class="pill">3.7.1</span> + reads <code>AGENTS.md</code></td></tr>
       <tr><td>Claude Desktop</td><td>per-project stdio MCP entry (<code>--project-dir</code> — can't advertise roots)</td></tr>
       <tr><td>Codex · Copilot</td><td>read <code>AGENTS.md</code> natively — the decisions are portable, no MCP entry required</td></tr>
     </table>
     <p>Prefer manual config? Add this stdio entry to your tool's MCP config — codevira
     resolves the active project from the client's workspace roots:</p>
-    <pre><span class="c">// e.g. project .mcp.json, .cursor/mcp.json, windsurf mcp_config.json</span>
+    <pre><span class="c">// e.g. project .mcp.json, .cursor/mcp.json</span>
 {
   <span class="k">"mcpServers"</span>: {
     <span class="k">"codevira"</span>: { <span class="k">"command"</span>: <span class="s">"codevira"</span>, <span class="k">"args"</span>: [] }

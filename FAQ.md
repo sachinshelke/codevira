@@ -6,7 +6,7 @@
 
 ### What is Codevira in one line?
 
-A persistent memory layer for AI coding agents — so Claude Code, Cursor, Windsurf, and Antigravity all share the same project context, decisions, and history on your local machine.
+A persistent memory layer for AI coding agents — so Claude Code, Cursor, and Antigravity all share the same project context, decisions, and history on your local machine.
 
 ### Who is this for?
 
@@ -38,7 +38,7 @@ of codevira works identically to v1.x.
 
 1. **No more re-explaining your project every session** — `get_session_context()` brings any AI agent up to speed in one call
 2. **Decisions stick** — `do_not_revert` flags + searchable decision log mean today's AI doesn't undo last week's careful work
-3. **Cross-tool continuity** — switch between Claude Code, Cursor, Windsurf, Antigravity; project state carries over
+3. **Cross-tool continuity** — switch between Claude Code, Cursor, Antigravity; project state carries over
 4. **Lower token cost** — summary-first tool design means agents query for what they need, not "give me everything"
 
 ### Does Codevira send my code anywhere?
@@ -178,7 +178,7 @@ No need to re-explain. Switch to Antigravity to run tests — same memory. The A
 |--------|-----|-----|
 | Claude Desktop (app) | stdio | Desktop app only supports `command`+`args` config |
 | Claude Code CLI | stdio | Both work; stdio handles multi-project automatically |
-| Cursor, Windsurf | stdio | These tools use `command`+`args` config |
+| Cursor | stdio | These tools use `command`+`args` config |
 | Google Antigravity | stdio | Same |
 
 **Stdio** (default + recommended): the MCP client spawns `codevira` as a subprocess for each open workspace, bound to that project via the client's workspace roots, with its own memory from `~/.codevira/projects/<key>/`. One user-scope registration covers every project — zero per-project config after `codevira setup`.
@@ -239,7 +239,7 @@ Then restart Claude Code. Certs are auto-generated at `~/.codevira/certs/` on fi
 
 Common causes:
 
-1. **MCP config not written** — run `codevira init` in your project; it auto-injects config into Claude Code, Cursor, Windsurf, and Antigravity
+1. **MCP config not written** — run `codevira init` in your project; it auto-injects config into Claude Code, Cursor, and Antigravity
 2. **IDE needs restart** — most AI tools require a restart to pick up new MCP servers
 3. **Binary not in PATH** — check that `codevira` is accessible; if installed via pipx, verify `~/.local/bin` is in your PATH
 4. **Wrong project directory** — the config's `cwd` (stdio) or `--project-dir` (HTTP) must point to the project where `.codevira/config.yaml` exists

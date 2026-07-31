@@ -2,7 +2,7 @@
 Codevira — Persistent memory layer for AI coding agents.
 
 Local-first MCP server that gives every AI tool you use (Claude Code,
-Cursor, Windsurf, Antigravity) shared persistent memory of your codebase:
+Cursor, Antigravity) shared persistent memory of your codebase:
 context graph, decision log, roadmap, and adaptive learning.
 
 Public CLI entry point: `codevira` (see `mcp_server.cli:main`).

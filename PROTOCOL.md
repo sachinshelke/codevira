@@ -1,7 +1,7 @@
 # Agent Session Protocol
 
 Every AI coding agent working on this project MUST follow this protocol.
-This applies to Claude Code, Cursor, Windsurf, and any other AI tool.
+This applies to Claude Code, Cursor, and any other AI tool.
 
 ---
 
@@ -170,7 +170,7 @@ Codevira supports two MCP transports:
   project.
 - **HTTP/HTTPS (preview)** — single-project only. Use stdio for multi-project work.
 
-**Claude Code CLI, Cursor, Windsurf** — stdio, single user-scope entry (resolves the project from workspace roots):
+**Claude Code CLI, Cursor** — stdio, single user-scope entry (resolves the project from workspace roots):
 ```json
 {
   "mcpServers": {

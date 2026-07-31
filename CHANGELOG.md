@@ -9,6 +9,51 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased] — 3.8.0
 
+### Removed — Windsurf is no longer a supported injection target
+
+Windsurf was discontinued (folded into Cursor), so codevira no longer
+auto-detects it or writes MCP config for it. Removed from setup detection,
+the `--ide` menu, `inject_ide_config`, doctor hints, and all user-facing
+docs/website. **Backward-compatible:** `origin.py` still *recognizes*
+`"windsurf"` so decisions recorded by Windsurf before v3.8.0 read back
+correctly, and `codevira uninstall` / `untrack` still clean up any existing
+`.windsurf/` and `.windsurfrules` files left on disk. No migration needed —
+nothing writes new Windsurf entries, and existing ones are inert.
+
+### Changed — `session_log_enforcer` defaults to `block` (data-gated flip)
+
+v3.3.0 shipped the enforcer in `warn` mode with instrumentation, promising to
+flip the default "once that data confirms warn-mode is low-noise". The recorded
+data (`.codevira-cache/enforcer_outcomes.jsonl`) now says so: **324 STOP
+evaluations over 7 weeks — 218 compliant / 22 gap_warned / 84 skip_no_commits**,
+a 9% warn rate on commit-bearing sessions.
+
+A session that ships commits without calling `write_session_log` now has its
+Stop refused so the AI can write the log, rather than getting a nudge it can
+ignore.
+
+- `CODEVIRA_SESSION_LOG_ENFORCER_MODE=warn` restores the previous default;
+  `=off` disables the policy entirely.
+- **Honest caveat:** the sample is 7 distinct sessions on one maintainer
+  machine — the compliance ceiling, not a representative population. Expect a
+  higher fire rate in the wild, and the escape hatch above to matter.
+
+### Fixed — Stop-event blocks re-engage the AI instead of halting the turn
+
+Found while flipping the enforcer default. `claude_code_hooks._emit` emitted
+`{"continue": false, "stopReason": ...}` for **every** blocking verdict. On
+`Stop` that ends Claude's processing and addresses the *user* — the opposite of
+the documented block-mode behavior ("force the AI to retry"). Any Stop policy
+that blocked would have cut the final response off.
+
+- Stop / SubagentStop blocks now emit `{"decision": "block", "reason": ...}`,
+  which refuses the stop and feeds the reason back to the AI.
+- Claude Code's `stop_hook_active` flag (previously read nowhere in the
+  codebase) now degrades the second consecutive block to a warn, so a policy
+  the AI *cannot* satisfy — MCP unreachable, read-only store — can never loop.
+- PreToolUse / UserPromptSubmit block shapes are unchanged, with a regression
+  test pinning that.
+
 ### Added — `codevira register-all`: one MCP per project (heals wrong-project binding)
 
 The shared "single `codevira` entry that auto-detects the project" model proved

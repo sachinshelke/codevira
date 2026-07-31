@@ -24,7 +24,7 @@ read the same decisions as `AGENTS.md` guidance (advisory, not a hard block —
 their edits never route through codevira's hook engine). Local-first, MIT, no
 cloud, no vectors, no account. A production pipx install is ~66 MB.
 
-**Works with:** Claude Code · Claude Desktop · Cursor · Windsurf · Google
+**Works with:** Claude Code · Claude Desktop · Cursor · Google
 Antigravity · OpenAI Codex · GitHub Copilot · any MCP-compatible AI tool.
 
 <!-- demo coming soon: a short GIF of a blocked edit + cross-tool recall will go here -->
@@ -97,7 +97,7 @@ context. A decision recorded in one tool is visible to every tool. The hard
 *block* is Claude Code only today; the shared *memory* is universal.
 
 > The honest caveat: only Claude Code's `PreToolUse` hook hard-blocks, because
-> only its edits route through codevira's engine. In Cursor / Windsurf / Codex /
+> only its edits route through codevira's engine. In Cursor / Codex /
 > Copilot the decision is strong advisory context in `AGENTS.md`, not a physical
 > veto.
 
@@ -148,7 +148,7 @@ instead of the AI re-reading docs.
 ## What you get
 
 * **One memory across every AI tool.** A decision logged in Claude Code is
-  visible to Cursor, Windsurf, Antigravity, Codex, Copilot — all read the same
+  visible to Cursor, Antigravity, Codex, Copilot — all read the same
   `.codevira/decisions.jsonl` and generated `AGENTS.md` in your repo. No
   per-tool re-onboarding, no cloud sync.
 * **Enforcement, not just notes (Claude Code).** Decisions you mark
@@ -220,7 +220,7 @@ codebase.
 └─────────────────────────────────────────────────────────────────┘
                               ↑ stdio MCP ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│  IDE (Claude Code / Cursor / Windsurf / Antigravity / Codex /…) │
+│  IDE (Claude Code / Cursor / Antigravity / Codex /…)         │
 │                                                                 │
 │   UserPromptSubmit → codevira hook → relevance-gated inject     │
 │   Edit / Write → PreToolUse → block if do_not_revert violated   │
@@ -373,7 +373,7 @@ Claude Code projects — in any project you never ran `codevira init` on, the
 hooks stay fully inert.
 
 **Why "Claude Code only."** The hard-block path is Claude Code's real
-`PreToolUse` hook. Edits from Cursor / Windsurf / Codex / Copilot go straight to
+`PreToolUse` hook. Edits from Cursor / Codex / Copilot go straight to
 the filesystem — they never reach codevira's `PreToolUse` engine at all — so
 those IDEs get the decisions as advisory `AGENTS.md` context instead.
 

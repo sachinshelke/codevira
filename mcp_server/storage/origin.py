@@ -15,7 +15,10 @@ written by Cursor 3 days ago — what would you like to do?"
 
     {
       "ide":         "claude_code" | "claude_desktop" | "cursor" |
-                     "windsurf"    | "antigravity"    | "unknown",
+                     "antigravity" | "unknown",
+      # NOTE: "windsurf" is no longer an injection target (Windsurf was
+      # discontinued / folded into Cursor) but remains a RECOGNIZED value so
+      # decisions recorded by Windsurf before v3.8.0 still read back correctly.
       "agent_model": "<model-id>" | None,
       "host_hash":   "<12 hex chars>",
       "ts":          "2026-05-28T10:00:00+00:00",

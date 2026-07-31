@@ -14,6 +14,7 @@ Event types (see docs/heroes/00-engine.md "Hook event types"):
 
 The dataclass is frozen so policies can't accidentally mutate it.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -54,7 +55,7 @@ class HookEvent:
         project_root: absolute path of the project the AI is working in.
             Always populated; this is how the engine routes signals.
         ai_tool: identifier of the AI tool that triggered this event
-            (``"claude-code"``, ``"cursor"``, ``"windsurf"``, …). Best-effort;
+            (``"claude-code"``, ``"cursor"``, …). Best-effort;
             may be ``"unknown"`` if the wiring layer can't identify it.
         session_id: stable identifier for the current AI session; lets
             policies correlate events across the same conversation.

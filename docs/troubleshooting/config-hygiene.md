@@ -20,7 +20,7 @@ wrong until you clean the config.
 ## Root cause
 
 `codevira init` **auto-injects** codevira into *every* installed IDE's MCP config
-(Claude Code, Claude Desktop, Cursor, Windsurf, Antigravity). So if `init` runs
+(Claude Code, Claude Desktop, Cursor, Antigravity). So if `init` runs
 in a **throwaway or temporary directory** — a scratch repo, a test harness, a
 `mktemp` dir — it writes a real entry into your real IDE configs pointing at that
 throwaway path, and registers a project dir under `~/.codevira/projects/`. When

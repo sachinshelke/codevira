@@ -324,7 +324,7 @@ codevira clean --ghosts                # remove them (preserves tracked projects
 
 ### 4. (Optional) Restart your AI tool
 
-Claude Code, Cursor, Windsurf etc. load the MCP server **once at session
+Claude Code, Cursor etc. load the MCP server **once at session
 start**. After upgrade, restart the AI tool so it picks up the 2.0
 binary + the new lifecycle hooks.
 
@@ -340,7 +340,7 @@ binary + the new lifecycle hooks.
   `CODEVIRA_ENGINE=0` to kill-switch all policies in one env var.
 
 * **Cross-tool universality.** One `codevira setup` command configures
-  Claude Code, Cursor, Windsurf, Antigravity, OpenAI Codex, GitHub
+  Claude Code, Cursor, Antigravity, OpenAI Codex, GitHub
   Copilot, Continue.dev, and Aider — each in the right config file with
   the right schema. No per-IDE script.
 

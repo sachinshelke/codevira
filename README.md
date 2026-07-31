@@ -100,6 +100,13 @@ context. A decision recorded in one tool is visible to every tool. The hard
 > only its edits route through codevira's engine. In Cursor / Codex /
 > Copilot the decision is strong advisory context in `AGENTS.md`, not a physical
 > veto.
+>
+> **Verified on Claude Code (2026-08-01, 4.0.0.dev1):** a locked decision
+> returns `permissionDecision: deny` with exit 2, the refusal carries the
+> decision's reasoning, rejected alternatives and re-examination trigger, and
+> the verdict is recorded with its evidence. Other IDEs are supported but not
+> yet verified to this standard — each is being taken one at a time rather than
+> inferred (D00012Q).
 
 ---
 

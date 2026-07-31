@@ -7,7 +7,55 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [Unreleased] — 3.8.0
+## [Unreleased] — 4.0.0
+
+### Added — the product explains itself (Step 2)
+
+A refusal used to show an id, 120 truncated characters and a date. It now
+carries the decision's reasoning, the alternatives that were rejected, and the
+condition that would justify revisiting it — so a `do_not_revert` lock is
+something a user can actually satisfy rather than a ratchet nobody dares touch.
+
+- `record_decision` now **declares and forwards** `alternatives_considered` and
+  `would_re_examine_if`. Both were accepted by every layer beneath the MCP
+  surface since v3.1.x but never declared in the inputSchema, so they read
+  0/1365 across every project — a dead write path, not agent laziness.
+- `write_session_log` gains `task_type` + `skill_ids`. Skill induction filters
+  on `task_type`; with 62/62 sessions at `None` it was structurally guaranteed
+  to yield nothing regardless of usage.
+- `context` now reaches every reader: `search_decisions`, the digest that feeds
+  prompt injection, and the injected block itself.
+
+### Fixed — cross-project memory bleed in the engine
+
+Both halves of the engine resolved storage paths **ambiently** rather than from
+the project the event came from. Verified live: a context built for a fresh
+one-decision project returned 10 of another project's decisions including its
+`do_not_revert` locks, and a `UserPromptSubmit` was injected with a different
+repo's decisions.
+
+This is the enforcement- and injection-side twin of the v3.7.1 binding bugs, and
+it is the symptom that caused enforcement to be switched off on two large
+projects (D00012O).
+
+- `signals.decisions()` / `signals.search_decisions()` → scoped
+- `relevance_inject` `_load_indexes` / `_fts_candidates` / `_config` → scoped
+  (a project can no longer inherit another's injection budget)
+- `decisions_store.list_all()` gains `project_root`; `None` preserves prior
+  behaviour for every other caller
+
+### Fixed — pre-release builds silently stopped receiving update notices
+
+`_is_newer` applied the strict release-only parser to the **local** version, so
+any `dev`/`rc`/`a`/`b`/`post`/`+local` build parsed to `None` and never
+notified. `latest` stays strict — we never nag toward a pre-release.
+
+### Added — per-verdict enforcement audit log
+
+`decision_lock`, `anti_regression` and `blast_radius` recorded nothing, so the
+false-block rate was unmeasurable. Verdicts now append to
+`.codevira-cache/enforcement.jsonl` with `host_hash`, `version` and `ide`.
+Cache-only, bounded, and provably unable to change a verdict.
 
 ### Removed — Windsurf is no longer a supported injection target
 

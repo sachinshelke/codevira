@@ -171,6 +171,23 @@ def _recover_stranded_parameters(text: str) -> tuple[str, dict[str, Any]]:
     return (clean or text), recovered
 
 
+#: Merged-view cache, keyed by (path, mtime_ns, size) — 4.0 Step 4.
+#:
+#: ``read_merged`` re-parsed the ENTIRE decision store on every call.
+#: Profiled at 178 ``json.loads`` per ``search()``, which put p95 at
+#: 10.18 ms against D00012K's 3 ms warm-call ceiling. The store is
+#: append-only, so mtime+size is a sound invalidation key: any write
+#: changes both. A stale read is therefore impossible, and the cost of a
+#: cold miss is exactly what the old path paid every time.
+_MERGED_CACHE: dict[str, tuple[tuple[int, int], list[dict[str, Any]]]] = {}
+
+
+def invalidate_merged_cache() -> None:
+    """Drop the merged-view cache. Tests and repair paths that rewrite the
+    store in place (rather than appending) should call this."""
+    _MERGED_CACHE.clear()
+
+
 def _read_merged(project_root: Path | None = None) -> list[dict[str, Any]]:
     """Read decisions.jsonl + fold amendment lines into their base records.
 
@@ -182,7 +199,21 @@ def _read_merged(project_root: Path | None = None) -> list[dict[str, Any]]:
     ``_amendment_to_id`` marker; later amendments win; orphan
     amendments emit as their own record for diagnosis.
     """
-    return jsonl_store.read_merged(paths.decisions_path(project_root))
+    path = paths.decisions_path(project_root)
+    try:
+        st = path.stat()
+        key = str(path)
+        stamp = (st.st_mtime_ns, st.st_size)
+        cached = _MERGED_CACHE.get(key)
+        if cached is not None and cached[0] == stamp:
+            return cached[1]
+        merged = jsonl_store.read_merged(path)
+        _MERGED_CACHE[key] = (stamp, merged)
+        return merged
+    except OSError:
+        # Missing/unreadable store — fall through to the uncached read so
+        # the caller sees the same empty-or-error behaviour as before.
+        return jsonl_store.read_merged(path)
 
 
 def get(decision_id: str) -> dict[str, Any] | None:
@@ -585,7 +616,9 @@ def search(
         return []
 
     # Load merged decisions; map by id for quick lookup.
-    merged = jsonl_store.read_merged(decisions_p)
+    # 4.0 Step 4: go through the mtime-keyed cache rather than re-parsing
+    # the whole store per search (178 json.loads/search before this).
+    merged = _read_merged(project_root)
     by_id = {str(d.get("id")): d for d in merged}
 
     results: list[dict[str, Any]] = []

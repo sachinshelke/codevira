@@ -53,14 +53,21 @@ class TestAdd:
         assert rec["origin"]["ide"] == "cursor"
         assert rec["kind"] == "goal"
 
-    def test_default_session_id_unique(self, project: Path) -> None:
+    def test_entries_are_unique_but_share_a_session(self, project: Path) -> None:
+        """4.0 Step 3.2: entry ids stay unique; the SESSION id is shared.
+
+        Working memory is decay-scored and retrieved per session, so two
+        observations from one session sharing a session_id is the whole
+        point. Previously each got its own random slug, which meant
+        working_get() could never assemble a session's scratchpad.
+        """
         wid1 = working_store.add("a")
         wid2 = working_store.add("b")
-        assert wid1 != wid2
+        assert wid1 != wid2, "entry ids must still be unique"
         rows = jsonl_store.read_all(paths.working_path())
         sids = {r["session_id"] for r in rows}
-        # Per the v3.0.1 session-id helper: each unattributed call gets its own slug.
-        assert len(sids) == 2
+        assert len(sids) == 1, f"one session should own both entries, got {sids}"
+        assert "ad-hoc" not in sids, "v3.0.1 literal regression"
 
     def test_invalid_kind_rejected(self, project: Path) -> None:
         with pytest.raises(ValueError, match="kind"):

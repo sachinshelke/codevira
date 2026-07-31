@@ -25,7 +25,26 @@ _SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("aws-akia", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
     # Long hex / base64 blob — 32+ chars of plausible token material.
     ("long-token", re.compile(r"\b[A-Fa-f0-9]{32,}\b")),
-    ("long-b64", re.compile(r"\b[A-Za-z0-9+/]{40,}={0,2}\b")),
+    # Base64 WITHOUT a slash. Safe to match greedily: no filesystem path
+    # survives 40+ chars with no separator.
+    ("long-b64", re.compile(r"\b[A-Za-z0-9+]{40,}={0,2}\b")),
+    # Base64 WITH slashes — gated on the run also containing `+` or `=`.
+    #
+    # The previous single pattern allowed `/` unconditionally, so any
+    # absolute path longer than 40 chars was redacted as a secret. Measured
+    # on a real store: 596 of 655 working-memory edit observations (91%)
+    # had their file path destroyed, e.g.
+    #   "Edit: touched /<redacted:long-b64>-mcp/mcp_server/graph/template.html"
+    # That silently gutted the capture layer the anchor work depends on.
+    #
+    # `+` and `=` are the discriminator: standard-alphabet base64 of this
+    # length is overwhelmingly likely to carry padding or a `+`, while
+    # POSIX paths essentially never contain either. Over-redaction is still
+    # preferred over a missed secret — this only narrows the SLASH case.
+    (
+        "long-b64",
+        re.compile(r"\b(?=[A-Za-z0-9+/]*[+=])[A-Za-z0-9+/]{40,}={0,2}\b"),
+    ),
 )
 
 

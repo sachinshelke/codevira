@@ -36,7 +36,9 @@ Failure-mode policy (P9 — never block user write on cache failure):
 from __future__ import annotations
 
 import fnmatch
+import json
 import logging
+import re
 import secrets
 from datetime import datetime, timezone
 from pathlib import Path
@@ -55,22 +57,118 @@ from mcp_server.storage import (
 logger = logging.getLogger(__name__)
 
 
-def default_session_id() -> str:
-    """Generate a unique ad-hoc session id when the caller didn't supply one.
+#: Process-stable fallback id. Minted once per process so that, absent any
+#: live session marker, every write from one process at least shares an id.
+_PROCESS_SESSION_ID: str | None = None
 
-    v3.0.1 fix: prior to this, an unattributed ``record_decision`` /
-    ``write_session_log`` defaulted to the LITERAL string ``"ad-hoc"``.
-    Every concurrent IDE (Claude Code, Cursor, Antigravity)
-    that didn't pass a slug collided into the same bucket — masking
-    session boundaries and breaking the v3.1.0 working-memory design
-    (which keys observations by session_id). Generating a unique
-    suffix per call disambiguates without forcing every caller to
-    invent a name.
+
+def default_session_id(project_root: Path | None = None) -> str:
+    """Resolve the current session id when the caller didn't supply one.
+
+    v3.0.1 replaced a literal ``"ad-hoc"`` with ``ad-hoc-<random>`` to stop
+    concurrent IDEs colliding into one bucket. That fixed collisions and
+    created the opposite defect: a fresh id was minted on EVERY call, so
+    nothing could ever be correlated. Measured before this fix — 754
+    activity rows carrying 754 distinct session ids, and **0 of 116
+    decisions shared a session with an edit row**. Session-scoped features
+    (working memory, skill induction, anchor derivation) were therefore
+    joining on a key that was unique by construction.
+
+    4.0 resolution order:
+
+    1. The live hook session recorded by ``session_log_enforcer`` on
+       SESSION_START in ``.codevira-cache/active_sessions.jsonl``. This is
+       the real client session id, shared by every process the client
+       spawns — the only handle that spans the MCP server and the hooks.
+    2. A process-stable ``ad-hoc-<random>``, so writes from a single
+       process still correlate.
+
+    Never raises: any read failure falls through to (2).
     """
-    return f"ad-hoc-{secrets.token_hex(3)}"
+    try:
+        marker = paths.codevira_cache_dir(project_root) / "active_sessions.jsonl"
+        if marker.is_file():
+            latest: str | None = None
+            with marker.open("r", encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        sid = json.loads(line).get("session_id")
+                    except json.JSONDecodeError:
+                        continue
+                    if sid:
+                        latest = str(sid)
+            if latest:
+                return latest
+    except OSError:
+        pass
+
+    global _PROCESS_SESSION_ID
+    if _PROCESS_SESSION_ID is None:
+        _PROCESS_SESSION_ID = f"ad-hoc-{secrets.token_hex(3)}"
+    return _PROCESS_SESSION_ID
 
 
 # ─── Internal: merge amendments into base records ─────────────────────
+
+
+#: Fields that have been observed leaking into decision bodies as
+#: ``<parameter name="X">value`` blocks. Anything not listed is left in the
+#: text rather than silently guessed at.
+_RECOVERABLE_PARAMS = frozenset(
+    {"file_path", "symbol", "context", "tags", "do_not_revert"}
+)
+
+_STRANDED_RE = re.compile(
+    r'</?(?:decision|parameter)(?:\s+name="(?P<name>[a-z_]+)")?>[ \t]*(?P<value>[^<\n]*)',
+    re.IGNORECASE,
+)
+
+
+def _recover_stranded_parameters(text: str) -> tuple[str, dict[str, Any]]:
+    """Split a malformed decision body into (clean_text, recovered_fields).
+
+    A decision recorded through a malformed tool call can arrive with its
+    other arguments serialized into the body::
+
+        Use bcrypt for passwords.</decision>
+        <parameter name="file_path">auth.py</parameter>
+        <parameter name="do_not_revert">true
+
+    The decision itself is fine; only the envelope is broken. Rejecting it
+    would lose real memory, so we parse the block out, hand the values back
+    to the caller, and keep the prose.
+
+    Unknown parameter names are dropped from the returned mapping but their
+    text is still removed, so the stored decision stays readable.
+    Returns the input unchanged when no marker is present (the common case,
+    so this costs one substring check).
+    """
+    if not text or "<parameter name=" not in text:
+        return text, {}
+
+    recovered: dict[str, Any] = {}
+    for m in _STRANDED_RE.finditer(text):
+        name = (m.group("name") or "").lower()
+        value = (m.group("value") or "").strip()
+        if not name or name not in _RECOVERABLE_PARAMS or not value:
+            continue
+        if name == "do_not_revert":
+            recovered[name] = value.lower() in ("true", "1", "yes", "on")
+        elif name == "tags":
+            parts = [t.strip(" \"'[]") for t in value.split(",")]
+            cleaned = [t for t in parts if t]
+            if cleaned:
+                recovered[name] = cleaned
+        else:
+            recovered[name] = value
+
+    clean = _STRANDED_RE.sub("", text).strip()
+    # If stripping consumed everything, keep the original rather than
+    # persisting an empty decision.
+    return (clean or text), recovered
 
 
 def _read_merged(project_root: Path | None = None) -> list[dict[str, Any]]:
@@ -127,6 +225,30 @@ def record(
     Side effects: incrementally updates manifest.yaml + FTS5 cache.
     """
     paths.ensure_dirs()
+
+    # 4.0 Step 3.4: recover fields the caller serialized INTO the decision
+    # body instead of passing as arguments. D000014 diagnosed this in May
+    # 2026 and it was never systematically fixed; measured across all
+    # registered projects, 262 of 1269 base decisions (21%) carry a leaked
+    # `<parameter name="...">` block — 164 lost their context, 99 lost
+    # file_path, and 14 were INTENDED do_not_revert with the lock never
+    # landing. Recovering beats rejecting: the decision is real, only its
+    # envelope was malformed.
+    decision, _rec = _recover_stranded_parameters(decision)
+    if _rec:
+        file_path = file_path or _rec.get("file_path")
+        symbol = symbol or _rec.get("symbol")
+        context = context or _rec.get("context")
+        if not tags and _rec.get("tags"):
+            tags = _rec["tags"]
+        if not do_not_revert and _rec.get("do_not_revert"):
+            do_not_revert = True
+        logger.warning(
+            "decisions_store.record: recovered %s from a malformed decision "
+            "body (fields serialized into the text instead of passed as "
+            "arguments)",
+            sorted(_rec),
+        )
 
     # Normalize tags: lowercase, strip whitespace, dedup, sort
     # (lowercase normalization is the same rule manifest.incremental_add

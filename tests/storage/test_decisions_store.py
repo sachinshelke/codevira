@@ -40,16 +40,29 @@ class TestDefaultSessionId:
 
     _PATTERN = re.compile(r"^ad-hoc-[0-9a-f]{6}$")
 
-    def test_helper_returns_unique_slug_each_call(self) -> None:
-        """Each call generates a fresh random suffix (per-call
-        uniqueness — chosen so that two unattributed writes can be
-        distinguished post-hoc even within one process).
+    def test_helper_is_stable_within_a_process(self) -> None:
+        """4.0 Step 3.2 INVERTS the v3.0.1 contract, deliberately.
+
+        v3.0.1 made the id unique PER CALL so two unattributed writes
+        could be told apart. That is not a session id — it is a write id,
+        and it made every session-scoped join impossible: measured on the
+        dogfood repo, 754 activity rows carried 754 distinct ids and 0 of
+        116 decisions shared a session with an edit row.
+
+        The v3.0.1 concern is still honoured: concurrent CLIENTS get
+        distinct ids, because each carries its own client session id (or,
+        absent one, its own process-stable fallback).
+
+        Known limitation, stated rather than hidden: two concurrent
+        sessions of the SAME client in the SAME project both write to
+        active_sessions.jsonl, and the latest marker wins — so their
+        writes can share an id. That is narrower and more useful than the
+        previous behaviour, where the id belonged to neither.
         """
         slug1 = decisions_store.default_session_id()
         slug2 = decisions_store.default_session_id()
-        assert slug1 != slug2
+        assert slug1 == slug2
         assert self._PATTERN.match(slug1), slug1
-        assert self._PATTERN.match(slug2), slug2
 
     def test_helper_never_returns_literal_ad_hoc(self) -> None:
         """Catches a regression where someone short-circuits the helper
@@ -59,9 +72,9 @@ class TestDefaultSessionId:
             assert decisions_store.default_session_id() != "ad-hoc"
 
     def test_record_without_session_id_uses_new_default(self, project: Path) -> None:
-        """End-to-end: two record() calls with no session_id MUST yield
-        distinct on-disk session_id values. This is the
-        cross-IDE-collision fix in its simplest form.
+        """End-to-end: two record() calls with no session_id now yield the
+        SAME on-disk session_id — that is what makes them joinable to the
+        edits from the same session. Never the literal "ad-hoc".
         """
         from mcp_server.storage import jsonl_store, paths
 
@@ -74,10 +87,12 @@ class TestDefaultSessionId:
         # point in the test).
         sessions = [r.get("session_id") for r in raw if not r.get("_amendment_to_id")]
         assert len(sessions) == 2
-        assert sessions[0] != sessions[1], (
-            f"two unattributed record() calls produced the same "
-            f"session_id ({sessions[0]!r}); v3.0.1 regression"
+        assert sessions[0] == sessions[1], (
+            "two unattributed record() calls in one session must share a "
+            "session_id — otherwise nothing can be joined to the edits "
+            "from that session (4.0 Step 3.2)"
         )
+        assert all(s != "ad-hoc" for s in sessions), "v3.0.1 literal regression"
         assert all(self._PATTERN.match(s) for s in sessions), sessions
 
     def test_record_with_explicit_session_id_preserved(self, project: Path) -> None:
@@ -94,9 +109,11 @@ class TestDefaultSessionId:
         sessions = [r.get("session_id") for r in raw if not r.get("_amendment_to_id")]
         assert sessions == ["morning-auth", "morning-auth"]
 
-    def test_record_many_unique_slug_per_record(self, project: Path) -> None:
+    def test_record_many_shares_one_slug_for_unattributed(self, project: Path) -> None:
         """``record_many`` with mixed explicit + missing session_ids:
-        each missing gets its own unique slug; explicit ones preserved.
+        explicit ones are preserved; the unattributed siblings share the
+        session's id so they stay joinable (4.0 Step 3.2 — previously each
+        got its own random slug, which made them un-correlatable).
         """
         from mcp_server.storage import jsonl_store, paths
 
@@ -114,7 +131,9 @@ class TestDefaultSessionId:
         assert sessions[0] == "explicit-1"
         assert self._PATTERN.match(sessions[1])
         assert self._PATTERN.match(sessions[2])
-        assert sessions[1] != sessions[2], "two unattributed siblings collided"
+        assert (
+            sessions[1] == sessions[2]
+        ), "unattributed siblings recorded in one call must share a session"
         assert sessions[3] == "explicit-2"
 
 

@@ -73,7 +73,7 @@ def default_session_id() -> str:
 # ─── Internal: merge amendments into base records ─────────────────────
 
 
-def _read_merged() -> list[dict[str, Any]]:
+def _read_merged(project_root: Path | None = None) -> list[dict[str, Any]]:
     """Read decisions.jsonl + fold amendment lines into their base records.
 
     Thin wrapper around the v3.0.1 shared primitive
@@ -84,7 +84,7 @@ def _read_merged() -> list[dict[str, Any]]:
     ``_amendment_to_id`` marker; later amendments win; orphan
     amendments emit as their own record for diagnosis.
     """
-    return jsonl_store.read_merged(paths.decisions_path())
+    return jsonl_store.read_merged(paths.decisions_path(project_root))
 
 
 def get(decision_id: str) -> dict[str, Any] | None:
@@ -333,6 +333,7 @@ def list_all(
     include_superseded: bool = False,
     include_outdated: bool = False,
     full: bool = False,
+    project_root: Path | None = None,
 ) -> dict[str, Any]:
     """Filter + paginate decisions. Filters are AND-combined.
 
@@ -342,8 +343,16 @@ def list_all(
     ``include_outdated`` (v3.7.0): outdated-tombstoned decisions
     (``mark_outdated``) are hidden by default so stale memory stops
     surfacing; pass True to include them.
+
+    ``project_root`` (4.0): read THAT project's store rather than
+    resolving one ambiently from cwd/env. The enforcement path must pass
+    it — a policy evaluating project A's edit against project B's locked
+    decisions is the cross-project bleed shape of D00011U/D00011V, and it
+    was reachable here because ``SignalContext`` carried a project_root
+    that this function ignored. ``None`` preserves the previous ambient
+    behaviour for every other caller.
     """
-    merged = _read_merged()
+    merged = _read_merged(project_root)
     filtered: list[dict[str, Any]] = []
 
     norm_tags_filter = (

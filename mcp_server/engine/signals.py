@@ -213,7 +213,15 @@ class SignalContext:
                 paths as store_paths,
             )
 
-            decisions_path = store_paths.decisions_path()
+            # 4.0: resolve from THIS context's project, not ambiently.
+            # Previously this called decisions_path() with no argument, so a
+            # SignalContext built for project A read whichever project the
+            # process happened to resolve — verified live: a context for a
+            # fresh project returned 10 of agent-mcp's decisions, including
+            # its do_not_revert locks. That is the enforcement-side twin of
+            # the D00011U/D00011V cross-project bleed: a locked decision from
+            # one project could block an edit in another.
+            decisions_path = store_paths.decisions_path(self.project_root)
             if not decisions_path.is_file():
                 # .codevira/ not initialised; no decisions to evaluate.
                 self._decisions_cache[cache_key] = result
@@ -233,6 +241,7 @@ class SignalContext:
                 protected_only=locked_only,
                 include_superseded=False,
                 full=True,
+                project_root=self.project_root,
             )
             for d in raw.get("decisions", []):
                 # The engine-policy contract expects these specific keys.
@@ -288,8 +297,12 @@ class SignalContext:
         try:
             from mcp_server.storage import decisions_store, paths as store_paths
 
-            if store_paths.is_initialized():
-                result = decisions_store.search(query, limit=limit)
+            # 4.0: same scoping fix as `decisions()` above — search THIS
+            # context's project, never one resolved from ambient cwd/env.
+            if store_paths.is_initialized(self.project_root):
+                result = decisions_store.search(
+                    query, limit=limit, project_root=self.project_root
+                )
         except Exception:  # noqa: BLE001
             result = []
         self._decisions_cache[cache_key] = result

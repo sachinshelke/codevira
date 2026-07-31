@@ -898,7 +898,18 @@ def _inject_claude_desktop(
         "CODEVIRA_IDE": "claude_desktop",
     }
 
-    merged = _merge_mcp_config(existing, "codevira", server_config)
+    # v3.8.0 (D000131): Claude Desktop is NOT project-aware — it reads ONE global
+    # config with no cwd. A bare "codevira" key means the SECOND project's setup
+    # overwrites the first, so Desktop points every project at whichever was set
+    # up last (the wrong-project memory bleed). Mint a named per-project entry,
+    # exactly like _inject_antigravity does. Reuse register_all.slug so this key
+    # is byte-identical to what `register-all` / `doctor --fix` write (no dup
+    # keys). Lazy import: register_all imports ide_inject, so a top-level import
+    # would be circular.
+    from mcp_server.register_all import slug
+
+    server_name = slug(str(project_root))
+    merged = _merge_mcp_config(existing, server_name, server_config)
     _write_json_safe(config_path, merged)
     return str(config_path)
 

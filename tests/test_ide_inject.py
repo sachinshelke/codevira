@@ -165,7 +165,10 @@ class TestClaudeDesktopInject:
         _inject_claude_desktop(project, "/usr/bin/codevira", "python3")
 
         data = json.loads(config_file.read_text())
-        entry = data["mcpServers"]["codevira"]
+        # D000131: Desktop (not project-aware) gets a NAMED per-project key so a
+        # second project can't overwrite it. No bare "codevira" key.
+        assert "codevira" not in data["mcpServers"]
+        entry = data["mcpServers"]["codevira-my-project"]
         assert entry["command"] == "/usr/bin/codevira"
         assert "--project-dir" in entry["args"]
         assert str(project) in entry["args"]
@@ -193,7 +196,35 @@ class TestClaudeDesktopInject:
         data = json.loads(config_file.read_text())
         assert data["globalShortcut"] == "Ctrl+Shift+C"
         assert "other-mcp" in data["mcpServers"]
-        assert "codevira" in data["mcpServers"]
+        assert "codevira-proj" in data["mcpServers"]
+
+    def test_two_projects_do_not_collide(self, tmp_path, monkeypatch):
+        """D000131 regression: Claude Desktop reads ONE global config with no
+        cwd. Setting up a SECOND project must NOT overwrite the first — each
+        gets its own named key, and both point at their own --project-dir.
+
+        FAILS before the fix: both projects wrote the bare "codevira" key, so
+        the second overwrote the first (the wrong-project memory bleed).
+        """
+        config_file = tmp_path / "claude_desktop_config.json"
+        monkeypatch.setattr(
+            ide_inject, "_claude_desktop_config_path", lambda: config_file
+        )
+        lh = tmp_path / "LH"
+        lh.mkdir()
+        udap = tmp_path / "UDAP"
+        udap.mkdir()
+
+        _inject_claude_desktop(lh, "/usr/bin/codevira", "python3")
+        _inject_claude_desktop(udap, "/usr/bin/codevira", "python3")
+
+        servers = json.loads(config_file.read_text())["mcpServers"]
+        # both projects survive as distinct named entries
+        assert {"codevira-lh", "codevira-udap"} <= set(servers)
+        assert "codevira" not in servers  # no bare, collidable key
+        # each entry is pinned to its OWN project dir
+        assert str(lh) in servers["codevira-lh"]["args"]
+        assert str(udap) in servers["codevira-udap"]["args"]
 
     def test_full_binary_path_required(self, tmp_path, monkeypatch):
         config_file = tmp_path / "claude_desktop_config.json"
@@ -207,7 +238,7 @@ class TestClaudeDesktopInject:
         _inject_claude_desktop(project, full_path, "python3")
 
         data = json.loads(config_file.read_text())
-        assert data["mcpServers"]["codevira"]["command"] == full_path
+        assert data["mcpServers"]["codevira-proj"]["command"] == full_path
 
     def test_claude_desktop_config_path_macos(self, monkeypatch):
         monkeypatch.setattr(sys, "platform", "darwin")
@@ -355,7 +386,7 @@ class TestM1IdeEnvStamp:
         project = tmp_path / "proj"
         project.mkdir()
         _inject_claude_desktop(project, "/usr/bin/codevira", "python3")
-        entry = self._read_codevira_entry(tmp_path / "desktop.json")
+        entry = self._read_codevira_entry(tmp_path / "desktop.json", "codevira-proj")
         assert entry["env"]["CODEVIRA_IDE"] == "claude_desktop"
 
     def test_per_project_cursor(self, tmp_path):

@@ -39,6 +39,16 @@ hard-pinned to `--project-dir`. One MCP per project — no collisions.
 has one (currently: remove the bare `codevira` entry that shadows project pins),
 backing up `~/.claude.json` first and touching only the `codevira` key.
 
+### Fixed — Claude Desktop setup overwrote the previous project (wrong-project bleed)
+
+Claude Desktop is **not project-aware** — it reads one global config with no
+per-window `cwd`. But `codevira setup` wrote every project under the *same* bare
+`codevira` key, so setting up a second project silently overwrote the first and
+Desktop pointed every project at whichever was configured last. Setup now mints a
+**named per-project entry** (`codevira-<project>`) for Desktop, matching the
+Antigravity path and byte-identical to what `register-all` / `doctor --fix` write
+(no duplicate keys). Existing bare entries are still healed by those commands.
+
 ---
 
 ## [3.7.1] — 2026-07-20

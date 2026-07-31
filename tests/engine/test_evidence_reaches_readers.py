@@ -138,3 +138,48 @@ class TestSessionLogAcceptsTaskType:
             next_steps=[],
         )
         assert res["session_id"] == "s2"
+
+
+class TestWhySurvivesTheScorer:
+    """The digest holds `why` and _format_decision_line renders it, but
+    _score_candidates rebuilds the dict from scratch — so the reasoning was
+    silently dropped between the two. Caught only by an end-to-end run of
+    the real UserPromptSubmit hook, not by either unit test in isolation."""
+
+    def test_scored_candidate_carries_why_end_to_end(self) -> None:
+        from mcp_server.engine.policies.relevance_inject import RelevanceInject
+
+        ri = RelevanceInject()
+        scored = ri._score_candidates(
+            tag_candidates={"cache": ["D000001"]},
+            file_candidates={},
+            fts_candidates=[],
+            digest_records=[
+                {
+                    "id": "D000001",
+                    "summary": "Never cache the invalidation path",
+                    "tags": ["cache"],
+                    "file": "src/cache.py",
+                    "do_not_revert": True,
+                    "weight": 1.0,
+                    "why": "deploys served stale reads for 90s",
+                }
+            ],
+            min_score=0.0,
+        )
+        assert scored, "expected a scored candidate"
+        assert scored[0]["why"] == "deploys served stale reads for 90s"
+        assert "↳ deploys served stale reads" in ri._format_decision_line(scored[0])
+
+    def test_missing_digest_record_yields_why_none(self) -> None:
+        from mcp_server.engine.policies.relevance_inject import RelevanceInject
+
+        scored = RelevanceInject()._score_candidates(
+            tag_candidates={"x": ["D999999"]},
+            file_candidates={},
+            fts_candidates=[],
+            digest_records=[],
+            min_score=0.0,
+        )
+        if scored:
+            assert scored[0]["why"] is None

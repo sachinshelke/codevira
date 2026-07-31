@@ -446,12 +446,18 @@ class RelevanceInject(Policy):
                 do_not_revert = False
                 file_path = None
                 tags: list[str] = []
+                why: str | None = None
             else:
                 weight = float(digest_rec.get("weight", 0.5))
                 summary = str(digest_rec.get("summary", ""))
                 do_not_revert = bool(digest_rec.get("do_not_revert", False))
                 file_path = digest_rec.get("file")
                 tags = list(digest_rec.get("tags", []))
+                # 4.0 Step 2.3: carry the reasoning through the scorer.
+                # The digest holds it and _format_decision_line renders it,
+                # but this dict is rebuilt from scratch — so without this
+                # line the "why" was silently dropped between the two.
+                why = digest_rec.get("why")
 
             final = base * max(weight, 0.1)  # never zero-out a real match
             if final < min_score:
@@ -465,6 +471,7 @@ class RelevanceInject(Policy):
                     "do_not_revert": do_not_revert,
                     "file": file_path,
                     "tags": tags,
+                    "why": why,
                     "_components": {
                         "tag": tag_score.get(did, 0.0),
                         "file": file_score.get(did, 0.0),

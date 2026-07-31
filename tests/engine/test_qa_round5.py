@@ -413,3 +413,41 @@ class TestPostToolUseInputSchema:
         )
         assert captured["tool_output"] is not None
         assert captured["tool_output"].get("output") == "legacy field"
+
+
+class TestMalformedInputFailsOpenVisibly:
+    """A malformed hook payload must allow, never block — but this
+    silently defeated a live verification run for an hour (zsh's builtin
+    `echo` interpreted \\n, putting a raw newline inside a JSON string).
+    Pinning the behaviour so the fail-open path stays deliberate.
+    """
+
+    def test_invalid_json_allows(self, tmp_path, monkeypatch):
+        class Blocker(Policy):
+            name = "blocker"
+            handles = (EventType.PRE_TOOL_USE,)
+
+            def evaluate(self, event):
+                return PolicyVerdict.block("should never be reached")
+
+        register_policy(Blocker())
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        stdin_buf = io.StringIO('{"cwd": "' + str(proj) + '", "tool_input": {broken}}')
+        stdin_buf.isatty = lambda: False  # type: ignore[method-assign]
+        monkeypatch.setattr(sys, "stdin", stdin_buf)
+        out = io.StringIO()
+        monkeypatch.setattr(sys, "stdout", out)
+
+        rc = claude_code_hooks.handle("PreToolUse")
+        assert rc == 0
+        assert json.loads(out.getvalue())["continue"] is True
+
+    def test_empty_stdin_allows(self, tmp_path, monkeypatch):
+        stdin_buf = io.StringIO("")
+        stdin_buf.isatty = lambda: False  # type: ignore[method-assign]
+        monkeypatch.setattr(sys, "stdin", stdin_buf)
+        out = io.StringIO()
+        monkeypatch.setattr(sys, "stdout", out)
+        assert claude_code_hooks.handle("PreToolUse") == 0
+        assert json.loads(out.getvalue())["continue"] is True

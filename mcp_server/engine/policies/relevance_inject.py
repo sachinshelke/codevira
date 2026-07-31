@@ -46,6 +46,8 @@ Env var overrides (machine-wide):
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import hashlib
 import logging
 import os
@@ -142,8 +144,12 @@ class RelevanceInject(Policy):
 
     # ─── Config resolution ─────────────────────────────────────────────
 
-    def _config(self) -> dict[str, Any]:
-        """Env vars > project config.yaml > defaults."""
+    def _config(self, project_root: Path | None = None) -> dict[str, Any]:
+        """Env vars > project config.yaml > defaults.
+
+        4.0: ``project_root`` scopes the config read. Previously ambient,
+        so one project could inherit another's injection budget and mode.
+        """
         mode_raw = os.environ.get("CODEVIRA_INJECT_MODE", "").strip().lower()
         max_decisions_raw = os.environ.get("CODEVIRA_INJECT_MAX_DECISIONS", "")
         max_tokens_raw = os.environ.get("CODEVIRA_INJECT_MAX_TOKENS", "")
@@ -154,7 +160,7 @@ class RelevanceInject(Policy):
             try:
                 from mcp_server.storage import paths
 
-                cfg_path = paths.config_path()
+                cfg_path = paths.config_path(project_root)
                 if cfg_path.is_file():
                     cfg = yaml.safe_load(cfg_path.read_text()) or {}
                     if not mode_raw and "inject_mode" in cfg:
@@ -250,22 +256,24 @@ class RelevanceInject(Policy):
             return PolicyVerdict.allow()
 
         # Gate 3: config
-        config = self._config()
+        config = self._config(event.project_root)
         if config["mode"] == "off":
             return PolicyVerdict.allow()
 
-        # Gate 4: storage availability
+        # Gate 4: storage availability — scoped to THIS event's project.
+        # 4.0: previously resolved ambiently, which injected another
+        # project's decisions into this one. See _load_indexes.
         try:
             from mcp_server.storage import paths
 
-            if not paths.is_initialized():
+            if not paths.is_initialized(event.project_root):
                 # No .codevira/ in this project; nothing to inject.
                 return PolicyVerdict.allow()
         except Exception:
             return PolicyVerdict.allow()
 
         # Stage 1: load manifest + digest
-        manifest_data, digest_records = self._load_indexes()
+        manifest_data, digest_records = self._load_indexes(event.project_root)
         if not manifest_data.get("active_decisions"):
             # Empty project.
             return PolicyVerdict.allow()
@@ -274,7 +282,11 @@ class RelevanceInject(Policy):
         prompt_lower = prompt.lower()
         tag_candidates = self._tag_candidates(prompt_lower, manifest_data)
         file_candidates = self._file_candidates(prompt_lower, manifest_data)
-        fts_candidates = self._fts_candidates(prompt, limit=config["max_decisions"] * 4)
+        fts_candidates = self._fts_candidates(
+            prompt,
+            limit=config["max_decisions"] * 4,
+            project_root=event.project_root,
+        )
 
         # Stage 3: score
         scored = self._score_candidates(
@@ -313,13 +325,25 @@ class RelevanceInject(Policy):
 
     # ─── Stage helpers ────────────────────────────────────────────────
 
-    def _load_indexes(self) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-        """Read manifest + digest. Both files are small (KB range)."""
+    def _load_indexes(
+        self, project_root: Path | None = None
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """Read manifest + digest for ``project_root``. Both are KB-range.
+
+        4.0: these were resolved ambiently (``manifest_path()`` /
+        ``digest_path()`` with no argument), so the hook injected whichever
+        project the PROCESS resolved rather than the one the event came
+        from. Verified live: a UserPromptSubmit in a fresh project was
+        injected with agent-mcp's decisions. This is the injection-side
+        twin of the same bleed fixed in signals.decisions(), and it is the
+        shape users actually notice — "why is it telling me about another
+        repo's decisions?" (D00012O).
+        """
         try:
             from mcp_server.storage import jsonl_store, manifest as manifest_mod, paths
 
-            manifest_data = manifest_mod.load(paths.manifest_path())
-            digest_records = jsonl_store.read_all(paths.digest_path())
+            manifest_data = manifest_mod.load(paths.manifest_path(project_root))
+            digest_records = jsonl_store.read_all(paths.digest_path(project_root))
         except Exception as exc:  # noqa: BLE001
             logger.warning("relevance_inject._load_indexes failed: %s", exc)
             return ({}, [])
@@ -354,12 +378,19 @@ class RelevanceInject(Policy):
                 out[fp] = list(ids)
         return out
 
-    def _fts_candidates(self, prompt: str, *, limit: int) -> list[dict[str, Any]]:
-        """FTS5 keyword search on prompt text; returns BM25-ranked hits."""
+    def _fts_candidates(
+        self, prompt: str, *, limit: int, project_root: Path | None = None
+    ) -> list[dict[str, Any]]:
+        """FTS5 keyword search on prompt text; returns BM25-ranked hits.
+
+        4.0: scoped to ``project_root`` — see ``_load_indexes``.
+        """
         try:
             from mcp_server.storage import decisions_store
 
-            return decisions_store.search(prompt, limit=limit)
+            return decisions_store.search(
+                prompt, limit=limit, project_root=project_root
+            )
         except Exception as exc:  # noqa: BLE001
             logger.warning("relevance_inject._fts_candidates failed: %s", exc)
             return []

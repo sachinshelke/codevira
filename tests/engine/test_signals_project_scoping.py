@@ -122,3 +122,64 @@ class TestNoCrossProjectBleed:
 
         hits = SignalContext(project_root=alpha).search_decisions("retry budget")
         assert all(not h.get("id", "").startswith("B") for h in hits)
+
+
+class TestInjectionIsScopedToo:
+    """The injection path had the same ambient-resolution bug as
+    signals.decisions(), and it is the one users actually notice: a
+    UserPromptSubmit in project A was injected with project B's
+    decisions. Verified live before the fix (D00012O)."""
+
+    def test_inject_reads_only_its_own_project(
+        self, two_projects: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from mcp_server.engine.policies.relevance_inject import RelevanceInject
+
+        alpha, beta = two_projects
+        # Give BOTH projects a manifest+digest so either could be loaded.
+        for root, did, text in (
+            (alpha, "A000001", "alpha: keep the retry budget at 3"),
+            (beta, "B000001", "beta: never cache the invalidation path"),
+        ):
+            (root / ".codevira" / "manifest.yaml").write_text(
+                f"active_decisions: 1\ntags:\n  retry: [{did}]\n"
+            )
+            (root / ".codevira" / "digest.jsonl").write_text(
+                json.dumps(
+                    {
+                        "id": did,
+                        "summary": text,
+                        "tags": ["retry"],
+                        "file": None,
+                        "do_not_revert": True,
+                        "weight": 1.0,
+                        "why": None,
+                    }
+                )
+                + "\n"
+            )
+
+        # Ambient points at BETA; ask for ALPHA's indexes.
+        monkeypatch.setenv("CODEVIRA_PROJECT_DIR", str(beta))
+        monkeypatch.chdir(beta)
+
+        manifest, digest_records = RelevanceInject()._load_indexes(alpha)
+        ids = {r["id"] for r in digest_records}
+        assert ids == {"A000001"}, f"injected another project's decisions: {ids}"
+
+    def test_config_is_scoped(
+        self, two_projects: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """One project must not inherit another's injection budget."""
+        from mcp_server.engine.policies.relevance_inject import RelevanceInject
+
+        alpha, beta = two_projects
+        (alpha / ".codevira" / "config.yaml").write_text("inject_max_decisions: 7\n")
+        (beta / ".codevira" / "config.yaml").write_text("inject_max_decisions: 2\n")
+
+        monkeypatch.delenv("CODEVIRA_INJECT_MAX_DECISIONS", raising=False)
+        monkeypatch.setenv("CODEVIRA_PROJECT_DIR", str(beta))
+        monkeypatch.chdir(beta)
+
+        assert RelevanceInject()._config(alpha)["max_decisions"] == 7
+        assert RelevanceInject()._config(beta)["max_decisions"] == 2

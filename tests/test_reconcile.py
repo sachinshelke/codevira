@@ -1,8 +1,8 @@
 """
 Tests for mcp_server/storage/reconcile.py — Phase 29 shared clustering core.
 
-Also asserts backward-compat: check_conflict + consensus_store still resolve
-the primitives (they now re-import from here).
+Also asserts backward-compat: check_conflict still resolves the primitives
+(it re-imports from here). consensus_store was removed in 4.0.
 """
 
 from __future__ import annotations
@@ -95,7 +95,13 @@ class TestBackwardCompat:
             "hash the password"
         )
 
-    def test_consensus_store_imports_resolve(self):
-        # consensus_store imports the primitives via check_conflict — a smoke
-        # import proves the re-export chain is intact.
-        from mcp_server.storage import consensus_store  # noqa: F401
+    def test_consensus_store_is_gone(self):
+        """4.0 subtraction: the consensus subsystem was removed (6 MCP
+        tools, 1 CLI subcommand, ~1,829 LOC, zero data files in any
+        project). reconcile.py remains the shared clustering core for
+        check_conflict — that re-export chain is asserted above.
+        """
+        import pytest
+
+        with pytest.raises(ImportError):
+            from mcp_server.storage import consensus_store  # noqa: F401

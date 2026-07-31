@@ -1545,79 +1545,6 @@ async def list_tools() -> list[Tool]:
                 "required": ["file_path"],
             },
         ),
-        # ---- v3.1.0 M6 Phase B: consensus (read-only) ----
-        Tool(
-            name="consensus_check",
-            description=(
-                "v3.1.0 M6 Phase B: Scan decisions written since this IDE's "
-                "checkpoint, surface cross-IDE conflicts to "
-                ".codevira/pending_conflicts.jsonl, advance the checkpoint. "
-                "Read-only — no automatic resolution. The Phase C handshake "
-                "protocol (one IDE proposing supersession to another) is "
-                "M7 and ships disabled by default."
-            ),
-            inputSchema={"type": "object", "properties": {}},
-        ),
-        Tool(
-            name="consensus_status",
-            description=(
-                "v3.1.0 M6: Return the count of pending cross-IDE conflicts + "
-                "top-K rows (default 3). Useful as a status check from inside "
-                "the agent loop; the get_session_context payload also "
-                "carries a 'consensus' panel based on this data."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "top_k": {"type": "integer", "default": 3},
-                },
-            },
-        ),
-        Tool(
-            name="consensus_propose_supersession",
-            description=(
-                "v3.1.0 M7 Phase C: Open a cross-IDE supersession proposal. "
-                "Writes a 'proposed_supersession' row to pending_conflicts.jsonl "
-                "with expires_at = ts + handshake_timeout_days (default 14). "
-                "Opt-in: returns {disabled: True} unless "
-                "memory.consensus.handshake_enabled is set in "
-                ".codevira/config.yaml. Same-author fast-path returns "
-                "{fast_path: True} so the caller can route to "
-                "supersede_decision directly."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "target_decision_id": {"type": "string"},
-                    "new_decision": {"type": "string"},
-                    "reason": {"type": "string"},
-                },
-                "required": ["target_decision_id", "new_decision", "reason"],
-            },
-        ),
-        Tool(
-            name="consensus_resolve",
-            description=(
-                "v3.1.0 M7 Phase C: Approve, reject, or withdraw a pending "
-                "supersession proposal. Opt-in via "
-                "memory.consensus.handshake_enabled. The approving IDE should "
-                "match the target decision's origin IDE (or be 'unknown') "
-                "for cross-IDE proposals; withdrawals come from the "
-                "proposing IDE."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "proposal_id": {"type": "string"},
-                    "action": {
-                        "type": "string",
-                        "enum": ["approved", "rejected", "withdrawn"],
-                    },
-                    "comment": {"type": "string"},
-                },
-                "required": ["proposal_id", "action"],
-            },
-        ),
         Tool(
             name="origin_of",
             description=(
@@ -1800,7 +1727,7 @@ async def list_tools() -> list[Tool]:
         "get_signature", "query_graph", "get_reflections", "list_reflections",
         "get_skill", "list_skills", "get_working_context", "working_get",
         "spatial_nearby", "spatial_heat", "spatial_neighborhood",
-        "spatial_affordances", "consensus_status", "origin_of",
+        "spatial_affordances", "origin_of",
         "search_preferences",
     }  # fmt: skip
     if ToolAnnotations is not None:
@@ -2310,34 +2237,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             from mcp_server.tools.spatial import spatial_affordances
 
             result = spatial_affordances(file_path=arguments["file_path"])
-        # ---- v3.1.0 M6 Phase B: consensus dispatch ----
-        elif name == "consensus_check":
-            from mcp_server.tools.consensus import consensus_check
-
-            result = consensus_check()
-        elif name == "consensus_status":
-            from mcp_server.tools.consensus import consensus_status
-
-            result = consensus_status(top_k=arguments.get("top_k", 3))
-        # ---- v3.1.0 M7 Phase C: handshake dispatch ----
-        elif name == "consensus_propose_supersession":
-            from mcp_server.tools.consensus import consensus_propose_supersession
-
-            result = consensus_propose_supersession(
-                target_decision_id=arguments["target_decision_id"],
-                new_decision=arguments["new_decision"],
-                reason=arguments["reason"],
-            )
-        elif name == "consensus_resolve":
-            from mcp_server.tools.consensus import consensus_resolve
-
-            result = consensus_resolve(
-                proposal_id=arguments["proposal_id"],
-                action=arguments["action"],
-                comment=arguments.get("comment"),
-            )
         elif name == "origin_of":
-            from mcp_server.tools.consensus import origin_of
+            from mcp_server.tools.provenance import origin_of
 
             result = origin_of(decision_id=arguments["decision_id"])
         # ---- v3.3.0 Phase 4: preference capture dispatch ----

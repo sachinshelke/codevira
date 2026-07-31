@@ -504,7 +504,16 @@ class RelevanceInject(Policy):
         return "\n".join(lines)
 
     def _format_decision_line(self, d: dict[str, Any]) -> str:
-        """One line per decision. Cache-stable (no timestamp, no score)."""
+        """One line per decision. Cache-stable (no timestamp, no score).
+
+        4.0 Step 2.3: appends a clipped "why" when the digest carries one.
+        The budget loop above is greedy, so a longer line means fewer
+        decisions injected — that trade is intentional. A decision the agent
+        understands is worth more than two it merely sees, and injecting a
+        bare assertion with no reasoning is how tangential decisions earned
+        the "mediocre signal-to-noise" verdict in D00005N.
+        """
         prefix = "🔒 " if d["do_not_revert"] else "• "
         file_part = f"  `{d['file']}`" if d.get("file") else ""
-        return f"{prefix}**{d['id']}** {d['summary']}{file_part}"
+        why_part = f"\n    ↳ {d['why']}" if d.get("why") else ""
+        return f"{prefix}**{d['id']}** {d['summary']}{file_part}{why_part}"

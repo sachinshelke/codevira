@@ -90,7 +90,31 @@ def digest_record(decision: dict[str, Any]) -> dict[str, Any]:
         "file": decision.get("file_path"),
         "do_not_revert": bool(decision.get("do_not_revert", False)),
         "weight": weight_for_outcome(decision.get("outcome")),
+        # 4.0 Step 2.3: a one-line "why", tightly clipped. The digest feeds
+        # prompt injection, which is token-budgeted — the renderer adds
+        # lines greedily until the budget is hit, so a longer line means
+        # FEWER decisions injected. That trade is deliberate: a decision the
+        # agent understands beats two it merely sees. Kept short so the
+        # trade stays small; the full context is one expand() away.
+        "why": _clip_why(decision.get("context")),
     }
+
+
+#: Cap for the digest's one-line "why". Deliberately tight — see digest_record.
+_WHY_CAP = 140
+
+
+def _clip_why(context: str | None) -> str | None:
+    """First sentence-ish of ``context``, clipped on a word boundary."""
+    text = (context or "").strip().replace("\n", " ")
+    if not text:
+        return None
+    if len(text) <= _WHY_CAP:
+        return text
+    cut = text[: _WHY_CAP - 1]
+    if " " in cut[_WHY_CAP // 2 :]:
+        cut = cut[: cut.rindex(" ")]
+    return cut.rstrip(" ,;:.") + "…"
 
 
 def regenerate(

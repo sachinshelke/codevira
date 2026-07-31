@@ -65,12 +65,50 @@ def _parse_version(version: str) -> tuple[int, ...] | None:
         return None
 
 
+def _parse_current_version(version: str) -> tuple[int, ...] | None:
+    """Parse the LOCAL version, tolerating a pre-release suffix.
+
+    ``_parse_version`` deliberately rejects anything that isn't a plain
+    dotted-integer release, and that is right for the PyPI side — we never
+    nag someone toward a pre-release. Applying it to the LOCAL version too
+    was a silent defect: a user on ``4.0.0.dev1`` (or any ``rc``/``a``/``b``/
+    ``post``/``+local`` build) parsed to None, so ``_is_newer`` returned
+    False and update notices stopped appearing entirely, with no error.
+
+    Here we compare on the release part only — ``4.0.0.dev1`` → ``(4, 0, 0)``.
+    A dev build of X therefore behaves like X for notification purposes,
+    which errs toward notifying rather than going quiet.
+    """
+    if not isinstance(version, str):
+        return None
+    head = version.strip().split("+", 1)[0]  # drop +local
+    parts: list[int] = []
+    for part in head.split("."):
+        if part.isdigit():
+            parts.append(int(part))
+            continue
+        # First non-numeric segment starts the pre-release suffix
+        # (dev1, rc1, a1, post1, …). Everything from here is dropped.
+        lead = ""
+        for ch in part:
+            if not ch.isdigit():
+                break
+            lead += ch
+        if lead:
+            parts.append(int(lead))
+        break
+    return tuple(parts) or None
+
+
 def _is_newer(latest: str, current: str) -> bool:
     """True iff ``latest`` is a plain release strictly newer than
     ``current``. Defensive: any unparseable input → False (no notice).
+
+    ``latest`` stays strict (never nag toward a pre-release); ``current``
+    tolerates one, so pre-release users keep getting notices.
     """
     latest_t = _parse_version(latest)
-    current_t = _parse_version(current)
+    current_t = _parse_current_version(current)
     if latest_t is None or current_t is None:
         return False
     # Pad to equal length so 3.3 vs 3.3.0 compares as equal.

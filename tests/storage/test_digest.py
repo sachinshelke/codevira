@@ -77,8 +77,16 @@ class TestDigestRecord:
                 "file_path": "auth.py",
                 "do_not_revert": True,
                 "outcome": "kept",
-                # Fields that should be dropped:
+                # 4.0 Step 2.3: `context` is NO LONGER dropped — it is
+                # clipped into `why`. It was dropped for token discipline,
+                # but the binding constraint on the injection path is
+                # _DEFAULT_MAX_DECISIONS = 3, not the 600-token budget:
+                # 3 decisions cost ~70 tokens without `why` and ~175 with,
+                # so the reasoning is affordable and a bare injected
+                # assertion is exactly what earned the "mediocre
+                # signal-to-noise" verdict in D00005N.
                 "context": "lengthy rationale",
+                # Still dropped:
                 "ts": "2026-05-19T12:00:00Z",
             }
         )
@@ -89,7 +97,10 @@ class TestDigestRecord:
             "file",
             "do_not_revert",
             "weight",
+            "why",
         }
+        assert rec["why"] == "lengthy rationale"
+        assert "ts" not in rec
         assert rec["id"] == "D000001"
         assert rec["summary"] == "Use bcrypt for password hashing"
         assert rec["tags"] == ["security", "auth"]
@@ -166,6 +177,7 @@ class TestRegenerate:
                 "file",
                 "do_not_revert",
                 "weight",
+                "why",  # 4.0 Step 2.3 — see test_shape_contract
             }
 
     def test_regenerate_atomic_via_tmp(

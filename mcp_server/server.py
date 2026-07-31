@@ -963,6 +963,34 @@ async def list_tools() -> list[Tool]:
                         "description": "Original developer prompt",
                     },
                     "phase": {"type": "string", "description": "phase"},
+                    "task_type": {
+                        "type": "string",
+                        "enum": [
+                            "feature",
+                            "bug",
+                            "refactor",
+                            "release",
+                            "docs",
+                            "other",
+                        ],
+                        "description": (
+                            "What KIND of work this session was. Skill "
+                            "induction clusters sessions by task_type — "
+                            "without it a session can never contribute to a "
+                            "learned skill, which is why induction has yielded "
+                            "zero across every project to date."
+                        ),
+                    },
+                    "skill_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "IDs of skills you actually applied this session. "
+                            "Feeds the outcomes fan-out that reinforces or "
+                            "retires a skill based on whether its session's "
+                            "work survived in git."
+                        ),
+                    },
                     "files_changed": {"type": "array", "items": {"type": "string"}},
                     "decisions": {
                         "type": "array",
@@ -2105,6 +2133,13 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 files_changed=arguments["files_changed"],
                 decisions=arguments["decisions"],
                 next_steps=arguments["next_steps"],
+                # 4.0 Step 2.4: sessions_store.write has accepted both since
+                # v3.1.x; the MCP surface never declared or forwarded them, so
+                # 62/62 sessions carry task_type=None and skill induction is
+                # structurally guaranteed to yield zero. Same dead-write-path
+                # shape as record_decision's alternatives_considered.
+                task_type=arguments.get("task_type"),
+                skill_ids=arguments.get("skill_ids"),
             )
         elif name == "record_decision":
             from mcp_server.tools.learning import (

@@ -474,6 +474,13 @@ def search(
         result = {
             "id": d.get("id"),
             "decision": d.get("decision"),
+            # 4.0 Step 2.3: `context` holds the reasoning on ~81% of
+            # decisions and was dropped here, so even full=True returned a
+            # decision with no "why". The evidence existed and never reached
+            # a reader.
+            "context": d.get("context"),
+            "alternatives_considered": d.get("alternatives_considered"),
+            "would_re_examine_if": d.get("would_re_examine_if"),
             "file_path": d.get("file_path"),
             "do_not_revert": bool(d.get("do_not_revert", False)),
             "tags": d.get("tags") or [],

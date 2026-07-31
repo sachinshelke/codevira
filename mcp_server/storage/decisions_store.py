@@ -1250,7 +1250,16 @@ def rebuild_indexes() -> None:
     Called after amendments (mark_protected, supersede) and on
     ``codevira sync``. Also triggers an AGENTS.md regen so the slim
     contract reflects the new state.
+
+    4.0 Step 4: this is the single chokepoint every amendment AND the
+    id-repair rewrite already funnels through, so dropping the read
+    caches here covers every in-place rewrite at once. The (mtime, size)
+    key already catches appends; a rewrite that happened to preserve both
+    would not, and ``repair_ids`` genuinely rewrites the file.
     """
+    invalidate_merged_cache()
+    fts5_index.invalidate_staleness_cache()
+
     paths.ensure_dirs()
     try:
         manifest.regenerate(paths.decisions_path(), paths.manifest_path())

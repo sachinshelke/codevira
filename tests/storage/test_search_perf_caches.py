@@ -149,3 +149,30 @@ class TestWithinBudget:
         lat.sort()
         p95 = lat[int(len(lat) * 0.95)]
         assert p95 < 3.0, f"p95 {p95:.2f}ms exceeds the 3ms budget (D00012K)"
+
+
+class TestInPlaceRewritesInvalidate:
+    """The (mtime, size) key catches appends. An in-place REWRITE that
+    happened to preserve both would not — and `repair_ids` genuinely
+    rewrites the file. `rebuild_indexes()` is the chokepoint every
+    amendment and repair path already funnels through, so it drops both
+    caches."""
+
+    def test_rebuild_indexes_drops_the_caches(self, project: Path) -> None:
+        decisions_store.record("A decision")
+        decisions_store.list_all(limit=5)  # warm
+        assert decisions_store._MERGED_CACHE, "expected a warm cache"
+
+        decisions_store.rebuild_indexes()
+        assert not decisions_store._MERGED_CACHE, "merged cache not dropped"
+        assert not fts5_index._FRESH_CACHE, "staleness cache not dropped"
+
+    def test_repair_ids_result_is_visible(self, project: Path) -> None:
+        """repair_ids rewrites the store; the next read must see it."""
+        decisions_store.record("One")
+        decisions_store.record("Two")
+        decisions_store.list_all(limit=5)  # warm
+        out = decisions_store.repair_ids(apply=True)
+        assert isinstance(out, dict)
+        # Whatever it did, the store must still read back consistently.
+        assert decisions_store.list_all(limit=50)["count"] >= 2

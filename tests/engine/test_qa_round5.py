@@ -219,6 +219,97 @@ class TestBlockSchemaConformance:
 
 
 # =====================================================================
+# Stop-block semantics (v3.8.0, found while flipping session_log_enforcer
+# to block-by-default): Stop blocks must RE-ENGAGE the AI, not halt the
+# turn. `{"continue": false, "stopReason": ...}` ends processing and talks
+# to the user; `{"decision": "block", "reason": ...}` refuses the stop and
+# talks to the AI. The wiring emitted the former for every event type, so
+# any Stop policy that blocked would have cut the response off — the exact
+# opposite of what session_log_enforcer's block mode is documented to do.
+# =====================================================================
+
+
+class _StopBlocker(Policy):
+    name = "stop_blocker"
+    handles = (EventType.STOP,)
+
+    def evaluate(self, event):
+        return PolicyVerdict.block("call write_session_log before stopping")
+
+
+class TestStopBlockSchemaConformance:
+    def test_stop_block_uses_decision_block_not_continue_false(
+        self, tmp_path, monkeypatch
+    ):
+        register_policy(_StopBlocker())
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        rc, stdout, stderr = _run_handler(
+            "Stop",
+            {"session_id": "s1", "cwd": str(proj)},
+            monkeypatch,
+        )
+        payload = json.loads(stdout)
+        assert payload.get("decision") == "block"
+        assert "write_session_log" in payload.get("reason", "")
+        # The halting field must NOT be present — it would end the turn
+        # instead of re-engaging the AI.
+        assert "continue" not in payload
+        assert "stopReason" not in payload
+        assert rc == 2
+        assert "write_session_log" in stderr
+
+    def test_stop_hook_active_degrades_block_to_warn(self, tmp_path, monkeypatch):
+        """Loop guard: Claude Code sets stop_hook_active on the Stop that
+        follows a blocked one. Blocking again would re-engage forever when
+        the AI *cannot* satisfy the policy."""
+        register_policy(_StopBlocker())
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        rc, stdout, stderr = _run_handler(
+            "Stop",
+            {"session_id": "s1", "cwd": str(proj), "stop_hook_active": True},
+            monkeypatch,
+        )
+        payload = json.loads(stdout)
+        assert payload["continue"] is True
+        assert "write_session_log" in payload.get("systemMessage", "")
+        assert "decision" not in payload
+        assert rc == 0
+
+    def test_pretooluse_block_shape_unchanged_by_stop_special_case(
+        self, tmp_path, monkeypatch
+    ):
+        """Regression guard: the Stop branch must not leak into tool events."""
+
+        class Blocker(Policy):
+            name = "blocker"
+            handles = (EventType.PRE_TOOL_USE,)
+
+            def evaluate(self, event):
+                return PolicyVerdict.block("denied")
+
+        register_policy(Blocker())
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        rc, stdout, _ = _run_handler(
+            "PreToolUse",
+            {
+                "session_id": "s1",
+                "cwd": str(proj),
+                "tool_name": "Edit",
+                "tool_input": {"file_path": str(proj / "x.py")},
+            },
+            monkeypatch,
+        )
+        payload = json.loads(stdout)
+        assert payload["continue"] is False
+        assert "denied" in payload["stopReason"]
+        assert "decision" not in payload
+        assert rc == 2
+
+
+# =====================================================================
 # R5 #3: warn path uses systemMessage field
 # =====================================================================
 

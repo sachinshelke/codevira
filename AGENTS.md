@@ -15,6 +15,7 @@
 - **D000010** Any change to a hero policy (mcp_server/engine/policies/*.py) — especially relevance_inject and decision_lock — MUST ru…  ·  `mcp_server/engine/policies/relevance_inject.py`  ·  _e2e, hero-policy, regression, relevance-inject, testing, v3.0, wedge_
 - **D000012** The v3.0.0 JSONL store WRITE path now validates the resolved project root via is_invalid_project_root() inside storage/…  ·  `mcp_server/storage/paths.py`  ·  _claude-desktop, forbidden-root, g5, ship-blocker, storage, v3.0.0, write-path_
 - **D00011Z** [supersedes D00011W: D00011W claimed the data-loss bug was fixed and was locked do_not_revert on that basis. An adversa…  ·  `mcp_server/migrate.py`  ·  _corrected, data-loss, high-severity, migration, release-blocker, root-cause, v3.7.1_
+- **D00012K** [supersedes D0000PV: D0000PV's constraint is right and stands, but both of its numbers were retired by D00011J's measur…  ·  _budget, do-not-revert, footprint, invariant, lean, lightweight, performance_
 
 ### Active conventions
 
@@ -29,9 +30,8 @@
 - **D000017** [supersedes D000014: D000014 premise was factually wrong: verified the committed code uses ~/.gemini/antigravity/, neve…  ·  `mcp_server/ide_inject.py`  ·  _antigravity, broken-integration, cross-tool, ide-inject, setup-wizard, v3.0.1_
 - **D000018** Measured codevira startup token footprint (2026-05-26, chars/4 estimate): MCP tools/list = 16,454 chars ≈ 4,100 tokens …
 - **D000019** IMPLEMENTED (commit 7a2bdd4) the D000018 token reduction. New env var CODEVIRA_TOOL_PROFILE=lean trims the advertised M…
-- **D00001A** RELEASE SCOPING (per Sachin 2026-05-26): ALL of this session's work ships in the SINGLE 3.0.0 release — there is no sep…
 
-_+88 more decision(s) — full log in `.codevira/decisions.jsonl`._
+_+97 more decision(s) — full log in `.codevira/decisions.jsonl`._
 
 
 For the full decision log, use `search_decisions` / `list_decisions` (or the `codevira` CLI) — don't read `.codevira/*.jsonl` directly.

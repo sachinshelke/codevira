@@ -276,7 +276,12 @@ class TestStopNoOp:
 
 
 class TestStopEnforcement:
-    def test_commits_without_log_warns(self, git_project: Path) -> None:
+    def test_commits_without_log_blocks_by_default(self, git_project: Path) -> None:
+        """v3.8.0: the DEFAULT (no env set) is block, not warn.
+
+        Fails against _DEFAULT_MODE = "warn" — this is the test that proves
+        the data-gated flip landed.
+        """
         policy = SessionLogEnforcer()
         ts = _ts_after_head(git_project)
         policy.evaluate(
@@ -292,7 +297,7 @@ class TestStopEnforcement:
             _make_event(EventType.STOP, git_project, session_id="s1"),
             None,
         )
-        assert verdict.action == "warn"
+        assert verdict.action == "block"
         assert "2 commits" in (verdict.message or "")
         assert "write_session_log" in (verdict.message or "")
         assert verdict.metadata["commit_count"] == 2
@@ -341,7 +346,8 @@ class TestStopEnforcement:
             _make_event(EventType.STOP, git_project, session_id="s1"),
             None,
         )
-        assert verdict.action == "warn"
+        # Subject is gap DETECTION, not the mode it's reported in.
+        assert not verdict.is_allowing()
 
     def test_single_commit_uses_singular(self, git_project: Path) -> None:
         policy = SessionLogEnforcer()
@@ -358,7 +364,7 @@ class TestStopEnforcement:
             _make_event(EventType.STOP, git_project, session_id="s1"),
             None,
         )
-        assert verdict.action == "warn"
+        assert not verdict.is_allowing()
         assert "1 commit " in (verdict.message or "")
         assert "1 commits" not in (verdict.message or "")
 
@@ -414,12 +420,36 @@ class TestMode:
         )
         assert verdict.is_allowing()
 
-    def test_unknown_mode_defaults_to_warn(
+    def test_unknown_mode_falls_back_to_default(
         self,
         git_project: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        """A garbage env value uses _DEFAULT_MODE — block since v3.8.0."""
         monkeypatch.setenv("CODEVIRA_SESSION_LOG_ENFORCER_MODE", "nonsense")
+        policy = SessionLogEnforcer()
+        ts = _ts_after_head(git_project)
+        policy.evaluate(
+            _make_event(
+                EventType.SESSION_START, git_project, session_id="s1", timestamp=ts
+            ),
+            None,
+        )
+        _git_commit(git_project, "feat: x", at_epoch=ts + 10)
+
+        verdict = policy.evaluate(
+            _make_event(EventType.STOP, git_project, session_id="s1"),
+            None,
+        )
+        assert verdict.action == "block"
+
+    def test_warn_mode_still_available_as_escape_hatch(
+        self,
+        git_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The pre-v3.8.0 behavior stays one env var away."""
+        monkeypatch.setenv("CODEVIRA_SESSION_LOG_ENFORCER_MODE", "warn")
         policy = SessionLogEnforcer()
         ts = _ts_after_head(git_project)
         policy.evaluate(
@@ -540,7 +570,14 @@ class TestOutcomesInstrumentation:
             None,
         )
 
-    def test_gap_records_gap_warned(self, git_project: Path) -> None:
+    def test_gap_records_gap_warned(
+        self,
+        git_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """warn-mode instrumentation still records gap_warned (v3.8.0 made
+        block the default, so warn must be requested explicitly here)."""
+        monkeypatch.setenv("CODEVIRA_SESSION_LOG_ENFORCER_MODE", "warn")
         policy = SessionLogEnforcer()
         ts = _ts_after_head(git_project)
         self._start_session(policy, git_project, ts)
@@ -555,6 +592,21 @@ class TestOutcomesInstrumentation:
         assert outcomes[0]["commit_count"] == 1
         assert outcomes[0]["mode"] == "warn"
         assert outcomes[0]["session_id"] == "s1"
+
+    def test_gap_records_gap_blocked_by_default(self, git_project: Path) -> None:
+        """v3.8.0: with no env set the outcome row is gap_blocked."""
+        policy = SessionLogEnforcer()
+        ts = _ts_after_head(git_project)
+        self._start_session(policy, git_project, ts)
+        _git_commit(git_project, "feat: work", at_epoch=ts + 10)
+
+        verdict = self._stop(policy, git_project)
+
+        assert verdict.action == "block"
+        outcomes = _read_outcomes(git_project)
+        assert len(outcomes) == 1
+        assert outcomes[0]["outcome"] == "gap_blocked"
+        assert outcomes[0]["mode"] == "block"
 
     def test_compliant_recorded(self, git_project: Path) -> None:
         policy = SessionLogEnforcer()
@@ -631,5 +683,7 @@ class TestOutcomesInstrumentation:
 
         verdict = self._stop(policy, git_project)
 
-        assert verdict.action == "warn"
+        # Subject is "instrumentation failure never changes the verdict",
+        # not which mode the verdict is in.
+        assert not verdict.is_allowing()
         assert "write_session_log" in (verdict.message or "")

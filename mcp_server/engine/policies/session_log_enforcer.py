@@ -38,9 +38,22 @@ Ship plan:
     ``<project>/.codevira-cache/enforcer_outcomes.jsonl`` (per-machine,
     gitignored, size-capped with one-file rotation) so the noise rate is
     measurable from real sessions. Default stays ``warn``.
-  - next minor (planned): once the outcomes data confirms low noise,
-    upgrade the default to ``block`` so Claude Code's Stop hook
-    re-engages the AI until the log lands.
+  - v3.8.0: default is ``block`` — Claude Code's Stop hook re-engages the
+    AI until the log lands. The flip is data-gated on the v3.3.0 outcomes
+    file: 324 STOP evaluations over 7 weeks recorded 218 compliant /
+    22 gap_warned / 84 skip_no_commits — a 9% warn rate on commit-bearing
+    sessions. **Caveat, stated so it isn't lost:** that sample is 7 distinct
+    sessions on a single maintainer machine, i.e. the compliance ceiling,
+    not a representative population. External noise rate will be higher.
+    ``CODEVIRA_SESSION_LOG_ENFORCER_MODE=warn`` restores the old default
+    and ``=off`` disables the policy.
+
+Block-mode wire contract (see wiring/claude_code_hooks._emit): a Stop
+block emits ``{"decision": "block", "reason": ...}``, NOT
+``{"continue": false}`` — the latter would halt the turn instead of
+re-engaging the AI. Claude Code's ``stop_hook_active`` flag degrades the
+second consecutive block to a warn so a policy the AI cannot satisfy
+(MCP unreachable, read-only store) can never loop.
 
 Degradation: if the outcomes append fails (disk full, permissions), the
 policy still returns the correct verdict — instrumentation never changes
@@ -65,7 +78,7 @@ _ACTIVE_FILENAME = "active_sessions.jsonl"
 _OUTCOMES_FILENAME = "enforcer_outcomes.jsonl"
 _SESSIONS_REL = ".codevira/sessions.jsonl"
 
-_DEFAULT_MODE = "warn"
+_DEFAULT_MODE = "block"
 _MODES = ("off", "warn", "block")
 
 # P5 bound for the outcomes instrumentation file: rotate to a single
@@ -102,10 +115,12 @@ class SessionLogEnforcer(Policy):
                 "default": _DEFAULT_MODE,
                 "env": "CODEVIRA_SESSION_LOG_ENFORCER_MODE",
                 "description": (
-                    "off (disabled) | warn (default — non-blocking nudge; "
-                    "v3.3.0 records STOP outcomes to .codevira-cache/"
-                    "enforcer_outcomes.jsonl) | block (planned default once "
-                    "the recorded outcomes confirm low noise)"
+                    "off (disabled) | warn (non-blocking nudge) | block "
+                    "(default since v3.8.0 — refuses the Stop so the AI "
+                    "calls write_session_log; degrades to warn on the "
+                    "second consecutive fire so it cannot loop). STOP "
+                    "outcomes are recorded to .codevira-cache/"
+                    "enforcer_outcomes.jsonl in every mode."
                 ),
             },
         }

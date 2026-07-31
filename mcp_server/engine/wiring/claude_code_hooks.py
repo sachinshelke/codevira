@@ -60,6 +60,13 @@ _CC_EVENT_MAP: dict[str, EventType] = {
 # handled. (R5 QA finding: this is required, not optional.)
 _CC_EVENT_NAME: dict[EventType, str] = {v: k for k, v in _CC_EVENT_MAP.items()}
 
+# Events whose block verdict means "don't let Claude stop yet" rather than
+# "deny this action". These take the {"decision": "block", "reason": ...}
+# shape; every other event takes {"continue": false, "stopReason": ...}.
+# SubagentStop is listed for forward-compat — it shares Stop's semantics
+# and would otherwise silently fall into the halting branch if mapped later.
+_STOP_EVENT_NAMES: frozenset[str] = frozenset({"Stop", "SubagentStop"})
+
 
 def handle(event_type_str: str) -> int:
     """Process a Claude Code hook invocation. Returns the suggested exit code.
@@ -290,6 +297,36 @@ def _emit(verdict: PolicyVerdict, event: HookEvent) -> int:
         msg = verdict.message or "Codevira policy blocked this action."
         if verdict.policy:
             msg = f"[codevira:{verdict.policy}] {msg}"
+
+        # Stop / SubagentStop have DIFFERENT block semantics from the
+        # tool events, and getting this wrong inverts the intent:
+        #
+        #   {"continue": false, "stopReason": ...}  → halts Claude's
+        #       processing and shows the reason to the USER. The turn ends.
+        #   {"decision": "block", "reason": ...}    → refuses to let Claude
+        #       stop; the reason is fed back to the AI so it can act.
+        #
+        # A Stop policy that blocks wants the SECOND one (session_log_enforcer
+        # blocks to make the AI call write_session_log before finishing).
+        # Emitting continue:false here would cut the response off instead —
+        # the opposite of the documented behavior.
+        if cc_event_name in _STOP_EVENT_NAMES:
+            # Loop guard: Claude Code sets stop_hook_active=true on the Stop
+            # that follows a blocked one. Blocking again would re-engage
+            # forever whenever the AI *cannot* satisfy the policy (MCP down,
+            # tool not exposed, non-writable store). Degrade to a warn so the
+            # message still lands exactly once and the turn can finish.
+            if bool((event.raw or {}).get("stop_hook_active")):
+                _write_response({"continue": True, "systemMessage": msg})
+                return 0
+            _write_response({"decision": "block", "reason": msg})
+            try:
+                sys.stderr.write(msg + "\n")
+                sys.stderr.flush()
+            except OSError:
+                pass
+            return 2
+
         payload: dict[str, Any] = {
             "continue": False,
             "stopReason": msg,

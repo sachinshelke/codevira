@@ -153,7 +153,42 @@ def dispatch(event: HookEvent) -> PolicyVerdict:
         # "allow" contributes nothing to the combined output
 
     # 6. Combine
-    return _combine(blocks, warns, injects)
+    combined = _combine(blocks, warns, injects)
+
+    # 7. Instrument (4.0 Step 3.5). Append-only, cache-only, P9-swallowed —
+    #    `audit.record` never raises and never touches the returned verdict.
+    #    Placed AFTER _combine so the row reflects what the caller actually
+    #    acted on, not a per-policy intermediate.
+    _audit(event, combined, blocks + warns + injects, len(eligible))
+
+    return combined
+
+
+def _audit(
+    event: HookEvent,
+    combined: PolicyVerdict,
+    contributors: list[PolicyVerdict],
+    eligible: int,
+) -> None:
+    """Record the verdict for measurement. Must never affect enforcement."""
+    try:
+        from mcp_server.engine import audit
+
+        audit.record(
+            project_root=event.project_root,
+            event_type=getattr(event.event_type, "name", str(event.event_type)),
+            session_id=event.session_id,
+            action=combined.action,
+            policies=[v.policy for v in contributors if v.policy],
+            target=str(event.target_file)
+            if getattr(event, "target_file", None)
+            else None,
+            metadata=combined.metadata,
+            eligible=eligible,
+        )
+    except Exception:  # noqa: BLE001 — belt-and-braces; audit.record is
+        # already total, but an import error here must not break dispatch.
+        return
 
 
 def _safe_evaluate(policy: Policy, event: HookEvent) -> PolicyVerdict:

@@ -873,7 +873,33 @@ async def list_tools() -> list[Tool]:
                     },
                     "context": {
                         "type": "string",
-                        "description": "Why this won (alternatives, what would force re-examination)",
+                        "description": (
+                            "Free prose: why this won, what it depended on, "
+                            "what evidence backed it. Surfaced verbatim when "
+                            "a locked decision blocks an edit — this is what "
+                            "the next agent reads instead of guessing."
+                        ),
+                    },
+                    "alternatives_considered": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "The strongest options you REJECTED, one per entry "
+                            '(e.g. ["polling — simpler but 3s worst-case '
+                            'latency", "webhooks — needs a public endpoint"]). '
+                            "Surfaces the losers so a future session can weigh "
+                            "whether to revisit instead of re-deriving them."
+                        ),
+                    },
+                    "would_re_examine_if": {
+                        "type": "string",
+                        "description": (
+                            "The condition that should trigger reconsidering "
+                            'this (e.g. "if the payload exceeds 1 MB" or "if '
+                            'we add a second write path"). Especially valuable '
+                            "with do_not_revert — it turns a one-way ratchet "
+                            "into a lock with a stated release condition."
+                        ),
                     },
                     "do_not_revert": {
                         "type": "boolean",
@@ -2099,6 +2125,13 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 session_id=arguments.get("session_id"),
                 tags=arguments.get("tags"),
                 force=arguments.get("force", False),
+                # 4.0 Step 2.1: these two were accepted by
+                # learning.record_decision and decisions_store.record since
+                # v3.1.x but were never DECLARED in the inputSchema above nor
+                # forwarded here — so they read 0/1365 across every project.
+                # That was a dead write path, not agent laziness.
+                alternatives_considered=arguments.get("alternatives_considered"),
+                would_re_examine_if=arguments.get("would_re_examine_if"),
             )
         # v2.2.0+ batch 6: mark_decision_protected dispatch deleted
         # (use supersede_decision with do_not_revert=True). refresh_index

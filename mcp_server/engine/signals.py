@@ -246,6 +246,12 @@ class SignalContext:
                         "symbol": d.get("symbol"),
                         "decision": d.get("decision"),
                         "context": d.get("context"),
+                        # 4.0 Step 2.2: carried so a REFUSAL can explain
+                        # itself. Before this the block message was an id, a
+                        # 120-char truncation and a timestamp — the product's
+                        # hero moment showed no reasoning at all.
+                        "alternatives_considered": d.get("alternatives_considered"),
+                        "would_re_examine_if": d.get("would_re_examine_if"),
                         "locked": bool(d.get("do_not_revert")),
                         "timestamp": d.get("ts"),
                     }

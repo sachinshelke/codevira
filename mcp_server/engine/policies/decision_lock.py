@@ -23,6 +23,24 @@ from mcp_server.engine.signals import SignalContext
 _DEFAULT_MODE = "block"
 _MODES = ("off", "warn", "block")
 
+
+def _clip(text: str, cap: int) -> str:
+    """Truncate on a word boundary with an ellipsis, or return "" for empty.
+
+    Used only for the user-visible block message, where readability in a
+    terminal matters more than completeness — the full record is always one
+    ``expand(ids=[...])`` away.
+    """
+    if not text:
+        return ""
+    if len(text) <= cap:
+        return text
+    cut = text[: cap - 1]
+    if " " in cut[cap // 2 :]:
+        cut = cut[: cut.rindex(" ")]
+    return cut.rstrip(" ,;:.") + "…"
+
+
 # ---------------------------------------------------------------------
 # Content-aware orthogonality (v3.5.0) — the lock used to be PRESENCE-based:
 # any non-additive edit to a file holding a do_not_revert decision was
@@ -489,16 +507,12 @@ class DecisionLock(Policy):
         target_name = event.target_file.name if event.target_file else target_rel
         is_downgrade = downgrade_kind is not None
 
-        # Top-3 decisions for the message
-        sample_lines: list[str] = []
-        for d in decisions[:3]:
-            decision_text = (d.get("decision") or "").strip()
-            # Truncate long decisions to keep message readable
-            if len(decision_text) > 120:
-                decision_text = decision_text[:117] + "..."
-            ts = self._format_timestamp(d.get("timestamp"))
-            did = d.get("id", "?")
-            sample_lines.append(f"  • #{did}: {decision_text!r}{ts}")
+        # Top-3 decisions for the message.
+        #
+        # 4.0 Step 2.2: a REFUSAL now carries the reasoning. The downgrade
+        # notices stay compact — they are advisories the agent skims, and
+        # padding them trains people to skip the block message too.
+        sample_lines = self._sample_lines(decisions, with_evidence=not is_downgrade)
         more = f"\n  ... and {len(decisions) - 3} more" if len(decisions) > 3 else ""
 
         if downgrade_kind == "insertion":
@@ -622,6 +636,55 @@ class DecisionLock(Policy):
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    #: Caps for the block message. A refusal has to be readable in a
+    #: terminal, so evidence is bounded per decision rather than dumped.
+    _DECISION_CAP = 200
+    _CONTEXT_CAP = 320
+    _ALT_CAP = 90
+    _TRIGGER_CAP = 160
+
+    def _sample_lines(
+        self, decisions: list[dict[str, Any]], *, with_evidence: bool
+    ) -> list[str]:
+        """Render the top-3 locked decisions for the message.
+
+        ``with_evidence`` is True only for a genuine block. Until 4.0 this
+        rendered an id, a 120-char truncation and a date — so at the moment
+        codevira REFUSED an edit it showed no reasoning, and the agent had
+        nothing to surface to the user beyond "something says no". The
+        evidence was already stored (``context`` is on ~81% of decisions)
+        and already carried into the policy by signals.py; it was simply
+        never printed.
+
+        Downgrade notices deliberately stay compact — they fire far more
+        often, and padding them teaches people to skim the block too.
+        """
+        lines: list[str] = []
+        for d in decisions[:3]:
+            decision_text = _clip((d.get("decision") or "").strip(), self._DECISION_CAP)
+            ts = self._format_timestamp(d.get("timestamp"))
+            did = d.get("id", "?")
+            lines.append(f"  • #{did}: {decision_text!r}{ts}")
+            if not with_evidence:
+                continue
+
+            if ctx := _clip((d.get("context") or "").strip(), self._CONTEXT_CAP):
+                lines.append(f"      why: {ctx}")
+
+            alts = [
+                _clip(str(a).strip(), self._ALT_CAP)
+                for a in (d.get("alternatives_considered") or [])
+                if str(a).strip()
+            ]
+            if alts:
+                lines.append(f"      rejected: {'; '.join(alts[:3])}")
+
+            if trigger := _clip(
+                (d.get("would_re_examine_if") or "").strip(), self._TRIGGER_CAP
+            ):
+                lines.append(f"      revisit if: {trigger}")
+        return lines
 
     @staticmethod
     def _format_timestamp(ts: Any) -> str:

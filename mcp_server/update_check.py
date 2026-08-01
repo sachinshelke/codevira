@@ -219,31 +219,36 @@ def refresh_cache() -> int:
     """
     now = time.time()
     try:
-        from urllib.request import Request, urlopen
+        from mcp_server import __version__, egress
 
-        from mcp_server import __version__
-
-        req = Request(
+        # 4.0 Step 9 · S5: this module used to open the socket itself.
+        # Every outbound request now funnels through `egress`, which is
+        # the only module allowed to import a network client — enforced
+        # by tests/test_egress_boundary.py, which walks the import graph
+        # and fails the build. "Local-first" is a published guarantee;
+        # this is what makes it checkable instead of merely true today.
+        failures: list[str] = []
+        data = egress.get_json(
             _PYPI_URL,
-            headers={"User-Agent": f"codevira/{__version__} update-check"},
+            user_agent=f"codevira/{__version__} update-check",
+            timeout=_FETCH_TIMEOUT_S,
+            on_error=failures.append,
         )
-        # macOS python.org builds ship without a system CA bundle wired
-        # into OpenSSL, so bare urlopen fails CERTIFICATE_VERIFY_FAILED.
-        # certifi is always present transitively (mcp → httpx → certifi);
-        # fall back to the default context if it ever isn't.
-        context = None
-        try:
-            import ssl
-
-            import certifi
-
-            context = ssl.create_default_context(cafile=certifi.where())
-        except Exception:  # noqa: BLE001
-            context = None
-        with urlopen(  # noqa: S310 — fixed https URL
-            req, timeout=_FETCH_TIMEOUT_S, context=context
-        ) as resp:
-            data = json.loads(resp.read(1_000_000).decode("utf-8"))
+        if data is None:
+            # Offline, or the user turned egress off. Not an error: a
+            # version check is advisory and the tool works without it.
+            # The SPECIFIC reason is kept — "OSError: network down" answers
+            # a user's "why is this quiet?" and a generic string does not.
+            reason = failures[0] if failures else "network unavailable"
+            _write_cache_atomic(
+                {
+                    **(_read_cache() or {}),
+                    "schema": 1,
+                    "checked_at": now,
+                    "error": reason[:300],
+                }
+            )
+            return 1
         latest = data["info"]["version"]
         if _parse_version(latest) is None:
             raise ValueError(f"unrecognized version from PyPI: {latest!r}")

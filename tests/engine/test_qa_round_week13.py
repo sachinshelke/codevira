@@ -102,7 +102,7 @@ class TestL1_TenHeroes:
         # (LiveStyleEnforcement), Hero 10 (AIPromotionScore), Hero 9
         # (ProactiveIntentInference), and Hero 3 (ProactiveScopeContractLock)
         # were all DELETED. v3.2.0 ADDED session_log_enforcer.
-        # Default set: 7 (5 heroes + 1 v2.1.2 item + 1 v3.2.0 enforcer).
+        # Default set (4.0): 7 — 5 heroes + 1 v2.1.2 item + 1 v3.2.0 enforcer.
         expected = {
             "blast_radius_veto",  # Hero 4
             "decision_lock",  # Hero 1 (unique enforcement wedge)
@@ -111,7 +111,10 @@ class TestL1_TenHeroes:
             "anti_regression",  # Hero 2
             "post_edit_graph_refresh",  # v2.1.2 Item 4
             "session_log_enforcer",  # v3.2.0 — hook-layer write_session_log enforcement
-            "prompt_capture",  # v3.3.0 Phase 4 — preference capture (D0000LU)
+            # 4.0: prompt_capture removed with the preferences subsystem it
+            # fed — global_preferences held 0 rows across 24 projects despite
+            # 380 captured prompts, because distillation required MCP
+            # sampling the primary client does not advertise.
             # Hero 8 (Decision Replay) is a browse surface, not a policy.
         }
         assert names == expected, (

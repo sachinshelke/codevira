@@ -1740,6 +1740,24 @@ def main() -> None:
         )
     # v2.2.0+: `report` dispatch deleted (command removed).
     elif args.command == "serve":
+        # 4.0: uvicorn + starlette are declared in the optional `[http]`
+        # extra rather than as direct deps. In practice `mcp` requires both
+        # transitively, so this guard is defensive and will not normally
+        # fire — it exists so that IF the MCP SDK ever drops them, `serve`
+        # fails with a fix rather than an ImportError traceback.
+        try:
+            import starlette  # noqa: F401
+            import uvicorn  # noqa: F401
+        except ImportError:
+            print(
+                "Error: the HTTP transport is not installed.\n"
+                "  Fix: pipx install --force 'codevira[http]'\n"
+                "       (or `pip install 'codevira[http]'`)\n"
+                "  Note: stdio is the default transport and needs nothing "
+                "extra — this is only for `codevira serve`.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
         # --project-dir may appear after "serve" — merge with pre-parsed value
         sub_project_dir = getattr(args, "project_dir", None)
         if sub_project_dir and project_dir is None:

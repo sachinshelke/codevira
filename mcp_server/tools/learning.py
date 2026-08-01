@@ -796,21 +796,15 @@ def get_session_context(since: str | None = None) -> dict:
         except Exception:
             pass
 
-        # v3.3.0 Phase 4 (D0000LU): one budgeted style line from LLM-
-        # distilled preferences (~30 tokens). Omitted entirely when no
-        # communication preferences exist — token-frugal per D000018.
+        # 4.0: the style panel was removed with the preferences subsystem.
+        # It read LLM-distilled communication preferences from
+        # ~/.codevira/global.db, which held 0 rows across 24 registered
+        # projects despite 380 captured prompts — the distillation path
+        # required MCP sampling, which the primary client does not
+        # advertise. The panel was therefore omitted on every call it ever
+        # made. Kept as an explicit None so the response shape is stable
+        # for one release.
         style_line: str | None = None
-        try:
-            from mcp_server.tools.preferences import search_preferences
-
-            _prefs = search_preferences(category="communication", top_k=3)
-            _signals = [
-                p["signal"] for p in _prefs.get("preferences", []) if p.get("signal")
-            ]
-            if _signals:
-                style_line = "; ".join(_signals)[:160]
-        except Exception:  # noqa: BLE001 — the brief must never fail on this
-            style_line = None
 
         # v3.7.0 Lane-A safety net: echo the RESOLVED project (path + name) so a
         # single-registration server that bound to the WRONG project is a

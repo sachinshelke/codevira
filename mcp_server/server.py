@@ -1478,41 +1478,6 @@ async def list_tools() -> list[Tool]:
             },
         ),
         # ---- v3.3.0 Phase 4: preference capture (D0000LU) ----
-        Tool(
-            name="distill_preferences",
-            description=(
-                "v3.3.0: Distill captured user prompts into durable "
-                "preferences (communication style, workflow habits) via the "
-                "host LLM (sampling/createMessage). Call at SESSION END when "
-                "the Stop-hook nudge fires, with dry_run=false to persist "
-                "into cross-project memory (~/.codevira/global.db) and clear "
-                "the capture file. Degrades to {rendered_prompt} when the "
-                "host doesn't support sampling."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "dry_run": {"type": "boolean", "default": True},
-                },
-            },
-        ),
-        Tool(
-            name="search_preferences",
-            description=(
-                "v3.3.0: Search learned user preferences (cross-project, "
-                "LLM-distilled). Filter by category: 'communication', "
-                "'workflow', 'formatting'. Use before adopting a tone or "
-                "workflow the user may have expressed opinions about. "
-                "Highest-frequency first."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "category": {"type": "string"},
-                    "top_k": {"type": "integer", "default": 10},
-                },
-            },
-        ),
         # ---- v3.1.0 M8: reflections (episodic abstraction) ----
         # ---- v1.5: Deep Graph Intelligence Tools ----
         Tool(
@@ -1598,7 +1563,6 @@ async def list_tools() -> list[Tool]:
         "get_signature", "query_graph", "get_reflections", "list_reflections",
         "get_skill", "list_skills", "get_working_context", "working_get",
         "origin_of",
-        "search_preferences",
     }  # fmt: skip
     if ToolAnnotations is not None:
         for t in tools:
@@ -2089,27 +2053,6 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
             result = origin_of(decision_id=arguments["decision_id"])
         # ---- v3.3.0 Phase 4: preference capture dispatch ----
-        elif name == "distill_preferences":
-            from mcp_server.tools.preferences import distill_preferences_async
-
-            mcp_session = None
-            try:
-                mcp_session = server.request_context.session
-            except LookupError:
-                pass
-
-            result = await distill_preferences_async(
-                dry_run=arguments.get("dry_run", True),
-                server_session=mcp_session,
-            )
-        elif name == "search_preferences":
-            from mcp_server.tools.preferences import search_preferences
-
-            result = search_preferences(
-                category=arguments.get("category"),
-                top_k=arguments.get("top_k", 10),
-            )
-        # ---- v3.1.0 M8: reflections dispatch ----
         else:
             result = {"error": f"Unknown tool: {name}"}
 

@@ -36,6 +36,10 @@ Contract
   pure function of content, so convergence needs zero shared state.
 - Amendments follow their base when unambiguous (same old id + same
   ``writer_id``); otherwise they stay with the winner (never guessed).
+- Decision-to-decision EDGES (``superseded_by``) are repointed by the same
+  rule. Without this a renumbered base leaves a dangling supersession: the
+  chain stops resolving, and ``list_decisions`` shows a decision that was
+  retired months ago as still current.
 
 This is Tier-0 (structural, deterministic). Tier-1 (semantic dedup / conflict
 escalation) layers on top via the reconcile engine — see Phase 29.
@@ -57,6 +61,23 @@ _LOSER_HASH_WIDTH = 12
 # A ts that sorts AFTER any real ISO-8601 timestamp, so a record missing ``ts``
 # loses the "earliest writer keeps the id" race instead of winning it.
 _TS_SENTINEL = "~"
+
+#: Fields whose VALUE is another decision's id. Renumbering a record without
+#: repointing these leaves a dangling edge — a supersession chain that stops
+#: resolving. ``superseded_by`` is the one that exists in real stores (7 of 228
+#: records here); ``supersedes`` is in the record schema and reserved.
+#:
+#: NOT included: the ``[supersedes D000120: reason]`` marker that
+#: ``decisions_store`` embeds in the decision TEXT. Rewriting prose would
+#: change what the user wrote, and the text is the audit trail — the
+#: structured field is what readers resolve.
+_REFERENCE_FIELDS = ("superseded_by", "supersedes")
+
+#: Bumped whenever the winner-selection or reference-rewriting rules change.
+#: Two machines running DIFFERENT versions over the same merged store converge
+#: to different files, so callers surface this rather than silently disagreeing.
+#: 1 = v3.7.0 (ids + amendments only). 2 = 4.0 (also repoints references).
+ORDER_VERSION = 2
 
 
 def _canonical(record: dict[str, Any], *, exclude: tuple[str, ...] = ()) -> str:
@@ -138,6 +159,47 @@ def _mint_loser_id(
     while f"{prefix}{h}-{n}" in claimed:
         n += 1
     return f"{prefix}{h}-{n}"
+
+
+def _rewrite_references(
+    rec: dict[str, Any],
+    *,
+    follow: dict[tuple[str, str], str],
+    split_ids: set[str],
+    writer: str,
+) -> tuple[dict[str, Any], bool]:
+    """Repoint this record's decision-to-decision edges at renumbered bases.
+
+    Returns ``(record, ambiguous)``. Only touches a field whose value is an id
+    that was actually SPLIT by this repair — an edge pointing at an id nobody
+    renumbered is already correct and is left exactly as written.
+
+    Attribution uses the same ``(old_id, writer)`` rule as amendments: an edge
+    written by machine M pointing at a contested id means M's copy of it. When
+    that can't be established the edge stays on the WINNER (which kept the id)
+    and the record is flagged, because a supersession pointed at the wrong
+    engineer's decision would mark their work obsolete.
+    """
+    updates: dict[str, str] = {}
+    ambiguous = False
+    for field in _REFERENCE_FIELDS:
+        val = rec.get(field)
+        if not isinstance(val, str) or val not in split_ids:
+            continue
+        resolved = follow.get((val, writer))
+        if resolved:
+            updates[field] = resolved
+        else:
+            ambiguous = True
+
+    if not updates and not ambiguous:
+        return rec, False
+
+    out = dict(rec)
+    out.update(updates)
+    if ambiguous:
+        out["_reference_ambiguous"] = True
+    return out, ambiguous
 
 
 def find_collisions(
@@ -279,15 +341,37 @@ def normalize(
         else:
             ambiguous_keys.add((old, host))
 
+    # Ids that lost at least one record to renumbering. An edge pointing at
+    # anything else needs no attention: nobody moved what it points at.
+    split_ids: set[str] = {old for old, _ in loser_keys}
+
     ambiguous_amendments = 0
+    ambiguous_references = 0
     out: list[dict[str, Any]] = []
+
+    def _emit(rec: dict[str, Any]) -> None:
+        """Apply reference rewriting, then append.
+
+        Every surviving record goes through here — winners, renumbered
+        losers and amendments alike. A renumbered record can itself carry a
+        ``superseded_by`` that needs repointing, so this cannot live on only
+        the untouched-record branch.
+        """
+        nonlocal ambiguous_references
+        rec, amb = _rewrite_references(
+            rec, follow=follow, split_ids=split_ids, writer=_host(rec)
+        )
+        if amb:
+            ambiguous_references += 1
+        out.append(rec)
+
     for i, r in enumerate(recs):
         if i in dropped:
             continue
         if i in reassign:
             r = dict(r)
             r[id_field] = reassign[i]
-            out.append(r)
+            _emit(r)
             continue
         if r.get(amendment_field):
             key = (str(r.get(amendment_field)), _host(r))
@@ -295,20 +379,19 @@ def normalize(
                 r = dict(r)
                 r[id_field] = follow[key]
                 r[amendment_field] = follow[key]
-                out.append(r)
+                _emit(r)
                 continue
             if key in ambiguous_keys or (
-                str(r.get(amendment_field)) in {k[0] for k in loser_keys}
-                and not _host(r)
+                str(r.get(amendment_field)) in split_ids and not _host(r)
             ):
                 # Its base id was split among renumbered losers but we can't
                 # attribute this amendment — keep it on the winner, flag it.
                 r = dict(r)
                 r["_amendment_ambiguous"] = True
                 ambiguous_amendments += 1
-                out.append(r)
+                _emit(r)
                 continue
-        out.append(dict(r))
+        _emit(dict(r))
 
     return {
         "records": out,
@@ -316,4 +399,6 @@ def normalize(
         "collisions": collisions,
         "deduped": len(dropped),
         "ambiguous_amendments": ambiguous_amendments,
+        "ambiguous_references": ambiguous_references,
+        "order_version": ORDER_VERSION,
     }

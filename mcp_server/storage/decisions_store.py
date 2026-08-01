@@ -829,18 +829,44 @@ def list_tags_with_counts() -> dict[str, Any]:
 # ─── Mutations (append-as-amendment) ────────────────────────────────
 
 
+def _amendment(
+    decision_id: str, *, ts: str | None = None, **fields: Any
+) -> dict[str, Any]:
+    """Build an amendment row, carrying the provenance of whoever made it.
+
+    4.0 Step 9. Amendments used to omit ``origin`` entirely — 0 of 96 in
+    the reference store — which left every one of them unattributable.
+    That is what breaks a two-host merge: ``id_repair`` renumbers a
+    colliding base and needs ``(old_id, writer)`` to decide which copy an
+    amendment belongs to. With no writer it cannot, so the amendment
+    stays on whoever won the id race. A supersession then marks the wrong
+    engineer's decision retired while the real one still reads current.
+
+    Ordering matters here and is not incidental: this could only land
+    AFTER ``device_id`` (S1). Stamping a writer that drifts every few
+    weeks would have made the same case resolve to the WRONG loser with
+    no flag, which is worse than not resolving it at all.
+
+    The base's own ``origin`` is safe — ``jsonl_store`` refuses to
+    overlay it (``_AMENDMENT_NEVER_OVERLAYS``), so amending someone
+    else's decision does not rewrite its authorship to you.
+    """
+    return {
+        "id": decision_id,
+        "ts": ts or datetime.now(timezone.utc).isoformat(),
+        "_amendment_to_id": decision_id,
+        "origin": origin.current_origin(),
+        **fields,
+    }
+
+
 def mark_protected(decision_id: str) -> dict[str, Any]:
     """Flip do_not_revert=True via an amendment line."""
     paths.ensure_dirs()
     if get(decision_id) is None:
         return {"success": False, "error": f"decision {decision_id} not found"}
 
-    amendment = {
-        "id": decision_id,
-        "ts": datetime.now(timezone.utc).isoformat(),
-        "_amendment_to_id": decision_id,
-        "do_not_revert": True,
-    }
+    amendment = _amendment(decision_id, do_not_revert=True)
     jsonl_store.append(paths.decisions_path(), amendment)
     rebuild_indexes()
     return {"success": True, "decision_id": decision_id, "do_not_revert": True}
@@ -866,12 +892,7 @@ def reaffirm(decision_id: str) -> dict[str, Any]:
         return {"success": False, "error": f"decision {decision_id} not found"}
 
     now_iso = datetime.now(timezone.utc).isoformat()
-    amendment = {
-        "id": decision_id,
-        "ts": now_iso,
-        "_amendment_to_id": decision_id,
-        "reaffirmed_at": now_iso,
-    }
+    amendment = _amendment(decision_id, ts=now_iso, reaffirmed_at=now_iso)
     jsonl_store.append(paths.decisions_path(), amendment)
     rebuild_indexes()
     return {
@@ -1010,16 +1031,13 @@ def mark_outdated(
             "do_not_revert": True,
         }
     now = datetime.now(timezone.utc).isoformat()
-    amendment = {
-        "id": decision_id,
-        "ts": now,
-        "_amendment_to_id": decision_id,
-        "is_outdated": True,
-        "outdated_at": now,
-        "outdated_reason": (
-            reason.strip()[:500] if reason and reason.strip() else None
-        ),
-    }
+    amendment = _amendment(
+        decision_id,
+        ts=now,
+        is_outdated=True,
+        outdated_at=now,
+        outdated_reason=(reason.strip()[:500] if reason and reason.strip() else None),
+    )
     jsonl_store.append(paths.decisions_path(), amendment)
     rebuild_indexes()
     return {"success": True, "decision_id": decision_id, "is_outdated": True}
@@ -1076,12 +1094,7 @@ def set_flag(
     if not updates:
         return {"success": True, "decision_id": decision_id, "updates": {}}
 
-    amendment = {
-        "id": decision_id,
-        "ts": datetime.now(timezone.utc).isoformat(),
-        "_amendment_to_id": decision_id,
-        **updates,
-    }
+    amendment = _amendment(decision_id, **updates)
     jsonl_store.append(paths.decisions_path(), amendment)
     rebuild_indexes()
     return {"success": True, "decision_id": decision_id, "updates": updates}
@@ -1161,13 +1174,7 @@ def supersede(
         alternatives_considered=alternatives_considered,
         would_re_examine_if=would_re_examine_if,
     )
-    amendment = {
-        "id": old_id,
-        "ts": datetime.now(timezone.utc).isoformat(),
-        "_amendment_to_id": old_id,
-        "is_superseded": True,
-        "superseded_by": new_id,
-    }
+    amendment = _amendment(old_id, is_superseded=True, superseded_by=new_id)
     jsonl_store.append(paths.decisions_path(), amendment)
     rebuild_indexes()
     return {

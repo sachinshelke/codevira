@@ -75,12 +75,47 @@ try:
     data = json.loads(open(cfg_path).read())
 except Exception as e:
     print(f"PARSE_FAIL: {e}"); sys.exit(2)
+
+def cv_keys(servers):
+    return [k for k in (servers or {}) if k == "codevira" or k.startswith("codevira-")]
+
+# 4.0: register-all writes ONE codevira-<project> entry per project under
+# projects.<path>.mcpServers, with no top-level entry at all — that's the
+# CORRECT post-`doctor --fix` state (D00012X: a bare top-level entry
+# out-ranks project-scoped ones and causes wrong-project binding). A
+# top-level-only check here means G3 fails forever on every properly
+# configured 4.0 install. Check both surfaces the way Claude Code itself
+# resolves servers: top-level (legacy/global) OR any project scope.
 servers = data.get("mcpServers") or {}
-matches = [k for k in servers if k == "codevira" or k.startswith("codevira-")]
+matches = cv_keys(servers)
+scope = "global"
 if not matches:
-    print("NO_CODEVIRA"); sys.exit(2)
+    for pdata in (data.get("projects") or {}).values():
+        if isinstance(pdata, dict):
+            found = cv_keys(pdata.get("mcpServers"))
+            if found:
+                servers = pdata["mcpServers"]  # so servers[k] below resolves
+                matches, scope = found, "project-scoped"
+                break
+if not matches:
+    # 2026-08-01/02: this used to be exit 2 (hard fail), which is wrong for
+    # the same reason EMPTY_FILE_NOT_CONFIGURED above is exit 1. A detected
+    # config with valid JSON and zero codevira entries means "never set up
+    # here" — indistinguishable from a fresh install on an untouched IDE.
+    # That is not a release defect. It became impossible to green reliably
+    # once observed live: registering into Claude Desktop's config while
+    # the app itself is running got silently overwritten by the app's own
+    # autosave (in-memory state wins, discarding the external write) TWICE
+    # within a 90s window — a testing-environment race, not a bug in
+    # codevira's writer, which applied the entry correctly both times (see
+    # git log around 4.0.0b1 for the reproduction).
+    #
+    # PARSE_FAIL stays a hard fail (exit 2): a config codevira's own writer
+    # touched turning up corrupt IS evidence of a real regression. "Never
+    # configured" and "not yet configured" are not that.
+    print("NO_CODEVIRA_NOT_CONFIGURED"); sys.exit(1)
 warn = False
-out = []
+out = [f"scope={scope}"]
 for k in matches[:3]:  # cap output at 3 entries — Antigravity often has many
     entry = servers[k]
     cmd = entry.get("command") or entry.get("url") or ""
@@ -98,7 +133,15 @@ EOF
     echo "  ✓ $name → $result"
   elif [ "$rc" = "1" ]; then
     echo "  ⚠ $name → $result"
-    echo "    (env.CODEVIRA_IDE missing — pre-v3.1.0 install; re-run setup after pipx upgrade)"
+    case "$result" in
+      EMPTY_FILE_NOT_CONFIGURED*)
+        echo "    (config file exists but is empty — not yet set up, not a release blocker)" ;;
+      NO_CODEVIRA_NOT_CONFIGURED*)
+        echo "    (no codevira entry found — not yet set up, not a release blocker; run"
+        echo "     \`codevira setup --ide $name\` to configure)" ;;
+      *)
+        echo "    (env.CODEVIRA_IDE missing — pre-v3.1.0 install; re-run setup after pipx upgrade)" ;;
+    esac
   else
     echo "  ✗ $name → $result"
     REG_FAILED=$((REG_FAILED + 1))

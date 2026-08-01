@@ -7,7 +7,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [Unreleased] — 4.0.0
+## [4.0.0b1] — 2026-08-01
 
 > **Upgrading?** See [MIGRATING.md](MIGRATING.md). Take a snapshot first:
 > `codevira memory snapshot --all-projects --note "before 4.0"`.

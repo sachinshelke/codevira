@@ -1608,6 +1608,20 @@ def main() -> None:
         ),
     )
     engine_sub = engine_parser.add_subparsers(dest="engine_action")
+    # 4.0 Step 8: enforce at the COMMIT boundary, which every IDE crosses.
+    # Hard PreToolUse blocking reaches 2 of ~7 supported editors; git
+    # reaches all of them, including ones that do not exist yet.
+    engine_sub.add_parser(
+        "pre-commit",
+        help="Evaluate staged changes against locked decisions. Exit 1 "
+        "blocks the commit. Called by the installed git pre-commit hook; "
+        "override once with `git commit --no-verify`.",
+    )
+    engine_sub.add_parser(
+        "install-git-hook",
+        help="Install the codevira pre-commit hook into this repo "
+        "(.git/hooks/pre-commit). Preserves any existing hook.",
+    )
     handle_parser = engine_sub.add_parser(
         "handle",
         help="Process a Claude Code lifecycle hook event from stdin",
@@ -2004,6 +2018,14 @@ def main() -> None:
     elif args.command == "engine":
         # Internal — Claude Code hook scripts call us with `engine handle <event>`.
         engine_action = getattr(args, "engine_action", None)
+        if engine_action == "pre-commit":
+            from mcp_server.engine.wiring.git_hooks import handle as _git_handle
+
+            sys.exit(_git_handle())
+        if engine_action == "install-git-hook":
+            from mcp_server.engine.wiring.git_hooks import install_hook
+
+            sys.exit(install_hook())
         if engine_action == "handle":
             # Register every Hero policy that ships enabled-by-default.
             # Without this, the hook runs the engine but ZERO policies

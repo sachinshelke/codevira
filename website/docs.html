@@ -258,12 +258,11 @@ codevira setup</pre>
       <tr><td><code>codevira search</code> <span class="pill">3.6</span></td><td>Search decisions from the terminal; <code>--all-projects</code> searches every registered repo, <code>--json</code> for scripts</td></tr>
       <tr><td><code>codevira eval</code> <span class="pill">3.5</span></td><td>Score read-side relevance (recall@k / MRR) on self-derived cases</td></tr>
       <tr><td><code>codevira tune-weights</code> <span class="pill">3.5</span></td><td>Learn ranking weights from your memory; persist only a proven win</td></tr>
-      <tr><td><code>codevira reflect --from-sessions</code> <span class="pill">3.5</span></td><td>Mine local Claude Code / Codex / Gemini transcripts for lessons</td></tr>
-      <tr><td><code>codevira uninstall</code></td><td>Reverse every system write codevira made (<code>--keep-data</code> to keep memory)</td></tr>
+            <tr><td><code>codevira uninstall</code></td><td>Reverse every system write codevira made (<code>--keep-data</code> to keep memory)</td></tr>
     </table>
 
     <h2 id="tools">MCP tool surface</h2>
-    <p><strong>51 tools</strong> are surfaced to AI clients via <code>tools/list</code>
+    <p><strong>36 tools</strong> are surfaced to AI clients via <code>tools/list</code>
     (one admin tool, <code>refresh_graph</code>, is hidden). They're summary-first by
     default — pass <code>full=true</code> or <code>expand(ids=[…])</code> for detail.
     Set <code>CODEVIRA_TOOL_PROFILE=lean</code> to advertise only the 12 daily-driver
@@ -272,14 +271,17 @@ codevira setup</pre>
       <tr><th>Group</th><th>Representative tools</th></tr>
       <tr><td>Orientation</td><td><code>get_session_context</code>, <code>get_roadmap</code></td></tr>
       <tr><td>Decisions</td><td><code>search_decisions</code>, <code>list_decisions</code>, <code>expand</code>, <code>record_decision</code>, <code>supersede_decision</code>, <code>mark_decision_outdated</code>, <code>set_decision_flag</code>, <code>get_history</code></td></tr>
-      <tr><td>Code graph</td><td><code>get_node</code>, <code>get_impact</code>, <code>get_signature</code>, <code>get_code</code>, <code>query_graph</code></td></tr>
+      <tr><td>Code graph</td><td><code>get_node</code>, <code>get_impact</code>, <code>query_graph</code></td></tr>
       <tr><td>Roadmap / phases</td><td><code>get_phase</code>, <code>add_phase</code>, <code>update_phase_status</code>, <code>complete_phase</code>, <code>update_next_action</code>, <code>write_session_log</code></td></tr>
-      <tr><td>Memory subsystems</td><td>working memory, skills, spatial, consensus, reflections (<code>working_add</code>, <code>record_skill</code>, <code>spatial_nearby</code>, <code>consensus_status</code>, <code>reflect</code>, …)</td></tr>
-      <tr><td>Preferences</td><td><code>distill_preferences</code>, <code>search_preferences</code></td></tr>
+      <tr><td>Memory subsystems</td><td>working memory, skills, provenance (<code>working_add</code>, <code>working_promote</code>, <code>record_skill</code>, <code>get_skill</code>, <code>origin_of</code>, …)</td></tr>
     </table>
-    <div class="note">Code-reading tools (<code>get_signature</code> / <code>get_code</code>)
+    <div class="note">Code-graph tools (<code>get_impact</code> / <code>query_graph</code>)
     cover Python, TypeScript, JS/JSX, Go, and Rust. For other languages the agent reads
     the file directly.</div>
+    <div class="note"><strong>Changed in 4.0:</strong> 15 tools were removed on measured
+    usage &mdash; the consensus, reflections, spatial and preferences subsystems, plus
+    <code>get_code</code> / <code>get_signature</code>. Nothing recorded was deleted; see
+    <a href="https://github.com/sachinshelke/codevira/blob/main/MIGRATING.md">MIGRATING.md</a>.</div>
     <div class="note"><strong>New in 3.6:</strong>
     <code>record_decision(symbol="login")</code> scopes a <code>do_not_revert</code>
     decision to a single function/class — the lock then blocks only edits that land

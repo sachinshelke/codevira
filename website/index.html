@@ -514,7 +514,7 @@
         </div>
         <div class="step" data-step="3">
           <b><span class="n">4</span> Learn</b>
-          <span>Skills, preferences, and reflections accumulate on top.</span>
+          <span>Skills and fix history accumulate on top.</span>
           <div class="bar"><i></i></div>
         </div>
       </div>
@@ -751,7 +751,7 @@
       <div class="steps">
         <div class="step active" style="cursor:default">
           <b><span class="n">✓</span> Moves with git</b>
-          <span>Decisions, sessions, skills, reflections — already in your repo. Clone and they're there.</span>
+          <span>Decisions, sessions, skills — already in your repo. Clone and they're there.</span>
         </div>
         <div class="step active" style="cursor:default">
           <b><span class="n">✓</span> Moves in the archive</b>
@@ -827,7 +827,7 @@ params = StdioServerParameters(command=<span class="yy">"codevira-python"</span>
     <span class="vv">async with</span> ClientSession(r, w) <span class="vv">as</span> s:
         <span class="vv">await</span> s.initialize()
         ctx = <span class="vv">await</span> s.call_tool(<span class="yy">"get_session_context"</span>, {})</pre></div>
-        <p class="tabnote">51 tools: decisions, roadmap, code graph, working memory, skills, spatial, consensus, reflections, preferences. TypeScript, Go, Rust, Java MCP SDKs all work the same way.</p>
+        <p class="tabnote">36 tools: decisions, roadmap, code graph, working memory, skills, provenance. TypeScript, Go, Rust, Java MCP SDKs all work the same way.</p>
       </div>
       <div class="tabpane" id="p-data">
         <div class="codecard"><pre><span class="cm"># No SDK at all? The memory is just files in your repo.</span>
@@ -849,7 +849,7 @@ params = StdioServerParameters(command=<span class="yy">"codevira-python"</span>
           <tr><td>Cross-IDE memory via AGENTS.md</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
           <tr><td>Roadmap, sessions, skills, preferences</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
           <tr><td>Code graph + blast-radius analysis</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="n">reads file</td></tr>
-          <tr><td>Symbol-level tools (get_signature / get_code)</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="n">reads file</td></tr>
+          <tr><td>Symbol-level <code>query_graph</code></td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="n">reads file</td></tr>
         </tbody>
       </table>
     </div>
@@ -1016,7 +1016,7 @@ params = StdioServerParameters(command=<span class="yy">"codevira-python"</span>
     {title:"in the background", lines:[
       ['bb','◆ skills      "how we rebase here" — reinforced by git'],
       ['bb','◆ preferences "keep answers short" — distilled from prompts'],
-      ['bb','◆ reflections weekly abstraction over decisions'],
+      ['bb','◆ skills reusable procedures, reinforced by git outcomes'],
       ['bb','◆ consensus   cross-IDE contradiction check'],
       ['',''],
       ['gg','memory compounds. every session starts smarter.'],

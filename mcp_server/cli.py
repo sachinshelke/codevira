@@ -1116,17 +1116,50 @@ def main() -> None:
     # learned_rules per the 2026-05-22 surface-cut audit).
 
     # clean (P2-1 + P2-10 rc.5: added description + self-contained flag help)
+    prune_parser = subparsers.add_parser(
+        "prune",
+        help="Remove orphaned/ghost project dirs and stale registry rows (safe)",
+        description=(
+            "Tidy ~/.codevira/ WITHOUT uninstalling anything. Removes project "
+            "data dirs whose path no longer exists, bare global.db rows "
+            "pointing at missing paths, 'ghost' dirs left by incomplete "
+            "inits, and legacy .codevira.migrated/ backups. Your decisions, "
+            "IDE configs and hooks are never touched.\n\n"
+            "This is what `clean` sounded like it did. `clean` is the "
+            "UNINSTALLER — see D00012X."
+        ),
+    )
+    prune_parser.add_argument(
+        "--orphans", action="store_true", help="Only prune orphaned project dirs"
+    )
+    prune_parser.add_argument(
+        "--ghosts", action="store_true", help="Only prune ghost (incomplete-init) dirs"
+    )
+    prune_parser.add_argument(
+        "--legacy", action="store_true", help="Only prune .codevira.migrated/ backups"
+    )
+    prune_parser.add_argument(
+        "--dry-run", action="store_true", help="Show what would be removed"
+    )
+    prune_parser.add_argument(
+        "-y", "--yes", action="store_true", help="Skip confirmation prompts"
+    )
+
     clean_parser = subparsers.add_parser(
         "clean",
-        help="Remove all Codevira data, IDE configs, and services",
+        help="DEPRECATED — this UNINSTALLS codevira. Use `prune` to tidy, "
+        "`uninstall` to remove.",
         description=(
-            "Uninstall codevira's machine-wide state: wipe ~/.codevira/ (all "
-            "project data, learned preferences/rules, decisions), remove "
-            "mcpServers.codevira from every detected IDE config, and remove any "
-            "installed launchd service. Use --all to also remove per-project "
-            "artifacts (legacy .codevira/ directories committed into repos, git "
-            "post-commit hooks, per-project IDE config files). Always preview "
-            "with --dry-run first."
+            "DEPRECATED: the name is misleading and cost a real installation. "
+            "`clean` with no flags is a full UNINSTALL — it wipes ~/.codevira/ "
+            "(project data dirs, global.db, snapshots, device_id), strips "
+            "mcpServers.codevira from every IDE config, and removes the launchd "
+            "service.\n\n"
+            "  To tidy stale state:  codevira prune\n"
+            "  To uninstall:         codevira uninstall\n\n"
+            "Kept as an alias so existing scripts do not break. The destructive "
+            "path now requires you to TYPE 'uninstall' (as `reset` does), so a "
+            "piped 'y' cannot confirm it."
         ),
     )
     clean_parser.add_argument(
@@ -1905,7 +1938,46 @@ def main() -> None:
             output_json=getattr(args, "output_json", False),
         )
         sys.exit(rc)
+    elif args.command == "prune":
+        # The safe half of the old `clean`, promoted to its own name.
+        selective = any(
+            getattr(args, f, False) for f in ("orphans", "ghosts", "legacy")
+        )
+        for flag, kwarg in (
+            ("ghosts", "ghosts_only"),
+            ("orphans", "orphans_only"),
+            ("legacy", "legacy_only"),
+        ):
+            if selective and not getattr(args, flag, False):
+                continue
+            cmd_clean(
+                dry_run=getattr(args, "dry_run", False),
+                yes=getattr(args, "yes", False),
+                **{kwarg: True},
+            )
     elif args.command == "clean":
+        # DEPRECATED. Bare `clean` is a full uninstall; the name reads as
+        # tidy-up and cost a real installation (D00012X). Kept working so
+        # scripts do not break, but it says what it is first.
+        _selective = any(
+            getattr(args, f, False) for f in ("orphans", "ghosts", "legacy")
+        )
+        if _selective:
+            print(
+                "  note: `codevira clean --orphans/--ghosts/--legacy` is now "
+                "`codevira prune`.",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                "\n  ⚠  `codevira clean` is DEPRECATED and is a full UNINSTALL.\n"
+                "     It deletes ~/.codevira/ (project data dirs, global.db,\n"
+                "     snapshots, device_id), strips codevira from every IDE\n"
+                "     config, and removes the launchd service.\n\n"
+                "       To tidy stale state:  codevira prune\n"
+                "       To uninstall:         codevira uninstall\n",
+                file=sys.stderr,
+            )
         cmd_clean(
             clean_all=getattr(args, "all", False),
             dry_run=getattr(args, "dry_run", False),
@@ -2719,10 +2791,20 @@ def cmd_clean(
         return
 
     if not yes:
-        # Bug 22 (rc.4): shared confirm() helper.
-        from mcp_server._prompts import confirm
+        # TYPED confirmation, not a y/n. `codevira reset` has required this
+        # since v2.1.2 for exactly the same reason: a destructive op must not
+        # be confirmable by a stray keystroke.
+        #
+        # This path used the plain y/n `confirm()` helper, so `yes | codevira
+        # clean` answered it and wiped a real installation — the operator
+        # never saw the prompt. `yes` emits "y", which is not "uninstall", so
+        # the same pipe now aborts. (D00012X.)
+        from mcp_server._prompts import confirm_typed
 
-        if not confirm("Remove all of the above?", default=False):
+        if not confirm_typed(
+            "This UNINSTALLS codevira — everything listed above is removed.",
+            "uninstall",
+        ):
             print("  Aborted.")
             print()
             return

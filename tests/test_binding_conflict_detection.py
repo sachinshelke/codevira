@@ -153,3 +153,55 @@ class TestTheHelperMatchesTheRemover:
         assert ide_inject.has_codevira_server({"codevira-agent-mcp": {}})
         assert not ide_inject.has_codevira_server({"codeviraX": {}})
         assert not ide_inject.has_codevira_server({"other": {}})
+
+
+class TestTheRuleHasOneImplementation:
+    """The bug's real shape was three copies of one rule drifting apart.
+
+    Whenever a copy is added, it is the STALE one that causes damage —
+    here, a guard reporting clean on a live conflict and an uninstall
+    leaving a registration behind.
+    """
+
+    def test_the_path_level_wrapper_delegates(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "mcp.json"
+        cfg.write_text(json.dumps({"mcpServers": {"codevira-agent-mcp": {}}}))
+        assert ide_inject._has_codevira_entry(cfg) is True
+
+    def test_uninstall_finds_a_suffixed_entry(self, tmp_path: Path) -> None:
+        """The uninstall path used an exact match, so `codevira-<project>`
+        entries survived a removal that reported success."""
+        cfg = tmp_path / ".mcp.json"
+        cfg.write_text(json.dumps({"mcpServers": {"codevira-agent-mcp": {}}}))
+        from mcp_server.ide_inject import _read_json_safe, has_codevira_server
+
+        assert has_codevira_server(_read_json_safe(cfg).get("mcpServers"))
+
+    def test_no_exact_match_lookups_remain(self) -> None:
+        """Guard the sweep: a new exact-key lookup reintroduces the bug.
+
+        Prose is stripped before matching. RST double-backtick spans and
+        comments describe the bug deliberately, and a guard that flags its
+        own explanation gets disabled rather than obeyed.
+
+        Substring checks against TEXT (``in content``, ``in out``) are a
+        different operation and are correct, so they are excluded.
+        """
+        import re
+
+        prose = re.compile(r"``[^`]*``")
+        lookup = re.compile(r'"codevira" in (?!content|out|line|k\.lower)')
+        root = Path(__file__).resolve().parents[1] / "mcp_server"
+        offenders = []
+        for py in root.rglob("*.py"):
+            for i, raw in enumerate(py.read_text().splitlines(), 1):
+                line = prose.sub("", raw).split("#", 1)[0]
+                if not lookup.search(line):
+                    continue
+                if "has_codevira_server" in line:
+                    continue
+                offenders.append(f"{py.name}:{i}")
+        assert not offenders, (
+            "exact-key lookups found; use has_codevira_server(): "
+            + ", ".join(offenders)
+        )

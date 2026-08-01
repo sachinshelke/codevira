@@ -572,11 +572,16 @@ def remove_codevira_project_from_config(
 
 
 def _has_codevira_entry(config_path: Path) -> bool:
-    """True if `config_path` has a `codevira` (or `codevira-*`) mcpServers key."""
+    """True if `config_path` has a `codevira` (or `codevira-*`) mcpServers key.
+
+    Delegates to :func:`has_codevira_server` so the prefix rule has exactly
+    one implementation. Three copies of it had drifted apart and one of the
+    stale ones caused the wrong-project-binding guard to report clean on a
+    real conflict.
+    """
     if not config_path.exists():
         return False
-    servers = _read_json_safe(config_path).get("mcpServers", {})
-    return any(k == "codevira" or k.startswith("codevira-") for k in servers)
+    return has_codevira_server(_read_json_safe(config_path).get("mcpServers"))
 
 
 def heal_stale_registration(

@@ -2810,10 +2810,14 @@ def _collect_project_cleanup(project_path: Path, actions: list) -> None:
         ("windsurf", project_path / ".windsurf" / "mcp.json"),
     ]:
         if config_path.exists():
-            from mcp_server.ide_inject import _read_json_safe
+            from mcp_server.ide_inject import _read_json_safe, has_codevira_server
 
             data = _read_json_safe(config_path)
-            if "codevira" in data.get("mcpServers", {}):
+            # Prefix match, not `"codevira" in servers`. `register-all`
+            # names entries after the project (`codevira-agent-mcp`), so an
+            # exact match here silently skipped them — uninstall reported
+            # success and left the registration behind.
+            if has_codevira_server(data.get("mcpServers")):
                 print(f"    • {name}/.{ide_name} config")
                 actions.append(
                     (

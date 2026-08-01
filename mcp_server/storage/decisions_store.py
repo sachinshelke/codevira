@@ -44,6 +44,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from mcp_server.retrieval import score as retrieval_score
 from mcp_server.storage import (
     digest,
     fts5_index,
@@ -660,7 +661,7 @@ def search(
             "score_breakdown": {
                 "bm25": hit["score"],
                 "rank": hit_rank,
-                "rank_norm": round(1.0 - (hit_rank / max(len(hits), 1)), 4),
+                "rank_norm": retrieval_score.rank_norm(hit_rank, len(hits)),
                 "matched": "fts5",
             },
             "snippet": hit.get("snippet"),

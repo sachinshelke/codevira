@@ -327,7 +327,7 @@ complete_phase · update_next_action · write_session_log
 | Skill library (6) | `record_skill`, `get_skill`, `apply_skill_outcome`, `list_skills`, `supersede_skill`, `promote_skill_to_playbook` | Reusable procedures; FTS5 composite ranking (BM25 + tag-Jaccard + recency); auto-archive at 5 consecutive failures or 90 unused days (`do_not_revert` exempt). |
 | Provenance (1) | `origin_of` | Which IDE, which machine, when. Retained when the rest of the consensus subsystem was cut — it is what attributes an amendment across a two-host merge. (`CODEVIRA_IDE` is a cooperative signal, spoofable, not a security boundary.) |
 
-#### Removed in 4.0 (52 tools → 37)
+#### Removed in 4.0 (52 tools → 37 defined; 36 advertised)
 
 Cut on measured usage across 4,203 transcripts, not on taste. The data
 they wrote is untouched — these were surfaces, and `codevira export` still
@@ -460,7 +460,7 @@ then `pipx uninstall codevira`.
 | `do_not_revert` enforced at the Claude Code hook AND, in any editor, at the commit boundary (`codevira engine install-git-hook`) | Graph tools cover Python / TS / JS / Go / Rust; other languages → the AI `Read`s the file directly |
 | FTS5/BM25 decision search | Real-time multi-machine sync — by design local-first; for team sharing, run `codevira init --shared` to commit `.codevira/` |
 | Per-project + cross-machine project inventory (`global.db`) | No web UI — use the `codevira://decisions` MCP resource, or `codevira replay --format html` |
-| 37 MCP tools + ~27 CLI commands + 7 engine policies | The HTTP server (`codevira serve`) is single-project per launch — for daily use, stick with stdio |
+| 36 MCP tools advertised in `tools/list` (37 defined — `refresh_graph` is hidden) + ~27 CLI commands + 7 engine policies | The HTTP server (`codevira serve`) is single-project per launch — for daily use, stick with stdio |
 | Concurrent-safe storage (Posix `fcntl.flock` + Windows sentinel), thread + subprocess + chaos-tested | Windows sentinel fallback is verified in unit tests but not yet load-tested on real Windows |
 | Anti-Regression on small `Edit`/`MultiEdit` hunks | Anti-Regression does not yet detect full-file `Write` reverts; accuracy depends on `fix:` commit hygiene |
 

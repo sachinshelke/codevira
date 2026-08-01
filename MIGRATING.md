@@ -47,7 +47,7 @@ server-side.
 The migration preserves every row — it verifies the count and rolls back
 rather than completing a migration that would lose data.
 
-### Breaking: 15 MCP tools were removed (52 → 37)
+### Breaking: 15 MCP tools were removed (52 → 37 defined, 36 advertised)
 
 Each was cut on measured usage across 4,203 transcripts, not on taste.
 **If you call these from a script or a custom agent, they will now fail:**

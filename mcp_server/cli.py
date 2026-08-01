@@ -1594,6 +1594,44 @@ def main() -> None:
         "passed to working_add).",
     )
 
+    memory_parser = subparsers.add_parser(
+        "memory",
+        help="Snapshot and roll back .codevira/ — the memory store. "
+        "`.codevira/` is gitignored, so `git revert` cannot undo a bad "
+        "migration or an accidental wipe; this can.",
+    )
+    memory_sub = memory_parser.add_subparsers(dest="memory_action")
+
+    mem_snap = memory_sub.add_parser(
+        "snapshot", help="Capture the current state of .codevira/."
+    )
+    mem_snap.add_argument("--note", default="", help="Why you took it.")
+    mem_snap.add_argument(
+        "--all-projects",
+        action="store_true",
+        help="Snapshot every registered project, not just this one.",
+    )
+
+    mem_list = memory_sub.add_parser("list", help="Show available snapshots.")
+    mem_list.add_argument("--all-projects", action="store_true")
+
+    mem_undo = memory_sub.add_parser(
+        "undo",
+        help="Restore .codevira/ from a snapshot (most recent by default). "
+        "The current state is captured first, so undo is itself undoable.",
+    )
+    mem_undo.add_argument(
+        "--snapshot", default=None, help="Snapshot name from `memory list`."
+    )
+    mem_undo.add_argument(
+        "--all-projects",
+        action="store_true",
+        help="Restore every registered project's most recent snapshot.",
+    )
+    mem_undo.add_argument(
+        "--yes", action="store_true", help="Skip the confirmation prompt."
+    )
+
     engine_parser = subparsers.add_parser(
         "engine",
         help="Internal: lifecycle-hook engine entry (called by hook scripts)",
@@ -2015,6 +2053,10 @@ def main() -> None:
             "<session_id>`.\n"
         )
         sys.exit(2)
+    elif args.command == "memory":
+        from mcp_server.cli_memory import cmd_memory
+
+        sys.exit(cmd_memory(args))
     elif args.command == "engine":
         # Internal — Claude Code hook scripts call us with `engine handle <event>`.
         engine_action = getattr(args, "engine_action", None)

@@ -227,8 +227,6 @@ READ_TOOLS: frozenset[str] = frozenset(
         "expand",
         "get_history",
         "get_playbook",
-        "get_signature",
-        "get_code",
         "get_session_context",
         "query_graph",
         "working_get",

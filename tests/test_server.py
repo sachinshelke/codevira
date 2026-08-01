@@ -727,28 +727,6 @@ class TestCallToolMissingDispatches:
             _run(call_tool("refresh_graph", {"file_paths": ["src/x.py"]}))
         m.assert_called_once_with(file_paths=["src/x.py"])
 
-    def test_dispatch_get_signature(self):
-        sentinel = {"symbols": []}
-        with (
-            patch("mcp_server.server.get_signature", return_value=sentinel) as m,
-            patch("mcp_server.auto_init.ensure_project_initialized"),
-        ):
-            _run(call_tool("get_signature", {"file_path": "src/api.py"}))
-        m.assert_called_once_with("src/api.py")
-
-    def test_dispatch_get_code(self):
-        sentinel = {"source": "def foo(): pass"}
-        with (
-            patch("mcp_server.server.get_code", return_value=sentinel) as m,
-            patch("mcp_server.auto_init.ensure_project_initialized"),
-        ):
-            _run(call_tool("get_code", {"file_path": "src/api.py", "symbol": "foo"}))
-        m.assert_called_once_with("src/api.py", symbol="foo")
-
-    # v2.2.0+: export_graph / get_graph_diff / get_decision_confidence /
-    # get_preferences / get_learned_rules / get_project_maturity dispatch
-    # tests all removed (tools deleted per surface-cut audit).
-
     def test_dispatch_get_session_context(self):
         sentinel = {"context": {}}
         with (

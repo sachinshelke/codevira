@@ -30,7 +30,6 @@ Run as part of G2 in the release gauntlet (``make test-e2e``). NEVER ship red.
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -345,45 +344,6 @@ class TestManagedFilesCrossTool:
         assert not (project / "CLAUDE.md").exists(), "extra files stay opt-in"
 
 
-# ─────────────────────────────────────────────────────────────────────
-# P16 — get_signature multi-language surface
-# ─────────────────────────────────────────────────────────────────────
-
-
-class TestGetSignatureMultiLang:
-    def test_supported_types_documented(self, project):
-        from mcp_server.tools.code_reader import get_signature
-
-        # The file must EXIST (else the not-found check short-circuits before
-        # the extension check we want to exercise).
-        mystery = project / "mystery.unknownext"
-        mystery.write_text("noop\n", encoding="utf-8")
-        res = get_signature(str(mystery))
-        assert res["found"] is False
-        for ext in (".ts", ".tsx", ".js", ".jsx"):
-            assert ext in res["error"], f"{ext} must be a documented supported type"
-
-    def test_typescript_file_parses_without_crash(self, project):
-        from mcp_server.tools.code_reader import get_signature
-
-        ts = project / "greet.ts"
-        ts.write_text(
-            "export function greet(name: string): string {\n"
-            "  return `hi ${name}`;\n}\n",
-            encoding="utf-8",
-        )
-        res = get_signature(str(ts))
-        assert isinstance(res, dict) and "found" in res
-        if res["found"]:  # real grammar present (release env); mocked CI → False
-            assert res.get("language") in ("typescript", "tsx", "javascript")
-
-
-# ─────────────────────────────────────────────────────────────────────
-# P17 — one shared git outcome classifier (D000112)
-# ─────────────────────────────────────────────────────────────────────
-
-
-@pytest.mark.skipif(shutil.which("git") is None, reason="git not available")
 class TestOutcomeClassifierUnified:
     """``classify_outcome`` is the single brain both outcome surfaces (SQLite
     confidence + JSONL digest/replay/skills) delegate to — if its kept/modified

@@ -87,7 +87,6 @@ from mcp_server.tools.search import (
 # v2.2.0: search_codebase removed. AI agents grep + read files; semantic
 # code search was the source of 90%+ of v2.1.x disk + bug surface.
 from mcp_server.tools.playbook import get_playbook
-from mcp_server.tools.code_reader import get_signature, get_code
 from mcp_server.tools.learning import (
     get_session_context as learning_get_session_context,
 )
@@ -1076,50 +1075,6 @@ async def list_tools() -> list[Tool]:
                 },
             },
         ),
-        Tool(
-            name="get_signature",
-            description=(
-                "Get the skeleton of a Python file — all public function and class names, "
-                "their signatures, docstrings, and line ranges. "
-                "Call this after get_node() to understand file structure before deciding "
-                "which symbol to read with get_code(). Much cheaper than reading the full file. "
-                "Note: Python files only. For other languages, read the file directly."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "file_path": {
-                        "type": "string",
-                        "description": "Relative file path (e.g. 'src/services/generator.py')",
-                    }
-                },
-                "required": ["file_path"],
-            },
-        ),
-        Tool(
-            name="get_code",
-            description=(
-                "Get the full source of a single function or class by name. "
-                "Always reads from disk — always current, never stale. "
-                "Call get_signature() first to discover available symbol names and line ranges. "
-                "Omit symbol to get module-level constants and assignments only. "
-                "Note: Python files only. For other languages, read the file directly."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "file_path": {
-                        "type": "string",
-                        "description": "Relative file path",
-                    },
-                    "symbol": {
-                        "type": "string",
-                        "description": "Function or class name to retrieve. Omit for module-level constants.",
-                    },
-                },
-                "required": ["file_path"],
-            },
-        ),
         # v2.2.0+: export_graph, get_graph_diff, get_decision_confidence,
         # get_project_maturity tools deleted per 2026-05-22 surface-cut
         # audit. Vestigial / never-used / dashboard-only surfaces.
@@ -1938,13 +1893,6 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             result = update_next_action(arguments["next_action"])
         elif name == "refresh_graph":
             result = refresh_graph(file_paths=arguments.get("file_paths"))
-        elif name == "get_signature":
-            result = get_signature(arguments["file_path"])
-        elif name == "get_code":
-            result = get_code(arguments["file_path"], symbol=arguments.get("symbol"))
-        # v2.2.0+: export_graph, get_graph_diff, get_decision_confidence,
-        # get_project_maturity, analyze_changes, find_hotspots dispatchers
-        # deleted per surface-cut audit.
         elif name == "get_session_context":
             # v2.1.2 Item 25: pass through optional since= cutoff.
             result = learning_get_session_context(since=arguments.get("since"))

@@ -258,7 +258,6 @@ class TestGetSessionContext:
                 "status": "in_progress",
             },
         }
-        mock_changesets = {"open_changesets": [], "count": 0, "warning": None}
 
         with patch(
             "mcp_server.tools.learning.get_roadmap",
@@ -268,11 +267,7 @@ class TestGetSessionContext:
             with patch(
                 "mcp_server.tools.roadmap.get_roadmap", return_value=mock_roadmap
             ):
-                with patch(
-                    "mcp_server.tools.changesets.list_open_changesets",
-                    return_value=mock_changesets,
-                ):
-                    result = learning.get_session_context()
+                result = learning.get_session_context()
 
         assert "recent_sessions" in result
         assert "recent_decisions" in result
@@ -311,11 +306,7 @@ class TestGetSessionContext:
             },
         }
         with patch("mcp_server.tools.roadmap.get_roadmap", return_value=mock_roadmap):
-            with patch(
-                "mcp_server.tools.changesets.list_open_changesets",
-                return_value={"open_changesets": [], "count": 0, "warning": None},
-            ):
-                result = learning.get_session_context()
+            result = learning.get_session_context()
 
         # New shape: current_phase at top level (no more nested `roadmap` key)
         assert result["current_phase"]["name"] == "API Refactor"
@@ -329,11 +320,7 @@ class TestGetSessionContext:
         with patch(
             "mcp_server.tools.roadmap.get_roadmap", side_effect=Exception("broken")
         ):
-            with patch(
-                "mcp_server.tools.changesets.list_open_changesets",
-                return_value={"open_changesets": [], "count": 0, "warning": None},
-            ):
-                result = learning.get_session_context()
+            result = learning.get_session_context()
 
         # On failure current_phase stays empty dict
         assert result["current_phase"] == {}
@@ -537,11 +524,7 @@ class TestGetSessionContext:
             with patch(
                 "mcp_server.tools.roadmap._load_roadmap", return_value=mock_roadmap_data
             ):
-                with patch(
-                    "mcp_server.tools.changesets.list_open_changesets",
-                    return_value={"open_changesets": [], "count": 0, "warning": None},
-                ):
-                    result = learning.get_session_context()
+                result = learning.get_session_context()
 
         assert "recent_phase_decisions" in result, (
             "Bug 5 regression: get_session_context must include "
@@ -571,11 +554,7 @@ class TestGetSessionContext:
         with patch(
             "mcp_server.tools.roadmap._load_roadmap", return_value=mock_roadmap_data
         ):
-            with patch(
-                "mcp_server.tools.changesets.list_open_changesets",
-                return_value={"open_changesets": [], "count": 0, "warning": None},
-            ):
-                result = learning.get_session_context()
+            result = learning.get_session_context()
 
         assert len(result["recent_phase_decisions"]) <= 5
 
@@ -589,11 +568,7 @@ class TestGetSessionContext:
             "mcp_server.tools.roadmap._load_roadmap",
             return_value={"completed_phases": []},
         ):
-            with patch(
-                "mcp_server.tools.changesets.list_open_changesets",
-                return_value={"open_changesets": [], "count": 0, "warning": None},
-            ):
-                result = learning.get_session_context()
+            result = learning.get_session_context()
 
         assert result["recent_phase_decisions"] == []
 
@@ -614,12 +589,7 @@ class TestGetSessionContext:
             ],
         )
         db.close()
-
-        with patch(
-            "mcp_server.tools.changesets.list_open_changesets",
-            return_value={"open_changesets": [], "count": 0, "warning": None},
-        ):
-            result = learning.get_session_context()
+        result = learning.get_session_context()
 
         if result["recent_decisions"]:
             for d in result["recent_decisions"]:
@@ -781,10 +751,6 @@ class TestSessionContextFocus:
                 "mcp_server.tools.roadmap.get_roadmap",
                 return_value={"current_phase": {}},
             ),
-            patch(
-                "mcp_server.tools.changesets.list_open_changesets",
-                return_value={"open_changesets": [], "count": 0, "warning": None},
-            ),
         ):
             result = learning.get_session_context()
         assert "focus_source" in result
@@ -808,10 +774,6 @@ class TestSessionContextFocus:
         }
         with (
             patch("mcp_server.tools.roadmap.get_roadmap", return_value=roadmap),
-            patch(
-                "mcp_server.tools.changesets.list_open_changesets",
-                return_value={"open_changesets": [], "count": 0, "warning": None},
-            ),
         ):
             result = learning.get_session_context()
 
@@ -826,10 +788,6 @@ class TestSessionContextFocus:
             patch(
                 "mcp_server.tools.roadmap.get_roadmap",
                 return_value={"current_phase": {}},
-            ),
-            patch(
-                "mcp_server.tools.changesets.list_open_changesets",
-                return_value={"open_changesets": [], "count": 0, "warning": None},
             ),
         ):
             result = learning.get_session_context()

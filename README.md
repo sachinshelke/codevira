@@ -111,7 +111,7 @@ context. A decision recorded in one tool is visible to every tool. The hard
 > `git commit --no-verify` overrides once; `CODEVIRA_GIT_HOOK_MODE=warn`
 > disables it. Merge commits are never blocked.
 >
-> **Verified on Claude Code (2026-08-01, 4.0.0.dev1):** a locked decision
+> **Verified on Claude Code (2026-08-01, 4.0.0b1):** a locked decision
 > returns `permissionDecision: deny` with exit 2, the refusal carries the
 > decision's reasoning, rejected alternatives and re-examination trigger, and
 > the verdict is recorded with its evidence. Other IDEs are supported but not

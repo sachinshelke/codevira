@@ -83,7 +83,6 @@ def _clean_v350_env(monkeypatch):
         "CODEVIRA_DECISION_LOCK_MODE",
         "CODEVIRA_DECISION_LOCK_CONTENT_AWARE",
         "CODEVIRA_DECISION_DETAIL",
-        "CODEVIRA_LEARNED_WEIGHTS",
         "CODEVIRA_SYNONYM_WIDENING",
     ):
         monkeypatch.delenv(env, raising=False)
@@ -301,49 +300,6 @@ class TestRelevanceEval:
         self._seed()
         # Non-gating by design: a quality signal, always exit 0 without --gate.
         assert cmd_eval(k=5, max_cases=50, trend=False) == 0
-
-
-# ─────────────────────────────────────────────────────────────────────
-# P13 — learned hot-path weights, opt-in (D00010Z)
-# ─────────────────────────────────────────────────────────────────────
-
-
-class TestLearnedWeights:
-    def test_opt_in_round_trip(self, project, monkeypatch):
-        from mcp_server.engine.policies import relevance_inject
-        from mcp_server.storage import learned_weights
-
-        learned = {"tag": 9.0, "file": 8.0, "fts": 7.0}
-        assert learned_weights.save(learned), "atomic persist must succeed"
-
-        # Default (no env): the hot path ignores the learned file.
-        monkeypatch.delenv("CODEVIRA_LEARNED_WEIGHTS", raising=False)
-        assert relevance_inject._learned_weights_enabled() is False
-        assert relevance_inject._effective_weights() != (9.0, 8.0, 7.0)
-
-        # Opt in: the learned vector replaces the shipped defaults.
-        monkeypatch.setenv("CODEVIRA_LEARNED_WEIGHTS", "1")
-        assert relevance_inject._effective_weights() == (9.0, 8.0, 7.0)
-
-    def test_corrupt_file_falls_back_to_defaults(self, project, monkeypatch):
-        from mcp_server.engine.policies import relevance_inject
-        from mcp_server.storage import learned_weights
-
-        learned_weights.path().write_text("{ not json", encoding="utf-8")
-        monkeypatch.setenv("CODEVIRA_LEARNED_WEIGHTS", "1")
-        # A malformed file can never make the read surface worse than it ships.
-        assert relevance_inject._effective_weights() != (0.0, 0.0, 0.0)
-
-    def test_tune_cli_never_gates(self, project):
-        from mcp_server.cli_eval import cmd_tune_weights
-
-        _record("use bcrypt over argon2", file_path="auth.py", tags=["auth"])
-        assert cmd_tune_weights(k=5, max_cases=50) == 0
-
-
-# ─────────────────────────────────────────────────────────────────────
-# E4 — managed files beyond AGENTS.md, same canonical block (D000110)
-# ─────────────────────────────────────────────────────────────────────
 
 
 class TestManagedFilesCrossTool:
@@ -564,8 +520,10 @@ class TestReleaseCoherence:
 
         # Synonym widening OFF by default → query unchanged.
         assert fts5_index._sanitize_fts_query("database auth") == '"database" OR "auth"'
-        # Learned weights OFF by default.
-        assert relevance_inject._learned_weights_enabled() is False
+        # 4.0: the learned-weights flag was removed with the tuner that
+        # produced it — the shipped weights are now the only weights.
+        assert not hasattr(relevance_inject, "_learned_weights_enabled")
+        assert relevance_inject._effective_weights() == (0.4, 0.4, 0.2)
         # Content-aware lock ON by default (the v3.5.0 behavior change).
         assert DecisionLock()._config()["content_aware"] is True
 
@@ -575,7 +533,7 @@ class TestReleaseCoherence:
         out = expand(ids=["D-does-not-exist"])
         assert out["count"] == 0 and out["not_found"] == ["D-does-not-exist"]
 
-    @pytest.mark.parametrize("cmd", ["eval", "tune-weights"])
+    @pytest.mark.parametrize("cmd", ["eval"])
     def test_new_cli_subcommands_exist(self, cmd):
         # Run the BRANCH's CLI (not a possibly-stale installed `codevira`).
         result = subprocess.run(

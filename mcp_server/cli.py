@@ -1548,25 +1548,6 @@ def main() -> None:
         help="Opt-in CI gate: exit 1 if recall@k falls below this (0-1).",
     )
 
-    # v3.5.0 Phase 13: learn relevance_inject ranking weights from real memory
-    # (E3 objective) — codevira tune-weights [--k N] [--dry-run].
-    tune_parser = subparsers.add_parser(
-        "tune-weights",
-        help="Learn relevance_inject ranking weights from real memory via the "
-        "E3 objective; persists only a meaningful win. Cold-path, non-gating.",
-    )
-    tune_parser.add_argument(
-        "--k", type=int, default=5, help="top-k cutoff (default 5)."
-    )
-    tune_parser.add_argument(
-        "--max-cases", type=int, default=200, help="cap on eval cases (default 200)."
-    )
-    tune_parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Compute + report but do NOT persist learned_weights.json.",
-    )
-
     # v3.1.0 M5: induced-skill candidate generation. CLI-only — the MCP
     # surface for skills is record_skill / get_skill / list_skills.
     induce_parser = subparsers.add_parser(
@@ -1978,17 +1959,6 @@ def main() -> None:
                 max_cases=getattr(args, "max_cases", 200),
                 trend=not getattr(args, "no_trend", False),
                 min_recall=getattr(args, "min_recall", None),
-            )
-        )
-    elif args.command == "tune-weights":
-        # v3.5.0 Phase 13: learned hot-path weight tuning.
-        from mcp_server.cli_eval import cmd_tune_weights
-
-        sys.exit(
-            cmd_tune_weights(
-                k=getattr(args, "k", 5),
-                max_cases=getattr(args, "max_cases", 200),
-                apply=not getattr(args, "dry_run", False),
             )
         )
     elif args.command == "induce-skills":

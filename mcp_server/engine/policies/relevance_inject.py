@@ -88,41 +88,17 @@ _TAG_WEIGHT = 0.4
 _FILE_WEIGHT = 0.4
 _FTS_WEIGHT = 0.2
 
-# Phase 13: OPT-IN learned weights. When CODEVIRA_LEARNED_WEIGHTS is set, the
-# tuner-learned vector from .codevira/learned_weights.json replaces the
-# defaults above. Loaded ONCE per process and cached so the injected block
-# stays cache-stable within a session (a mid-session weight change would
-# bust the Anthropic prompt cache). Default OFF + transparent fallback to the
-# shipped defaults, so this can never regress the wedge unless explicitly
-# enabled — and the tuner only persists weights that beat the defaults on E3.
-_UNSET: Any = object()
-_LEARNED_WEIGHTS_CACHE: Any = _UNSET
-
-
-def _learned_weights_enabled() -> bool:
-    return os.environ.get("CODEVIRA_LEARNED_WEIGHTS", "").strip().lower() in (
-        "1",
-        "true",
-        "on",
-        "yes",
-    )
+# 4.0: the Phase-13 opt-in learned-weights path was removed with the
+# tuner that produced it. The tuner optimised (recall@k, MRR) only —
+# blind to the noise complaint in D00005N — so every vector it learned
+# was fitted against a metric that could not see our documented failure
+# mode. It was default-off and set in zero live configs. Removing it
+# also retires one of the divergent scorers (eval/composite.py) and one
+# env flag, per G3.
 
 
 def _effective_weights() -> tuple[float, float, float]:
-    """Return ``(tag, file, fts)`` — learned (opt-in, cached) or shipped."""
-    if not _learned_weights_enabled():
-        return _TAG_WEIGHT, _FILE_WEIGHT, _FTS_WEIGHT
-    global _LEARNED_WEIGHTS_CACHE
-    if _LEARNED_WEIGHTS_CACHE is _UNSET:
-        try:
-            from mcp_server.storage import learned_weights
-
-            w = learned_weights.load()
-        except Exception:  # noqa: BLE001 — hot path never breaks on bad config
-            w = None
-        _LEARNED_WEIGHTS_CACHE = (w["tag"], w["file"], w["fts"]) if w else None
-    if _LEARNED_WEIGHTS_CACHE:
-        return _LEARNED_WEIGHTS_CACHE
+    """Return the shipped ``(tag, file, fts)`` weights."""
     return _TAG_WEIGHT, _FILE_WEIGHT, _FTS_WEIGHT
 
 

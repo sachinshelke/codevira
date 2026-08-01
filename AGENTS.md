@@ -31,7 +31,7 @@
 - **D000018** Measured codevira startup token footprint (2026-05-26, chars/4 estimate): MCP tools/list = 16,454 chars ≈ 4,100 tokens …
 - **D000019** IMPLEMENTED (commit 7a2bdd4) the D000018 token reduction. New env var CODEVIRA_TOOL_PROFILE=lean trims the advertised M…
 
-_+100 more decision(s) — full log in `.codevira/decisions.jsonl`._
+_+101 more decision(s) — full log in `.codevira/decisions.jsonl`._
 
 
 For the full decision log, use `search_decisions` / `list_decisions` (or the `codevira` CLI) — don't read `.codevira/*.jsonl` directly.

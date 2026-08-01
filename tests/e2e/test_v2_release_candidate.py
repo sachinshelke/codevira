@@ -689,40 +689,41 @@ class TestE_PublicAPIContract:
             ), f"Hero CLI subcommand {sub!r} missing from help output"
 
     def test_pillar_1_doctor_subcommand_status(self):
-        """KNOWN GAP audit: Pillar 1.3 (master plan) called for a
-        `codevira doctor` health check. It is NOT shipped in v2.0
-        hero weeks — Pillar 1 work was deprioritized.
+        """Pillar 1.3 called for a `codevira doctor` health check.
 
-        This test documents the gap so we don't ship v2.0 GA forgetting
-        about it. When `doctor` ships, flip the assertion.
+        This began as a gap marker: `doctor` was not shipped in the v2.0
+        hero weeks, so the test asserted its ABSENCE and skipped itself
+        the day it appeared, with a note to flip the assertion. `doctor`
+        shipped in v2.x. The note was never acted on, so this skipped
+        every run since — a gap marker that stopped marking anything.
+
+        Flipped, as instructed, and extended to `--fix`, which is this
+        release's addition and the reason the branch exists.
         """
         import subprocess
 
         repo = Path(__file__).resolve().parents[2]
         env = os.environ.copy()
         env["PYTHONPATH"] = str(repo) + os.pathsep + env.get("PYTHONPATH", "")
-        result = subprocess.run(
-            [sys.executable, "-m", "mcp_server.cli", "--help"],
-            cwd=str(repo),
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-        # Currently `doctor` is NOT shipped. Lock that fact so a
-        # silent late-merge doesn't slip in unnoticed.
-        if "doctor" in result.stdout:
-            # When `doctor` ships, this becomes a positive assertion
-            # — pytest skips below.
-            pytest.skip(
-                "doctor subcommand is now shipped — flip this test "
-                "to a positive assertion"
+
+        def _cli(*args: str) -> str:
+            result = subprocess.run(
+                [sys.executable, "-m", "mcp_server.cli", *args],
+                cwd=str(repo),
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=15,
             )
-        # Otherwise, document the gap loudly via test name.
-        # (Test passes trivially; the assertion is in the docstring.)
-        assert (
-            "doctor" not in result.stdout
-        ), "Pillar 1.3 doctor subcommand status changed unexpectedly"
+            return result.stdout + result.stderr
+
+        assert "doctor" in _cli("--help"), "doctor missing from the subcommand list"
+
+        # The gap this branch closed: `doctor` could report a clean bill
+        # while a bare top-level MCP entry silently out-ranked the
+        # project-scoped ones (D00012X). Detecting it is only half the
+        # fix — `--fix` is what removes it.
+        assert "--fix" in _cli("doctor", "--help"), "doctor --fix is not exposed"
 
     def test_engine_version_documented(self):
         """Engine carries a version string for compatibility checks."""

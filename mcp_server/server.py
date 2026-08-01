@@ -2305,16 +2305,18 @@ def main():
     # timeout. Surfaced via "looks hanged on first tool call" during
     # Claude Desktop dogfood (2026-05-23).
     def _run_startup_outcome_analysis() -> None:
-        try:
-            from indexer.outcome_tracker import analyze_session_outcomes
-
-            analyze_session_outcomes()
-            logger.info("Outcome analysis complete (background)")
-        except Exception as e:
-            logger.warning("Could not run startup outcome analysis: %s", e)
-            from mcp_server._safe_crash import safe_log_crash
-
-            safe_log_crash(e, context="startup outcome analysis")
+        # 4.0: the outcome-analysis call that used to open this function was
+        # removed. It ran indexer.outcome_tracker, which queried graph.db
+        # tables that have held 0 rows since v3.0.0 moved the canonical store
+        # to JSONL — a guaranteed no-op costing ~102ms of git fanout at every
+        # server start. Repointing it at outcomes_writer.observe_all() was
+        # measured at 5.15s, i.e. 50x worse, so the whole call is dropped:
+        # outcome labels are produced by the write-time fan-out and by the
+        # explicit `codevira observe-git` CLI, neither of which needs a
+        # 5-second git sweep on every startup. D000006 exists because this
+        # fanout is slow; the right answer was to stop doing it, not to
+        # thread it. The git fix-history scan below is UNRELATED and stays —
+        # it feeds anti_regression.
 
         # v3.0.0 audit (§4.1): wire AntiRegression git populator
         import os as _os

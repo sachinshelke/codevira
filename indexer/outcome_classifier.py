@@ -1,6 +1,6 @@
 """Single source of truth for git-derived decision outcomes — Phase 17.
 
-``outcome_tracker`` (SQLite → confidence) and
+``outcome_tracker`` (SQLite → confidence; removed in 4.0) and
 ``mcp_server.storage.outcomes_writer`` (JSONL → digest / replay / skills) used
 to run INDEPENDENT git analyses and could label the SAME decision differently
 — e.g. the tracker called a revert-message commit ``reverted`` while the

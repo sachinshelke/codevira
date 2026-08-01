@@ -19,7 +19,9 @@ Call these MCP tools at the moments the description matches your action — they
 
 ### Before adopting a pattern, library, or naming convention
 
-- **`search_preferences(category)`** — Returns this project's coding style (snake_case vs camelCase, error-handling idioms, test layout, etc.). Match these unless the user explicitly asks to change them.
+- **`get_session_context()`** — its `style` panel carries the top communication preferences (~30 tokens), so match them without a separate call. For code style, read the surrounding code: naming, error handling and test layout are visible there and do not need a tool.
+
+  *(`search_preferences` was removed in 4.0 — see "Removed in 4.0" below.)*
 
 ### When you fix a bug or land an architectural choice
 
@@ -86,52 +88,55 @@ Auto-archive at 5 consecutive failures OR `unused_days ≥ 90` (configurable). S
 
 CLI: `codevira induce-skills [--apply] [--yes]` — cluster productive sessions (≥80% kept, tag-Jaccard ≥ 0.5) and propose induced skills. Without `--apply`: writes to `.codevira/induction_proposals.jsonl` for review.
 
-### Spatial memory — code-as-space
+### Provenance — who wrote what
 
-Activity heatmap (`.codevira-cache/activity.jsonl`, per-machine) + folder-tree neighborhoods + affordances.
+- **`origin_of(decision_id)`** — which IDE, which machine, when. Retained
+  when the rest of the consensus subsystem was cut in 4.0, because
+  provenance is what `id_repair` uses to attribute an amendment across a
+  two-host merge.
 
-- **`spatial_nearby(file_path, k=5)`** — files topologically near a file (BFS ≤ 2 hops over import/call edges + same-neighborhood), ranked by recent activity. Use when navigating unfamiliar code.
-- **`spatial_heat(top_k=20, since_days=?)`** — where attention has concentrated. Use for "what changed this week?".
-- **`spatial_neighborhood(file_path)`** — the folder-tree-derived (or yaml-overridden) neighborhood + members.
-- **`spatial_affordances(file_path)`** — what task_types apply here. E.g., a file under `mcp_server/tools/` typically affords `{add_tool, write_test}`. Combine with `get_playbook(task_type)` for relevant rules.
+## Removed in 4.0 — do not call these
 
-Override files: `.codevira/neighborhoods.yaml` (re-label folder mapping); `.codevira/affordances.yaml` (project-specific affordances on top of `mcp_server/data/affordances.yaml`).
+Fifteen tools were cut on measured usage across 4,203 transcripts. If you
+have them in memory from an older version of this file, they no longer
+exist and calling them will fail:
 
-### Consensus — cross-IDE awareness
+- `consensus_check`, `consensus_status`, `consensus_propose_supersession`,
+  `consensus_resolve` — use `origin_of` for provenance
+- `reflect`, `get_reflections`, `list_reflections`
+- `spatial_nearby`, `spatial_heat`, `spatial_neighborhood`,
+  `spatial_affordances` — use `get_impact(file_path)` for structural
+  neighbours
+- `distill_preferences`, `search_preferences`
+- `get_code`, `get_signature` — Read the file directly; both measured
+  **zero** calls in 2.5 months
 
-Tracks which IDE wrote each decision so contradictions across IDEs surface.
+`get_session_context()` still includes the one-line `style` panel, so
+match the user's communication preferences without needing a tool call.
 
-- **`consensus_check()`** — run a scan (read-only) for cross-IDE conflicts since this IDE's last checkpoint. Materializes matches to `.codevira/pending_conflicts.jsonl`.
-- **`consensus_status(top_k=3)`** — count + top-K pending conflicts (`get_session_context` also surfaces a panel).
-- **`origin_of(decision_id)`** — provenance lookup (always available — provenance is M1).
+## Enforcement reaches every editor (4.0)
 
-Phase C (opt-in handshake, default off) — gated by `memory.consensus.handshake_enabled` in `.codevira/config.yaml`:
-- **`consensus_propose_supersession(target_decision_id, new_decision, reason)`** — open a proposal against a foreign IDE's `do_not_revert` decision. Same-IDE fast-path bypasses the handshake.
-- **`consensus_resolve(proposal_id, action="approved"|"rejected"|"withdrawn", comment?)`** — record the response.
-- 14-day timeout default; expired proposals can be force-finalized via `expired_unilateral=True` (with audit row).
+Enforcement used to be an IDE hook, which meant only Claude Code
+hard-blocked. `codevira engine install-git-hook` installs a `pre-commit`
+hook that runs locked decisions against staged changes through the same
+engine — so a `do_not_revert` decision is enforced in any editor, because
+they all commit with git.
 
-CLI: `codevira consensus check`.
+- `git commit --no-verify` overrides a single commit
+- `CODEVIRA_GIT_HOOK_MODE=warn` (or `off`) changes it globally
+- merge commits are never blocked
 
-### Reflections — episodic abstraction
+## Rolling back memory (4.0)
 
-`.codevira/reflections.jsonl` (committed). LLM-generated abstractions over recent decisions + sessions.
+`.codevira/` is gitignored, so `git revert` cannot undo a bad migration or
+an accidental wipe. Before any risky operation on the store:
 
-- **`reflect(period_days=7, dry_run=True)`** — build the source context + render the prompt. With `dry_run=False`, v3.2.0+ runs the real MCP sampling/createMessage RPC when the client supports sampling; clients without sampling get `sampling_supported: False` + `rendered_prompt` (commit the LLM response via the CLI instead).
-- **`get_reflections(top_k=5)`** — most recent reflections.
-- **`list_reflections(since?, tags?, limit=50)`** — filtered list.
+```bash
+codevira memory snapshot --note "before <whatever>"
+```
 
-CLI: `codevira reflect [--period 7d] [--from-file PATH] [--apply] [--yes]`.
-
-Sanitization pass strips api keys / Bearer tokens / passwords / AWS AKIA / long hex / long base64 from the source context before the LLM sees it.
-
-### Preferences — cross-project communication style (v3.3.0)
-
-How the user likes their AI to work ("keep answers short", "tests first") — learned from real prompts, no rules or keyword matching.
-
-- The `prompt_capture` engine policy records every user prompt (sanitized, size-capped) to `.codevira-cache/prompts.jsonl` automatically.
-- **`distill_preferences()`** — call it when the Stop-hook nudge asks (fires at ≥10 pending prompts, 24h cooldown). One MCP-sampling call extracts durable preferences into `~/.codevira/global.db` — user-scoped, visible from every project.
-- **`search_preferences(category?)`** — retrieve learned preferences (e.g. category="communication").
-- `get_session_context()` already includes a one-line `style` panel (top-3 communication preferences, ~30 tokens) — match it without being asked.
+`codevira memory undo` restores it. The current state is captured first,
+so the undo is itself undoable.
 
 ## Tool budget discipline
 

@@ -9,6 +9,79 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased] — 4.0.0
 
+> **Upgrading?** See [MIGRATING.md](MIGRATING.md). Take a snapshot first:
+> `codevira memory snapshot --all-projects --note "before 4.0"`.
+
+### Breaking
+
+- **`global.db` gains a `tenant` column** — the one change that cannot be
+  downgraded. Cross-project preferences and rules are now scoped to
+  `$CODEVIRA_TENANT` (default `local`). A single-user machine sees no
+  change; a shared `$HOME` (CI runner, devcontainer, server) stops
+  bleeding one person's learned state into another's. The `UNIQUE`
+  constraints were rebuilt to include `tenant` — without that, one tenant
+  holding a signal would permanently block another from storing it. The
+  migration verifies its row count and rolls back rather than completing
+  a lossy rewrite.
+- **15 MCP tools removed (52 → 37)**, each cut on measured usage across
+  4,203 transcripts: the consensus (4), reflections (3), spatial (4) and
+  preferences (2) subsystems, plus `get_code` / `get_signature` (zero
+  calls in 2.5 months). `origin_of` is retained. The CLI subcommand
+  `codevira tune-weights` is also gone. **No recorded data is deleted** —
+  these were surfaces; `codevira export` still includes everything.
+- **`session_log_enforcer` defaults to `block`** (was `warn`).
+
+### Added — a way back, and a way to enforce everywhere
+
+- **`codevira memory snapshot | list | undo`.** `.codevira/` is
+  gitignored, so `git revert` could never roll back the memory store.
+  Now something can — and undo is itself undoable, because restoring
+  captures the current state first. `--all-projects` covers every
+  registered repo.
+- **Commit-boundary enforcement.** `codevira engine install-git-hook`
+  runs locked decisions against staged changes through the same engine
+  the IDE hooks use, so a `do_not_revert` decision is a physical veto in
+  *any* editor — they all commit with git. Merge commits are never
+  blocked; `git commit --no-verify` overrides once.
+- **`mcp_server/egress.py`** is now the only module permitted to import a
+  network client, enforced by a CI test that walks the import graph and
+  fails the build. `CODEVIRA_NO_NETWORK=1` is an absolute kill switch,
+  checked before any config file. The entire network surface remains one
+  advisory PyPI version check.
+- **`$CODEVIRA_HOME`** relocates the global data directory — separate
+  profiles, containers with a read-only `$HOME`, CI runners.
+
+### Fixed — memory that survives a two-host merge
+
+- **A stable machine identity (`origin.device_id`).** `host_hash` derived
+  from `uuid.getnode()`, which returns whichever of a laptop's many
+  interfaces enumerates first — measured **4 distinct values from one
+  machine over 7 weeks**, two of them live concurrently. `id_repair` keys
+  amendment attribution on writer identity, so a developer whose VPN
+  reconnected became a stranger to their own decision.
+- **Amendments record who made them.** `mark_protected`, `reaffirm`,
+  `mark_outdated`, `set_flag` and `supersede` wrote anonymous rows (0 of
+  96 carried provenance), so on a two-host merge a supersession landed on
+  whoever won the id race — retiring the wrong engineer's decision.
+- **`id_repair` repoints decision-to-decision edges.** It renumbered
+  colliding records without updating `superseded_by`, leaving dangling
+  supersessions.
+- **Content-addressed `uid`** on every record, plus `_amendment_to_uid`
+  edges so attribution needs no heuristic. Deliberately *not* `uuid4`,
+  which measurably breaks cherry-pick dedup (1 record → 2). **Nothing is
+  back-filled** — a pre-4.0 record's uid derives from its content.
+- **`origin` and `uid` are never overlaid onto a base record** by an
+  amendment, so amending someone else's decision no longer rewrites its
+  authorship.
+
+### Changed — less surface, faster reads
+
+- Warm-call p95 **10.18 ms → 1.92 ms** against D00012K's 3 ms ceiling.
+- One ranking definition (`mcp_server/retrieval/score.py`) replaces four
+  implementations on three incompatible scales.
+- `symbol` is derived from the session's own edit instead of being typed
+  by an agent (it sat at 1 of 123 populated).
+
 ### Added — the product explains itself (Step 2)
 
 A refusal used to show an id, 120 truncated characters and a date. It now

@@ -1,5 +1,121 @@
 # Migrating to Codevira
 
+## Upgrading to 4.0
+
+**Take a snapshot first. Then `pipx install --upgrade codevira`.**
+
+```bash
+codevira memory snapshot --all-projects --note "before 4.0"
+pipx install --upgrade codevira
+```
+
+That first line is new in 4.0 and it is the one manual step we ask for.
+`.codevira/` is gitignored, so `git revert` has never been able to undo a
+bad upgrade of your memory store. `codevira memory undo` now can — but
+only if a snapshot exists, and the upgrade is the moment you want one.
+
+If something goes wrong at any point below:
+
+```bash
+codevira memory undo --all-projects
+```
+
+The current state is captured before the restore, so the undo is itself
+undoable.
+
+### The one breaking change: `global.db` gains a `tenant` column
+
+This is the only change in 4.0 that **cannot be downgraded**. Everything
+else is additive.
+
+`~/.codevira/global.db` holds cross-project state — distilled
+communication preferences, learned rules. Every row used to be implicitly
+"the person whose `$HOME` this is". That is correct on a laptop and wrong
+on a shared home: a CI runner where several people's jobs run as one OS
+user, a devcontainer with a baked `$HOME`, or codevira running
+server-side.
+
+- **On a single-user machine, you will not notice.** Existing rows are
+  migrated to the tenant `local`, which is what they already were. Reads
+  and writes behave exactly as before.
+- **If you share a home directory**, set `CODEVIRA_TENANT` per person.
+  Preferences and rules are then scoped and no longer bleed between you.
+- **The downgrade caveat:** a 3.x client has no `WHERE tenant` clause. On
+  a *shared* home, rolling back to 3.x would let it read everyone's rows
+  as its own. On a single-user machine, rolling back is harmless.
+
+The migration preserves every row — it verifies the count and rolls back
+rather than completing a migration that would lose data.
+
+### Breaking: 15 MCP tools were removed (52 → 37)
+
+Each was cut on measured usage across 4,203 transcripts, not on taste.
+**If you call these from a script or a custom agent, they will now fail:**
+
+| Removed | Replacement |
+|---|---|
+| `consensus_check`, `consensus_status`, `consensus_propose_supersession`, `consensus_resolve` | `origin_of(decision_id)` still gives provenance |
+| `reflect`, `get_reflections`, `list_reflections` | — (no replacement; the subsystem is gone) |
+| `spatial_nearby`, `spatial_heat`, `spatial_neighborhood`, `spatial_affordances` | `get_impact(file_path)` for structural neighbours |
+| `distill_preferences`, `search_preferences` | — |
+| `get_code`, `get_signature` | Read the file; both measured **zero** calls in 2.5 months |
+
+The CLI subcommand `codevira tune-weights` is also gone.
+
+**Nothing you recorded is deleted.** These are read/write *surfaces*; the
+underlying `.codevira/*.jsonl` files are untouched, and `codevira export`
+still includes everything.
+
+### Default-behaviour changes worth knowing
+
+- **Commit-time enforcement is available and defaults to blocking.**
+  `codevira engine install-git-hook` installs a `pre-commit` hook that
+  runs your locked decisions against staged changes. This is how
+  enforcement reaches editors other than Claude Code — they all commit
+  with git. It is **not installed automatically**; you opt in per repo.
+  Once installed: `git commit --no-verify` overrides a single commit,
+  `CODEVIRA_GIT_HOOK_MODE=warn` (or `off`) changes it globally. Merge
+  commits are never blocked.
+- **`session_log_enforcer` blocks by default** (it warned before). A
+  session that ships commits without a `write_session_log` call is asked
+  to write one before stopping. A second consecutive block degrades to a
+  warning, so a session that genuinely cannot log still finishes. Set
+  `CODEVIRA_SESSION_LOG_ENFORCER_MODE=warn` for the old behaviour.
+
+### New environment variables
+
+| Variable | Default | What it does |
+|---|---|---|
+| `CODEVIRA_HOME` | `~/.codevira` | Relocates the entire global data dir. Useful for separate profiles, containers with a read-only `$HOME`, and CI runners that must not share state. |
+| `CODEVIRA_TENANT` | `local` | Scopes `global.db` preferences and rules to a person. Set it per user on a shared home. |
+| `CODEVIRA_NO_NETWORK` | unset | Absolute kill switch for the one outbound call codevira makes (a PyPI version check). Checked before any config file. |
+| `CODEVIRA_DEVICE_ID` | auto | Overrides the persisted machine id. For containers where `$HOME` is a fresh layer each run. |
+| `CODEVIRA_GIT_HOOK_MODE` | `block` | `warn` / `off` for the commit-time hook. |
+
+### What happens automatically (you do nothing)
+
+- **Records gain `device_id` and `uid`.** New writes carry a stable
+  machine identity and a content-addressed record id. **Existing records
+  are never rewritten** — a pre-4.0 record's `uid` is derived from its
+  content on read, so nothing on disk changes and nothing is
+  back-filled. (Back-filling `device_id` would falsely attest which
+  machine wrote a record that predates the field.)
+- **Amendments now record who made them.** `mark_protected`, `reaffirm`,
+  `mark_outdated`, `set_flag` and `supersede` previously wrote anonymous
+  rows, which is why a supersession chain could land on the wrong
+  engineer's decision after a two-host merge. Existing amendments stay
+  as they are.
+- **`global.db` schema migration** runs on first open, as described above.
+
+### Verifying the upgrade
+
+```bash
+codevira doctor
+codevira memory list          # your pre-upgrade snapshot should be here
+```
+
+---
+
 ## Upgrading to 3.7.0
 
 **Just `pipx install --upgrade codevira`. There are no manual steps.** The

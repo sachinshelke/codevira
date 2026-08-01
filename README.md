@@ -96,10 +96,18 @@ over MCP, can call `search_decisions("auth")`) and sees D000412 with its full
 context. A decision recorded in one tool is visible to every tool. The hard
 *block* is Claude Code only today; the shared *memory* is universal.
 
-> The honest caveat: only Claude Code's `PreToolUse` hook hard-blocks, because
-> only its edits route through codevira's engine. In Cursor / Codex /
-> Copilot the decision is strong advisory context in `AGENTS.md`, not a physical
-> veto.
+> The honest caveat, updated in 4.0: only Claude Code's `PreToolUse` hook
+> blocks *at edit time*, because only its edits route through codevira's
+> engine. In Cursor / Codex / Copilot the decision is advisory context in
+> `AGENTS.md` while you type.
+>
+> **4.0 closes that at the commit boundary instead.** `codevira engine
+> install-git-hook` runs locked decisions against staged changes through the
+> same engine — so the veto is physical in *any* editor, because they all
+> commit with git. Verified on a repo with no IDE hook installed: the commit
+> was refused by git with the decision's reasoning attached.
+> `git commit --no-verify` overrides once; `CODEVIRA_GIT_HOOK_MODE=warn`
+> disables it. Merge commits are never blocked.
 >
 > **Verified on Claude Code (2026-08-01, 4.0.0.dev1):** a locked decision
 > returns `permissionDecision: deny` with exit 2, the refusal carries the
@@ -307,21 +315,33 @@ complete_phase · update_next_action · write_session_log
 ### Code graph
 
 `get_node` (file metadata) · `get_impact` (blast radius) · `query_graph`
-(function-level callers/callees/tests/dependents/symbols) · `get_signature`
-(all public symbols) · `get_code` (source of one symbol) · `get_playbook`
+(function-level callers/callees/tests/dependents/symbols) · `get_playbook`
 (curated rules for `add_tool` / `add_service` / `add_schema` / `debug_pipeline`
 / `commit` / `write_test`). Plus the hidden `refresh_graph`.
 
-### Memory subsystems (v3.1.0)
+### Memory subsystems
 
 | Subsystem | Tools | What it covers |
 |---|---|---|
 | Working memory (4) | `working_add`, `working_get`, `working_promote`, `get_working_context` | Intra-session scratchpad, decay-scored (`importance × e^(−Δt/τ=6h) + 0.5·access_count`), capacity-bounded. Auto-populated by the `PostToolUse` fan-out. |
 | Skill library (6) | `record_skill`, `get_skill`, `apply_skill_outcome`, `list_skills`, `supersede_skill`, `promote_skill_to_playbook` | Reusable procedures; FTS5 composite ranking (BM25 + tag-Jaccard + recency); auto-archive at 5 consecutive failures or 90 unused days (`do_not_revert` exempt). |
-| Spatial (4) | `spatial_nearby`, `spatial_heat`, `spatial_neighborhood`, `spatial_affordances` | Code-as-space: activity heatmap, folder neighborhoods, what task types each area affords. |
-| Consensus (5) | `consensus_check`, `consensus_status`, `consensus_propose_supersession`, `consensus_resolve`, `origin_of` | Tracks which IDE wrote each decision so cross-IDE contradictions surface. (Provenance is a cooperative signal — `CODEVIRA_IDE` is spoofable, not a security boundary.) |
-| Reflections (3) | `reflect`, `get_reflections`, `list_reflections` | LLM-generated abstractions over recent decisions + sessions via MCP sampling. `reflect --from-sessions` folds local transcripts as candidates only (nothing auto-committed). |
-| Preferences (2) | `distill_preferences`, `search_preferences` | Session-end distillation of your prompts into durable, user-scoped preferences in `~/.codevira/global.db`, visible from every project. |
+| Provenance (1) | `origin_of` | Which IDE, which machine, when. Retained when the rest of the consensus subsystem was cut — it is what attributes an amendment across a two-host merge. (`CODEVIRA_IDE` is a cooperative signal, spoofable, not a security boundary.) |
+
+#### Removed in 4.0 (52 tools → 37)
+
+Cut on measured usage across 4,203 transcripts, not on taste. The data
+they wrote is untouched — these were surfaces, and `codevira export` still
+includes everything.
+
+| Removed | Instead |
+|---|---|
+| `consensus_check`, `consensus_status`, `consensus_propose_supersession`, `consensus_resolve` | `origin_of` |
+| `reflect`, `get_reflections`, `list_reflections` | — |
+| `spatial_nearby`, `spatial_heat`, `spatial_neighborhood`, `spatial_affordances` | `get_impact` |
+| `distill_preferences`, `search_preferences` | the `style` panel in `get_session_context` |
+| `get_code`, `get_signature` | read the file — both measured **zero** calls in 2.5 months |
+
+See [MIGRATING.md](MIGRATING.md) for the upgrade path.
 
 ### MCP Workflow Prompt
 
@@ -338,7 +358,7 @@ complete_phase · update_next_action · write_session_log
 | Cross-IDE memory via AGENTS.md | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Roadmap / sessions | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Code graph + blast radius | ✓ | ✓ | ✓ | ✓ | — |
-| `get_signature` / `get_code` | ✓ | ✓ | ✓ | ✓ | — |
+| Symbol-level `query_graph` | ✓ | ✓ | ✓ | ✓ | — |
 
 Decisions / `AGENTS.md` / roadmap are **language-agnostic** — they work for any
 language. **Code-graph and symbol tools** cover exactly Python (stdlib `ast`)
@@ -437,10 +457,10 @@ then `pipx uninstall codevira`.
 | Production-stable | Known-limited |
 |---|---|
 | Cross-IDE decision memory via in-repo JSONL | Hard `PreToolUse` enforcement is Claude Code only; other IDEs read `AGENTS.md` (advisory, not a hard block) |
-| `do_not_revert` enforcement at the Claude Code hook | Symbol tools cover Python / TS / JS / Go / Rust; other languages → the AI `Read`s the file directly |
+| `do_not_revert` enforced at the Claude Code hook AND, in any editor, at the commit boundary (`codevira engine install-git-hook`) | Graph tools cover Python / TS / JS / Go / Rust; other languages → the AI `Read`s the file directly |
 | FTS5/BM25 decision search | Real-time multi-machine sync — by design local-first; for team sharing, run `codevira init --shared` to commit `.codevira/` |
 | Per-project + cross-machine project inventory (`global.db`) | No web UI — use the `codevira://decisions` MCP resource, or `codevira replay --format html` |
-| 51 MCP tools + ~26 CLI commands + 8 engine policies | The HTTP server (`codevira serve`) is single-project per launch — for daily use, stick with stdio |
+| 37 MCP tools + ~27 CLI commands + 7 engine policies | The HTTP server (`codevira serve`) is single-project per launch — for daily use, stick with stdio |
 | Concurrent-safe storage (Posix `fcntl.flock` + Windows sentinel), thread + subprocess + chaos-tested | Windows sentinel fallback is verified in unit tests but not yet load-tested on real Windows |
 | Anti-Regression on small `Edit`/`MultiEdit` hunks | Anti-Regression does not yet detect full-file `Write` reverts; accuracy depends on `fix:` commit hygiene |
 

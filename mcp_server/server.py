@@ -13,8 +13,10 @@ Tools:
   # update_node / add_node / list_nodes removed in v2.2.0 — graph generator owns mutations
   update_next_action(next_action)        → update roadmap next action
   refresh_graph(file_paths?)             → auto-generate graph nodes for new files
-  get_signature(file_path)               → skeleton: public symbols, signatures, line ranges
-  get_code(file_path, symbol?)           → full source of one function or class from disk
+  # get_signature / get_code removed in 4.0 — measured ZERO calls across
+  #   4,203 transcripts over 2.5 months; agents Read the file instead
+  # consensus_* / reflect / spatial_* / *_preferences removed in 4.0 —
+  #   see MIGRATING.md "15 MCP tools were removed"
 
 Usage (Claude Code .claude/settings.json):
   {
@@ -1514,11 +1516,14 @@ async def list_tools() -> list[Tool]:
     _READ_ONLY = {
         "get_session_context", "get_roadmap", "get_phase", "get_playbook",
         "search_decisions", "list_decisions", "expand", "get_history",
-        "list_tags", "check_conflict", "get_node", "get_impact", "get_code",
-        "get_signature", "query_graph", "get_reflections", "list_reflections",
-        "get_skill", "list_skills", "get_working_context", "working_get",
-        "origin_of",
+        "list_tags", "check_conflict", "get_node", "get_impact",
+        "query_graph", "get_skill", "list_skills", "get_working_context",
+        "working_get", "origin_of",
     }  # fmt: skip
+    # 4.0 Step 5 removed get_code, get_signature, get_reflections and
+    # list_reflections from this set along with the tools themselves. A
+    # dead name here is inert (it is only ever a membership test) but it
+    # misleads the next reader into thinking the tool still exists.
     if ToolAnnotations is not None:
         for t in tools:
             if t.annotations is None:

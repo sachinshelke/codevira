@@ -443,7 +443,13 @@ def _compute_next_id_locked(
 #: Unlike ``ts``, there is no "heal if missing" case. A base with no
 #: origin means unknown provenance, and filling it in from whoever
 #: amended it would assert something nobody knows to be true.
-_AMENDMENT_NEVER_OVERLAYS = frozenset({"origin"})
+#:
+#: ``uid`` is here for the same structural reason: it is the *record's own*
+#: content identity (4.0 Step 9 · S2). An amendment has its own uid, and
+#: letting it overlay meant a merged record reported the identity of the
+#: last thing that happened to it rather than of itself — so every
+#: uid-keyed edge pointing at that record resolved to nothing.
+_AMENDMENT_NEVER_OVERLAYS = frozenset({"origin", "uid"})
 
 
 def read_merged(

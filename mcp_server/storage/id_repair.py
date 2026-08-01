@@ -119,6 +119,21 @@ def _host(record: dict[str, Any]) -> str:
     return writer_id(record.get("origin"))
 
 
+def _uid(record: dict[str, Any]) -> str:
+    """The record's content identity, stored or derived. ``""`` on failure.
+
+    Derivation matters: a pre-4.0 record has no stored uid but yields the
+    same value a 4.0 one with identical content would, so uid-keyed
+    following works across both eras with no file rewritten.
+    """
+    try:
+        from mcp_server.storage.uid import uid_of
+
+        return uid_of(record)
+    except Exception:  # noqa: BLE001 — repair must never raise
+        return ""
+
+
 def _order_key(
     record: dict[str, Any], *, id_field: str, amendment_field: str
 ) -> tuple[str, str, str]:
@@ -365,6 +380,16 @@ def normalize(
             ambiguous_references += 1
         out.append(rec)
 
+    # Step 9 · S3b. An amendment that names its base by CONTENT needs no
+    # attribution heuristic at all: a uid identifies exactly one record,
+    # however many machines minted the same id. Built only from renumbered
+    # losers — a base that kept its id needs no redirect.
+    by_uid: dict[str, str] = {}
+    for idx, new_id in reassign.items():
+        u = _uid(recs[idx])
+        if u:
+            by_uid[u] = new_id
+
     for i, r in enumerate(recs):
         if i in dropped:
             continue
@@ -374,6 +399,13 @@ def normalize(
             _emit(r)
             continue
         if r.get(amendment_field):
+            exact = by_uid.get(str(r.get("_amendment_to_uid") or ""))
+            if exact:
+                r = dict(r)
+                r[id_field] = exact
+                r[amendment_field] = exact
+                _emit(r)
+                continue
             key = (str(r.get(amendment_field)), _host(r))
             if key in follow:
                 r = dict(r)

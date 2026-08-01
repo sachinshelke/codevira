@@ -53,6 +53,7 @@ from mcp_server.storage import (
     origin,
     paths,
     sanitize,
+    uid as uid_mod,
 )
 
 logger = logging.getLogger(__name__)
@@ -365,6 +366,11 @@ def record(
         # records have no origin; readers treat as ide="unknown").
         "origin": origin.current_origin(),
     }
+
+    # Content identity, computed BEFORE the id exists — which is the point:
+    # `id` is minted per-store and rewritten by id_repair, `uid` is the same
+    # value on every machine that holds this decision (Step 9 · S2).
+    base_record["uid"] = uid_mod.compute(base_record)
 
     decision_id = jsonl_store.append_with_generated_id(
         paths.decisions_path(), base_record
@@ -851,13 +857,32 @@ def _amendment(
     overlay it (``_AMENDMENT_NEVER_OVERLAYS``), so amending someone
     else's decision does not rewrite its authorship to you.
     """
-    return {
+    row = {
         "id": decision_id,
         "ts": ts or datetime.now(timezone.utc).isoformat(),
         "_amendment_to_id": decision_id,
         "origin": origin.current_origin(),
         **fields,
     }
+
+    # Step 9 · S3b: name the base by CONTENT, not by id. `_amendment_to_id`
+    # is ambiguous the moment two machines mint the same id — which is the
+    # whole reason id_repair has to guess at all. A uid names exactly one
+    # record, so an amendment carrying one needs no guessing.
+    #
+    # Best-effort: a base with no resolvable uid leaves the edge unset and
+    # the (old_id, writer) path handles it exactly as before.
+    try:
+        base = get(decision_id)
+        if base:
+            base_uid = uid_mod.uid_of(base)
+            if base_uid:
+                row["_amendment_to_uid"] = base_uid
+    except Exception as exc:  # noqa: BLE001 — never fail a mutation over this
+        logger.debug("decisions_store._amendment: uid edge skipped: %s", exc)
+
+    row["uid"] = uid_mod.compute(row)
+    return row
 
 
 def mark_protected(decision_id: str) -> dict[str, Any]:

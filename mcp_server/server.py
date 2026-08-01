@@ -55,6 +55,8 @@ except ImportError:
     raise
 
 import json
+
+
 from mcp_server.tools.graph import (
     get_node,
     get_impact,
@@ -101,6 +103,36 @@ from mcp_server import __version__ as _codevira_version
 # misleading — clients use serverInfo.version for telemetry and version
 # gating.
 server = Server("codevira", version=_codevira_version)
+
+#: Tools cut in 4.0, mapped to what to reach for instead.
+#:
+#: The 4.0 plan made this a release guardrail: "removed tools return
+#: 'removed in 4.0, see MIGRATING' — never an unknown-tool error (agents
+#: cache tool lists for weeks)." A session opened before the upgrade keeps
+#: calling these, and `Unknown tool: consensus_check` tells it nothing.
+#:
+#: Each value names a real successor rather than pointing everyone at the
+#: migration guide — an agent that gets a usable answer inline does not
+#: need to go read a document.
+_REMOVED_IN_4_0 = {
+    "consensus_check": "origin_of(decision_id) for provenance",
+    "consensus_status": "origin_of(decision_id) for provenance",
+    "consensus_propose_supersession": "supersede_decision(...)",
+    "consensus_resolve": "supersede_decision(...) or mark_decision_outdated(...)",
+    "reflect": "record_decision(...); reflections held zero data machine-wide",
+    "get_reflections": "search_decisions(query)",
+    "list_reflections": "list_decisions(...)",
+    "spatial_nearby": "get_impact(file_path) for structural neighbours",
+    "spatial_heat": "get_impact(file_path)",
+    "spatial_neighborhood": "get_impact(file_path)",
+    "spatial_affordances": "get_impact(file_path)",
+    "distill_preferences": "get_session_context(); its `style` panel carries these",
+    "search_preferences": "get_session_context(); its `style` panel carries these",
+    "get_code": "read the file directly; measured zero calls in 2.5 months",
+    "get_signature": "read the file directly; measured zero calls in 2.5 months",
+}
+# Values stay ASCII on purpose: this dict is JSON-serialised to the agent,
+# and a non-ASCII dash arrives as a literal — in the payload it reads.
 
 
 # ---- MCP Prompts (workflow templates) ----
@@ -2006,6 +2038,18 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
             result = origin_of(decision_id=arguments["decision_id"])
         # ---- v3.3.0 Phase 4: preference capture dispatch ----
+        elif name in _REMOVED_IN_4_0:
+            # A removed tool is not an unknown tool. Agents cache tool
+            # lists for weeks, so a session opened before the upgrade will
+            # keep calling these — and "Unknown tool: consensus_check"
+            # tells it nothing about what to do instead. Named in the 4.0
+            # plan's guardrails for exactly this reason.
+            result = {
+                "error": f"`{name}` was removed in codevira 4.0.",
+                "removed_in": "4.0.0",
+                "use_instead": _REMOVED_IN_4_0[name],
+                "see": "MIGRATING.md, '15 MCP tools were removed'",
+            }
         else:
             result = {"error": f"Unknown tool: {name}"}
 

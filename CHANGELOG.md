@@ -23,7 +23,10 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   holding a signal would permanently block another from storing it. The
   migration verifies its row count and rolls back rather than completing
   a lossy rewrite.
-- **15 MCP tools removed (52 → 37)**, each cut on measured usage across
+- **15 MCP tools removed (52 → 37 defined, 36 advertised)** — the
+  thirty-seventh, `refresh_graph`, is deliberately hidden from
+  `tools/list` and still callable; an agent counting its own tool list
+  sees 36. Each cut on measured usage across
   4,203 transcripts: the consensus (4), reflections (3), spatial (4) and
   preferences (2) subsystems, plus `get_code` / `get_signature` (zero
   calls in 2.5 months). `origin_of` is retained. The CLI subcommand

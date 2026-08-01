@@ -18,6 +18,25 @@ import pytest
 os.environ.setdefault("CODEVIRA_NO_UPDATE_CHECK", "1")
 
 # ---------------------------------------------------------------------------
+# Isolate the global home for SUBPROCESSES too.
+#
+# `_isolate_global_home` below patches `paths.get_global_home` with
+# monkeypatch — which does not cross a process boundary. 18 test files spawn
+# a `codevira` subprocess, and every one of them was writing into the
+# developer's real ~/.codevira/global.db: 371 of 387 rows in the reference
+# machine's registry were pytest temp dirs, and the count grew during a
+# single suite run.
+#
+# An env var is the only isolation a child inherits, so it is set here at
+# import time — before any test, fixture or collection-time code can spawn
+# anything. Deliberately NOT tmp_path_factory: this must exist before pytest
+# builds its fixtures.
+# ---------------------------------------------------------------------------
+import tempfile as _tempfile  # noqa: E402
+
+os.environ.setdefault("CODEVIRA_HOME", _tempfile.mkdtemp(prefix="codevira-test-home-"))
+
+# ---------------------------------------------------------------------------
 # Pre-import numpy at conftest load time.
 #
 # Why: pytest.approx (and several pytest assertion helpers) lazy-import numpy

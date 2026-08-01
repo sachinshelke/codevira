@@ -98,7 +98,14 @@ class TestIdentitySurvivesTheNetworkStack:
                 "from mcp_server.storage import origin; print(origin.device_id())",
             ],
             cwd=Path(__file__).resolve().parents[2],
-            env={**os.environ, "HOME": str(fake_home)},
+            # CODEVIRA_HOME must be dropped, not just overridden: conftest
+            # sets it suite-wide and it takes precedence over HOME, so
+            # leaving it in would point the child at the shared test home
+            # rather than this test's.
+            env={
+                **{k: v for k, v in os.environ.items() if k != "CODEVIRA_HOME"},
+                "HOME": str(fake_home),
+            },
             capture_output=True,
             text=True,
         )

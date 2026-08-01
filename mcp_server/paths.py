@@ -747,8 +747,43 @@ def get_package_data_dir() -> Path:
     return Path(__file__).parent / "data"
 
 
+#: Relocates the entire global data directory. Honoured by every caller
+#: because they all route through :func:`get_global_home`.
+#:
+#: Added in 4.0 to fix a real defect: ``tests/conftest.py`` isolated the
+#: global home with ``monkeypatch.setattr``, which does not cross a process
+#: boundary. 18 test files spawn a ``codevira`` subprocess, and every one
+#: of them wrote into the developer's REAL ``~/.codevira/global.db`` — 371
+#: of 387 rows in the reference machine's registry were pytest temp dirs.
+#: An env var is the only isolation a child process inherits.
+#:
+#: It is also a feature people asked for by working around it: separate
+#: profiles, containers with a read-only ``$HOME``, and CI runners that
+#: must not share state between jobs.
+GLOBAL_HOME_ENV = "CODEVIRA_HOME"
+
+
 def get_global_home() -> Path:
-    """Return ~/.codevira/ global data directory. Creates it if needed."""
+    """Return the global data directory (``~/.codevira/`` by default).
+
+    ``$CODEVIRA_HOME`` overrides the location entirely. Creates it if
+    needed. A blank or unusable override falls back to the default rather
+    than raising — this sits under nearly every code path, and a typo in
+    an env var should not make the tool unusable.
+    """
+    override = os.environ.get(GLOBAL_HOME_ENV, "").strip()
+    if override:
+        try:
+            home = Path(override).expanduser()
+            home.mkdir(parents=True, exist_ok=True)
+            return home
+        except OSError as exc:
+            logger.warning(
+                "%s=%r is not usable (%s); falling back to ~/.codevira",
+                GLOBAL_HOME_ENV,
+                override,
+                exc,
+            )
     home = Path.home() / ".codevira"
     home.mkdir(parents=True, exist_ok=True)
     return home

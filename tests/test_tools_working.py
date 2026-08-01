@@ -151,12 +151,19 @@ class TestWorkingPromote:
         assert r["promoted"] is False
         assert "not found" in r["error"]
 
-    def test_skill_returns_deferred(self, project: Path) -> None:
+    def test_skill_promotion_writes_a_skill(self, project: Path) -> None:
+        """Was `test_skill_returns_deferred`, which pinned a stub.
+
+        The stub deferred to "v3.1.0 M3 (skills_store)" — a milestone that
+        shipped in v3.1.0. This test asserted the deferral, so it kept the
+        bug green for months instead of catching it. Fixed in 4.0; see
+        tests/test_working_promote_skill.py for the full behaviour.
+        """
         wid = working_store.add("Goal: design retry workflow", kind="goal")
         r = working.working_promote(wid, to="skill")
-        assert r["promoted"] is False
-        assert r["deferred"] is True
-        assert r["milestone"] == "M3"
+        assert r["promoted"] is True, r
+        assert r["skill_id"]
+        assert "deferred" not in r
 
     def test_playbook_returns_deferred(self, project: Path) -> None:
         wid = working_store.add("design a debug recipe", kind="observation")

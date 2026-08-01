@@ -996,39 +996,17 @@ class TestH_CrossToolUniversality:
     and .cursor/rules/codevira.mdc).
     """
 
-    def test_canonical_nudge_content_consistent_across_ides(self):
-        """If `mcp_server/agents_md.py` (or equivalent generator) ships,
-        verify the canonical instructions content is identical across
-        the rendered files. v2.0 may not have all of these wired yet
-        (Pillar 2 was scoped); this test is permissive on which files
-        exist but strict on consistency where they DO exist."""
-        # The Pillar 2 generator may live in setup_wizard or agents_md;
-        # detect what's available.
-        try:
-            from mcp_server import setup_wizard  # noqa: F401
-        except ImportError:
-            pytest.skip("Pillar 2 generator not yet in this build")
-
-        # If the canonical block file exists, verify it has the
-        # essential content the wedge promises.
-        canonical_path = (
-            Path(__file__).resolve().parents[2]
-            / "mcp_server"
-            / "data"
-            / "templates"
-            / "canonical_block.md"
-        )
-        if not canonical_path.exists():
-            pytest.skip(
-                "canonical_block.md template not yet in this build "
-                "(Pillar 2 may have been deprioritized for alpha)"
-            )
-        content = canonical_path.read_text(encoding="utf-8")
-        # Essential mentions (the universality wedge promise)
-        for must_contain in ("codevira", "session_context"):
-            assert (
-                must_contain in content.lower()
-            ), f"canonical nudge content missing {must_contain!r}"
+    # NOTE (removed): test_canonical_nudge_content_consistent_across_ides.
+    # It skipped forever on a missing `canonical_block.md` template. That
+    # template never shipped, and the feature it guarded — one canonical
+    # nudge block rendered identically into CLAUDE.md / AGENTS.md /
+    # .cursor/rules/codevira.mdc — was DELETED in v2.2.0 (2026-05-22
+    # surface-cut audit): the per-IDE nudge matrix collapsed into a single
+    # `<project>/AGENTS.md` (see mcp_server/setup_wizard.py). With one file
+    # there is no cross-IDE drift left to assert. AGENTS.md block generation
+    # is covered by tests/storage/test_agents_md_generator.py and
+    # tests/test_setup_wizard.py, so nothing is lost by deleting a test that
+    # could only ever skip.
 
     def test_setup_wizard_module_importable(self):
         """If Pillar 1 (UX install) shipped, the setup wizard imports."""

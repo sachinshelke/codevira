@@ -464,25 +464,40 @@ class TestV212MCPRoundTrip:
         )
         assert len(ids) == 2, ids
 
-    def test_search_decisions_carries_semantic_warning_when_chroma_unavailable(
+    def test_search_decisions_uses_keyword_retrieval_without_semantic_deps(
         self,
         isolated_codevira,
     ):
-        """Issue #10 / Tier 2: when chromadb / torch fails to load, the
-        response carries a clear ``_semantic_warning`` explaining why.
+        """search_decisions retrieves via FTS5 keyword search on every run,
+        with no chromadb / torch dependency and no degradation warning.
 
-        Hard to force-fail chromadb in a clean test env; we skip if
-        semantic IS available (the warning won't surface). When it IS
-        unavailable, the field must be present.
+        History: this was ``..._carries_semantic_warning_when_chroma_unavailable``
+        (issue #10 / Tier 2). Back then a search could fall back to a
+        degraded path and stamp the response with ``_semantic_warning`` when
+        chromadb/torch failed to load. It guarded that with
+        ``if "_semantic_warning" not in r: pytest.skip(...)`` — so on a
+        healthy machine (semantic infra present) it skipped and asserted
+        nothing, every run.
+
+        v2.2.0 removed the semantic tier from decision search entirely
+        (chromadb deleted; search is pure FTS5 — see mcp_server/tools/search.py
+        and decision D00012F). So the warning path this test was named for no
+        longer exists and CANNOT be forced by hiding a dependency: there is
+        no import whose absence produces ``_semantic_warning`` anymore. The
+        honest, testable half is the clean path, asserted positively below —
+        which is now the ONLY path, and the one a healthy machine actually
+        runs.
         """
         record_many(
             [
-                {"decision": "Some decision"},
+                {"decision": "Use bcrypt for password hashing"},
             ]
         )
-        r = call_tool("search_decisions", {"query": "decision"})
-        # If chromadb loaded fine, there's nothing to assert here.
-        if "_semantic_warning" not in r:
-            pytest.skip("semantic infra loaded cleanly; no warning to verify")
-        assert isinstance(r["_semantic_warning"], str)
-        assert len(r["_semantic_warning"]) > 0
+        r = call_tool("search_decisions", {"query": "bcrypt password"})
+        assert isinstance(r, dict), r
+        # Keyword retrieval, always — never a semantic/degraded mode.
+        assert r.get("retrieval") == "keyword", r
+        # The removed-feature field must stay gone: no chromadb, no warning.
+        assert "_semantic_warning" not in r, r
+        # And the search actually works on the FTS5 backend.
+        assert r.get("count", 0) >= 1, r

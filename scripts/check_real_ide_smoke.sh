@@ -89,14 +89,23 @@ def cv_keys(servers):
 servers = data.get("mcpServers") or {}
 matches = cv_keys(servers)
 scope = "global"
+n_projects = 0
 if not matches:
-    for pdata in (data.get("projects") or {}).values():
+    # Count every registered project, not just the first. Reporting one
+    # arbitrary key here reads as "this is your binding" — during the
+    # 4.0 verification it printed `key=codevira-udap` while running in
+    # agent-mcp, which cost a round of chasing a non-bug. The one-per-
+    # project total is the fact worth showing.
+    for ppath, pdata in (data.get("projects") or {}).items():
         if isinstance(pdata, dict):
             found = cv_keys(pdata.get("mcpServers"))
             if found:
-                servers = pdata["mcpServers"]  # so servers[k] below resolves
-                matches, scope = found, "project-scoped"
-                break
+                n_projects += 1
+                if not matches:
+                    servers = pdata["mcpServers"]  # so servers[k] below resolves
+                    matches, scope = found, "project-scoped"
+    if n_projects:
+        scope = f"project-scoped ({n_projects} project(s))"
 if not matches:
     # 2026-08-01/02: this used to be exit 2 (hard fail), which is wrong for
     # the same reason EMPTY_FILE_NOT_CONFIGURED above is exit 1. A detected

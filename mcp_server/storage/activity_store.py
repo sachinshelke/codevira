@@ -92,6 +92,7 @@ def add(
     kind: str = KIND_EDIT,
     session_id: str | None = None,
     origin_override: dict | None = None,
+    line: int | None = None,
 ) -> str:
     """Append an activity row; return the generated A-id.
 
@@ -119,6 +120,14 @@ def add(
         "origin": origin_override or origin_module.current_origin(),
         "_schema_v": SCHEMA_V,
     }
+    # 4.0 Step 7: optional 1-indexed line of the edit. The store has been
+    # per-file since v3.1.0 — its own docstring deferred per-symbol
+    # granularity to "v3.2+" — and without a line there is no way to
+    # resolve which SYMBOL an edit touched, which is what region-level
+    # decision locking needs. Omitted (not null) when unknown, so existing
+    # rows and readers are untouched.
+    if isinstance(line, int) and line > 0:
+        rec["line"] = line
     return jsonl_store.append_with_generated_id(
         paths.activity_path(), rec, prefix="A", width=6
     )

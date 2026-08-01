@@ -313,6 +313,37 @@ def record(
     # malformed value can't bloat the record / AGENTS.md.
     norm_symbol = symbol.strip()[:200] if symbol and symbol.strip() else None
 
+    # 4.0 Step 7: DERIVE the symbol when the caller didn't name one.
+    #
+    # `symbol` has existed since v3.6.0 and is what makes region-level
+    # locking possible — decision_lock then blocks only edits INSIDE the
+    # named function instead of anywhere in the file. It sits at 1/123
+    # populated, because setting it requires an agent to type it. Every
+    # field a MACHINE writes is populated (outcome 21%, origin 68%); every
+    # field an AGENT must type is not. So derive it from the session's own
+    # edits rather than asking harder.
+    #
+    # Best-effort and conservative: an unresolved anchor leaves symbol
+    # None and the decision stays file-scoped, exactly as today. A WRONG
+    # symbol is worse than none — it would scope a lock to a region the
+    # decision has nothing to do with — so anchor.py returns None on any
+    # ambiguity rather than guessing.
+    if norm_symbol is None and file_path:
+        try:
+            from mcp_server.storage import anchor as _anchor
+
+            _sid = session_id or default_session_id(project_root=None)
+            _derived = _anchor.symbol_for_session_edit(str(file_path), _sid)
+            if _derived:
+                norm_symbol = _derived[:200]
+                logger.debug(
+                    "decisions_store.record: derived symbol %r for %s",
+                    norm_symbol,
+                    file_path,
+                )
+        except Exception as exc:  # noqa: BLE001 — never fail a write on this
+            logger.debug("decisions_store.record: symbol derivation failed: %s", exc)
+
     base_record = {
         "ts": datetime.now(timezone.utc).isoformat(),
         "session_id": session_id or default_session_id(),

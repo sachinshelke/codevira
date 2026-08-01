@@ -175,6 +175,11 @@ def flush() -> None:
                 activity_store.add(
                     rec["_activity_file_path"],
                     kind=activity_store.KIND_EDIT,
+                    # 4.0 Step 7: carry the edit LINE so the symbol it
+                    # touched can be resolved later. Without it the log is
+                    # per-file and region-level locking has nothing to
+                    # scope to.
+                    line=rec.get("_activity_line"),
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.debug("memory_fanout.flush: activity add failed: %s", exc)
@@ -200,6 +205,30 @@ def reset_buffer() -> None:
 # ──────────────────────────────────────────────────────────────────────
 # Observation builders
 # ──────────────────────────────────────────────────────────────────────
+
+
+def _edit_line(file_path: Any, args: dict[str, Any]) -> int | None:
+    """1-indexed line an Edit landed on, or None. Never raises.
+
+    Only Edit-shaped tools carry `old_string`; Write replaces a whole file
+    and has no single line, so it correctly yields None.
+    """
+    try:
+        old = args.get("old_string")
+        if not old or not file_path or file_path == "<unknown>":
+            return None
+        from pathlib import Path as _P
+
+        from mcp_server.storage import anchor as _anchor
+
+        target = _P(str(file_path))
+        if not target.is_file():
+            return None
+        return _anchor.line_of_edit(
+            str(old), target.read_text(encoding="utf-8", errors="replace")
+        )
+    except Exception:  # noqa: BLE001 — fan-out is fail-open
+        return None
 
 
 def _build_observation(event: HookEvent) -> dict[str, Any] | None:
@@ -243,6 +272,12 @@ def _build_observation(event: HookEvent) -> dict[str, Any] | None:
             "_activity_file_path": (
                 str(file_path) if file_path and file_path != "<unknown>" else None
             ),
+            # 4.0 Step 7: the 1-indexed line this edit landed on, resolved
+            # from `old_string` against the file on disk. This is what lets
+            # the symbol be derived later — activity.jsonl has been
+            # per-file since v3.1.0, and a file alone cannot scope a
+            # region lock. None whenever the location is ambiguous.
+            "_activity_line": _edit_line(file_path, args),
         }
 
     if tool_name == "Bash":

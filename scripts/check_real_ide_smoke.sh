@@ -158,18 +158,31 @@ fi
 # ─── check 2: MCP stdio handshake speed against a tmp project ──────────
 echo
 TMP_PROJECT=$(mktemp -d -t codevira-g3-XXXXXXXX)
-trap 'rm -rf "$TMP_PROJECT"' EXIT
+# Booting a server auto-registers its project, and there is no deregister
+# counterpart by design (a missing path is usually an unmounted volume, not
+# a dead project). So an evening of gauntlet runs used to leave one
+# codevira-g3-XXXXXXXX row per run in the maintainer's real global.db, plus
+# a matching ~/.codevira/projects/<slug>/ dir — removing TMP_PROJECT never
+# removed its registration. Give the handshake its own throwaway
+# CODEVIRA_HOME instead: containment survives a killed run, cleanup would
+# not. See tests/test_g3_hermetic.py.
+TMP_HOME=$(mktemp -d -t codevira-g3-home-XXXXXXXX)
+trap 'rm -rf "$TMP_PROJECT" "$TMP_HOME"' EXIT
 mkdir -p "$TMP_PROJECT/.codevira"
 printf 'project:\n  name: g3-smoke\n' > "$TMP_PROJECT/.codevira/config.yaml"
 
-python3 - "$CODEVIRA" "$TMP_PROJECT" <<'PYEOF'
+python3 - "$CODEVIRA" "$TMP_PROJECT" "$TMP_HOME" <<'PYEOF'
 import json, os, subprocess, sys, time
 
-codevira, project = sys.argv[1], sys.argv[2]
+codevira, project, g3_home = sys.argv[1], sys.argv[2], sys.argv[3]
 env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"),
        "HOME": os.environ.get("HOME", ""),
        # Avoid the background watcher thread — irrelevant for stdio handshake.
-       "CODEVIRA_NO_WATCHER": "1"}
+       "CODEVIRA_NO_WATCHER": "1",
+       # Keep the throwaway project out of the real registry. This measures
+       # boot+tools/list speed, which does not depend on the machine's own
+       # store — so isolating it costs the gate nothing.
+       "CODEVIRA_HOME": g3_home}
 
 # No subcommand → MCP stdio server (the path IDEs invoke).
 proc = subprocess.Popen(

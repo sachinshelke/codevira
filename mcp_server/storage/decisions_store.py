@@ -359,7 +359,7 @@ def record(
         logger.warning("decisions_store.record: digest update failed: %s", exc)
 
     # v3.1.0 M4: a decision tied to a file is a high-signal "attention"
-    # event. Mirror it into the activity log so spatial_heat surfaces
+    # event. Mirror it into the activity log so the capture pipeline sees
     # the file. Best-effort (P9 — the decision is already persisted).
     _activity_origin = base_record["origin"]
     _activity_session = base_record["session_id"]

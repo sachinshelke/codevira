@@ -1,9 +1,15 @@
 """
-activity_store.py — v3.1.0 M4 Phase 1: spatial-activity log.
+activity_store.py — per-file attention log (v3.1.0 M4; retained in 4.0).
 
 Records *where* in the codebase the agent has been working — edits,
-decisions tagged with a file. The downstream spatial tools
-(``spatial_nearby``, ``spatial_heat``) read this log to surface
+decisions tagged with a file.
+
+4.0: the spatial tools that used to read this log were removed (they
+queried a database nothing writes). The log is RETAINED because it is
+now load-bearing for two other things: session identity (a decision must
+share a session_id with an edit row) and the 4.0 capture pipeline, which
+will derive anchors from it. It is currently write-mostly — that is a
+known, deliberate state, not an oversight. It once served to surface
 focus zones and rank neighbors by recent attention.
 
 # Why a separate store
@@ -12,7 +18,7 @@ focus zones and rank neighbors by recent attention.
   Living in ``.codevira-cache/activity.jsonl`` (gitignored, per
   machine) avoids polluting the team's git diff with someone else's
   exploration history.
-- **Opt-in team export**: ``codevira spatial export-activity``
+- **Per-machine, gitignored, size-capped.**
   aggregates and writes ``.codevira/activity_summary.yaml`` when a
   team wants the heat map shared.
 - **Compaction-friendly**: append-only JSONL with capped retention
@@ -218,7 +224,7 @@ def list_top_k_files(
 
 def visit_count_30d(node_id: str, *, now: datetime | None = None) -> int:
     """Total ``edit`` + ``decision_ref`` events for ``node_id`` in the
-    last 30 days. Used by ``spatial_nearby`` ranking.
+    last 30 days. Retained for the 4.0 capture pipeline.
     """
     now_dt = now or datetime.now(timezone.utc)
     cutoff = now_dt - timedelta(days=30)
@@ -251,7 +257,7 @@ def compact(*, retention_days: int = DEFAULT_RETENTION_DAYS) -> int:
 
     Holds the file lock for the entire read-filter-write via
     ``jsonl_store.compact``. The default 90-day window is long
-    enough for monthly spatial heatmaps without unbounded growth on
+    enough for attention analysis without unbounded growth on
     a project the agent has worked on for a year.
     """
     path = paths.activity_path()

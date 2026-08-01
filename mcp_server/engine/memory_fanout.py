@@ -167,7 +167,7 @@ def flush() -> None:
             logger.debug("memory_fanout.flush: working add failed: %s", exc)
 
         # v3.1.0 M4: if the originating tool was a file edit, mirror the
-        # observation as an activity row so spatial_heat / spatial_nearby
+        # observation as an activity row so the 4.0 capture pipeline
         # have a heat signal. _activity_file_path is set by
         # _build_observation below; never present on Bash records.
         if activity_store is not None and rec.get("_activity_file_path"):

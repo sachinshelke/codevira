@@ -267,10 +267,10 @@ def working_path(project_root: Path | None = None) -> Path:
 
 
 def activity_path(project_root: Path | None = None) -> Path:
-    """v3.1.0 M4: spatial-activity log (per-machine, gitignored).
+    """Per-file attention log (per-machine, gitignored).
 
     Stores ``edit`` / ``decision_ref`` rows as the agent works through
-    the codebase. The ``codevira spatial export-activity`` CLI is the
+    the codebase. It is per-machine and rebuildable; the
     opt-in path to share aggregated heat with a team; the raw log
     itself stays local because attention patterns are per-developer.
 

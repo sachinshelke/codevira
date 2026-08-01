@@ -26,15 +26,16 @@ Contract
   an id is the collision we repair (amendments legitimately reuse a base id
   and are exempt).
 - Among colliding base records, the WINNER keeps the id, chosen by a total
-  order every machine computes identically: ``(ts, origin.host_hash,
-  content_hash)`` — the final content hash guarantees a strict order even when
-  ts and host collide.
+  order every machine computes identically: ``(ts, writer_id, content_hash)``
+  — the final content hash guarantees a strict order even when ts and writer
+  collide. ``writer_id`` is ``origin.device_id`` falling back to
+  ``origin.host_hash``; see ``_host`` for why the fallback matters.
 - Byte-identical records are the SAME decision (a cherry-pick / double-commit)
   and are DEDUPED, not renumbered.
 - LOSERS are renumbered to a content-derived id ``D<sha1(content)[:12]>`` — a
   pure function of content, so convergence needs zero shared state.
 - Amendments follow their base when unambiguous (same old id + same
-  ``origin.host_hash``); otherwise they stay with the winner (never guessed).
+  ``writer_id``); otherwise they stay with the winner (never guessed).
 
 This is Tier-0 (structural, deterministic). Tier-1 (semantic dedup / conflict
 escalation) layers on top via the reconcile engine — see Phase 29.
@@ -78,10 +79,23 @@ def _content_hash(
 
 
 def _host(record: dict[str, Any]) -> str:
-    origin = record.get("origin") or {}
-    if isinstance(origin, dict):
-        return str(origin.get("host_hash") or "")
-    return ""
+    """Identity of the machine that wrote ``record``, or ``""``.
+
+    4.0 Step 9 · S1: this used to read ``origin.host_hash`` directly,
+    which is derived from ``uuid.getnode()`` and therefore changes when
+    a network interface appears — measured 4 distinct values from one
+    machine over 7 weeks. Amendment-following keys on this value, so a
+    developer whose VPN reconnected became a stranger to their own
+    earlier decision and their amendment was attributed elsewhere.
+
+    ``origin.writer_id`` prefers the persisted ``device_id`` and falls
+    back to ``host_hash``, so pre-4.0 records compare exactly as before
+    and mixed-era records simply fail to match — which lands every
+    caller here on its conservative branch rather than a wrong guess.
+    """
+    from mcp_server.storage.origin import writer_id
+
+    return writer_id(record.get("origin"))
 
 
 def _order_key(

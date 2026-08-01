@@ -105,6 +105,12 @@ dev = [
   "mypy>=1.10",
   "types-PyYAML",
   "pre-commit>=3.5",
+  # tests/test_sdist_completeness.py builds a real sdist, because a
+  # MANIFEST.in directive that parses is not evidence the archive contains
+  # the file. Guarding that test with a skip-if-missing would delete the
+  # packaging check in CI — the one environment where nobody notices it is
+  # gone — so the dependency is declared instead.
+  "build>=1.0",
 ]
 
 [project.scripts]

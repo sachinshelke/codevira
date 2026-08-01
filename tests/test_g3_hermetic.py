@@ -32,8 +32,9 @@ REPO = Path(__file__).resolve().parents[1]
 SCRIPT = REPO / "scripts" / "check_real_ide_smoke.sh"
 
 pytestmark = pytest.mark.skipif(
-    shutil.which("codevira") is None,
-    reason="G3 drives the installed `codevira` binary; not on PATH here",
+    shutil.which("codevira") is None or not SCRIPT.exists(),
+    reason="G3 drives the installed `codevira` binary and its own script; "
+    "the sdist ships tests/ but not scripts/, so both must be checked",
 )
 
 
@@ -64,7 +65,7 @@ def fake_home(tmp_path: Path) -> Path:
 def _run_g3(home: Path) -> subprocess.CompletedProcess:
     env = {**os.environ, "HOME": str(home)}
     env.pop("CODEVIRA_HOME", None)  # the point is that the SCRIPT sets it
-    return subprocess.run(
+    proc = subprocess.run(
         ["bash", str(SCRIPT)],
         cwd=REPO,
         env=env,
@@ -72,6 +73,18 @@ def _run_g3(home: Path) -> subprocess.CompletedProcess:
         text=True,
         timeout=180,
     )
+    # Guard against the vacuous pass. "No rows leaked" is also true when
+    # the script never ran — and it would not run in an sdist-only
+    # checkout, since the sdist packages tests/ but not scripts/. Without
+    # this, a missing or broken G3 makes these tests GREENER, which is the
+    # exact failure shape this file exists to catch.
+    if "tools/list" not in proc.stdout + proc.stderr:
+        raise AssertionError(
+            "G3 never reached the handshake, so the leak assertions below "
+            f"would pass for the wrong reason.\nrc={proc.returncode}\n"
+            f"{(proc.stdout + proc.stderr)[-2000:]}"
+        )
+    return proc
 
 
 def _project_rows(db: Path) -> list[str]:

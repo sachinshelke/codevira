@@ -93,7 +93,15 @@ dev = [
   "pytest>=7.0",
   "pytest-asyncio>=0.21",
   "pytest-timeout>=2.1",
-  "ruff>=0.6.0",
+  # Upper bound is load-bearing. This repo carries NO [tool.ruff] config, so
+  # `make lint` inherits whatever rule set the installed version defaults to
+  # — which means a ruff release can turn CI red with no commit of ours. That
+  # happened on 2026-08-02: 0.16 widened the defaults and CI went from green
+  # to 484 errors, identically on main and on the release branch, none of them
+  # introduced by either. Raise this bound deliberately, with the findings
+  # triaged, rather than letting a resolver decide the project's lint policy.
+  # `.pre-commit-config.yaml` pins ruff for the same reason.
+  "ruff>=0.6.0,<0.16",
   "mypy>=1.10",
   "types-PyYAML",
   "pre-commit>=3.5",

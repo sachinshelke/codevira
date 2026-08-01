@@ -622,7 +622,7 @@ def search(
     by_id = {str(d.get("id")): d for d in merged}
 
     results: list[dict[str, Any]] = []
-    for hit in hits:
+    for hit_rank, hit in enumerate(hits):
         d = by_id.get(hit["decision_id"])
         if d is None:
             continue
@@ -650,6 +650,19 @@ def search(
             "tags": d.get("tags") or [],
             "created_at": d.get("ts"),
             "score": hit["score"],
+            # 4.0 Step 6: say WHY this surfaced. `score` alone is a raw
+            # FTS5 BM25 figure — unbounded, negative, and meaningless to a
+            # reader. skills_store.search has emitted a breakdown since
+            # v3.1.0; decision search never did, so the one surface agents
+            # actually use was the one that could not be debugged. Bounded
+            # rank_norm is included because raw BM25 cannot be compared
+            # across queries.
+            "score_breakdown": {
+                "bm25": hit["score"],
+                "rank": hit_rank,
+                "rank_norm": round(1.0 - (hit_rank / max(len(hits), 1)), 4),
+                "matched": "fts5",
+            },
             "snippet": hit.get("snippet"),
             # v3.7.0: expose outcome for freshness-ranking (reverted down-rank).
             "outcome": d.get("outcome"),

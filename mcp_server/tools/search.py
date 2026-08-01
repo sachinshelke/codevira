@@ -185,6 +185,12 @@ def search_decisions(
             "tags": r.get("tags") or [],
             "created_at": r.get("created_at"),
             "score": r.get("score"),
+            # 4.0 Step 6: `score_breakdown` is deliberately NOT in the
+            # compact row. Measured at +122 tokens on a 5-row payload
+            # (449 -> 571, +27%) — a real cost on EVERY search for an aid
+            # needed rarely, and E1 (D0000ZQ) chose token discipline for
+            # the default. It ships under full=True, the documented
+            # escape hatch, alongside snippet and origin.
             # v3.6.0: present only on all_projects results.
             **(
                 {"project": r["project"], "project_path": r.get("project_path")}

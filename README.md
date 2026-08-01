@@ -17,12 +17,14 @@ One local, in-repo memory layer that every AI coding agent you use can read and 
 [![MCP](https://img.shields.io/badge/protocol-MCP-purple)](https://modelcontextprotocol.io)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](CONTRIBUTING.md)
 
-Codevira also **enforces** those decisions: in **Claude Code**, a `PreToolUse`
+Codevira also **enforces** those decisions. In **Claude Code**, a `PreToolUse`
 hook physically blocks an `Edit`/`Write` that would revert a decision you marked
-`do_not_revert` or re-introduce a fixed bug — before the file changes. Other IDEs
-read the same decisions as `AGENTS.md` guidance (advisory, not a hard block —
-their edits never route through codevira's hook engine). Local-first, MIT, no
-cloud, no vectors, no account. A production pipx install is ~66 MB.
+`do_not_revert` or re-introduce a fixed bug — before the file changes. In
+**every other editor**, an opt-in git `pre-commit` hook
+(`codevira engine install-git-hook`) runs the same engine at the commit
+boundary, so the veto is physical there too — because every editor commits with
+git. Local-first, MIT, no cloud, no vectors, no account. A production pipx
+install is ~66 MB.
 
 **Works with:** Claude Code · Claude Desktop · Cursor · Google
 Antigravity · OpenAI Codex · GitHub Copilot · any MCP-compatible AI tool.

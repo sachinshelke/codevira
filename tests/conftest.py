@@ -37,6 +37,30 @@ import tempfile as _tempfile  # noqa: E402
 os.environ.setdefault("CODEVIRA_HOME", _tempfile.mkdtemp(prefix="codevira-test-home-"))
 
 # ---------------------------------------------------------------------------
+# Make spawned subprocesses import THIS working tree, not whatever is
+# installed.
+#
+# A subprocess started with `cwd=tmp_path` (which most CLI tests do) has no
+# repo on sys.path, so `import mcp_server` falls through to site-packages —
+# a copy from an earlier `pip install`. Those tests were therefore
+# exercising an OLD build rather than the code under test, and passing.
+#
+# That is how the global.db registry leak survived four rounds of tracing:
+# every tracer patched the repo's classes inside the pytest process, while
+# the writes happened in a subprocess importing a DIFFERENT copy of the
+# module — one predating $CODEVIRA_HOME, so it wrote to the real
+# ~/.codevira. Measured: +4 rows per run without this, +0 with it.
+#
+# Prepend rather than replace, so a caller's own PYTHONPATH still applies.
+# ---------------------------------------------------------------------------
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+os.environ["PYTHONPATH"] = (
+    _REPO_ROOT + os.pathsep + os.environ["PYTHONPATH"]
+    if os.environ.get("PYTHONPATH")
+    else _REPO_ROOT
+)
+
+# ---------------------------------------------------------------------------
 # Pre-import numpy at conftest load time.
 #
 # Why: pytest.approx (and several pytest assertion helpers) lazy-import numpy

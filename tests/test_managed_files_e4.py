@@ -10,7 +10,6 @@ injected block (echo-safety).
 from __future__ import annotations
 
 
-from mcp_server.ingest import heuristics as H
 from mcp_server.storage import agents_md_generator as gen
 from mcp_server.storage import paths as store_paths
 
@@ -113,22 +112,3 @@ class TestRegenerateAll:
         assert "# My project rules" in text  # user content survives
         assert "Keep tests fast." in text
         assert "<!-- codevira:begin" in text  # our block was added
-
-
-# ─────────────────────────────────────────────────────────────────────
-# Echo-safety (E2 must not re-ingest the injected block)
-# ─────────────────────────────────────────────────────────────────────
-
-
-class TestEchoSafety:
-    def test_managed_block_is_not_a_correction(self) -> None:
-        echoed = (
-            "<!-- codevira:begin (auto-generated; do not edit) -->\n"
-            "## Codevira memory\n- do not revert X\n<!-- codevira:end -->"
-        )
-        assert H.is_managed_block(echoed)
-        # Even though it contains 'revert', it must not register as a correction.
-        assert not H.looks_like_correction(echoed)
-
-    def test_real_correction_still_detected(self) -> None:
-        assert H.looks_like_correction("no, that's wrong — revert it")

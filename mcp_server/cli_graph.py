@@ -2,7 +2,7 @@
 cli_graph.py — `codevira graph` : self-contained interactive memory viewer.
 
 v3.1.x: full multi-lens interactive viewer over the project's memory.
-Renders decisions, files, skills, and reflections as one graph; the
+Renders decisions, files and skills as one graph; the
 embedded JS lets you switch lenses (color-by), layouts, filters, and
 time-window without leaving the page. Self-contained: no CDN, no
 runtime deps, works offline.
@@ -11,14 +11,12 @@ Nodes:
   - decision  — id, decision text, tags, file_path, origin.ide, ts
   - file      — id "file:<path>", referenced by decisions
   - skill     — id "K…", procedure summary, triggers.tags, origin.ide
-  - reflection — id "R…", abstraction, tags, period, origin.ide
 
 Edges:
   - supersedes (decision→decision; also skill→skill)
   - touches    (decision→file)
   - depends    (file→file, from code graph if available)
   - induced    (skill→decision, via shared session_ids)
-  - covers     (reflection→decision, via source_decision_ids)
 """
 
 from __future__ import annotations
@@ -53,16 +51,6 @@ def _load_skills() -> list[dict[str, Any]]:
         from mcp_server.storage import skills_store
 
         return skills_store.list_all(status=None, limit=_MAX_NODES_PER_TYPE)
-    except Exception:  # noqa: BLE001
-        return []
-
-
-def _load_reflections() -> list[dict[str, Any]]:
-    """Read recent reflections. Best-effort: return [] on any error."""
-    try:
-        from mcp_server.storage import reflections_store
-
-        return reflections_store.list_filtered(limit=_MAX_NODES_PER_TYPE)
     except Exception:  # noqa: BLE001
         return []
 
@@ -417,7 +405,11 @@ def cmd_graph(
             return 1
         decisions = _load_decisions()
         skills = _load_skills() if with_skills else []
-        reflections = _load_reflections() if with_reflections else []
+        # 4.0: the reflections subsystem was removed (zero data existed in
+        # any project). Kept as an empty overlay so the renderer signature
+        # and the --no-reflections flag stay backward-compatible for one
+        # release.
+        reflections: list[dict[str, Any]] = []
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1

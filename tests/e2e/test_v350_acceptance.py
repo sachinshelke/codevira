@@ -29,7 +29,6 @@ Run as part of G2 in the release gauntlet (``make test-e2e``). NEVER ship red.
 
 from __future__ import annotations
 
-import json
 import os
 import shutil
 import subprocess
@@ -265,84 +264,6 @@ class TestSummaryFirstAndExpand:
 
 # ─────────────────────────────────────────────────────────────────────
 # E2 — read-only session-transcript ingest (D00010W)
-# ─────────────────────────────────────────────────────────────────────
-
-
-def _claude_session_log(path: Path) -> None:
-    """A minimal Claude Code transcript with one tool failure + one user
-    correction — i.e. an 'interesting' session the scanner should surface."""
-    records = [
-        {"type": "user", "message": {"content": "please edit foo"}},
-        {
-            "type": "assistant",
-            "message": {
-                "content": [
-                    {"type": "tool_use", "id": "t1", "name": "Bash", "input": {}}
-                ]
-            },
-        },
-        {
-            "type": "user",
-            "message": {
-                "content": [
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": "t1",
-                        "is_error": True,
-                        "content": "Exit code 1: failed near AKIAIOSFODNN7EXAMPLE",
-                    }
-                ]
-            },
-        },
-        {"type": "user", "message": {"content": "no, that's wrong — revert it"}},
-    ]
-    path.write_text("\n".join(json.dumps(r) for r in records), encoding="utf-8")
-
-
-class TestSessionIngestReadOnly:
-    def test_scan_surfaces_interesting_digest_without_mutating_logs(
-        self, project, tmp_path
-    ):
-        from mcp_server.ingest import scan
-
-        # Claude Code stores each project's sessions under a dir named after the
-        # project path with slashes replaced by dashes.
-        cc_root = tmp_path / "claude"
-        proj_dir = cc_root / str(project).replace("/", "-")
-        proj_dir.mkdir(parents=True)
-        log = proj_dir / "s.jsonl"
-        _claude_session_log(log)
-
-        def snapshot():
-            return {
-                str(p): (p.stat().st_mtime_ns, p.stat().st_size)
-                for p in cc_root.rglob("*")
-                if p.is_file()
-            }
-
-        before = snapshot()
-        # Restrict to the claude_code parser so the scan can't reach the
-        # developer's real ~/.codex / ~/.gemini logs (other parsers would
-        # otherwise run against their default roots).
-        digests = scan.scan_sessions(
-            project,
-            roots={"claude_code": cc_root},
-            sources=["claude_code"],
-            since_days=3650,
-        )
-        after = snapshot()
-
-        assert before == after, "transcript scan must be READ-ONLY (D00010W)"
-        assert digests, "the failure+correction session should be surfaced"
-        d = digests[0]
-        assert d.source == "claude_code" and d.is_interesting
-        assert d.n_failures >= 1 and d.n_corrections >= 1
-        # Secrets in retained excerpts are scrubbed at parse time.
-        assert all("AKIAIOSFODNN7EXAMPLE" not in f.error_excerpt for f in d.failures)
-
-
-# ─────────────────────────────────────────────────────────────────────
-# E3 — read-side relevance eval (D00010Y)
 # ─────────────────────────────────────────────────────────────────────
 
 
@@ -667,14 +588,3 @@ class TestReleaseCoherence:
         assert (
             result.returncode == 0
         ), f"`codevira {cmd} --help` failed: {result.stderr[:400]}"
-
-    def test_reflect_documents_from_sessions(self):
-        result = subprocess.run(
-            [sys.executable, "-m", "mcp_server.cli", "reflect", "--help"],
-            cwd=str(_REPO_ROOT),
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        assert result.returncode == 0
-        assert "--from-sessions" in (result.stdout + result.stderr)

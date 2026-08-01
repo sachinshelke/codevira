@@ -212,7 +212,6 @@ WRITE_TOOLS: frozenset[str] = frozenset(
         "supersede_skill",
         "promote_skill_to_playbook",
         "distill_preferences",
-        "reflect",
     }
 )
 
@@ -243,8 +242,6 @@ READ_TOOLS: frozenset[str] = frozenset(
         "spatial_affordances",
         "origin_of",
         "search_preferences",
-        "get_reflections",
-        "list_reflections",
         "check_conflict",
     }
 )

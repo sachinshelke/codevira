@@ -445,8 +445,10 @@ degradation, and read-only-directory hostility). See
 | `codevira search <query>` | Search decisions from the terminal (FTS5/BM25); `--all-projects`, `--json` |
 | `codevira graph` | Render an interactive, offline HTML viewer of decision memory |
 | `codevira export` / `import` | Back up / restore project memory + global learning across machines |
-| `codevira clean` / `reset` | Remove orphaned data / destructive cleanup (auto-exports first) |
-| `codevira uninstall` | Reverse every system write codevira made (preserves user content outside markers) |
+| `codevira prune` | **v4.0** — remove orphaned project dirs, dead `global.db` rows, ghost dirs and legacy backups. Never touches decisions, IDE configs or hooks. `--dry-run` first |
+| `codevira reset` | Destructive cleanup of this project's memory (auto-exports first; requires a typed confirmation) |
+| `codevira uninstall` | Reverse every system write codevira made — `~/.codevira/` including snapshots, every IDE config entry, the launchd service. Preserves user content outside markers. Requires typing `uninstall` |
+| `codevira clean` | **Deprecated alias for `uninstall`.** Until v4.0 this table described it as a tidy-up — which is what `prune` does. That description, plus the name, destroyed a real install. Use `prune` to tidy, `uninstall` to remove |
 | `codevira serve` | Start the single-project MCP HTTP server (stdio is the daily mode) |
 
 Run `codevira <cmd> --help` for full flags. Uninstall with `codevira uninstall`

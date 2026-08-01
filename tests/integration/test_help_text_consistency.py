@@ -200,6 +200,66 @@ class TestHelpTextConsistency:
             )
 
 
+class TestDestructiveCommandsAreDocumentedHonestly:
+    """A destructive command's README line must not read as a safe one.
+
+    Until v4.0 the command table said:
+
+        | `codevira clean` / `reset` | Remove orphaned data / ... |
+
+    `clean` is the full uninstaller — it wipes ~/.codevira/ including
+    snapshots, strips codevira from every IDE config, and removes the
+    launchd service. On 2026-08-01 an agent read that description, ran
+    `yes | codevira clean` to tidy some stale registry rows, and
+    destroyed a real installation. The name misled, and the docs
+    confirmed the misreading rather than correcting it.
+
+    These tests guard the description, not just the presence of a row.
+    """
+
+    def _readme(self) -> str:
+        from pathlib import Path
+
+        return (Path(__file__).resolve().parents[2] / "README.md").read_text()
+
+    def test_prune_is_documented(self):
+        """The safe operation needs a name users can find."""
+        assert "`codevira prune`" in self._readme(), (
+            "codevira prune ships but is absent from the README command "
+            "table — leaving `clean` as the only discoverable tidy-up, "
+            "which is what caused the incident."
+        )
+
+    def test_clean_is_not_described_as_a_tidy_up(self):
+        """The exact wording that misled, as a regression test."""
+        readme = self._readme()
+        for line in readme.splitlines():
+            if "`codevira clean`" not in line:
+                continue
+            low = line.lower()
+            assert "orphan" not in low, (
+                "README describes `clean` as removing orphaned data. That is "
+                f"`prune`. Line:\n  {line.strip()}"
+            )
+            assert "uninstall" in low or "deprecated" in low, (
+                "the `clean` row must say it uninstalls or is deprecated:\n"
+                f"  {line.strip()}"
+            )
+
+    def test_uninstall_names_what_it_removes(self):
+        """ "Reverses every system write" is true but not concrete enough
+        to stop someone running it to free disk space."""
+        readme = self._readme()
+        row = next(
+            (ln for ln in readme.splitlines() if "`codevira uninstall`" in ln), ""
+        )
+        assert row, "no README row for `codevira uninstall`"
+        assert "snapshot" in row.lower(), (
+            "the uninstall row should name snapshots — they are the one "
+            "loss that cannot be recovered from the repo:\n  " + row.strip()
+        )
+
+
 class TestAllSubcommandHelpRenders:
     """Every subcommand's --help must render without raising.
 

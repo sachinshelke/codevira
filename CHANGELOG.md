@@ -30,6 +30,16 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `codevira tune-weights` is also gone. **No recorded data is deleted** —
   these were surfaces; `codevira export` still includes everything.
 - **`session_log_enforcer` defaults to `block`** (was `warn`).
+- **`codevira clean` now requires typing `uninstall`** and will no longer
+  accept a piped `y`. If you have a script doing `yes | codevira clean`
+  it will now abort — which is the point. `clean` is the full
+  uninstaller: it wipes `~/.codevira/` including snapshots, strips
+  codevira from every IDE config, and removes the launchd service. The
+  name says tidy-up. On 2026-08-01 that gap destroyed a real
+  installation on this project's own machine, so `clean` is deprecated
+  in favour of `codevira uninstall`, and `codevira reset`'s typed
+  confirmation (v2.1.2) now guards it too. Scripted use keeps working
+  via the explicit `--yes`; the fix targets *accidental* confirmation.
 
 ### Added — a way back, and a way to enforce everywhere
 
@@ -50,6 +60,35 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   advisory PyPI version check.
 - **`$CODEVIRA_HOME`** relocates the global data directory — separate
   profiles, containers with a read-only `$HOME`, CI runners.
+- **`codevira prune`** — the tidy-up `clean` sounded like. Removes
+  project data dirs whose path no longer exists, `global.db` rows
+  pointing at nothing, ghost dirs from interrupted inits, and legacy
+  `.codevira.migrated/` backups. Decisions, IDE configs and hooks are
+  never touched. `--dry-run` first; `--orphans` / `--ghosts` /
+  `--legacy` to narrow. The safe operations used to be the ones hidden
+  behind flags while the destructive one was the bare default — that is
+  now inverted.
+
+### Fixed — the sdist shipped a test suite that could not run
+
+Left to itself, setuptools inherits distutils' legacy `test*.py` default:
+non-recursive, and no match for `conftest.py`. The result was **96 of 167
+test files** — the flat `tests/` directory alone, without `e2e/`,
+`integration/`, `engine/` or `storage/`, and without the conftest that
+sets `CODEVIRA_HOME` and prepends the repo to `PYTHONPATH`.
+
+Missing those two lines, a packager building from the sdist would have
+had the suite write into their own `~/.codevira/` and import
+site-packages instead of the tree under test — the two bugs this release
+fixes for us, packaged for redelivery. `MANIFEST.in` now states the
+intent explicitly, including the e2e fixtures' `.md`/`.json`/`.ts`/`.yaml`
+that a `*.py` rule would have shipped the tests without.
+
+The wheel is byte-identical: this touches only the sdist.
+
+- Contributors: the `check_real_ide_smoke.sh` gate (G3) no longer
+  registers its throwaway project in your real `~/.codevira/`. It boots
+  under its own `CODEVIRA_HOME`, so a killed run leaves nothing either.
 
 ### Fixed — memory that survives a two-host merge
 

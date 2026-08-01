@@ -738,6 +738,35 @@ def _build_global_server_config(cmd_path: str, python_exe: str) -> dict:
     return {"command": cmd_path, "args": []}
 
 
+def has_codevira_server(servers: object) -> bool:
+    """True when this ``mcpServers`` mapping holds ANY codevira entry.
+
+    4.0 bug fix. These call sites tested ``"codevira" in servers`` — an exact
+    key match. ``register-all`` names entries after the project
+    (``codevira-agent-mcp``, ``codevira-udap``, …) so one MCP exists per
+    project, which means the exact match found NOTHING.
+
+    The consequence was not cosmetic: ``check_claude_binding_conflict``
+    fires only when a bare global entry coexists with scoped ones, so with
+    ``scoped`` empty it reported "no conflicting registrations" while the
+    exact conflict was present. The detector was blind to the entries the
+    fixer creates — which is why wrong-project binding survived the v3.7.1
+    work that was supposed to end it. Observed live: a session in
+    ``agent-mcp`` wrote its decisions into ``Agentic/LH``.
+
+    Mirrors the prefix rule ``_remove_codevira_entries`` already used a few
+    hundred lines above; the two had simply drifted apart.
+    """
+    if not isinstance(servers, dict):
+        return False
+    return any(k == _CODEVIRA_KEY or k.startswith(f"{_CODEVIRA_KEY}-") for k in servers)
+
+
+#: Server-key prefix. A bare ``codevira`` is the user-scope entry; anything
+#: suffixed (``codevira-<project>``) is a per-project one.
+_CODEVIRA_KEY = "codevira"
+
+
 def claude_scoped_entries() -> list[str]:
     """Return project paths that have their OWN codevira entry in ~/.claude.json.
 
@@ -752,8 +781,7 @@ def claude_scoped_entries() -> list[str]:
     for proj, pdata in (data.get("projects") or {}).items():
         if not isinstance(pdata, dict):
             continue
-        servers = pdata.get("mcpServers")
-        if isinstance(servers, dict) and "codevira" in servers:
+        if has_codevira_server(pdata.get("mcpServers")):
             out.append(proj)
     return out
 
@@ -781,7 +809,7 @@ def project_has_scoped_claude_entry(project_root: Path) -> bool:
         if not isinstance(pdata, dict):
             continue
         servers = pdata.get("mcpServers")
-        if not (isinstance(servers, dict) and "codevira" in servers):
+        if not has_codevira_server(servers):
             continue
         try:
             if str(Path(proj).resolve()) == root:
@@ -792,7 +820,7 @@ def project_has_scoped_claude_entry(project_root: Path) -> bool:
 
     mcp_json = _read_json_safe(_claude_config_path(Path(project_root)))
     servers = mcp_json.get("mcpServers")
-    return isinstance(servers, dict) and "codevira" in servers
+    return has_codevira_server(servers)
 
 
 def bare_global_claude_entry() -> dict | None:

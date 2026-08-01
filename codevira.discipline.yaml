@@ -69,14 +69,26 @@ release_gates:
       file. No automation can satisfy this gate.
 
 # ─── Commands the PreToolUse hook blocks unless evidence shows G1–G5 pass ───
+#
+# KEEP IN SYNC with .claude/hooks/pre-release-block.sh, which hardcodes
+# the same list for defense-in-depth (it must work with this file missing
+# or corrupt). tests/test_pre_release_block_hook.py runs every entry below
+# through the hook and fails if one is not refused.
+#
+# These match the command being EXECUTED, not the text of the command
+# line: `git commit -m "…twine upload…"` is not a release attempt, and
+# blocking it would only teach the maintainer to reach for
+# CODEVIRA_RELEASE_OVERRIDE=1.
 block_commands:
   - twine upload
   - twine upload --repository
   - python -m twine upload
+  - python3 -m twine upload
   - gh release edit --draft=false
   - gh release create  # only blocked when --draft=false is also passed
   - pipx publish
   - pip publish
+  - make release-publish
 
 # ─── Where evidence lives (gitignored, per-version) ──────────────────────────
 evidence:

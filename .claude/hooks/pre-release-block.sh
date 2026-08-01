@@ -65,10 +65,13 @@ set -uo pipefail   # NOTE: no `e` — we handle errors explicitly so a
 #
 #   1. Heredoc bodies are dropped, so `git commit -m "$(cat <<'EOF' …)"`
 #      is judged on `git commit -m …`, not on the commit message.
-#   2. What's left is split into shell tokens, so a quoted string is ONE
+#   2. Comments are dropped, quote-aware and the way bash does it — a
+#      `#` only starts one where a word starts, so `a#b` stays a word.
+#      (shlex's own comment handling would eat the rest of the line.)
+#   3. What's left is split into shell tokens, so a quoted string is ONE
 #      token — `"…blocked twine upload…"` can never look like the two
 #      adjacent tokens `twine` `upload`.
-#   3. Release patterns are matched as adjacent token runs within a
+#   4. Release patterns are matched as adjacent token runs within a
 #      single command segment (split on ; && || |), and we recurse into
 #      `sh -c "…"` so a nested shell can't launder a real publish.
 #
@@ -128,10 +131,61 @@ def strip_heredocs(cmd):
     return "\n".join(kept)
 
 
+def strip_comments(cmd):
+    """Drop shell comments, quote-aware.
+
+    We cannot leave this to shlex: it ends a token at ANY unquoted `#`
+    and discards the rest of the LINE, so `echo a#b && twine upload`
+    lexes to ['echo', 'a'] and the release vanishes. bash only starts a
+    comment where a word starts, so `a#b` is a literal word. We follow
+    bash and set `commenters = ""` on the lexer.
+
+    Runs AFTER strip_heredocs so apostrophes in heredoc prose ("doesn't")
+    can't leave this scanner stuck in a bogus quote state.
+    """
+    out = []
+    quote = None
+    i = 0
+    n = len(cmd)
+    while i < n:
+        ch = cmd[i]
+        if quote:
+            out.append(ch)
+            # In double quotes a backslash escapes the next character;
+            # in single quotes nothing does.
+            if ch == "\\" and quote == '"' and i + 1 < n:
+                out.append(cmd[i + 1])
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+            i += 1
+        elif ch == "\\" and i + 1 < n:
+            out.append(ch)
+            out.append(cmd[i + 1])
+            i += 2
+        elif ch in "'\"":
+            quote = ch
+            out.append(ch)
+            i += 1
+        elif ch == "#" and (not out or out[-1] in " \t\n;&|()"):
+            # A comment. Skip to the newline but keep it, so line
+            # structure (and any heredoc terminator) survives.
+            nl = cmd.find("\n", i)
+            if nl == -1:
+                break
+            i = nl
+        else:
+            out.append(ch)
+            i += 1
+    return "".join(out)
+
+
 def tokenize(cmd):
     """Shell-ish tokens. Raises ValueError on unbalanced quotes."""
     lexer = shlex.shlex(cmd, posix=True, punctuation_chars=True)
     lexer.whitespace_split = True
+    lexer.commenters = ""  # handled by strip_comments, which matches bash
     return list(lexer)
 
 
@@ -190,7 +244,7 @@ def is_release(cmd, depth=0):
     if depth > 3:
         return False
     try:
-        tokens = tokenize(strip_heredocs(cmd))
+        tokens = tokenize(strip_comments(strip_heredocs(cmd)))
     except ValueError:
         return substring_fallback(cmd)
     for seg in segments(tokens):

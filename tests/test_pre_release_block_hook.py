@@ -158,6 +158,72 @@ def test_blocks_real_release_without_evidence(command, tmp_path):
     assert "RELEASE BLOCKED" in result.stderr
 
 
+# ---------------------------------------------------------------------------
+# `#` — a comment to bash, a word character mid-word
+# ---------------------------------------------------------------------------
+#
+# Python's shlex ends a token at ANY unquoted `#` and discards the rest of
+# the line. bash only starts a comment when `#` begins a word, so `a#b` is
+# a literal word. Taking shlex at its word meant `echo a#b && twine upload`
+# tokenized to ['echo', 'a'] — the release silently dropped off the end.
+# The hook strips comments itself, quote-aware, and turns shlex's own
+# comment handling off.
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param(
+            "echo a#b && twine upload dist/*",
+            id="hash-inside-a-word-does-not-hide-what-follows",
+        ),
+        pytest.param(
+            "curl 'https://example.com/p#frag' && twine upload dist/*",
+            id="hash-inside-quotes",
+        ),
+        pytest.param(
+            "# build first, then publish\ntwine upload dist/*",
+            id="comment-line-above-the-release",
+        ),
+        pytest.param(
+            "echo done;# inline\ntwine upload dist/*",
+            id="comment-after-a-separator",
+        ),
+    ],
+)
+def test_hash_does_not_hide_a_release(command, tmp_path):
+    result = _run(command, tmp_path)
+    assert result.returncode == _BLOCK, (
+        f"a `#` let a release slip past the hook: {command!r}\n"
+        f"  stdout: {result.stdout}"
+    )
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param(
+            "git push  # then run twine upload dist/*",
+            id="release-named-in-a-real-comment",
+        ),
+        pytest.param(
+            "# reminder: make release-publish needs evidence\nls -la",
+            id="whole-line-comment",
+        ),
+        pytest.param(
+            'git commit -m "fix #123: document the twine upload wall"',
+            id="hash-in-a-commit-message",
+        ),
+    ],
+)
+def test_a_release_named_in_a_comment_is_still_only_prose(command, tmp_path):
+    result = _run(command, tmp_path)
+    assert result.returncode == _ALLOW, (
+        "hook blocked a command whose only mention of a release is a "
+        f"comment:\n  command: {command!r}\n  stderr: {result.stderr}"
+    )
+
+
 def test_gh_release_create_without_draft_false_is_allowed(tmp_path):
     """A draft release is not a publish — matches codevira.discipline.yaml,
     which blocks `gh release create` only when --draft=false is passed."""

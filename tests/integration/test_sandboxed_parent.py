@@ -29,10 +29,13 @@ in pytest, but we CAN:
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -41,6 +44,73 @@ pytestmark = pytest.mark.integration
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+# ---------------------------------------------------------------------------
+# Spawn budgets + timing instrumentation
+# ---------------------------------------------------------------------------
+# 2026-08-03: G1.7 twice failed the release gauntlet on timing alone (PR #17,
+# runs 30751330963 and 30765384673 — two different tests, two different
+# commits, both green on re-run of the identical commit). Both failures
+# reported a bare `None` ("no tools/list response"), which says nothing about
+# how long we actually waited or which phase consumed the budget.
+#
+# That matters more than an ordinary flake: G1.7 is release-blocking, and a
+# gate that can't explain itself trains people to re-run until green — exactly
+# how the Antigravity-class regression this file exists to catch (issue #10)
+# would slip through. So every spawn is timestamped per phase and the timeline
+# is printed on any failure. See _SpawnResult.diagnostics().
+#
+# Measured reference (local, macOS, python3.13, at this commit's parent
+# df0081f, __pycache__ deliberately purged so bytecode compile is paid on
+# every spawn):
+#     spawn -> initialize response   0.90s   <- ~82% of the budget
+#     initialize -> tools/call resp  0.11s
+#     tools/call -> process exit     0.09s
+#     total per spawn                1.10s;  the whole file 7.4s
+# Spawns #2 and #3 measured within 0.06s of #1, so bytecode compilation is
+# NOT the variable cost.
+#
+# Two things measured while adding this that argue AGAINST "CI is just slow",
+# and are the reason the timeout was not simply raised:
+#
+#   1. Sweeping the budget from 0.30s to 1.00s in 5ms steps never once
+#      produced "initialize answered, follow-up did not". Once the server
+#      starts answering, the responses land within ~10ms of each other
+#      (invalid-root spawn: id=1 at 0.788s, id=3 at 0.795s). A uniformly
+#      slow runner preserves that ratio, so a timeout slicing between the
+#      two — twice, on two different tests — is implausible.
+#   2. subprocess.communicate() does NOT lose partial stdout when it times
+#      out (verified: the second communicate() after kill() returns it), so
+#      the missing responses on CI were genuinely never emitted.
+#
+# Which leaves an early exit — the server stopping on its own, under budget,
+# after answering initialize — as the leading hypothesis. The old harness
+# reported that identically to a timeout, which is why two re-runs produced
+# no information. diagnostics() now separates the two verdicts explicitly.
+# UNVERIFIED against an actual CI run; that is what the next failure is for.
+#
+# Steady-state budget. 30.0s is not a new number — it is what three of the
+# five call sites already passed explicitly; the other two silently used a
+# 25.0s default that was never chosen against a measurement. Unified so there
+# is one number to reason about instead of an unexplained 25-vs-30 split.
+_SPAWN_TIMEOUT_S = 30.0
+
+# The FIRST spawn in a session is not comparable to the ones after it: it pays
+# interpreter start plus OS page-cache misses across the whole mcp / pydantic /
+# anyio import tree on a runner that has never executed this path. One cold
+# start should not have to fit the same window as a warm one, so it gets its
+# own budget rather than inflating the budget for every spawn.
+#
+# UNVERIFIED: 30.0s is provisional — we have no CI-side measurement yet, only
+# the local numbers above (where the page cache was already warm from pytest
+# itself, so local runs cannot show this effect at all). The point of the
+# instrumentation is that the next failure prints the real number instead of
+# `None`; tighten this constant once a CI timeline exists.
+_COLD_START_GRACE_S = 30.0
+
+# Set once the first subprocess of the session has been spawned.
+_first_spawn_done = False
 
 
 def _mcp_request(
@@ -60,6 +130,88 @@ def _mcp_request(
     return json.dumps(payload) + "\n"
 
 
+@dataclasses.dataclass
+class _SpawnResult:
+    """Outcome of one sandboxed spawn, with a per-phase wall-clock timeline.
+
+    ``timeline`` is a list of ``(elapsed_s, event)`` appended from both the
+    main thread and the two reader threads, so it is rendered sorted by
+    timestamp rather than by insertion order.
+    """
+
+    returncode: int
+    stdout: str
+    stderr: str
+    timeline: list[tuple[float, str]]
+    response_ids: list[int]
+    output_times: list[float]
+    timed_out: bool
+    budget_s: float
+    elapsed_s: float
+    cold_start: bool
+
+    def diagnostics(self) -> str:
+        """Phase timeline + verdict, for inclusion in every assertion message.
+
+        A failing release gate has to say WHERE the time went. The two PR #17
+        failures said only that a response was ``None``, which is consistent
+        with "server died during import", "server was slow to start" and
+        "server started fine then stalled on one request" — three different
+        bugs with three different fixes.
+        """
+        budget_desc = f"{self.budget_s:.1f}s"
+        if self.cold_start:
+            budget_desc += (
+                f" = {_SPAWN_TIMEOUT_S:.1f}s steady-state"
+                f" + {_COLD_START_GRACE_S:.1f}s first-spawn cold-start grace"
+            )
+        lines = [f"--- spawn timeline (budget {budget_desc}) ---"]
+        for elapsed, event in sorted(self.timeline, key=lambda row: row[0]):
+            lines.append(f"  {elapsed:8.3f}s  {event}")
+        lines.append(f"  {self.elapsed_s:8.3f}s  [total wall clock]")
+
+        if self.response_ids:
+            lines.append(f"  responses seen, in order: {self.response_ids}")
+        else:
+            lines.append(
+                "  responses seen: NONE — the server produced no JSON-RPC output at all"
+            )
+
+        if self.timed_out:
+            last_out = max(self.output_times) if self.output_times else None
+            if last_out is None:
+                lines.append(
+                    f"  VERDICT: TIMED OUT at {self.budget_s:.1f}s having never "
+                    f"produced a single line of stdout. The cost is upstream of "
+                    f"request handling — interpreter start, imports, or server "
+                    f"init. Raising the budget is the right lever here."
+                )
+            else:
+                silence = self.elapsed_s - last_out
+                lines.append(
+                    f"  VERDICT: TIMED OUT at {self.budget_s:.1f}s. Last output at "
+                    f"{last_out:.3f}s, then {silence:.1f}s of silence. The server "
+                    f"was already answering, so this is NOT spawn/import cost — "
+                    f"raising the budget would hide it. Look at what the "
+                    f"un-answered request does."
+                )
+        else:
+            # The failure mode the old harness could not distinguish from a
+            # timeout: the server EXITED on its own, under budget, having
+            # answered only some of the requests. Same symptom ("response was
+            # None"), completely different fix — the budget is innocent.
+            lines.append(
+                f"  VERDICT: did NOT time out — the process exited on its own "
+                f"after {self.elapsed_s:.3f}s of a {self.budget_s:.1f}s budget "
+                f"(rc={self.returncode}). If a response is missing here, the "
+                f"budget is NOT implicated: the server stopped early. Check "
+                f"stderr and the exit code."
+            )
+        if self.stderr.strip():
+            lines.append(f"--- stderr (last 800 chars) ---\n{self.stderr[-800:]}")
+        return "\n".join(lines)
+
+
 def _spawn_codevira_mcp(
     project_dir: Path,
     home_dir: Path,
@@ -67,8 +219,9 @@ def _spawn_codevira_mcp(
     strip_dyld: bool = True,
     block_torch: bool = False,
     inputs: str = "",
-    timeout_s: float = 25.0,
-) -> tuple[int, str, str]:
+    timeout_s: float = _SPAWN_TIMEOUT_S,
+    allow_cold_start_grace: bool = True,
+) -> _SpawnResult:
     """Spawn codevira via the package's main entrypoint as a subprocess.
 
     The point is to use a CLEAN env — strip DYLD_*, PYTHONPATH (other
@@ -80,7 +233,13 @@ def _spawn_codevira_mcp(
     simulates "torch dylib can't load" without actually breaking the
     underlying install.
 
-    Returns (returncode, stdout, stderr).
+    ``timeout_s`` is the STEADY-STATE budget; the first spawn of the session
+    additionally gets ``_COLD_START_GRACE_S``. Pass
+    ``allow_cold_start_grace=False`` to opt out (the instrumentation tests
+    need a budget they can actually exceed).
+
+    Returns a :class:`_SpawnResult` — pass ``.diagnostics()`` into any
+    assertion message so a failure reports its phase timeline.
     """
     env: dict[str, str] = {
         # Bare-minimum env. NO DYLD_*, no PYTHONPATH augmentation other
@@ -117,6 +276,30 @@ def _spawn_codevira_mcp(
         # PYTHONPATH already set; prepend the shim dir.
         env["PYTHONPATH"] = f"{shim_dir}:{env['PYTHONPATH']}"
 
+    global _first_spawn_done
+    cold_start = allow_cold_start_grace and not _first_spawn_done
+    _first_spawn_done = True
+    budget_s = timeout_s + (_COLD_START_GRACE_S if cold_start else 0.0)
+
+    timeline: list[tuple[float, str]] = []
+    response_ids: list[int] = []
+    output_times: list[float] = []
+    stdout_chunks: list[str] = []
+    stderr_chunks: list[str] = []
+    t0 = time.monotonic()
+
+    def _mark(event: str, *, is_output: bool = False) -> None:
+        # list.append is atomic under the GIL; each row carries its own
+        # timestamp, so cross-thread interleaving is fine (rendered sorted).
+        elapsed = time.monotonic() - t0
+        timeline.append((elapsed, event))
+        if is_output:
+            output_times.append(elapsed)
+
+    # Read stdout line-by-line on a thread rather than via communicate(), which
+    # is all-or-nothing: it can only tell us the TOTAL wall time, never which
+    # phase spent it. Timestamping each JSON-RPC line as it arrives is the
+    # whole point — it separates "never started" from "started then stalled".
     proc = subprocess.Popen(
         [sys.executable, "-m", "mcp_server.cli", "--project-dir", str(project_dir)],
         stdin=subprocess.PIPE,
@@ -126,12 +309,86 @@ def _spawn_codevira_mcp(
         text=True,
         cwd=str(project_dir),
     )
+
+    def _pump_stdout() -> None:
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            stdout_chunks.append(line)
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                msg = json.loads(stripped)
+            except json.JSONDecodeError:
+                _mark(f"non-JSON stdout line: {stripped[:70]!r}", is_output=True)
+                continue
+            req_id = msg.get("id")
+            if req_id is None:
+                _mark(f"notification {msg.get('method')!r}", is_output=True)
+                continue
+            response_ids.append(req_id)
+            kind = "result" if "result" in msg else "JSON-RPC error"
+            _mark(f"response id={req_id} ({kind})", is_output=True)
+
+    def _pump_stderr() -> None:
+        assert proc.stderr is not None
+        stderr_chunks.append(proc.stderr.read())
+
+    readers = [
+        threading.Thread(target=_pump_stdout, name="stdout-pump", daemon=True),
+        threading.Thread(target=_pump_stderr, name="stderr-pump", daemon=True),
+    ]
+    for reader in readers:
+        reader.start()
+
+    timed_out = False
     try:
-        stdout, stderr = proc.communicate(input=inputs, timeout=timeout_s)
+        # Every `inputs` in this file is well under 1 KB, so this fits the pipe
+        # buffer and cannot deadlock against a child that has not started
+        # reading yet. Revisit if a test ever pipes a large payload.
+        assert proc.stdin is not None
+        try:
+            proc.stdin.write(inputs)
+            proc.stdin.flush()
+            proc.stdin.close()
+            _mark(f"stdin written + closed ({len(inputs.splitlines())} messages)")
+        except (BrokenPipeError, OSError) as exc:
+            _mark(f"stdin write FAILED ({exc!r}) — child exited before reading")
+
+        proc.wait(timeout=budget_s)
+        _mark(f"process exit rc={proc.returncode}")
     except subprocess.TimeoutExpired:
+        timed_out = True
+        _mark(f"TIMEOUT at the {budget_s:.1f}s budget — sending SIGKILL")
         proc.kill()
-        stdout, stderr = proc.communicate()
-    return (proc.returncode if proc.returncode is not None else -1), stdout, stderr
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:  # pragma: no cover - SIGKILL ignored
+            _mark("child did not die within 10s of SIGKILL")
+    finally:
+        for reader in readers:
+            reader.join(timeout=10)
+            if reader.is_alive():  # pragma: no cover - pipe still held open
+                _mark(f"{reader.name} still alive after join — output truncated")
+
+    elapsed_s = time.monotonic() - t0
+    result = _SpawnResult(
+        returncode=proc.returncode if proc.returncode is not None else -1,
+        stdout="".join(stdout_chunks),
+        stderr="".join(stderr_chunks),
+        timeline=timeline,
+        response_ids=response_ids,
+        output_times=output_times,
+        timed_out=timed_out,
+        budget_s=budget_s,
+        elapsed_s=elapsed_s,
+        cold_start=cold_start,
+    )
+    if timed_out:
+        # Belt-and-braces: surface the timeline even if a caller forgets to
+        # thread diagnostics() into its assertion message.
+        print(result.diagnostics(), file=sys.stderr)
+    return result
 
 
 def _parse_jsonrpc_responses(stdout: str) -> list[dict]:
@@ -188,12 +445,11 @@ class TestSandboxedParent:
                 "clientInfo": {"name": "sandboxed-smoke", "version": "0.0.1"},
             },
         )
-        rc, stdout, stderr = _spawn_codevira_mcp(project, home, inputs=inputs)
-        responses = _parse_jsonrpc_responses(stdout)
-        assert responses, (
-            f"no JSON-RPC response from codevira in sanitized env. "
-            f"stderr (last 500): {stderr[-500:]}"
-        )
+        res = _spawn_codevira_mcp(project, home, inputs=inputs)
+        responses = _parse_jsonrpc_responses(res.stdout)
+        assert (
+            responses
+        ), f"no JSON-RPC response from codevira in sanitized env.\n{res.diagnostics()}"
         first = responses[0]
         assert "result" in first, f"initialize returned error: {first}"
         assert first["result"].get("serverInfo", {}).get("name") == "codevira"
@@ -220,21 +476,20 @@ class TestSandboxedParent:
             + _mcp_request("notifications/initialized", req_id=None)
             + _mcp_request("tools/list", req_id=3)
         )
-        rc, stdout, stderr = _spawn_codevira_mcp(
+        res = _spawn_codevira_mcp(
             project,
             home,
             block_torch=True,
             inputs=inputs,
         )
-        responses = _parse_jsonrpc_responses(stdout)
+        responses = _parse_jsonrpc_responses(res.stdout)
         tools_list_resp = next(
             (r for r in responses if r.get("id") == 3),
             None,
         )
-        assert tools_list_resp is not None, (
-            f"no tools/list response when torch is blocked. "
-            f"stderr (last 500): {stderr[-500:]}"
-        )
+        assert (
+            tools_list_resp is not None
+        ), f"no tools/list response when torch is blocked.\n{res.diagnostics()}"
         assert (
             "result" in tools_list_resp
         ), f"tools/list returned error when torch blocked: {tools_list_resp}"
@@ -277,19 +532,17 @@ class TestSandboxedParent:
                 req_id=3,
             )
         )
-        rc, stdout, stderr = _spawn_codevira_mcp(
+        res = _spawn_codevira_mcp(
             project,
             home,
             block_torch=True,
             inputs=inputs,
-            timeout_s=30.0,
         )
-        responses = _parse_jsonrpc_responses(stdout)
+        responses = _parse_jsonrpc_responses(res.stdout)
         call_resp = next((r for r in responses if r.get("id") == 3), None)
-        assert call_resp is not None, (
-            f"no list_decisions response when torch blocked. "
-            f"stderr (last 500): {stderr[-500:]}"
-        )
+        assert (
+            call_resp is not None
+        ), f"no list_decisions response when torch blocked.\n{res.diagnostics()}"
         # The response is a CallToolResult — content is a list of
         # TextContent. Unpack the text and verify it's a JSON object
         # with the v2.1.2 list_decisions shape.
@@ -330,21 +583,19 @@ class TestSandboxedParent:
             )
         )
         # Spawn with a FORBIDDEN root ("/") — the Antigravity crash condition.
-        rc, stdout, stderr = _spawn_codevira_mcp(
-            Path("/"), home, inputs=inputs, timeout_s=30.0
-        )
-        responses = _parse_jsonrpc_responses(stdout)
+        res = _spawn_codevira_mcp(Path("/"), home, inputs=inputs)
+        responses = _parse_jsonrpc_responses(res.stdout)
         init = next((r for r in responses if r.get("id") == 1), None)
         assert init is not None and "result" in init, (
             f"initialize did NOT complete — server crashed on an invalid root "
-            f"instead of degrading. rc={rc} stderr(last 700): {stderr[-700:]}"
+            f"instead of degrading.\n{res.diagnostics()}"
         )
         assert init["result"].get("serverInfo", {}).get("name") == "codevira"
         # A tool call must return an inert hint, not a crash / no-response.
         call = next((r for r in responses if r.get("id") == 3), None)
         assert call is not None and "result" in call, (
-            f"tool call did not return under an invalid root: {call}. "
-            f"stderr(last 500): {stderr[-500:]}"
+            f"tool call did not return under an invalid root: {call}.\n"
+            f"{res.diagnostics()}"
         )
         payload = json.loads(call["result"]["content"][0]["text"])
         assert (
@@ -385,13 +636,11 @@ class TestSandboxedParent:
                 req_id=3,
             )
         )
-        rc, stdout, stderr = _spawn_codevira_mcp(
-            project, home, inputs=inputs, timeout_s=30.0
-        )
+        res = _spawn_codevira_mcp(project, home, inputs=inputs)
         # The tool call returns the opt-in hint...
-        responses = _parse_jsonrpc_responses(stdout)
+        responses = _parse_jsonrpc_responses(res.stdout)
         call_resp = next((r for r in responses if r.get("id") == 3), None)
-        assert call_resp is not None, f"no get_impact response. stderr: {stderr[-500:]}"
+        assert call_resp is not None, f"no get_impact response.\n{res.diagnostics()}"
         payload = json.loads(call_resp["result"]["content"][0]["text"])
         assert (
             payload.get("not_opted_in") is True
@@ -403,3 +652,163 @@ class TestSandboxedParent:
         assert not (
             project / ".codevira"
         ).exists(), "opt-in leak: in-repo store created"
+
+
+class TestSpawnInstrumentation:
+    """Guard the diagnostics themselves.
+
+    G1.7 is release-blocking, so when it fails it has to say WHY. These tests
+    fail if the per-phase timeline regresses back to a bare ``None`` — the
+    state that made PR #17's two failures (runs 30751330963, 30765384673)
+    undiagnosable and cost two re-runs of a merge-blocking gate.
+    """
+
+    def test_diagnostics_names_the_stalled_phase_on_partial_output(self):
+        """Reproduces run 30765384673's exact shape — initialize answered,
+        the follow-up never did — and asserts the report distinguishes it
+        from a server that never started.
+
+        These two need opposite fixes: 'never started' means raise the
+        budget, 'started then stalled' means the budget is innocent. A bare
+        `None` cannot tell them apart, which is why the first instinct on
+        PR #17 was to bump the timeout.
+        """
+        stalled = _SpawnResult(
+            returncode=-9,
+            stdout='{"jsonrpc":"2.0","id":1,"result":{}}\n',
+            stderr="",
+            timeline=[(0.001, "stdin written"), (3.204, "response id=1 (result)")],
+            response_ids=[1],
+            output_times=[3.204],
+            timed_out=True,
+            budget_s=30.0,
+            elapsed_s=30.1,
+            cold_start=False,
+        )
+        report = stalled.diagnostics()
+        assert "TIMED OUT" in report
+        assert "3.204" in report, "must report WHEN the last output arrived"
+        assert "26.9s of silence" in report, "must quantify the stall"
+        assert "responses seen, in order: [1]" in report
+        assert (
+            "NOT spawn/import cost" in report
+        ), "partial-output timeouts must steer away from raising the budget"
+
+        never_started = dataclasses.replace(
+            stalled,
+            stdout="",
+            timeline=[(0.001, "stdin written")],
+            response_ids=[],
+            output_times=[],
+        )
+        report = never_started.diagnostics()
+        assert "never produced a single line of stdout" in report
+        assert "Raising the budget is the right lever" in report
+
+    def test_diagnostics_separates_an_early_exit_from_a_timeout(self):
+        """The failure mode the old harness could not name.
+
+        Measured while writing this: once the server starts answering,
+        initialize and the follow-up land ~10ms apart, and communicate()
+        does not drop partial output on timeout. So a missing follow-up on
+        CI most likely means the server EXITED, not that it ran long. That
+        must not read as a timeout, or the fix goes to the wrong place.
+        """
+        early_exit = _SpawnResult(
+            returncode=1,
+            stdout='{"jsonrpc":"2.0","id":1,"result":{}}\n',
+            stderr="Traceback ...\n",
+            timeline=[
+                (0.001, "stdin written"),
+                (0.780, "response id=1 (result)"),
+                (0.812, "process exit rc=1"),
+            ],
+            response_ids=[1],
+            output_times=[0.780],
+            timed_out=False,
+            budget_s=30.0,
+            elapsed_s=0.812,
+            cold_start=False,
+        )
+        report = early_exit.diagnostics()
+        assert "did NOT time out" in report
+        assert "rc=1" in report
+        assert "budget is NOT implicated" in report
+        assert "TIMED OUT" not in report, (
+            "an early exit must never be reported as a timeout — that is the "
+            "confusion that cost PR #17 two re-runs"
+        )
+
+    def test_diagnostics_shows_the_cold_start_split(self):
+        """The first-spawn budget must be legible as two separate numbers, so
+        nobody reads a 60s budget as 'someone doubled the timeout'.
+        """
+        res = _SpawnResult(
+            returncode=0,
+            stdout="",
+            stderr="",
+            timeline=[],
+            response_ids=[],
+            output_times=[],
+            timed_out=False,
+            budget_s=_SPAWN_TIMEOUT_S + _COLD_START_GRACE_S,
+            elapsed_s=1.0,
+            cold_start=True,
+        )
+        report = res.diagnostics()
+        assert "steady-state" in report and "cold-start grace" in report
+        assert f"{_SPAWN_TIMEOUT_S:.1f}s steady-state" in report
+
+    def test_timeout_reports_elapsed_time_instead_of_swallowing_it(
+        self, sandboxed_project
+    ):
+        """A real spawn given an unmeetable budget must come back marked as
+        timed out, with a wall-clock number — not silently as 'no response'.
+
+        Cold-start grace is disabled here; with it, the budget would be
+        ~60s and this spawn (~1s locally) would simply succeed.
+        """
+        project, home = sandboxed_project
+        res = _spawn_codevira_mcp(
+            project,
+            home,
+            inputs=_mcp_request("initialize", {"protocolVersion": "2024-11-05"}),
+            timeout_s=0.05,
+            allow_cold_start_grace=False,
+        )
+        assert res.timed_out is True
+        assert res.elapsed_s >= 0.05
+        assert res.budget_s == 0.05, "explicit budget must not be silently inflated"
+        assert "TIMED OUT" in res.diagnostics()
+
+    def test_successful_spawn_attributes_time_to_each_phase(self, sandboxed_project):
+        """The happy path must still record the timeline, because that is the
+        baseline a future CI failure gets compared against.
+        """
+        project, home = sandboxed_project
+        inputs = (
+            _mcp_request(
+                "initialize",
+                {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {"name": "timing", "version": "0.0.1"},
+                },
+                req_id=1,
+            )
+            + _mcp_request("notifications/initialized", req_id=None)
+            + _mcp_request("tools/list", req_id=3)
+        )
+        res = _spawn_codevira_mcp(project, home, inputs=inputs)
+        assert res.timed_out is False, res.diagnostics()
+        assert res.response_ids == [1, 3], res.diagnostics()
+
+        events = [event for _, event in sorted(res.timeline, key=lambda r: r[0])]
+        assert any(e.startswith("response id=1") for e in events), res.diagnostics()
+        assert any(e.startswith("response id=3") for e in events), res.diagnostics()
+        assert any(e.startswith("process exit") for e in events), res.diagnostics()
+
+        # The timings must be real and ordered — spawn -> initialize -> tools/list.
+        init_at = next(t for t, e in res.timeline if e.startswith("response id=1"))
+        list_at = next(t for t, e in res.timeline if e.startswith("response id=3"))
+        assert 0 < init_at <= list_at <= res.elapsed_s, res.diagnostics()

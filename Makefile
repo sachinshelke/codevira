@@ -151,7 +151,14 @@ release-gauntlet:
 		|| (echo "  ✗ G1.6 FAILED — release blocked (doc-drift like calibrate clamp range)"; exit 1)
 	@echo ""
 	@echo "▸ G1.7 — Sandboxed-parent MCP test (tests/integration/test_sandboxed_parent.py)"
-	@PYTHONPATH=. $(PYTHON) -m pytest tests/integration/test_sandboxed_parent.py -q --timeout=60 \
+# --timeout must stay ABOVE the in-test per-spawn budget (_SPAWN_TIMEOUT_S +
+# _COLD_START_GRACE_S = 60s for the first spawn). At the old --timeout=60 the
+# two collided, so pytest could kill the test at the same moment the spawn
+# budget expired — and pytest's timeout produces a bare traceback instead of
+# the spawn's phase timeline, which is the whole point of the instrumentation.
+# Costs nothing when healthy: the file runs in ~8s. See the block comment at
+# the top of test_sandboxed_parent.py.
+	@PYTHONPATH=. $(PYTHON) -m pytest tests/integration/test_sandboxed_parent.py -q --timeout=120 \
 		&& echo "  ✓ G1.7 passed" \
 		|| (echo "  ✗ G1.7 FAILED — release blocked (Antigravity-class regression — issue #10)"; exit 1)
 	@echo ""

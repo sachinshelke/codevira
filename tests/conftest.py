@@ -4,6 +4,8 @@ Shared pytest fixtures for the Codevira MCP test suite.
 
 import os
 import sys
+import threading
+import time
 import types
 from unittest.mock import MagicMock
 
@@ -187,6 +189,108 @@ def _isolate_global_home(tmp_path_factory, monkeypatch):
         "project:\n  name: isolated-test\n"
     )
     monkeypatch.chdir(iso_project)
+
+
+# ---------------------------------------------------------------------------
+# Background-thread leak detector.
+#
+# Every thread codevira starts is named ``codevira-*`` (auto-init, bg-index,
+# startup-outcome-analysis, post-edit-refresh). A test that starts one and
+# returns without joining it leaves that thread running INSIDE the next,
+# unrelated test — where it mutates process-global module state and writes to
+# the filesystem after this test's monkeypatches (fake $HOME, patched
+# get_data_dir) have been torn down.
+#
+# That is a RACE, not an ordering problem: a setup-time reset in the next test
+# cannot prevent a concurrent write from a thread that is already running.
+# It is why tests/test_auto_init.py::TestGetInitProgress::test_default_state
+# saw ``status == "indexing"`` on a fresh record in CI run 30764652633
+# (Python 3.10 only — slower scheduling widened the window).
+#
+# The rule this enforces: a test owns the threads it starts. Join them, or
+# don't start real ones.
+# ---------------------------------------------------------------------------
+
+_CODEVIRA_THREAD_PREFIX = "codevira-"
+
+# How long teardown waits before calling a thread leaked.
+#
+# Correctness does not depend on this number: the join happens at teardown, so
+# no thread crosses a test boundary regardless of how long the wait is. The
+# timeout only controls how loudly we REPORT a leak — generous enough that a
+# slow-but-terminating thread on a loaded CI runner doesn't cause a spurious
+# failure, short enough that a genuinely stuck thread fails fast.
+#
+# To audit instead of tolerate, drop the grace to zero — then ANY codevira
+# thread still alive at teardown is reported, however briefly it would have
+# lived:
+#
+#     CODEVIRA_TEST_THREAD_JOIN_TIMEOUT=0 python -m pytest tests/ -q
+#
+# That sweep is expected to come back clean. If it doesn't, a test started a
+# real background thread it doesn't own.
+_THREAD_JOIN_TIMEOUT = float(
+    os.environ.get("CODEVIRA_TEST_THREAD_JOIN_TIMEOUT", "10.0")
+)
+
+
+def _live_codevira_threads():
+    """Threads codevira started that are still running."""
+    return [
+        t
+        for t in threading.enumerate()
+        if t.is_alive() and t.name.startswith(_CODEVIRA_THREAD_PREFIX)
+    ]
+
+
+@pytest.fixture(autouse=True)
+def _no_leaked_background_threads(_isolate_global_home):
+    """Fail any test that leaves a codevira background thread running.
+
+    Depends on ``_isolate_global_home`` purely for ordering: pytest tears
+    fixtures down in reverse setup order, so taking it as an argument
+    guarantees this join happens BEFORE the fake-$HOME monkeypatches are
+    undone. Otherwise the very thread we're waiting on could spend the join
+    window writing to the developer's real ``~/.codevira/``.
+    """
+    yield
+
+    deadline = time.monotonic() + _THREAD_JOIN_TIMEOUT
+    for t in _live_codevira_threads():
+        t.join(timeout=max(0.0, deadline - time.monotonic()))
+
+    leaked = _live_codevira_threads()
+    if not leaked:
+        return
+
+    # Containment. The thread is still running and we cannot kill it, so at
+    # minimum sever its handle on the progress record — otherwise this one
+    # leak cascades into a string of unrelated failures and buries the
+    # culprit. Threads launched by ensure_project_initialized write to the
+    # record they were handed (see auto_init._update_progress), so rebinding
+    # the global makes their remaining writes inert.
+    import mcp_server.auto_init as _auto_init
+
+    _auto_init._progress = {
+        "status": "not_started",
+        "files_indexed": 0,
+        "total_files": 0,
+        "elapsed_seconds": 0.0,
+        "error": None,
+    }
+
+    names = ", ".join(sorted(t.name for t in leaked))
+    pytest.fail(
+        f"Test leaked {len(leaked)} live codevira background thread(s) after "
+        f"{_THREAD_JOIN_TIMEOUT}s: {names}.\n"
+        "A leaked thread keeps running inside later tests and mutates "
+        "process-global state there — the resulting failure looks like it "
+        "belongs to whichever test happened to be running.\n"
+        "Fix the test that started it: join the thread before the test ends "
+        "(inside the `with patch(...)` block, so the patches still cover the "
+        "thread's whole life), or stub the call so no real thread starts.",
+        pytrace=False,
+    )
 
 
 @pytest.fixture

@@ -419,6 +419,25 @@ class TestRunHttpServerBearerToken:
     make their imports raise to suppress them cleanly.
     """
 
+    @pytest.fixture(autouse=True)
+    def _no_real_outcome_analysis(self):
+        """Neutralize the startup outcome-analysis thread.
+
+        run_http_server unconditionally spawns a ``codevira-startup-outcome-
+        analysis`` daemon thread that calls ``analyze_session_outcomes()``,
+        which resolves the graph DB through a LIVE ``get_data_dir()`` — not the
+        one captured when the thread started. Nothing in this class joins that
+        thread, so pre-fix it kept running inside later, unrelated tests and
+        opened whichever project store those tests had just set up.
+
+        These tests are about bearer-token logic; the analysis is an unrelated
+        startup side effect. Stubbing the import target makes the thread a
+        no-op that exits immediately, so tests/conftest.py's
+        ``_no_leaked_background_threads`` join is instant.
+        """
+        with patch("indexer.outcome_tracker.analyze_session_outcomes"):
+            yield
+
     @staticmethod
     def _make_mock_uvicorn():
         """Create a mock uvicorn module with a .run callable."""

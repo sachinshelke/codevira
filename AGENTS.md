@@ -30,7 +30,7 @@
 - **D000016** v3.0.1 will add an interactive, queryable HTML viewer for codevira memory. Design (agreed 2026-05-26): self-contained S…  ·  _cli, cytoscape, export, feature, memory-viewer, v3.0.1, visualization_
 - **D000017** [supersedes D000014: D000014 premise was factually wrong: verified the committed code uses ~/.gemini/antigravity/, neve…  ·  `mcp_server/ide_inject.py`  ·  _antigravity, broken-integration, cross-tool, ide-inject, setup-wizard, v3.0.1_
 
-_+113 more decision(s) — full log in `.codevira/decisions.jsonl`._
+_+114 more decision(s) — full log in `.codevira/decisions.jsonl`._
 
 
 For the full decision log, use `search_decisions` / `list_decisions` (or the `codevira` CLI) — don't read `.codevira/*.jsonl` directly.

@@ -142,16 +142,38 @@ def get_node(file_path: str, full: bool = False) -> dict[str, Any]:
     db.close()
 
     if not node:
+        # Defined here, above the first early return, because EVERY
+        # found=False path has to carry the same shape. An agent keying on
+        # `not_indexed` to decide whether a zero blast-radius is trustworthy
+        # must never get a payload that simply lacks the field — that is
+        # indistinguishable from a successful lookup unless it also inspects
+        # `found`, which is exactly the trust bug v2.1.2 Item 2 set out to fix.
+        _not_indexed_counts = {
+            "rules_count": None,
+            "dependencies_count": None,
+            "key_functions_count": None,
+        }
         # v1.6: Check if auto-init is running
         try:
             from mcp_server.auto_init import get_init_progress
 
             prog = get_init_progress()
             if prog["status"] in ("initializing", "indexing"):
+                # 2026-08-03 (D000138): this branch was the ONE not-found path
+                # of four that omitted not_indexed. It fires whenever a
+                # background index is mid-flight, so a real client polling
+                # get_node during first-contact indexing got a payload that
+                # KeyError'd on result["not_indexed"]. It also made
+                # test_get_node_not_indexed_returns_null_counts look like an
+                # unexplained flake across three sessions: the trigger was a
+                # background thread leaving _progress at "indexing", not
+                # test ordering.
                 return {
                     "found": False,
+                    "not_indexed": True,
                     "status": "initializing",
                     "file_path": file_path,
+                    **_not_indexed_counts,
                     "message": "Graph is being built in the background. Try again in a few seconds.",
                     "hint": "Try the same get_node call again in a few seconds.",
                 }
@@ -187,11 +209,6 @@ def get_node(file_path: str, full: bool = False) -> dict[str, Any]:
         # OR returned 0 once the file was indexed-but-empty — the same
         # value for "no rules" and "never indexed", which misled agents.
         # See `docs/plans/v2.1.2.md` Item 2 for details.
-        _not_indexed_counts = {
-            "rules_count": None,
-            "dependencies_count": None,
-            "key_functions_count": None,
-        }
         if not graph_db_present:
             return {
                 "found": False,

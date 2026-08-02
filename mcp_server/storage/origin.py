@@ -18,7 +18,7 @@ written by Cursor 3 days ago — what would you like to do?"
                      "antigravity" | "unknown",
       # NOTE: "windsurf" is no longer an injection target (Windsurf was
       # discontinued / folded into Cursor) but remains a RECOGNIZED value so
-      # decisions recorded by Windsurf before v3.8.0 still read back correctly.
+      # decisions recorded by Windsurf before 4.0 still read back correctly.
       "agent_model": "<model-id>" | None,
       "device_id":   "<16 hex chars>",   # 4.0 — the STABLE machine identity
       "host_hash":   "<12 hex chars>",   # legacy; drifts, see below

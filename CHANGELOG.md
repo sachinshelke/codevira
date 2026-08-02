@@ -210,7 +210,7 @@ Windsurf was discontinued (folded into Cursor), so codevira no longer
 auto-detects it or writes MCP config for it. Removed from setup detection,
 the `--ide` menu, `inject_ide_config`, doctor hints, and all user-facing
 docs/website. **Backward-compatible:** `origin.py` still *recognizes*
-`"windsurf"` so decisions recorded by Windsurf before v3.8.0 read back
+`"windsurf"` so decisions recorded by Windsurf before 4.0 read back
 correctly, and `codevira uninstall` / `untrack` still clean up any existing
 `.windsurf/` and `.windsurfrules` files left on disk. No migration needed —
 nothing writes new Windsurf entries, and existing ones are inert.
@@ -288,6 +288,23 @@ Desktop pointed every project at whichever was configured last. Setup now mints 
 **named per-project entry** (`codevira-<project>`) for Desktop, matching the
 Antigravity path and byte-identical to what `register-all` / `doctor --fix` write
 (no duplicate keys). Existing bare entries are still healed by those commands.
+
+### Fixed — git worktrees fragmented memory (and a migration to re-unify it)
+
+A `.git` file (not dir) meant a linked worktree looked like its own project, so
+`codevira_dir()` gave each worktree a **separate** `.codevira/` — decisions made
+in a worktree couldn't be merged back to the main checkout. Now a linked
+worktree's memory redirects to the **main** worktree root (opt out with
+`CODEVIRA_WORKTREE_ISOLATED=1`), so worktrees write straight into the shared
+store — nothing to merge. Honors the write-path root validation (`D000012`): if
+the derived main root is invalid, it falls back to the worktree rather than
+writing memory somewhere bad.
+
+For worktrees that already wrote their own `.codevira/` before this fix, a
+startup migration folds those decisions into the main store via the same
+union+dedup as the git merge driver, then renames the worktree store to
+`.codevira.premerge-<ts>` — **never deleted** (honors `D00011Z`). Re-runs on
+every startup, so it self-heals.
 
 ---
 

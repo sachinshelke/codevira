@@ -935,7 +935,7 @@ def main() -> None:
         ),
     )
 
-    # register-all (v3.8.0) — clean-slate one-MCP-per-project registration
+    # register-all (4.0) — clean-slate one-MCP-per-project registration
     register_all_parser = subparsers.add_parser(
         "register-all",
         help="Register every existing project as its own named MCP (heals wrong-project binding)",
@@ -1884,7 +1884,7 @@ def main() -> None:
         )
         sys.exit(rc)
     elif args.command == "register-all":
-        # v3.8.0 — clean-slate one-MCP-per-project registration
+        # 4.0 — clean-slate one-MCP-per-project registration
         from mcp_server.register_all import cmd_register_all
 
         rc = cmd_register_all(

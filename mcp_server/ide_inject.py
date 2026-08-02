@@ -921,7 +921,7 @@ def _inject_claude_desktop(
         "CODEVIRA_IDE": "claude_desktop",
     }
 
-    # v3.8.0 (D000131): Claude Desktop is NOT project-aware — it reads ONE global
+    # 4.0 (D000131): Claude Desktop is NOT project-aware — it reads ONE global
     # config with no cwd. A bare "codevira" key means the SECOND project's setup
     # overwrites the first, so Desktop points every project at whichever was set
     # up last (the wrong-project memory bleed). Mint a named per-project entry,

@@ -553,7 +553,7 @@ def _mig_v370_dedupe_registration(project_root: Path) -> bool:
 def _mig_v380_worktree_memory_merge(project_root: Path) -> bool:
     """Fold a git worktree's OWN ``.codevira/`` into the MAIN worktree's store.
 
-    v3.8.0 (D00012A) routes a worktree's memory to the main worktree's
+    4.0 (D00012A) routes a worktree's memory to the main worktree's
     ``.codevira/``, so a worktree's *pre-existing* local store would be
     orphaned (written by an older codevira, no longer read). This migrates it:
 

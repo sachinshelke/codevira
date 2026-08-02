@@ -544,6 +544,43 @@ class TestStartBackgroundFullIndex:
 
         callback.assert_called_once_with("error")
 
+    def test_rebuild_is_invoked_quiet(self):
+        """The background thread must ask cmd_full_rebuild for SILENCE.
+
+        This thread runs inside the MCP server process, where sys.stdout is
+        the JSON-RPC transport — any write from here lands mid-protocol.
+        ``start_background_watcher`` already passes ``quiet=True`` into
+        ``cmd_incremental``; this is the missing half of that pair.
+        """
+        with patch.object(idx_mod, "cmd_full_rebuild") as mock_rebuild:
+            t = start_background_full_index()
+            t.join(timeout=5)
+
+        mock_rebuild.assert_called_once_with(quiet=True)
+
+    def test_background_rebuild_writes_nothing_to_stdout(self, project_env, capsys):
+        """End-to-end: a background rebuild leaves stdout untouched.
+
+        Regression for the 2026-08-01 CI failure. The real
+        ``cmd_full_rebuild`` printed ``✓ Graph built: N nodes, M edges.`` via
+        a stdout rich Console. On a daemon thread that line escapes into
+        whatever is reading stdout at the time — in CI it prefixed an
+        unrelated test's captured output and broke its ``json.loads``; in a
+        live stdio client it corrupts the JSON-RPC stream.
+        """
+        with patch(
+            "indexer.index_codebase._check_search_deps", return_value=False
+        ), patch(
+            "indexer.graph_generator.generate_graph_sqlite",
+            return_value={"nodes_total": 304, "edges_added": 0},
+        ), patch("indexer.index_codebase.SQLiteGraph"):
+            t = start_background_full_index()
+            t.join(timeout=10)
+            assert not t.is_alive(), "background index thread did not finish"
+
+        assert get_indexing_status()["status"] == "done"
+        assert capsys.readouterr().out == ""
+
 
 # ---------------------------------------------------------------------------
 # cmd_full_rebuild

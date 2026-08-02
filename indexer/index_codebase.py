@@ -469,12 +469,28 @@ def _chunk_to_document(chunk) -> tuple[str, str, dict]:
     return doc_id, document, metadata
 
 
-def cmd_full_rebuild(verbose: bool = False):
+def cmd_full_rebuild(verbose: bool = False, quiet: bool = False):
     """Full rebuild from scratch.
 
     Args:
         verbose: emit per-file decisions (matched / skipped + reason) for
                  diagnosing silent 0-chunk results. (Bug H, 2026-05-17, P10.)
+        quiet: suppress ALL console output. Required for background /
+               in-process invocations — see below.
+
+    ``quiet`` exists for the same reason ``cmd_incremental`` has it:
+    ``start_background_full_index()`` runs this function on a daemon thread
+    inside the MCP server process, where ``sys.stdout`` is the JSON-RPC
+    transport. Every rich write here (progress bars AND the completion
+    lines) would land mid-protocol and corrupt the stream — the rule
+    ``_warn_zero_chunks`` already documents. ``start_background_watcher``
+    passes ``quiet=True`` into ``cmd_incremental`` for exactly this;
+    ``cmd_full_rebuild`` had no such switch, so its output escaped.
+    Completion is still logged, so a quiet background run is observable.
+
+    Found 2026-08-01: the "✓ Graph built: N nodes" line surfacing on stdout
+    during an unrelated test (a leftover daemon thread), which is the same
+    write that corrupts a live stdio client.
     """
     from indexer.chunker import chunk_project
     from indexer.graph_generator import generate_graph_sqlite
@@ -487,7 +503,7 @@ def cmd_full_rebuild(verbose: bool = False):
         TaskProgressColumn,
     )
 
-    console = Console()
+    console = Console(quiet=quiet)
     _index_dir().mkdir(parents=True, exist_ok=True)
     db = SQLiteGraph(get_data_dir() / "graph" / "graph.db")
 
@@ -506,6 +522,11 @@ def cmd_full_rebuild(verbose: bool = False):
             str(_project_root()),
             str(get_data_dir() / "graph" / "graph.db"),
             full=True,
+        )
+        logger.info(
+            "Full rebuild (graph-only) complete: %s nodes, %s edges.",
+            result.get("nodes_total", 0),
+            result.get("edges_added", 0),
         )
         console.print(
             f"[green]✓[/green] Graph built: {result.get('nodes_total', 0)} nodes, "
@@ -684,8 +705,9 @@ def cmd_full_rebuild(verbose: bool = False):
     # sees when their config covers nothing. Logger fires unconditionally so
     # background (auto-init) invocations also leave a trace.
     if not all_chunks:
-        _warn_zero_chunks(watched_dirs, extensions)
+        _warn_zero_chunks(watched_dirs, extensions, quiet=quiet)
 
+    logger.info("Full rebuild complete: %d chunks indexed.", len(all_chunks))
     console.print(
         f"[green]✓[/green] Full rebuild complete: {len(all_chunks)} chunks indexed."
     )
@@ -1131,7 +1153,9 @@ def start_background_full_index(callback=None) -> "threading.Thread":
 
         try:
             with _chroma_write_lock:
-                cmd_full_rebuild()
+                # quiet=True: this thread lives inside the MCP server process,
+                # where stdout is the JSON-RPC transport. See cmd_full_rebuild.
+                cmd_full_rebuild(quiet=True)
             with _bg_lock:
                 _bg_status = "done"
         except Exception as e:

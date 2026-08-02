@@ -10,6 +10,7 @@ from __future__ import annotations
 import ast
 import sys
 import types
+from pathlib import Path
 from unittest.mock import patch
 
 
@@ -39,6 +40,8 @@ from indexer.chunker import (  # noqa: E402
     _get_docstring,
     _get_project_config,
     _infer_layer,
+    _load_tsconfig,
+    _resolve_ts_import,
     chunk_file,
     chunk_project,
     extract_imports,
@@ -1008,3 +1011,95 @@ class TestChunkFileMarkdownBugE:
             f"Bug E regression: lh-interface-shaped docs-only repo "
             f"produced {total_chunks} chunks (expected > 0)"
         )
+
+
+# ---------------------------------------------------------------------------
+# D000124: tsconfig path-alias (@/…) import resolution
+# ---------------------------------------------------------------------------
+
+
+class TestTsconfigAliasResolution:
+    """`_resolve_ts_import` must resolve tsconfig compilerOptions.paths aliases,
+    otherwise aliased imports drop their dependency edge and get_impact reports
+    blast_radius:0 for a heavily-imported file (D000124)."""
+
+    def setup_method(self):
+        _load_tsconfig.cache_clear()
+
+    def teardown_method(self):
+        _load_tsconfig.cache_clear()
+
+    def _make_ts_project(self, root: Path, tsconfig: str):
+        (root / "src").mkdir(parents=True, exist_ok=True)
+        (root / "src" / "objective-spec.ts").write_text("export type Spec = {};\n")
+        (root / "src" / "app.ts").write_text(
+            "import { Spec } from '@/objective-spec';\n"
+        )
+        (root / "tsconfig.json").write_text(tsconfig)
+
+    def test_alias_import_resolves_to_file(self, tmp_path):
+        """`@/objective-spec` must resolve to src/objective-spec.ts via the
+        `@/*` -> `src/*` alias. FAILS before the tsconfig-paths fix."""
+        self._make_ts_project(
+            tmp_path,
+            '{"compilerOptions": {"baseUrl": ".", "paths": {"@/*": ["src/*"]}}}',
+        )
+        resolved = _resolve_ts_import("@/objective-spec", tmp_path / "src", tmp_path)
+        assert resolved is not None, (
+            "aliased import '@/objective-spec' resolved to None — the dependency "
+            "edge would be dropped and blast_radius would read 0 (D000124)"
+        )
+        assert resolved.replace("\\", "/") == "src/objective-spec.ts"
+
+    def test_baseurl_relative_paths(self, tmp_path):
+        """paths targets are relative to baseUrl: baseUrl='src', '@/*' -> '*'."""
+        self._make_ts_project(
+            tmp_path,
+            '{"compilerOptions": {"baseUrl": "src", "paths": {"@/*": ["*"]}}}',
+        )
+        resolved = _resolve_ts_import("@/objective-spec", tmp_path / "src", tmp_path)
+        assert resolved is not None
+        assert resolved.replace("\\", "/") == "src/objective-spec.ts"
+
+    def test_jsonc_comments_and_trailing_commas_tolerated(self, tmp_path):
+        """Real tsconfig files are JSONC — comments + trailing commas must parse."""
+        self._make_ts_project(
+            tmp_path,
+            "{\n"
+            "  // project config\n"
+            '  "compilerOptions": {\n'
+            '    "baseUrl": ".",\n'
+            '    "paths": { "@/*": ["src/*"], },  /* alias */\n'
+            "  },\n"
+            "}\n",
+        )
+        resolved = _resolve_ts_import("@/objective-spec", tmp_path / "src", tmp_path)
+        assert resolved is not None
+        assert resolved.replace("\\", "/") == "src/objective-spec.ts"
+
+    def test_index_barrel_via_alias(self, tmp_path):
+        """`@/specs` -> src/specs/index.ts (directory barrel)."""
+        (tmp_path / "src" / "specs").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "src" / "specs" / "index.ts").write_text("export const x = 1;\n")
+        (tmp_path / "tsconfig.json").write_text(
+            '{"compilerOptions": {"baseUrl": ".", "paths": {"@/*": ["src/*"]}}}'
+        )
+        resolved = _resolve_ts_import("@/specs", tmp_path / "src", tmp_path)
+        assert resolved is not None
+        assert resolved.replace("\\", "/") == "src/specs/index.ts"
+
+    def test_unmatched_alias_returns_none(self, tmp_path):
+        """A specifier that matches no alias and no file still returns None."""
+        self._make_ts_project(
+            tmp_path,
+            '{"compilerOptions": {"baseUrl": ".", "paths": {"@/*": ["src/*"]}}}',
+        )
+        assert _resolve_ts_import("lodash", tmp_path / "src", tmp_path) is None
+
+    def test_relative_import_still_resolves(self, tmp_path):
+        """Regression guard: the refactored relative branch still works."""
+        (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "src" / "objective-spec.ts").write_text("export type S = {};\n")
+        resolved = _resolve_ts_import("./objective-spec", tmp_path / "src", tmp_path)
+        assert resolved is not None
+        assert resolved.replace("\\", "/") == "src/objective-spec.ts"

@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import ast
 import functools
+import json
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
@@ -159,6 +161,142 @@ def _extract_imports_treesitter(file_path: str, project_root: str) -> list[str]:
     return results
 
 
+def _strip_jsonc(text: str) -> str:
+    """Strip JSONC extras (// and /* */ comments, trailing commas) so a
+    tsconfig.json/jsconfig.json parses with json.loads. String-aware: comment
+    markers inside string values (e.g. the `/*` in a path alias "src/*") are
+    left intact — a regex stripper would corrupt those."""
+    out: list[str] = []
+    i, n = 0, len(text)
+    in_str = False
+    quote = ""
+    while i < n:
+        c = text[i]
+        if in_str:
+            out.append(c)
+            if c == "\\" and i + 1 < n:  # keep escaped char verbatim
+                out.append(text[i + 1])
+                i += 2
+                continue
+            if c == quote:
+                in_str = False
+            i += 1
+            continue
+        if c in ('"', "'"):
+            in_str = True
+            quote = c
+            out.append(c)
+            i += 1
+            continue
+        if c == "/" and i + 1 < n and text[i + 1] == "/":  # // line comment
+            while i < n and text[i] not in "\r\n":
+                i += 1
+            continue
+        if c == "/" and i + 1 < n and text[i + 1] == "*":  # /* block */
+            i += 2
+            while i + 1 < n and not (text[i] == "*" and text[i + 1] == "/"):
+                i += 1
+            i += 2
+            continue
+        out.append(c)
+        i += 1
+    return re.sub(r",(\s*[}\]])", r"\1", "".join(out))  # trailing comma
+
+
+@functools.lru_cache(maxsize=None)
+def _load_tsconfig(
+    project_root_str: str,
+) -> tuple[str, tuple[tuple[str, tuple[str, ...]], ...]]:
+    """Read compilerOptions.baseUrl + paths from tsconfig.json (or jsconfig.json)
+    at the project root. Returns (base_url, paths) where base_url is a
+    project-root-relative string ('' if unset) and paths is a hashable tuple of
+    (alias_pattern, (target, ...)). Returns ('', ()) on any failure.
+
+    `extends` chains and non-root tsconfig files are NOT followed (a known
+    limitation — see D000124); this covers the common single-root case.
+    """
+    root = Path(project_root_str)
+    for name in ("tsconfig.json", "jsconfig.json"):
+        cfg_path = root / name
+        if not cfg_path.is_file():
+            continue
+        try:
+            data = json.loads(_strip_jsonc(cfg_path.read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            continue
+        opts = (data or {}).get("compilerOptions") or {}
+        base_url = opts.get("baseUrl") or ""
+        raw_paths = opts.get("paths") or {}
+        paths: list[tuple[str, tuple[str, ...]]] = []
+        if isinstance(raw_paths, dict):
+            for pattern, targets in raw_paths.items():
+                if isinstance(targets, list):
+                    paths.append(
+                        (pattern, tuple(t for t in targets if isinstance(t, str)))
+                    )
+        return str(base_url), tuple(paths)
+    return "", ()
+
+
+def _match_alias(pattern: str, raw_module: str) -> str | None:
+    """If `raw_module` matches a tsconfig path `pattern`, return the text captured
+    by the `*` wildcard ('' for an exact, wildcard-free match); else None."""
+    if "*" in pattern:
+        prefix, _, suffix = pattern.partition("*")
+        if (
+            raw_module.startswith(prefix)
+            and raw_module.endswith(suffix)
+            and len(raw_module) >= len(prefix) + len(suffix)
+        ):
+            end = len(raw_module) - len(suffix) if suffix else len(raw_module)
+            return raw_module[len(prefix) : end]
+        return None
+    return "" if raw_module == pattern else None
+
+
+def _expand_alias(
+    raw_module: str, base_url: str, paths: tuple[tuple[str, tuple[str, ...]], ...]
+) -> list[str]:
+    """Turn an aliased specifier into candidate project-root-relative base paths
+    (no extension) using tsconfig baseUrl + paths."""
+    out: list[str] = []
+    for pattern, targets in paths:
+        captured = _match_alias(pattern, raw_module)
+        if captured is None:
+            continue
+        for tgt in targets:
+            sub = tgt.replace("*", captured) if "*" in tgt else tgt
+            rel = str(Path(base_url) / sub) if base_url else sub
+            if rel not in out:
+                out.append(rel)
+    return out
+
+
+def _probe_ts_file(base_no_ext: Path, project_root: Path) -> str | None:
+    """Probe TS/JS extension + index-file candidates for a base path and return
+    the first existing one, project-root-relative. project_root is resolved so
+    relative_to() matches even when it points through a symlink (e.g. macOS
+    /var -> /private/var)."""
+    root = project_root.resolve()
+    candidates = [
+        base_no_ext.with_name(base_no_ext.name + ".ts"),
+        base_no_ext.with_name(base_no_ext.name + ".tsx"),
+        base_no_ext.with_name(base_no_ext.name + ".js"),
+        base_no_ext.with_name(base_no_ext.name + ".jsx"),
+        base_no_ext / "index.ts",
+        base_no_ext / "index.tsx",
+        base_no_ext / "index.js",
+    ]
+    for c in candidates:
+        resolved = c.resolve()
+        if resolved.exists():
+            try:
+                return str(resolved.relative_to(root))
+            except ValueError:
+                continue
+    return None
+
+
 def _resolve_ts_import(
     raw_module: str, file_dir: Path, project_root: Path
 ) -> str | None:
@@ -168,24 +306,23 @@ def _resolve_ts_import(
     """
     # TypeScript/JS: relative imports like './foo' or '../bar'
     if raw_module.startswith("."):
-        # Resolve relative to the importing file's directory
-        candidates = [
-            file_dir / f"{raw_module}.ts",
-            file_dir / f"{raw_module}.tsx",
-            file_dir / f"{raw_module}.js",
-            file_dir / f"{raw_module}.jsx",
-            file_dir / raw_module / "index.ts",
-            file_dir / raw_module / "index.tsx",
-            file_dir / raw_module / "index.js",
-        ]
-        for c in candidates:
-            resolved = c.resolve()
-            if resolved.exists():
-                try:
-                    return str(resolved.relative_to(project_root))
-                except ValueError:
-                    continue
+        hit = _probe_ts_file(file_dir / raw_module, project_root)
+        if hit:
+            return hit
         return None
+
+    # Non-relative TS/JS: try tsconfig path aliases (@/foo, ~/bar) + baseUrl
+    # before falling back to a literal project-root probe. Without this, aliased
+    # imports resolve to nothing and their dependency edges are dropped (D000124).
+    base_url, ts_paths = _load_tsconfig(str(project_root))
+    for base_rel in _expand_alias(raw_module, base_url, ts_paths):
+        hit = _probe_ts_file(project_root / base_rel, project_root)
+        if hit:
+            return hit
+    if base_url:
+        hit = _probe_ts_file(project_root / base_url / raw_module, project_root)
+        if hit:
+            return hit
 
     # Non-relative: try as a project-local path (e.g. 'src/utils/foo')
     # Check common extensions

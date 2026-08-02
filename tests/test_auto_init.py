@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sys
+import threading
 import time
 import types
 import yaml
@@ -176,6 +177,32 @@ def _bg_init_patches(
     return stack
 
 
+def _join_indexing_thread(timeout: float = 10.0) -> None:
+    """Wait for the background init thread this test started.
+
+    Call this INSIDE the ``with _bg_init_patches(...)`` block. Two reasons,
+    both load-bearing:
+
+    * The patches must still be active while the thread runs. Pre-fix, the
+      ``with`` block exited the instant ``ensure_project_initialized`` returned
+      — so the thread went on to call the REAL ``auto_detect_project`` /
+      ``generate_graph_sqlite`` / ``start_background_full_index``.
+    * The thread must not outlive the test. ``_update_progress`` writes through
+      the module global ``_progress``; a thread still running during a LATER
+      test writes its status into that test's freshly-reset record. That is
+      what made ``TestGetInitProgress::test_default_state`` read ``"indexing"``
+      instead of ``"not_started"`` in CI run 30764652633. A setup-time reset
+      cannot fix it — the reset and the stale write are concurrent.
+
+    tests/conftest.py's ``_no_leaked_background_threads`` fixture is the
+    backstop that catches anyone who forgets.
+    """
+    t = ai._indexing_thread
+    if t is not None:
+        t.join(timeout=timeout)
+        assert not t.is_alive(), "background init thread did not finish in time"
+
+
 # ---------------------------------------------------------------
 # ensure_project_initialized()
 # ---------------------------------------------------------------
@@ -195,6 +222,7 @@ class TestEnsureProjectInitialized:
             "mcp_server.paths.get_data_dir", return_value=data_dir
         ), _bg_init_patches(DEFAULT_DETECTED):
             status = ensure_project_initialized(project_root)
+            _join_indexing_thread()
 
         assert isinstance(status, InitStatus)
         assert status.ready is False
@@ -282,6 +310,7 @@ class TestEnsureProjectInitialized:
             s1 = ensure_project_initialized(project_root)
             s2 = ensure_project_initialized(project_root)
             s3 = ensure_project_initialized(project_root)
+            _join_indexing_thread()
 
         # First call starts init; second and third hit fast-path
         assert ai._init_started is True
@@ -349,6 +378,7 @@ class TestEnsureProjectInitializedOptInGate:
             "mcp_server.paths.get_data_dir", return_value=data_dir
         ), _bg_init_patches(DEFAULT_DETECTED):
             status = ensure_project_initialized(project_root)
+            _join_indexing_thread()
 
         # Opted-in -> the gate allows -> background init runs.
         assert status.indexing is True
@@ -556,6 +586,7 @@ class TestBackgroundThread:
             "mcp_server.paths.get_data_dir", return_value=data_dir
         ), _bg_init_patches(DEFAULT_DETECTED):
             ensure_project_initialized(project_root)
+            _join_indexing_thread()
 
         assert ai._indexing_thread is not None
         assert ai._indexing_thread.daemon is True
@@ -573,6 +604,83 @@ class TestBackgroundThread:
             _run_background_init(project_root, data_dir)
 
         assert ai._progress["status"] == "ready"
+
+    def test_late_write_cannot_corrupt_a_rebound_progress_record(self, tmp_path):
+        """A still-running init must not write into a progress record it was
+        not launched with.
+
+        Regression guard for the cross-test race behind CI run 30764652633:
+        ``TestGetInitProgress::test_default_state`` failed on the Python 3.10
+        job with ``assert 'indexing' == 'not_started'`` while 3.11-3.13 and the
+        release gauntlet passed on the same commit (c1efd7e).
+
+        The mechanism: ``_update_progress`` re-resolved the module global
+        ``_progress`` on every write, so an auto-init thread started by an
+        EARLIER test kept writing through that name. When this file's autouse
+        fixture rebound ``ai._progress`` to a fresh dict, the still-running
+        thread's next ``status="indexing"`` landed in the record the CURRENT
+        test was about to read. Only the timing differed between Python
+        versions, which is why resets and ordering fixes could never help —
+        the reset and the stale write are concurrent by construction.
+
+        Here the thread is parked inside ``auto_detect_project`` while we
+        rebind the global, exactly as the fixture would. Its writes must go to
+        the record it was handed, leaving the new one pristine.
+        """
+        project_root = tmp_path / "proj"
+        project_root.mkdir()
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+
+        released = threading.Event()
+
+        def _parked_detect(_root):
+            # ensure_project_initialized also calls detect SYNCHRONOUSLY on the
+            # calling thread (the Bug 21a self-heal via repair_incomplete_init),
+            # so park only the background run — parking the main thread would
+            # just stall the test for the full timeout.
+            if threading.current_thread().name == "codevira-auto-init":
+                assert released.wait(10), "test never released the background thread"
+            return DEFAULT_DETECTED
+
+        with patch(
+            "mcp_server.paths.get_project_root", return_value=project_root
+        ), patch(
+            "mcp_server.paths.get_data_dir", return_value=data_dir
+        ), _bg_init_patches(DEFAULT_DETECTED), patch(
+            "mcp_server.detect.auto_detect_project", side_effect=_parked_detect
+        ):
+            ensure_project_initialized(project_root)
+            launched_record = ai._progress
+
+            # Stand in for the autouse fixture's between-tests reset.
+            ai._progress = {
+                "status": "not_started",
+                "files_indexed": 0,
+                "total_files": 0,
+                "elapsed_seconds": 0.0,
+                "error": None,
+            }
+            next_test_record = ai._progress
+
+            released.set()
+            _join_indexing_thread()
+
+        # The record the next test would read must be pristine. This is the
+        # exact assertion CI made: `assert 'indexing' == 'not_started'`.
+        assert next_test_record["status"] == "not_started", (
+            "a still-running auto-init wrote into a progress record it was not "
+            f"launched with (status={next_test_record['status']!r}) — this is "
+            "the CI run 30764652633 failure"
+        )
+        assert next_test_record["files_indexed"] == 0
+        assert next_test_record["total_files"] == 0
+        assert next_test_record["error"] is None
+        assert get_init_progress()["status"] == "not_started"
+
+        # ...and the thread still reported its real transitions somewhere, so
+        # this is genuine isolation and not a silently dropped write.
+        assert launched_record["status"] == "ready"
 
     def test_creates_directory_structure(self, tmp_path):
         """Background init creates graph, codeindex, and logs dirs.

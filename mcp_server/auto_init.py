@@ -177,9 +177,12 @@ def ensure_project_initialized(project_root: Path | None = None) -> InitStatus:
         with _progress_lock:
             _progress["status"] = "initializing"
 
+        # Pin the thread's progress writes to the record that exists NOW.
+        # See _update_progress for why the thread must not re-resolve the
+        # module global on every write.
         _indexing_thread = threading.Thread(
             target=_run_background_init,
-            args=(root, data_dir),
+            args=(root, data_dir, _progress),
             daemon=True,
             name="codevira-auto-init",
         )
@@ -190,8 +193,19 @@ def ensure_project_initialized(project_root: Path | None = None) -> InitStatus:
         return InitStatus(ready=False, indexing=True)
 
 
-def _run_background_init(project_root: Path, data_dir: Path) -> None:
-    """Background thread: detect project, write config, build graph, index files."""
+def _run_background_init(
+    project_root: Path, data_dir: Path, progress: dict | None = None
+) -> None:
+    """Background thread: detect project, write config, build graph, index files.
+
+    Args:
+        progress: The progress record this run reports into. Supplied by
+            :func:`ensure_project_initialized` when it launches the thread, so
+            a run that outlives the module state it was started under writes
+            into its own (now-abandoned) record rather than the live one.
+            ``None`` — the default used by direct/synchronous callers — writes
+            to whatever ``_progress`` is bound to at each write.
+    """
     global _start_time
 
     try:
@@ -206,10 +220,10 @@ def _run_background_init(project_root: Path, data_dir: Path) -> None:
         rejection = is_invalid_project_root(project_root)
         if rejection:
             logger.warning("Auto-init refused: %s", rejection)
-            _update_progress(status="error", error=rejection)
+            _update_progress(progress, status="error", error=rejection)
             return
 
-        _update_progress(status="initializing")
+        _update_progress(progress, status="initializing")
 
         # Step 1: Auto-detect project settings
         from mcp_server.detect import auto_detect_project
@@ -237,7 +251,7 @@ def _run_background_init(project_root: Path, data_dir: Path) -> None:
         _register_global(data_dir, project_root, detected)
 
         # Step 6: Generate graph (fast — no ML deps required)
-        _update_progress(status="indexing")
+        _update_progress(progress, status="indexing")
         try:
             from indexer.graph_generator import generate_graph_sqlite
 
@@ -253,7 +267,7 @@ def _run_background_init(project_root: Path, data_dir: Path) -> None:
             from mcp_server.gitignore import discover_source_files
 
             files = discover_source_files(project_root)
-            _update_progress(total_files=len(files))
+            _update_progress(progress, total_files=len(files))
         except Exception:
             files = []
 
@@ -263,7 +277,7 @@ def _run_background_init(project_root: Path, data_dir: Path) -> None:
         try:
             from indexer.index_codebase import start_background_full_index
 
-            _update_progress(status="indexing")
+            _update_progress(progress, status="indexing")
             idx_thread = start_background_full_index()
             # Wait up to 5 minutes; if ChromaDB or embedding model hangs we still
             # surface "ready" so tool calls aren't blocked indefinitely.
@@ -273,13 +287,13 @@ def _run_background_init(project_root: Path, data_dir: Path) -> None:
                     "Auto-init: semantic indexing timed out after 5 min; "
                     "continuing in graph-only mode"
                 )
-            _update_progress(files_indexed=len(files), status="ready")
+            _update_progress(progress, files_indexed=len(files), status="ready")
         except ImportError:
             # ChromaDB not installed — graph-only mode is fine
-            _update_progress(files_indexed=0, status="ready")
+            _update_progress(progress, files_indexed=0, status="ready")
         except Exception as e:
             logger.warning("Auto-init: semantic indexing failed (non-fatal): %s", e)
-            _update_progress(status="ready")
+            _update_progress(progress, status="ready")
 
         logger.info(
             "Auto-init complete for %s (%.1fs)",
@@ -289,12 +303,26 @@ def _run_background_init(project_root: Path, data_dir: Path) -> None:
 
     except Exception as e:
         logger.error("Auto-init failed: %s", e)
-        _update_progress(status="error", error=str(e))
+        _update_progress(progress, status="error", error=str(e))
 
 
-def _update_progress(**kwargs) -> None:
+def _update_progress(_record: dict | None = None, /, **kwargs) -> None:
+    """Merge ``kwargs`` into a progress record under ``_progress_lock``.
+
+    ``_record`` pins the write to one specific dict. Without it every write
+    re-resolves the module global ``_progress``, so a background init that is
+    still running after that global has been rebound underneath it (a test
+    harness resetting module state between tests, a re-init after fork) writes
+    its stale status into the CURRENT record — a cross-boundary race no amount
+    of resetting can prevent, because the reset and the write are concurrent.
+
+    :func:`_run_background_init` therefore passes the record it was launched
+    with, and its late writes land in the abandoned dict. Callers that omit
+    ``_record`` (direct/synchronous callers, tests) keep the old behaviour of
+    writing to whatever ``_progress`` currently names.
+    """
     with _progress_lock:
-        _progress.update(kwargs)
+        (_progress if _record is None else _record).update(kwargs)
 
 
 def _write_config(data_dir: Path, detected: dict, project_root: Path) -> None:

@@ -357,6 +357,36 @@ every startup, so it self-heals.
 
 ---
 
+### Fixed — a background auto-init could report progress into a record it no longer owned
+
+`auto_init._update_progress` re-resolved the module global `_progress` on every
+write, so an init run that was still going after that global had been rebound
+underneath it wrote its stale status into the *current* record. Production never
+rebinds `_progress`, so runtime behaviour is unchanged — but any harness that
+re-initialises module state (the test suite does, between tests) could have a
+finished-with run stamp `status="indexing"` over a fresh record.
+
+`ensure_project_initialized` now hands the thread the progress record that
+exists when it launches, and `_update_progress` takes an optional
+positional-only `_record`. Late writes from a superseded run land in their own
+abandoned dict instead of the live one.
+
+This surfaced as two intermittent CI failures that no amount of state-resetting
+could fix, because the reset and the stale write are concurrent by construction:
+`test_auto_init.py::TestGetInitProgress::test_default_state`
+(`assert 'indexing' == 'not_started'`, Python 3.10 job only) and
+`test_tools_graph.py::TestGetNode::test_get_node_not_indexed_returns_null_counts`
+(`KeyError: 'not_indexed'`, order-independent).
+
+### Fixed — the test suite now fails any test that leaks a background thread
+
+Every thread codevira starts is named `codevira-*`. A new autouse fixture joins
+any that are still alive at teardown and fails the test if one survives, so a
+leaked thread can no longer run inside a later, unrelated test — mutating its
+module state and writing to the filesystem after that test's `$HOME` and
+`get_data_dir` patches have been torn down. Set
+`CODEVIRA_TEST_THREAD_JOIN_TIMEOUT=0` to run it as a zero-grace audit.
+
 ## [3.7.1] — 2026-07-20
 
 ### Fixed — the centralization migration silently orphaned ALL memory (critical)

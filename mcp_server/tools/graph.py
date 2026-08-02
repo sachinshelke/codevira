@@ -142,6 +142,24 @@ def get_node(file_path: str, full: bool = False) -> dict[str, Any]:
     db.close()
 
     if not node:
+        # 2026-05-18 v2.1.2 Item 2 (P1+P10 trust-recovery): for ALL
+        # not-found cases, add `not_indexed: True` and return `null` for
+        # numeric count fields (rules_count, dependencies_count,
+        # key_functions_count, blast_radius). Previously these were absent
+        # OR returned 0 once the file was indexed-but-empty — the same
+        # value for "no rules" and "never indexed", which misled agents.
+        # See `docs/plans/v2.1.2.md` Item 2 for details.
+        # 2026-08-03: hoisted above the auto-init check — the
+        # initializing/indexing early return below is also a not-found
+        # return and was silently exempt from the contract, so an agent
+        # that called get_node while background indexing was in flight got
+        # a response with neither `not_indexed` nor the counts.
+        _not_indexed_counts = {
+            "rules_count": None,
+            "dependencies_count": None,
+            "key_functions_count": None,
+        }
+
         # v1.6: Check if auto-init is running
         try:
             from mcp_server.auto_init import get_init_progress
@@ -150,8 +168,10 @@ def get_node(file_path: str, full: bool = False) -> dict[str, Any]:
             if prog["status"] in ("initializing", "indexing"):
                 return {
                     "found": False,
+                    "not_indexed": True,
                     "status": "initializing",
                     "file_path": file_path,
+                    **_not_indexed_counts,
                     "message": "Graph is being built in the background. Try again in a few seconds.",
                     "hint": "Try the same get_node call again in a few seconds.",
                 }
@@ -180,18 +200,6 @@ def get_node(file_path: str, full: bool = False) -> dict[str, Any]:
         except Exception:
             pass
 
-        # 2026-05-18 v2.1.2 Item 2 (P1+P10 trust-recovery): for ALL three
-        # not-found cases, add `not_indexed: True` and return `null` for
-        # numeric count fields (rules_count, dependencies_count,
-        # key_functions_count, blast_radius). Previously these were absent
-        # OR returned 0 once the file was indexed-but-empty — the same
-        # value for "no rules" and "never indexed", which misled agents.
-        # See `docs/plans/v2.1.2.md` Item 2 for details.
-        _not_indexed_counts = {
-            "rules_count": None,
-            "dependencies_count": None,
-            "key_functions_count": None,
-        }
         if not graph_db_present:
             return {
                 "found": False,

@@ -50,23 +50,50 @@ def cmd_search(
         output_json: emit the raw tool payload as JSON instead of a table.
 
     Returns:
-        0 on success (including zero matches — not an error), 2 on empty query.
+        0 on success (including zero matches — not an error), 2 on empty query,
+        1 if the search backend failed (``--json`` still emits a JSON object).
+
+    ``--json`` contract: **stdout always carries exactly one JSON object.**
+    Never nothing, never a bare traceback. A caller that pipes this into
+    ``jq`` (or ``json.loads``) gets a parseable payload on every exit path,
+    with the failure named in ``error`` rather than showing up as
+    "Expecting value: line 1 column 1 (char 0)" three layers away. Human-
+    readable diagnostics go to stderr so they never pollute the document.
     """
     q = (query or "").strip()
     if not q:
-        print(
+        usage = (
             "Usage: codevira search <query> [--all-projects] [--limit N] "
-            "[--full] [--json]",
-            file=sys.stderr,
+            "[--full] [--json]"
         )
+        print(usage, file=sys.stderr)
+        if output_json:
+            print(_error_payload(query or "", "empty query", usage))
         return 2
 
     limit = _clamp_limit(limit)
 
     from mcp_server.tools.search import search_decisions
 
-    result = search_decisions(q, limit=limit, full=full, all_projects=all_projects)
-    rows: list[dict[str, Any]] = result.get("results", [])
+    try:
+        result = search_decisions(q, limit=limit, full=full, all_projects=all_projects)
+    except Exception as exc:  # noqa: BLE001 — a failed search is reported, not raised
+        logger.warning("codevira search: backend failed for %r: %s", q, exc)
+        print(f"Search failed: {exc}", file=sys.stderr)
+        if output_json:
+            print(_error_payload(q, f"{type(exc).__name__}: {exc}"))
+        return 1
+
+    # Defensive: a backend that returns a non-dict (or None) must not turn
+    # into an AttributeError here, nor into empty stdout under --json.
+    if not isinstance(result, dict):
+        logger.warning(
+            "codevira search: backend returned %s, expected dict", type(result).__name__
+        )
+        result = {"query": q, "count": 0, "results": []}
+
+    raw_rows = result.get("results")
+    rows: list[dict[str, Any]] = raw_rows if isinstance(raw_rows, list) else []
 
     if output_json:
         print(json.dumps(result, indent=2, default=str))
@@ -74,6 +101,24 @@ def cmd_search(
 
     _render_table(q, rows, all_projects=all_projects)
     return 0
+
+
+def _error_payload(query: str, error: str, hint: str | None = None) -> str:
+    """Serialize the zero-results-plus-error object the ``--json`` path emits.
+
+    Same top-level shape as a successful payload (``query``/``count``/
+    ``results``) so a consumer can read ``count`` unconditionally and only
+    look at ``error`` when it's present.
+    """
+    payload: dict[str, Any] = {
+        "query": query,
+        "count": 0,
+        "results": [],
+        "error": error,
+    }
+    if hint:
+        payload["hint"] = hint
+    return json.dumps(payload, indent=2, default=str)
 
 
 def _render_table(

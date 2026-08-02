@@ -7,6 +7,38 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [Unreleased]
+
+### Fixed — a background index thread wrote to the MCP stdio transport
+
+`start_background_full_index()` runs `cmd_full_rebuild()` on a daemon thread
+inside the MCP server process, where `sys.stdout` **is** the JSON-RPC
+transport. `cmd_full_rebuild` rendered its progress bars and its
+`✓ Graph built: N nodes, M edges.` line to a stdout `rich` Console, so an
+auto-init rebuild could inject text mid-protocol and corrupt the stream for
+any stdio client.
+
+`cmd_incremental` already took a `quiet` flag and `start_background_watcher`
+already passed `quiet=True`; `cmd_full_rebuild` was the missing half of that
+pair. It now accepts `quiet` (which also mutes the `rich` Progress bars — they
+share the console) and the background caller passes `quiet=True`. Completion
+is logged via `logger.info`, so a quiet background run stays observable.
+`codevira index --full` and `codevira init` output are unchanged.
+
+Surfaced as an order-dependent CI failure: the stray line landed in an
+unrelated test's captured stdout and broke its `json.loads`.
+
+### Fixed — `codevira search --json` could emit a non-JSON stdout
+
+A machine-readable mode that emits nothing on failure turns a local problem
+into an `Expecting value: line 1 column 1 (char 0)` several layers from the
+cause. `--json` now writes exactly one JSON object on **every** exit path: a
+backend exception yields `{query, count: 0, results: [], error}` with exit
+code 1, a non-dict backend result is tolerated, and all human-readable
+diagnostics go to stderr where they cannot pollute the document.
+
+---
+
 ## [3.7.1] — 2026-07-20
 
 ### Fixed — the centralization migration silently orphaned ALL memory (critical)

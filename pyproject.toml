@@ -93,6 +93,13 @@ dev = [
   "pytest>=7.0",
   "pytest-asyncio>=0.21",
   "pytest-timeout>=2.1",
+  # Shuffles test order for `make test-unit-random` (a separate CI job — the
+  # default `make test-unit` stays in collection order so the local loop is
+  # reproducible). Collection order is one order out of many; a test that
+  # leaks process-global state only fails in the orders where its victim runs
+  # after it, so gating solely on collection order cannot see that class of
+  # bug. Three such leaks were invisible to CI until 2026-08-02.
+  "pytest-randomly>=3.12",
   # Upper bound is load-bearing. This repo carries NO [tool.ruff] config, so
   # `make lint` inherits whatever rule set the installed version defaults to
   # — which means a ruff release can turn CI red with no commit of ours. That
@@ -138,3 +145,11 @@ mcp_server = ["data/**/*", "data/*", "graph/*.html"]
 markers = [
     "integration: end-to-end / dispatcher / wheel-install tests (slower; opt-in)",
 ]
+# pytest-randomly auto-enables the moment it is installed, which would silently
+# shuffle EVERY existing command — `pytest`, `make test-unit`, `make test-e2e`,
+# the release gauntlet. Ordering coverage is worth having (see
+# `make test-unit-random`) but it should be a job you opt into, not a property
+# that changes under a `pip install`. Default off here; `-p randomly` on the
+# command line re-enables it (a later `-p <name>` overrides an earlier
+# `-p no:<name>`), which is exactly what `test-unit-random` passes.
+addopts = ["-p", "no:randomly"]

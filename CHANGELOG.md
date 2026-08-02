@@ -9,6 +9,55 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Fixed — test suite: three process-global leaks made tests order-dependent
+
+Seven tests passed in collection order — the order CI and `make test-unit` use
+— and failed under a randomized order, so no gate could see them. An eighth
+and ninth passed *vacuously*. Three leaks in the test harness, not in shipped
+code:
+
+- **`tests/test_index_codebase.py` mutated the real `rich` modules.** Two
+  helpers built fake `rich` sub-modules for `patch.dict(sys.modules, ...)`,
+  but when the real module was already imported — always, since `rich>=13` is
+  a hard dependency — they assigned `Console`/`Table`/`Panel` straight onto it.
+  `patch.dict` restores the `sys.modules` *mapping*; it cannot undo an
+  in-place attribute mutation on a module it never owned. Once those tests had
+  run, every later test in the process rendered through a `MagicMock`:
+  `cmd_status` output came back empty, or with `<MagicMock id=...>` where the
+  table belonged. Replaced with one `patch.object`-based context manager, which
+  unwinds. The `_restore_real_rich` fixture that partially papered over this
+  (it reloaded `rich.console`, never `rich.table` / `rich.panel`) is gone.
+- **`crash_logger`'s two module-level caches survived across tests.** `_logger`
+  memoises a `RotatingFileHandler` bound to `<global_home>/logs/crashes.log` at
+  first use, and every test gets a different fake global home — so the first
+  test to record a crash kept every later `log_crash()` writing into *its* tmp
+  dir. `_recent_crashes`, the 60-second duplicate-suppression window, has the
+  same problem: the whole suite runs inside one window, so two tests raising
+  the same placeholder exception share a signature and the later write is
+  silently dropped. Both are now cleared per-test by the autouse
+  `_isolate_global_home` fixture.
+- **`mcp_server.server._is_http_transport` latched `True` for the session.**
+  `run_http_server()` sets it and never unsets it — correct in production, one
+  process serves one transport — but once `tests/test_http_server.py` had run,
+  `_bind_project_from_client_roots` short-circuited for every later test. The
+  two positive cases in `tests/test_binding_e2e.py` failed; the two negative
+  cases ("must NOT bind") passed for the wrong reason, which is the more
+  dangerous half. A new autouse fixture clears it, and `_roots_bind_attempted`,
+  per test.
+
+Regression guards added for each; each fails if its fix is reverted.
+
+### Added — a shuffled-order CI job (`make test-unit-random`)
+
+Contributor-facing. `pytest-randomly` joins `[dev]`, and CI gains a
+`test-random-order` job that runs the unit suite in a random order — the check
+that would have caught all three leaks above years earlier. It is deliberately
+**off by default**: the plugin auto-enables the moment it is installed, so
+`addopts = ["-p", "no:randomly"]` keeps `pytest`, `make test-unit`,
+`make test-e2e` and the release gauntlet in collection order, and only
+`make test-unit-random` opts back in. On failure pytest-randomly prints the
+seed it chose; reproduce with `--randomly-seed=<n>`.
+
 ### Fixed — a background index thread wrote to the MCP stdio transport
 
 `start_background_full_index()` runs `cmd_full_rebuild()` on a daemon thread

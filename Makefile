@@ -11,7 +11,7 @@
 # The Makefile is intentionally simple — every command is one shell
 # call. No magic, no recursion. Easy to read, easy to override.
 
-.PHONY: help install dev test test-unit test-e2e lint format type-check \
+.PHONY: help install dev test test-unit test-unit-random test-e2e lint format type-check \
         release-gauntlet release-evidence release-verify-version \
         release-build release-dry-run release-publish release-smoke \
         release-full ci clean
@@ -27,6 +27,7 @@ help:
 	@echo "  Quality (run on every PR):"
 	@echo "    test                 Alias for test-unit"
 	@echo "    test-unit            Run pytest unit tests (excludes e2e)"
+	@echo "    test-unit-random     Same suite in a shuffled order (catches state leaks)"
 	@echo "    test-e2e             Run end-to-end first-contact suite (G2)"
 	@echo "    lint                 Run ruff lint"
 	@echo "    format               Run ruff format"
@@ -67,6 +68,19 @@ test: test-unit
 
 test-unit:
 	$(PYTHON) -m pytest tests/ -q --ignore=tests/e2e --ignore=tests/integration
+
+# Same suite, shuffled. Collection order is ONE order out of many, and a test
+# that leaks process-global state only fails in the orders where its victim
+# runs after it — so a suite gated exclusively on collection order cannot see
+# that class of bug at all. Three such leaks (mutated `rich` modules, a
+# memoised crash logger, a latched `_is_http_transport`) sat green in CI until
+# 2026-08-02, one of them making two binding tests pass *vacuously*.
+#
+# Deliberately a SEPARATE target, not a flag on `test-unit`: the fast local
+# loop should stay reproducible. pytest-randomly prints the seed it chose;
+# reproduce any failure with `--randomly-seed=<n>`.
+test-unit-random:
+	$(PYTHON) -m pytest tests/ -q --ignore=tests/e2e --ignore=tests/integration -p randomly
 
 test-e2e:
 	$(PYTHON) -m pytest tests/e2e/test_first_contact.py tests/e2e/test_product_invariants.py tests/e2e/test_cross_tool_universality.py tests/e2e/test_v350_acceptance.py -v

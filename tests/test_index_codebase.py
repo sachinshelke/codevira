@@ -14,6 +14,7 @@ Covers:
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import os
 import threading
@@ -35,6 +36,39 @@ from indexer.index_codebase import (
     get_indexing_status,
     start_background_full_index,
 )
+
+
+@contextlib.contextmanager
+def _mock_rich():
+    """Swap rich's Console / Table / Panel for MagicMocks — reversibly.
+
+    ``rich`` is a hard runtime dependency (pyproject: ``rich>=13.0.0``), so
+    ``rich.console`` & co. are always importable. The pre-2026-08-02 shape of
+    this helper predated that: it built fake modules for ``patch.dict(
+    sys.modules, ...)`` and, when the real module was already imported (always,
+    in practice), assigned ``Console``/``Table``/``Panel`` straight onto it.
+
+    That LEAKED. ``patch.dict`` restores the ``sys.modules`` *mapping*; it
+    cannot undo an in-place attribute mutation on a module object it never
+    owned. So once any test here had run, every later test in the process
+    rendered through a MagicMock — ``cmd_status`` output came back empty (mock
+    Console) or as ``<MagicMock id=...>`` (mock Table inside a real Panel).
+    Invisible under collection order, because these classes sit last in this
+    file; under ``-p randomly`` it broke whatever happened to run after them
+    (5 failures across this file and ``test_doctor.py``).
+
+    ``patch.object`` undoes the swap on exit, so ordering stops mattering.
+    """
+    import rich.console
+    import rich.panel
+    import rich.table
+
+    with patch.object(
+        rich.console, "Console", MagicMock(return_value=MagicMock())
+    ), patch.object(
+        rich.table, "Table", MagicMock(return_value=MagicMock())
+    ), patch.object(rich.panel, "Panel", MagicMock(return_value=MagicMock())):
+        yield
 
 
 # ---------------------------------------------------------------------------
@@ -1464,31 +1498,8 @@ class TestGetEmbeddingFnExit:
 class TestCmdIncrementalLoop:
     """cmd_incremental — actual indexing loop (lines 283-323)."""
 
-    @staticmethod
-    def _rich_mods():
-        """Return fake rich sub-modules so cmd_incremental doesn't fail on import."""
-        import types
-        import sys
-
-        mods = {}
-        for name in (
-            "rich",
-            "rich.console",
-            "rich.table",
-            "rich.panel",
-            "rich.progress",
-        ):
-            if name not in sys.modules:
-                mods[name] = types.ModuleType(name)
-        # Console must be callable and return something with .print()
-        rich_console_mod = mods.get("rich.console") or sys.modules["rich.console"]
-        rich_console_mod.Console = MagicMock(return_value=MagicMock())
-        return mods
-
     def test_indexes_changed_file_successfully(self, project_env):
         """cmd_incremental processes changed files and updates the hash."""
-        import sys
-
         _project, data_dir, db = project_env
 
         src = _project / "src"
@@ -1509,7 +1520,7 @@ class TestCmdIncrementalLoop:
         mock_chunk.source_text = "def hello(): pass"
         mock_chunk.layer = "api"
 
-        with patch.dict(sys.modules, self._rich_mods()), patch(
+        with _mock_rich(), patch(
             "indexer.index_codebase._check_search_deps", return_value=True
         ), patch(
             "indexer.index_codebase._get_changed_files",
@@ -1530,15 +1541,13 @@ class TestCmdIncrementalLoop:
 
     def test_chunk_error_continues_to_next_file(self, project_env):
         """When chunk_file raises, cmd_incremental continues to the next file."""
-        import sys
-
         _project, data_dir, db = project_env
 
         mock_collection = MagicMock()
         mock_client = MagicMock()
         mock_client.get_collection.return_value = mock_collection
 
-        with patch.dict(sys.modules, self._rich_mods()), patch(
+        with _mock_rich(), patch(
             "indexer.index_codebase._get_changed_files",
             return_value=[("src/api.py", "hash1"), ("src/db.py", "hash2")],
         ), patch(
@@ -1877,53 +1886,12 @@ class TestBackgroundFullIndexCallback:
 class TestCmdStatusStaleFiles:
     """cmd_status stale file display (lines 530-535).
 
-    rich is an optional dependency not present in the test environment, so we
-    inject a minimal fake into sys.modules for each test.
+    Renders through mocked rich primitives (see ``_mock_rich``) so the
+    assertions don't depend on terminal width or ANSI styling.
     """
-
-    @staticmethod
-    def _fake_rich_mods():
-        """Return fake rich sub-modules for patch.dict injection."""
-        import sys
-        import types
-
-        mods = {}
-        for name in (
-            "rich",
-            "rich.console",
-            "rich.table",
-            "rich.panel",
-            "rich.progress",
-        ):
-            if name not in sys.modules:
-                mod = types.ModuleType(name)
-                mods[name] = mod
-
-        # Provide minimal classes that cmd_status and cmd_incremental use
-        console_mod = mods.get("rich.console") or sys.modules.get(
-            "rich.console", types.ModuleType("rich.console")
-        )
-        console_mod.Console = MagicMock(return_value=MagicMock())
-        mods["rich.console"] = console_mod
-
-        table_mod = mods.get("rich.table") or sys.modules.get(
-            "rich.table", types.ModuleType("rich.table")
-        )
-        table_mod.Table = MagicMock(return_value=MagicMock())
-        mods["rich.table"] = table_mod
-
-        panel_mod = mods.get("rich.panel") or sys.modules.get(
-            "rich.panel", types.ModuleType("rich.panel")
-        )
-        panel_mod.Panel = MagicMock(return_value=MagicMock())
-        mods["rich.panel"] = panel_mod
-
-        return mods
 
     def test_cmd_status_shows_stale_files(self, project_env):
         """cmd_status prints stale file list when files need reindexing."""
-        import sys
-
         _project, data_dir, db = project_env
         stale = [(f"src/file_{i}.py", f"hash{i}") for i in range(3)]
 
@@ -1932,7 +1900,7 @@ class TestCmdStatusStaleFiles:
         mock_collection.count.return_value = 0
         mock_client.get_collection.return_value = mock_collection
 
-        with patch.dict(sys.modules, self._fake_rich_mods()), patch(
+        with _mock_rich(), patch(
             "indexer.index_codebase.SQLiteGraph", return_value=db
         ), patch(
             "indexer.index_codebase._get_chroma_client", return_value=mock_client
@@ -1945,8 +1913,6 @@ class TestCmdStatusStaleFiles:
 
     def test_cmd_status_many_stale_files_truncated(self, project_env):
         """cmd_status truncates stale file list after 10 items."""
-        import sys
-
         _project, data_dir, db = project_env
         # 15 stale files — display first 10 then "and N more"
         stale = [(f"src/file_{i}.py", f"hash{i}") for i in range(15)]
@@ -1956,7 +1922,7 @@ class TestCmdStatusStaleFiles:
         mock_collection.count.return_value = 0
         mock_client.get_collection.return_value = mock_collection
 
-        with patch.dict(sys.modules, self._fake_rich_mods()), patch(
+        with _mock_rich(), patch(
             "indexer.index_codebase.SQLiteGraph", return_value=db
         ), patch(
             "indexer.index_codebase._get_chroma_client", return_value=mock_client
@@ -1968,37 +1934,87 @@ class TestCmdStatusStaleFiles:
             cmd_status(check_stale=True)  # opt-in to stale check
 
 
+class TestRichMockingIsReversible:
+    """Regression guard (2026-08-02) — the rich mocks must not outlive the
+    ``with`` block.
+
+    The old helpers assigned ``Console``/``Table``/``Panel`` onto the real,
+    already-imported rich modules and relied on ``patch.dict(sys.modules, ...)``
+    to undo it. It can't: it restores the mapping, never an in-place attribute
+    mutation on a module it didn't create. Every later test in the process then
+    rendered through a MagicMock, which is what made 5 tests here and in
+    ``test_doctor.py`` order-dependent (green in collection order, red under
+    ``-p randomly``).
+
+    Reproduce the pre-fix failures with::
+
+        pytest tests/test_index_codebase.py -p randomly --randomly-seed=1
+    """
+
+    def test_mock_rich_restores_the_real_classes(self):
+        import rich.console
+        import rich.panel
+        import rich.table
+
+        before = (rich.console.Console, rich.table.Table, rich.panel.Panel)
+        with _mock_rich():
+            assert isinstance(rich.console.Console, MagicMock)
+            assert isinstance(rich.table.Table, MagicMock)
+            assert isinstance(rich.panel.Panel, MagicMock)
+        assert (rich.console.Console, rich.table.Table, rich.panel.Panel) == before
+
+    def test_cmd_status_renders_through_real_rich_after_the_stale_tests(
+        self, project_env, capsys
+    ):
+        """Runs the mocking tests' own scenario, then asserts an unmocked
+        ``cmd_status`` still prints a real table. Pre-fix this saw
+        ``<MagicMock id=...>`` where the table should be."""
+        _project, _data_dir, db = project_env
+
+        mock_client = MagicMock()
+        mock_collection = MagicMock()
+        mock_collection.count.return_value = 0
+        mock_client.get_collection.return_value = mock_collection
+
+        def _patches():
+            return (
+                patch("indexer.index_codebase.SQLiteGraph", return_value=db),
+                patch(
+                    "indexer.index_codebase._get_chroma_client",
+                    return_value=mock_client,
+                ),
+                patch(
+                    "indexer.index_codebase._get_embedding_fn",
+                    return_value=MagicMock(),
+                ),
+                patch("indexer.index_codebase._get_changed_files", return_value=[]),
+            )
+
+        from indexer.index_codebase import cmd_status
+
+        with _mock_rich(), contextlib.ExitStack() as stack:
+            for cm in _patches():
+                stack.enter_context(cm)
+            cmd_status()
+        capsys.readouterr()  # discard the mocked run's (empty) output
+
+        with contextlib.ExitStack() as stack:
+            for cm in _patches():
+                stack.enter_context(cm)
+            cmd_status()
+        out = capsys.readouterr().out
+        assert "Graph Nodes" in out, f"rich stayed mocked; got:\n{out}"
+        assert "MagicMock" not in out, f"rich stayed mocked; got:\n{out}"
+
+
 # ============================================================================
 # v1.8: Zero-chunks safety hint — _warn_zero_chunks + _any_files_match +
 # integration with cmd_incremental.
 # ============================================================================
 
 
-@pytest.fixture
-def _restore_real_rich():
-    """Isolate from other tests that mutate rich.console.Console into a MagicMock.
-
-    Several tests in this file patch rich.console by grabbing the already-
-    imported module and reassigning ``Console`` to a MagicMock via
-    ``patch.dict(sys.modules, ...)``. patch.dict restores the ``sys.modules``
-    mapping but does NOT undo in-place attribute mutations on modules it
-    didn't own. This fixture reloads rich.console so our hint tests see the
-    real Console class.
-    """
-    import importlib
-    import rich.console as _rc
-
-    importlib.reload(_rc)
-    yield
-    importlib.reload(_rc)
-
-
 class TestWarnZeroChunks:
     """Unit tests for the dual stdout + logger helper."""
-
-    @pytest.fixture(autouse=True)
-    def _rich(self, _restore_real_rich):
-        pass
 
     def test_fires_on_stderr_when_not_quiet(self, capsys):
         """Hint must go to STDERR, never stdout — stdout is the MCP wire."""
@@ -2074,10 +2090,6 @@ class TestCmdIncrementalHint:
     """Verify the hint fires from cmd_incremental ONLY for a project-wide scan
     that matches nothing — not for caller-scoped incremental or for
     files-exist-but-unchanged."""
-
-    @pytest.fixture(autouse=True)
-    def _rich(self, _restore_real_rich):
-        pass
 
     def _run(
         self,

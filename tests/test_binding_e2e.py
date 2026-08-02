@@ -27,6 +27,15 @@ def _reset_binding_globals(monkeypatch) -> None:
     import mcp_server.server as srv
 
     monkeypatch.setattr(srv, "_roots_bind_attempted", False)
+    # run_http_server() latches this True for the life of the process and never
+    # unsets it, which makes _bind_project_from_client_roots a no-op. The
+    # autouse conftest fixture clears it per test; assert rather than set, so a
+    # regression there fails here loudly instead of being masked locally.
+    assert srv._is_http_transport is False, (
+        "mcp_server.server._is_http_transport leaked in True from an earlier "
+        "test (run_http_server never unsets it) — the roots-binding hook is "
+        "disabled, so these tests would fail, or pass vacuously"
+    )
     monkeypatch.setattr(paths, "_project_dir_override", None)
     # D000118 pin (ContextVar since Phase 31): reset so a pin leaked from an
     # earlier test can't shadow this test's binding resolution.

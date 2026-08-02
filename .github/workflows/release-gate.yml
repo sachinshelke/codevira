@@ -23,7 +23,23 @@ jobs:
   gauntlet:
     name: Release gauntlet (G1 + G2)
     runs-on: ubuntu-latest
+    # Any PR into main runs the gauntlet. The four naming conditions below
+    # are kept for release/* branches that target something other than main,
+    # but they must not be the ONLY way in.
+    #
+    # 2026-08-02: they were, and the gate skipped on the 4.0.0b1 release PR
+    # itself — head ref `feat/doctor-fix-binding`, title describing the
+    # change rather than starting with `release:`. A release does not stop
+    # being a release because it shipped from a feature branch, and this
+    # file's own header says why that matters: v2.0.0 reached PyPI with 23
+    # silent-failure bugs precisely because nothing forced gauntlet evidence
+    # in the release flow. A guard keyed on naming convention reports clean
+    # while sitting on the case it exists for.
+    #
+    # Cost of the wider trigger is one extra G1+G2 run on non-release PRs to
+    # main. That is the cheaper side of this trade by a wide margin.
     if: |
+      github.event.pull_request.base.ref == 'main' ||
       contains(github.event.pull_request.head.ref, 'release/') ||
       contains(github.event.pull_request.head.ref, 'Release/') ||
       startsWith(github.event.pull_request.title, 'release:') ||

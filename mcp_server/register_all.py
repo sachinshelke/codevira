@@ -10,6 +10,16 @@ implements the reliable alternative used by `codevira register-all`:
   as its OWN uniquely-named MCP (``codevira-<slug>``) hard-pinned to
   ``--project-dir <path>``. One MCP per project. No auto-detect. No collisions.
 
+That model is right only for a client whose config SCOPES entries by project.
+Claude Code does (``projects.<path>.mcpServers``). Claude Desktop does not —
+its ``mcpServers`` map is flat, so every entry loads in every conversation.
+Fanning out there spawned one server per project and advertised
+tool_count x projects tools in every conversation (12 servers / 432 tools on
+the reference machine), all but one bound to a project the user was not in.
+Claude Desktop is also the one client with per-tool-call project binding
+(``server._maybe_bind_from_tool_path``), so it gets exactly ONE unpinned
+entry. See ``SCOPE_*`` below.
+
 Discovery is dynamic (no hardcoded paths): projects are the union of
   * dirs already carrying a codevira entry in an IDE config, and
   * dirs with a ``.codevira/`` store found by scanning the ancestors of those
@@ -78,6 +88,26 @@ def _named_entry(cmd_path: str, python_exe: str, project: str, ide: str) -> dict
         args = ["-m", "mcp_server", "--project-dir", project]
     else:
         args = ["--project-dir", project]
+    return {
+        "type": "stdio",
+        "command": cmd_path,
+        "args": args,
+        "env": {"CODEVIRA_IDE": ide},
+    }
+
+
+def _dynamic_entry(cmd_path: str, python_exe: str, ide: str) -> dict:
+    """ONE codevira entry with no ``--project-dir``, for clients whose config
+    has no per-project scoping.
+
+    The project is resolved per tool call from the call's own ``file_path``
+    by ``server._maybe_bind_from_tool_path``, which is gated on
+    ``CODEVIRA_IDE=claude_desktop`` for exactly this purpose. The opt-in gate
+    keeps it inert outside opted-in projects — its docstring says so in as
+    many words: "a single global MCP registration stays fully inert outside
+    opted-in projects".
+    """
+    args = ["-m", "mcp_server"] if cmd_path == python_exe else []
     return {
         "type": "stdio",
         "command": cmd_path,
@@ -187,6 +217,14 @@ def _backup(path: Path) -> str:
     return "n/a"
 
 
+#: How a surface's config scopes MCP entries. This is a THREE-way property;
+#: it was a bool, and collapsing "flat" and "single-dynamic" into one `False`
+#: is what put 12 codevira servers into Claude Desktop.
+SCOPE_PER_PROJECT = "per-project"  # nested under projects.<path>.mcpServers
+SCOPE_FLAT = "flat"  # one pinned entry per project, all loaded
+SCOPE_SINGLE_DYNAMIC = "single-dynamic"  # ONE entry, binds per tool call
+
+
 def _rewrite_surface(
     path: Path,
     projects: list[str],
@@ -194,7 +232,7 @@ def _rewrite_surface(
     python_exe: str,
     ide: str,
     *,
-    per_project_scope: bool,
+    scope: str,
     dry_run: bool,
 ) -> dict:
     data = _read_json_safe(path)
@@ -204,13 +242,23 @@ def _rewrite_surface(
             removed += _strip_codevira(pd.setdefault("mcpServers", {}))
 
     added = 0
-    if per_project_scope:
+    if scope == SCOPE_PER_PROJECT:
         projmap = data.setdefault("projects", {})
         for p in projects:
             servers = projmap.setdefault(p, {}).setdefault("mcpServers", {})
             servers[slug(p)] = _named_entry(cmd_path, python_exe, p, ide)
             added += 1
-    else:
+    elif scope == SCOPE_SINGLE_DYNAMIC:
+        # Claude Desktop's mcpServers map is FLAT: every entry loads in EVERY
+        # conversation. Fanning out one pinned entry per project therefore
+        # spawned a server per project and advertised tool_count x projects
+        # tools in every conversation — 12 servers and 432 tools on the
+        # reference machine — with all but one bound to a project the user
+        # was not in. Claude Code is nested and genuinely scoped, so the same
+        # fan-out is correct there and stays.
+        data["mcpServers"]["codevira"] = _dynamic_entry(cmd_path, python_exe, ide)
+        added = 1
+    else:  # SCOPE_FLAT — pinned entries, for clients with no dynamic binding
         servers = data["mcpServers"]
         for p in projects:
             servers[slug(p)] = _named_entry(cmd_path, python_exe, p, ide)
@@ -242,11 +290,26 @@ def register_all(
     cmd_path, python_exe = _resolve_command()
 
     surfaces = [
-        ("Claude Code", _claude_global_config_path(), "claude_code", True),
-        ("Claude Desktop", _claude_desktop_config_path(), "claude_desktop", False),
+        # Claude Code nests under projects.<path>.mcpServers, so only the
+        # matching project's server loads — fan-out is correct here.
+        ("Claude Code", _claude_global_config_path(), "claude_code", SCOPE_PER_PROJECT),
+        # Claude Desktop's map is flat AND it is the one client with
+        # per-tool-call project binding, so it gets exactly one entry.
+        (
+            "Claude Desktop",
+            _claude_desktop_config_path(),
+            "claude_desktop",
+            SCOPE_SINGLE_DYNAMIC,
+        ),
     ]
     for cfg in _antigravity_write_targets():
-        surfaces.append((f"Antigravity ({cfg.parent.name})", cfg, "antigravity", False))
+        # Antigravity is flat too, but has no dynamic binding
+        # (_maybe_bind_from_tool_path is gated on claude_desktop), so a single
+        # entry would leave it unable to resolve any project. Pinned fan-out
+        # stays until it gains a binding signal.
+        surfaces.append(
+            (f"Antigravity ({cfg.parent.name})", cfg, "antigravity", SCOPE_FLAT)
+        )
 
     results: list[SurfaceResult] = []
     for label, path, ide, scope in surfaces:
@@ -259,7 +322,7 @@ def register_all(
             cmd_path,
             python_exe,
             ide,
-            per_project_scope=scope,
+            scope=scope,
             dry_run=dry_run,
         )
         results.append(

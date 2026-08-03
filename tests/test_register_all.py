@@ -72,7 +72,7 @@ class TestRewriteSurface:
             "/bin/codevira",
             "/usr/bin/python",
             "claude_code",
-            per_project_scope=True,
+            scope=ra.SCOPE_PER_PROJECT,
             dry_run=False,
         )
         assert r["removed"] == 2  # bare + the project-scoped codevira
@@ -92,8 +92,10 @@ class TestRewriteSurface:
         # a backup was written
         assert list(tmp_path.glob("cc.json.bak-registerall-*"))
 
-    def test_top_level_scope_for_non_project_aware(self, tmp_path):
-        cfg = tmp_path / "desktop.json"
+    def test_flat_scope_fans_out_for_clients_without_dynamic_binding(self, tmp_path):
+        """Antigravity: flat config, but no per-tool-call binding, so a single
+        entry could not resolve any project. Pinned fan-out is correct here."""
+        cfg = tmp_path / "antigravity.json"
         cfg.write_text(
             json.dumps(
                 {"mcpServers": {"codevira": {"args": ["--project-dir", "/only/LH"]}}}
@@ -104,8 +106,8 @@ class TestRewriteSurface:
             ["/p/LH", "/p/UDAP"],
             "/bin/codevira",
             "/usr/bin/python",
-            "claude_desktop",
-            per_project_scope=False,
+            "antigravity",
+            scope=ra.SCOPE_FLAT,
             dry_run=False,
         )
         d = json.loads(cfg.read_text())
@@ -113,6 +115,111 @@ class TestRewriteSurface:
             "codevira-lh",
             "codevira-udap",
         }
+
+
+class TestClaudeDesktopGetsExactlyOneEntry:
+    """Claude Desktop's ``mcpServers`` map is FLAT — every entry loads in every
+    conversation, with no project scoping.
+
+    Fanning out one pinned entry per project therefore spawned a server per
+    project and advertised tool_count x projects tools in EVERY conversation
+    (12 servers / 432 tools measured on the reference machine), all but one
+    bound to a project the user was not in. Desktop is also the only client
+    with per-tool-call project binding, so one unpinned entry is both
+    sufficient and what the rest of the product already assumes:
+    ``_maybe_bind_from_tool_path`` is gated on ``CODEVIRA_IDE=claude_desktop``,
+    and the opt-in gate's docstring says a "single global MCP registration
+    stays fully inert outside opted-in projects".
+    """
+
+    def _write(self, tmp_path, n_projects=12):
+        cfg = tmp_path / "desktop.json"
+        cfg.write_text(json.dumps({"mcpServers": {}, "preferences": {"x": 1}}))
+        ra._rewrite_surface(
+            cfg,
+            [f"/p/proj{i}" for i in range(n_projects)],
+            "/bin/codevira",
+            "/usr/bin/python",
+            "claude_desktop",
+            scope=ra.SCOPE_SINGLE_DYNAMIC,
+            dry_run=False,
+        )
+        return json.loads(cfg.read_text())
+
+    def test_twelve_projects_yield_one_entry(self, tmp_path):
+        """Fails on the pre-fix code, which wrote 12."""
+        d = self._write(tmp_path)
+        cv = [k for k in d["mcpServers"] if "codevira" in k.lower()]
+        assert cv == ["codevira"], (
+            f"Claude Desktop got {len(cv)} codevira entries: {cv}. Its config is "
+            f"flat, so every one of them loads in every conversation."
+        )
+
+    def test_the_entry_is_not_pinned_to_a_project(self, tmp_path):
+        """A --project-dir here would pin every conversation to ONE project,
+        which is worse than the fan-out it replaces."""
+        e = self._write(tmp_path)["mcpServers"]["codevira"]
+        assert "--project-dir" not in e["args"], e["args"]
+
+    def test_the_entry_carries_the_ide_that_enables_binding(self, tmp_path):
+        """_maybe_bind_from_tool_path returns early unless this is exact."""
+        e = self._write(tmp_path)["mcpServers"]["codevira"]
+        assert e["env"]["CODEVIRA_IDE"] == "claude_desktop"
+
+    def test_unrelated_config_is_preserved(self, tmp_path):
+        assert self._write(tmp_path).get("preferences") == {"x": 1}
+
+    def test_a_prior_fan_out_is_cleaned_up(self, tmp_path):
+        """Upgrading from the buggy shape must collapse the old entries."""
+        cfg = tmp_path / "desktop.json"
+        cfg.write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "codevira-lh": {"args": ["--project-dir", "/p/LH"]},
+                        "codevira-udap": {"args": ["--project-dir", "/p/UDAP"]},
+                        "other-server": {"args": []},
+                    }
+                }
+            )
+        )
+        r = ra._rewrite_surface(
+            cfg,
+            ["/p/LH", "/p/UDAP"],
+            "/bin/codevira",
+            "/usr/bin/python",
+            "claude_desktop",
+            scope=ra.SCOPE_SINGLE_DYNAMIC,
+            dry_run=False,
+        )
+        d = json.loads(cfg.read_text())
+        assert r["removed"] == 2 and r["added"] == 1
+        assert [k for k in d["mcpServers"] if "codevira" in k] == ["codevira"]
+        assert "other-server" in d["mcpServers"], "unrelated MCP must survive"
+
+
+class TestSurfaceScopesAreDeclaredCorrectly:
+    def test_each_surface_gets_the_scope_its_config_supports(self, monkeypatch):
+        """The scope is a property of the CLIENT's config format. Collapsing
+        'flat' and 'single-dynamic' into one boolean is what caused the bug."""
+        seen = {}
+
+        def fake_rewrite(path, projects, cmd, py, ide, *, scope, dry_run):
+            seen[ide] = scope
+            return {"removed": 0, "added": 0, "backup": "n/a"}
+
+        monkeypatch.setattr(ra, "_rewrite_surface", fake_rewrite)
+        monkeypatch.setattr(ra.Path, "is_file", lambda self: True)
+        monkeypatch.setattr(
+            ra, "discover_projects", lambda *a, **k: ra.Discovery(projects=["/p/LH"])
+        )
+        monkeypatch.setattr(ra, "_resolve_command", lambda: ("/bin/codevira", "/py"))
+        ra.register_all()
+
+        assert seen.get("claude_code") == ra.SCOPE_PER_PROJECT
+        assert seen.get("claude_desktop") == ra.SCOPE_SINGLE_DYNAMIC
+        if "antigravity" in seen:
+            assert seen["antigravity"] == ra.SCOPE_FLAT
 
     def test_dry_run_writes_nothing(self, tmp_path):
         cfg = tmp_path / "cc.json"
@@ -124,7 +231,7 @@ class TestRewriteSurface:
             "/bin/codevira",
             "/usr/bin/python",
             "claude_code",
-            per_project_scope=True,
+            scope=ra.SCOPE_PER_PROJECT,
             dry_run=True,
         )
         assert cfg.read_text() == original
@@ -207,5 +314,9 @@ class TestRegisterAllEndToEnd:
             "--project-dir",
             lh,
         ]
+        # Claude Code fans out (its config scopes by project); Claude Desktop
+        # gets ONE unpinned entry (its config is flat — every entry would load
+        # in every conversation) and binds per tool call instead.
         dtd = json.loads(desktop.read_text())
-        assert {"codevira-lh", "codevira-udap"} <= set(dtd["mcpServers"])
+        assert [k for k in dtd["mcpServers"] if "codevira" in k.lower()] == ["codevira"]
+        assert "--project-dir" not in dtd["mcpServers"]["codevira"]["args"]

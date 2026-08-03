@@ -130,6 +130,29 @@ def _mcp_request(
     return json.dumps(payload) + "\n"
 
 
+def _request_ids(inputs: str) -> set[int]:
+    """Ids the caller expects an answer for, read back out of ``inputs``.
+
+    Derived rather than passed so every call site is covered without one of
+    them being forgotten — a spawn that forgot to declare its ids would
+    silently go back to closing stdin early, which is exactly the failure
+    mode being removed. Notifications carry no id and are skipped.
+    """
+    ids: set[int] = set()
+    for line in inputs.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            msg = json.loads(line)
+        except json.JSONDecodeError:
+            continue  # malformed-input tests pass junk on purpose
+        rid = msg.get("id") if isinstance(msg, dict) else None
+        if isinstance(rid, int):
+            ids.add(rid)
+    return ids
+
+
 @dataclasses.dataclass
 class _SpawnResult:
     """Outcome of one sandboxed spawn, with a per-phase wall-clock timeline.
@@ -149,6 +172,7 @@ class _SpawnResult:
     budget_s: float
     elapsed_s: float
     cold_start: bool
+    stdin_open_when_answered: bool | None = None
 
     def diagnostics(self) -> str:
         """Phase timeline + verdict, for inclusion in every assertion message.
@@ -341,6 +365,9 @@ def _spawn_codevira_mcp(
     for reader in readers:
         reader.start()
 
+    expected_ids = _request_ids(inputs)
+    stdin_open_when_answered: bool | None = None
+
     timed_out = False
     try:
         # Every `inputs` in this file is well under 1 KB, so this fits the pipe
@@ -350,12 +377,57 @@ def _spawn_codevira_mcp(
         try:
             proc.stdin.write(inputs)
             proc.stdin.flush()
-            proc.stdin.close()
-            _mark(f"stdin written + closed ({len(inputs.splitlines())} messages)")
+            _mark(f"stdin written ({len(inputs.splitlines())} messages)")
         except (BrokenPipeError, OSError) as exc:
             _mark(f"stdin write FAILED ({exc!r}) — child exited before reading")
 
-        proc.wait(timeout=budget_s)
+        # Hold stdin OPEN until the answers arrive.
+        #
+        # Closing it immediately after the write is what made this test flake
+        # (CI 2026-08-03, run 30810510988): the mcp SDK's stdio transport
+        # builds an UNBUFFERED channel and wraps the reader in
+        # `async with read_stream_writer:`, so EOF closes the channel and
+        # tears the session down. A request already dispatched but not yet
+        # answered loses its response — observed as `responses seen: [1]`
+        # then `process exit rc=0` at 0.665s of a 30s budget, i.e. a clean
+        # early exit, NOT the timeout the budget was there to catch.
+        #
+        # That loop is the SDK's, not ours — we hand it `stdio_server()` and
+        # never touch the read side. It is also not reachable in production:
+        # a real MCP client keeps stdin open for the life of the session, and
+        # a client that HAS closed stdin is no longer waiting for a reply.
+        # So the artificial trigger is what gets removed, and the assertion
+        # keeps its teeth: a genuinely missing response still fails, it just
+        # fails on the budget instead of on a shutdown race.
+        deadline = time.monotonic() + budget_s
+        if expected_ids:
+            while time.monotonic() < deadline:
+                if expected_ids.issubset(set(response_ids)):
+                    # Real fd state, not a log line: a mark can be emitted by
+                    # a later close() and would pass regardless.
+                    stdin_open_when_answered = not proc.stdin.closed
+                    _mark(
+                        f"all {len(expected_ids)} expected response(s) received "
+                        f"(stdin_open={stdin_open_when_answered})"
+                    )
+                    break
+                if proc.poll() is not None:
+                    _mark(f"child exited early rc={proc.returncode} while awaiting ids")
+                    break
+                time.sleep(0.02)
+            else:
+                _mark("budget exhausted awaiting responses")
+
+        try:
+            proc.stdin.close()
+            _mark("stdin closed")
+        except (BrokenPipeError, OSError):
+            pass
+
+        # REMAINING budget, never a fresh one. A floor here would hand out
+        # time beyond `budget_s` and make an over-budget spawn look on-time,
+        # silently disarming the timeout assertions this harness exists for.
+        proc.wait(timeout=max(0.0, deadline - time.monotonic()))
         _mark(f"process exit rc={proc.returncode}")
     except subprocess.TimeoutExpired:
         timed_out = True
@@ -383,6 +455,7 @@ def _spawn_codevira_mcp(
         budget_s=budget_s,
         elapsed_s=elapsed_s,
         cold_start=cold_start,
+        stdin_open_when_answered=stdin_open_when_answered,
     )
     if timed_out:
         # Belt-and-braces: surface the timeline even if a caller forgets to
@@ -812,3 +885,72 @@ class TestSpawnInstrumentation:
         init_at = next(t for t, e in res.timeline if e.startswith("response id=1"))
         list_at = next(t for t, e in res.timeline if e.startswith("response id=3"))
         assert 0 < init_at <= list_at <= res.elapsed_s, res.diagnostics()
+
+
+class TestStdinIsHeldOpenUntilAnswered:
+    """The harness must not close stdin while a request is still in flight.
+
+    CI run 30810510988 (2026-08-03, commit c87006a) failed here with
+    `responses seen: [1]` and `process exit rc=0` at 0.665s of a 30s budget
+    — a clean early exit, not the timeout the budget exists to catch.
+
+    Cause: the mcp SDK's stdio transport builds an UNBUFFERED channel and
+    wraps the reader in `async with read_stream_writer:`, so EOF on stdin
+    closes the channel and tears the session down. A request already
+    dispatched but not yet answered loses its response. That loop belongs to
+    the SDK — this repo hands it `stdio_server()` and never touches the read
+    side — and it is unreachable in production, because a real MCP client
+    holds stdin open for the session and a client that has closed stdin is
+    no longer waiting for a reply.
+
+    So the fix removes the artificial trigger, and this test pins the
+    invariant that makes it work. It fails against the pre-fix harness,
+    where "stdin written + closed" is the FIRST timeline row.
+    """
+
+    def test_stdin_closes_only_after_the_expected_responses(
+        self, sandboxed_project
+    ) -> None:
+        project, home = sandboxed_project
+        inputs = (
+            _mcp_request(
+                "initialize",
+                {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {"name": "order", "version": "0.0.1"},
+                },
+                req_id=1,
+            )
+            + _mcp_request("notifications/initialized", req_id=None)
+            + _mcp_request("tools/list", req_id=3)
+        )
+        res = _spawn_codevira_mcp(project, home, inputs=inputs)
+
+        # The REAL fd state at the moment the last expected response landed.
+        # An earlier version of this test compared timeline row ORDER, and it
+        # passed against the pre-fix harness too — a later close() emits the
+        # "stdin closed" row regardless, so the ordering held while the actual
+        # bug was still present. Assert on the descriptor, not on a log line.
+        assert (
+            res.stdin_open_when_answered is not None
+        ), f"responses never all arrived\n{res.diagnostics()}"
+        assert res.stdin_open_when_answered is True, (
+            f"stdin was already CLOSED when the responses arrived — the SDK "
+            f"tears the session down on EOF and an in-flight request loses its "
+            f"reply\n{res.diagnostics()}"
+        )
+
+    def test_request_ids_are_derived_from_the_payload(self) -> None:
+        """Deriving beats declaring: a call site that forgot to pass its ids
+        would silently revert to closing stdin early."""
+        inputs = (
+            _mcp_request("initialize", {}, req_id=1)
+            + _mcp_request("notifications/initialized", req_id=None)
+            + _mcp_request("tools/list", req_id=3)
+        )
+        assert _request_ids(inputs) == {1, 3}, "notifications carry no id"
+
+    def test_malformed_input_lines_are_skipped_not_fatal(self) -> None:
+        """Some tests pipe junk on purpose; id-derivation must survive it."""
+        assert _request_ids('not json\n{"jsonrpc":"2.0","id":7}\n\n') == {7}

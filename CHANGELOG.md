@@ -387,6 +387,42 @@ module state and writing to the filesystem after that test's `$HOME` and
 `get_data_dir` patches have been torn down. Set
 `CODEVIRA_TEST_THREAD_JOIN_TIMEOUT=0` to run it as a zero-grace audit.
 
+### Fixed — `get_node` broke the v2.1.2 Item 2 contract during background indexing
+
+`get_node()` has four not-found branches. Three of them (no graph DB / empty
+graph / file absent from a populated graph) carried the v2.1.2 Item 2 contract:
+every not-found return ships `not_indexed: True` plus `null` for
+`rules_count`, `dependencies_count` and `key_functions_count`, precisely so an
+agent cannot confuse "never indexed" with "indexed and genuinely has zero
+dependencies".
+
+The fourth branch did not. The v1.6 early return taken while auto-init's
+background index is still running (`get_init_progress()["status"]` is
+`initializing` or `indexing`) predated Item 2 and returned only
+`found` / `status` / `file_path` / `message` / `hint`. An AI agent that called
+`get_node` mid-index got a `KeyError` on `result["not_indexed"]`, or — reading
+via `.get()` — saw the fields absent, which is the exact ambiguity Item 2 was
+written to remove.
+
+The root cause was placement, not an omission: the shared `_not_indexed_counts`
+dict was defined *below* the auto-init check, so the initializing branch could
+not reference it. It is now hoisted to the top of the `if not node:` block, so
+one definition serves all four branches and any branch added later has the
+contract in scope. `status`, `message` and `hint` are unchanged — this is
+purely additive to the response.
+
+`get_impact()` was checked for the same hole and does **not** have one: it has
+no initializing early return and falls through to its three
+contract-carrying branches. The regression test asserts `get_impact`'s contract
+under `status="indexing"` anyway, so one cannot be introduced later.
+
+Diagnosis in `D000138`; the code fix landed in `03c461a`, covered by
+`tests/test_graph_not_indexed_contract.py` (parametrised over every
+`_progress["status"]` value, because the defect was a *missing* case and a test
+that only covers the known case cannot catch the next one).
+
+---
+
 ## [3.7.1] — 2026-07-20
 
 ### Fixed — the centralization migration silently orphaned ALL memory (critical)

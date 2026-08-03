@@ -350,6 +350,47 @@ class TestGetNode:
         assert result["protected_count"] is None
         assert result["high_stability_count"] is None
 
+    def test_not_indexed_contract_holds_while_background_indexing(
+        self, tmp_path, monkeypatch
+    ):
+        """2026-08-03: the Item 2 contract must hold for the
+        initializing/indexing early return too.
+
+        get_node had a fourth not-found branch — taken when auto-init's
+        background index is still running — that returned neither
+        `not_indexed` nor the null counts. An agent calling get_node
+        mid-index got a KeyError on result["not_indexed"], or (with .get)
+        saw the fields absent: exactly the 'unindexed' vs
+        'indexed-with-zero-deps' ambiguity Item 2 exists to remove.
+        """
+        from mcp_server import auto_init
+
+        _, _, db = _setup_project(tmp_path, monkeypatch)
+        db.close()
+        monkeypatch.setitem(auto_init._progress, "status", "indexing")
+
+        result = graph.get_node("does/not/exist.py")
+        assert result["found"] is False
+        assert result["status"] == "initializing"
+        assert result["not_indexed"] is True, (
+            "Bug regression: the background-indexing early return skipped "
+            "the Item 2 contract — not_indexed must be present on EVERY "
+            "not-found return, not just the three post-index ones."
+        )
+        assert result["rules_count"] is None
+        assert result["dependencies_count"] is None
+        assert result["key_functions_count"] is None
+
+        # get_impact has no initializing early return — it falls through to
+        # the three post-index branches, which already carry the contract.
+        # Assert it anyway so adding one later can't reintroduce the hole.
+        impact = graph.get_impact("does/not/exist.py")
+        assert impact["found"] is False
+        assert impact["not_indexed"] is True
+        assert impact["blast_radius"] is None
+        assert impact["protected_count"] is None
+        assert impact["high_stability_count"] is None
+
     def test_staleness_file_does_not_exist(self, tmp_path, monkeypatch):
         """_check_staleness should flag stale=True if file is missing from disk."""
         _, _, db = _setup_project(tmp_path, monkeypatch)

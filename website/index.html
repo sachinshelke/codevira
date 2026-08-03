@@ -78,7 +78,17 @@
     {
       "@type": "Question",
       "name": "Which AI coding tools does Codevira work with?",
-      "acceptedAnswer": {"@type": "Answer", "text": "Claude Code, Claude Desktop, Cursor, and Google Antigravity via MCP; OpenAI Codex and GitHub Copilot read the generated AGENTS.md natively. One codevira setup configures every tool it detects on your machine. Claude Code additionally gets lifecycle hooks, where hard enforcement lives."}
+      "acceptedAnswer": {"@type": "Answer", "text": "Claude Code, Claude Desktop, Cursor, and Google Antigravity via MCP; OpenAI Codex and GitHub Copilot read the generated AGENTS.md natively. One codevira setup configures every tool it detects. As of 4.0, hard enforcement is no longer Claude-Code-only: it blocks the edit before it touches disk in Claude Code and Antigravity (a PreToolUse hook), and the commit in every other editor (an opt-in git pre-commit hook)."}
+    },
+    {
+      "@type": "Question",
+      "name": "How does Codevira block edits in editors other than Claude Code?",
+      "acceptedAnswer": {"@type": "Answer", "text": "Every editor commits with git. codevira engine install-git-hook adds a pre-commit hook that runs the same decision engine as the IDE hook, so a locked decision physically blocks the commit in Cursor, Codex, Copilot — any tool. In Claude Code the block happens even earlier, before the file changes. Without the git hook, other tools still get the decisions as strong AGENTS.md guidance."}
+    },
+    {
+      "@type": "Question",
+      "name": "Does Codevira work for a team or across machines?",
+      "acceptedAnswer": {"@type": "Answer", "text": "Yes. .codevira/ lives in your repo, so decisions travel with git clone. Records are content-addressed (uid = sha256 of the record), so a decision's supersession chain survives a two-host git merge — no lost locks. codevira export setup carries your cross-project learning (preferences, learned rules) to a new machine, merged rather than overwritten."}
     },
     {
       "@type": "Question",
@@ -279,8 +289,13 @@
   .step:hover{opacity:.9}
   .step.active{opacity:1;background:var(--glass);border-color:var(--glass-line);box-shadow:var(--shadow)}
   .step b{display:flex;align-items:center;gap:10px;font-size:15px;font-weight:600}
-  .step b .n{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;font-family:var(--mono);font-size:12px;
+  .step b .n{width:24px;height:24px;padding:0;border-radius:50%;display:grid;place-items:center;font-family:var(--mono);font-size:12px;
       background:linear-gradient(135deg,var(--blue),var(--violet));color:#fff;flex:none}
+  /* `.step span` sets padding-left:34px for the description text; the .n badge
+     is also a <span> inside .step, so it inherited that padding and rendered
+     as a 34px oval with the glyph shoved out. The explicit padding:0 above
+     resets it. */
+  .step b .n svg{display:block}
   .step span{display:block;font-size:13px;color:var(--dim);margin-top:5px;padding-left:34px}
   .step .bar{height:3px;border-radius:3px;background:var(--glass-edge);margin:12px 0 0 34px;overflow:hidden;display:none}
   .step.active .bar{display:block}
@@ -399,7 +414,7 @@
       <a href="#integrate">Integrate</a>
       <a href="#faq">FAQ</a>
       <a href="docs.html">Docs</a>
-      <a href="https://github.com/sachinshelke/codevira">GitHub</a>
+      <a href="https://github.com/sachinshelke/codevira" style="display:inline-flex;align-items:center"><svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor" aria-hidden="true" style="vertical-align:-3px;margin-right:7px"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.03 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>GitHub</a>
       <button id="theme-toggle" title="Toggle light / dark" aria-label="Toggle theme">◐</button>
     </div>
   </div>
@@ -756,15 +771,15 @@
       </div>
       <div class="steps">
         <div class="step active" style="cursor:default">
-          <b><span class="n">✓</span> Moves with git</b>
+          <b><span class="n"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span> Moves with git</b>
           <span>Decisions, sessions, skills — already in your repo. Clone and they're there.</span>
         </div>
         <div class="step active" style="cursor:default">
-          <b><span class="n">✓</span> Moves in the archive</b>
+          <b><span class="n"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span> Moves in the archive</b>
           <span>Cross-project learning: your preferences and learned rules, merged — not overwritten — into the new machine.</span>
         </div>
         <div class="step active" style="cursor:default">
-          <b><span class="n">⟳</span> Rebuilt fresh</b>
+          <b><span class="n"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 4v5h-5"/></svg></span> Rebuilt fresh</b>
           <span>Code-graph caches and indexes are machine-local and regenerate on first run. Nothing to migrate, nothing to break.</span>
         </div>
       </div>
@@ -885,7 +900,15 @@ params = StdioServerParameters(command=<span class="yy">"codevira-python"</span>
       </details>
       <details>
         <summary style="cursor:pointer;padding:16px 0;font-weight:600;border-top:1px solid var(--glass-edge)">Which AI coding tools does it work with?</summary>
-        <p style="padding:0 0 16px;color:var(--dim)">Claude Code, Claude Desktop, Cursor, and Google Antigravity via MCP; OpenAI Codex and GitHub Copilot read the generated <code style="font-family:var(--mono)">AGENTS.md</code> natively. One <code style="font-family:var(--mono)">codevira setup</code> configures every tool it detects on your machine. Claude Code additionally gets lifecycle hooks — that's where hard enforcement lives.</p>
+        <p style="padding:0 0 16px;color:var(--dim)">Claude Code, Claude Desktop, Cursor, and Google Antigravity via MCP; OpenAI Codex and GitHub Copilot read the generated <code style="font-family:var(--mono)">AGENTS.md</code> natively. One <code style="font-family:var(--mono)">codevira setup</code> configures every tool it detects. As of 4.0, hard enforcement is no longer Claude-Code-only: it blocks the edit before it touches disk in Claude Code and Antigravity (a <code style="font-family:var(--mono)">PreToolUse</code> hook), and the commit in every other editor (an opt-in git <code style="font-family:var(--mono)">pre-commit</code> hook).</p>
+      </details>
+      <details>
+        <summary style="cursor:pointer;padding:16px 0;font-weight:600;border-top:1px solid var(--glass-edge)">How does it block edits in editors other than Claude Code?</summary>
+        <p style="padding:0 0 16px;color:var(--dim)">Every editor commits with git. <code style="font-family:var(--mono)">codevira engine install-git-hook</code> adds a <code style="font-family:var(--mono)">pre-commit</code> hook that runs the same decision engine as the IDE hook, so a locked decision physically blocks the commit in Cursor, Codex, Copilot — any tool. In Claude Code the block happens even earlier, before the file changes. Without the git hook, other tools still get the decisions as strong <code style="font-family:var(--mono)">AGENTS.md</code> guidance. Override a single commit with <code style="font-family:var(--mono)">git commit --no-verify</code>.</p>
+      </details>
+      <details>
+        <summary style="cursor:pointer;padding:16px 0;font-weight:600;border-top:1px solid var(--glass-edge)">Does it work for a team, or across my machines?</summary>
+        <p style="padding:0 0 16px;color:var(--dim)">Yes. <code style="font-family:var(--mono)">.codevira/</code> lives in your repo, so decisions travel with <code style="font-family:var(--mono)">git clone</code>. Records are content-addressed (uid = sha256 of the record), so a decision's supersession chain survives a two-host git merge — no lost locks, no dangling history. <code style="font-family:var(--mono)">codevira export setup</code> carries your cross-project learning (preferences, learned rules) to a new machine, merged rather than overwritten.</p>
       </details>
       <details>
         <summary style="cursor:pointer;padding:16px 0;font-weight:600;border-top:1px solid var(--glass-edge)">How much does it cost?</summary>
@@ -898,7 +921,7 @@ params = StdioServerParameters(command=<span class="yy">"codevira-python"</span>
     <h2>Give your agents a memory.</h2>
     <p>Open source, MIT, local-first. Two commands and every AI tool on your machine shares it.</p>
     <div style="margin-top:28px;display:flex;gap:14px;justify-content:center;flex-wrap:wrap">
-      <a class="btn primary" href="https://github.com/sachinshelke/codevira">Get started on GitHub</a>
+      <a class="btn primary" href="https://github.com/sachinshelke/codevira"><svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor" aria-hidden="true" style="vertical-align:-3px;margin-right:7px"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.03 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>Get started on GitHub</a>
       <a class="btn ghost" href="https://pypi.org/project/codevira/">View on PyPI</a>
     </div>
   </div>
@@ -908,7 +931,7 @@ params = StdioServerParameters(command=<span class="yy">"codevira-python"</span>
 <footer>
   <div class="wrap">
     <span>© 2026 Codevira · MIT License · <span style="font-family:var(--mono)">4.0</span></span>
-    <span><a href="https://github.com/sachinshelke/codevira">GitHub</a> · <a href="https://pypi.org/project/codevira/">PyPI</a> · <a href="https://github.com/sachinshelke/codevira/blob/main/CHANGELOG.md">Changelog</a> · <a href="#faq">FAQ</a></span>
+    <span><a href="https://github.com/sachinshelke/codevira" style="display:inline-flex;align-items:center"><svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor" aria-hidden="true" style="vertical-align:-3px;margin-right:7px"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.03 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>GitHub</a> · <a href="https://pypi.org/project/codevira/">PyPI</a> · <a href="https://github.com/sachinshelke/codevira/blob/main/CHANGELOG.md">Changelog</a> · <a href="#faq">FAQ</a></span>
   </div>
 </footer>
 

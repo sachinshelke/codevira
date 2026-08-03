@@ -90,7 +90,7 @@
 </script>
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
   :root{
     /* Light-mode accents darkened for WCAG AA as TEXT on the #f3f5f9 ground:
@@ -108,8 +108,8 @@
     --term-bg:rgba(18,20,28,.92); --term-text:#e8eaf2;
     --blob1:#bcd6ff; --blob2:#e4ccff; --blob3:#ffd9d9;
     --mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
-    --sans:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
-    --display:"Space Grotesk","IBM Plex Sans",-apple-system,sans-serif;
+    --sans:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+    --display:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
     /* single centered logo watermark + ripple rings */
     --wm-size:min(70vmin,680px); --wm-logo-op:.055; --wm-ring:255,106,26; --wm-ring-op:.10;
   }
@@ -400,13 +400,8 @@
       <a href="#faq">FAQ</a>
       <a href="docs.html">Docs</a>
       <a href="https://github.com/sachinshelke/codevira">GitHub</a>
-      <button id="font-toggle" title="Try a different font" aria-label="Font options">Aa</button>
       <button id="theme-toggle" title="Toggle light / dark" aria-label="Toggle theme">◐</button>
     </div>
-  </div>
-  <div id="font-menu" class="glass" hidden>
-    <div class="fm-head">Typeface <span>pick one — saved locally</span></div>
-    <div class="fm-list" id="fm-list"></div>
   </div>
 </nav>
 
@@ -542,10 +537,13 @@
     <div class="graphbox glass reveal">
       <div class="pane">
         <svg id="gsvg" role="img" aria-label="Interactive decision graph demo"></svg>
+        <span class="glive" style="position:absolute;top:14px;left:14px;display:inline-flex;align-items:center;gap:7px;font:500 11px var(--mono);letter-spacing:.02em;color:var(--dim);background:var(--glass);border:1px solid var(--glass-edge);border-radius:99px;padding:5px 11px;pointer-events:none;z-index:2">
+          <span style="width:7px;height:7px;border-radius:50%;background:#2fbf71;box-shadow:0 0 8px #2fbf71"></span>live · drag &amp; click a node
+        </span>
         <div class="legend">
-          <span><i style="background:#7c8cff"></i>decision</span>
-          <span><i style="background:#ff6b6b"></i>protected</span>
-          <span><i style="background:#8a93a8"></i>file</span>
+          <span><i style="background:var(--red)"></i>protected</span>
+          <span><i style="background:var(--violet)"></i>decision</span>
+          <span><i style="background:var(--dim)"></i>file</span>
         </div>
       </div>
       <div class="gdetail" id="gdetail">
@@ -932,56 +930,6 @@ params = StdioServerParameters(command=<span class="yy">"codevira-python"</span>
   });
 })();
 
-/* ---------- font picker ---------- */
-(function(){
-  const FONTS = [
-    {id:"inter",    label:"Inter",                       note:"rocket.new · lovable",       display:'"Inter"', body:'"Inter"', gf:"Inter:wght@400;500;600"},
-    {id:"plex",     label:"Space Grotesk + IBM Plex",    note:"current",                    display:'"Space Grotesk"', body:'"IBM Plex Sans"', gf:"Space+Grotesk:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600"},
-    {id:"archivo",  label:"Archivo + Inter",             note:"Anthropic-like grotesque",   display:'"Archivo"', body:'"Inter"', gf:"Archivo:wght@400;500;600&family=Inter:wght@400;500;600"},
-    {id:"serif",    label:"Source Serif + Inter",        note:"Anthropic editorial",        display:'"Source Serif 4"', body:'"Inter"', gf:"Source+Serif+4:wght@500;600&family=Inter:wght@400;500;600"},
-    {id:"geist",    label:"Geist",                       note:"Vercel modern",              display:'"Geist"', body:'"Geist"', gf:"Geist:wght@400;500;600"},
-    {id:"manrope",  label:"Manrope",                     note:"soft geometric",             display:'"Manrope"', body:'"Manrope"', gf:"Manrope:wght@400;500;600"},
-    {id:"jakarta",  label:"Plus Jakarta Sans",           note:"friendly premium",           display:'"Plus Jakarta Sans"', body:'"Plus Jakarta Sans"', gf:"Plus+Jakarta+Sans:wght@400;500;600"},
-    {id:"dmsans",   label:"DM Sans",                     note:"clean geometric",            display:'"DM Sans"', body:'"DM Sans"', gf:"DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600"},
-    {id:"sora",     label:"Sora + Inter",                note:"techy display",              display:'"Sora"', body:'"Inter"', gf:"Sora:wght@400;500;600&family=Inter:wght@400;500;600"},
-    {id:"system",   label:"System (SF Pro / Segoe)",     note:"native feel",                display:'-apple-system', body:'-apple-system', gf:null},
-  ];
-  const loaded = new Set();
-  function loadGF(opt){
-    if (!opt.gf || loaded.has(opt.id)) return;
-    const l = document.createElement("link");
-    l.rel = "stylesheet";
-    l.href = `https://fonts.googleapis.com/css2?family=${opt.gf}&display=swap`;
-    document.head.appendChild(l); loaded.add(opt.id);
-  }
-  function apply(opt){
-    loadGF(opt);
-    const fb = ',-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif';
-    document.documentElement.style.setProperty("--sans", opt.body + fb);
-    document.documentElement.style.setProperty("--display", opt.display + fb);
-    localStorage.setItem("cv-font", opt.id);
-    document.querySelectorAll(".fm-opt").forEach(el => el.classList.toggle("active", el.dataset.id === opt.id));
-  }
-  const menu = document.getElementById("font-menu");
-  const list = document.getElementById("fm-list");
-  FONTS.forEach(opt => {
-    const row = document.createElement("div");
-    row.className = "fm-opt"; row.dataset.id = opt.id;
-    row.innerHTML = `<b>${opt.label}</b><small>${opt.note}</small>`;
-    row.querySelector("b").style.fontFamily = opt.display;
-    row.addEventListener("click", () => apply(opt));
-    list.appendChild(row);
-  });
-  document.getElementById("font-toggle").addEventListener("click", e => {
-    e.stopPropagation();
-    menu.hidden = !menu.hidden;
-    if (!menu.hidden) FONTS.forEach(loadGF);   // load all for live previews
-  });
-  document.addEventListener("click", e => { if (!menu.contains(e.target)) menu.hidden = true; });
-  const saved = FONTS.find(f => f.id === localStorage.getItem("cv-font"));
-  if (saved) apply(saved); else document.querySelector('.fm-opt[data-id="plex"]')?.classList.add("active");
-})();
-
 /* ---------- scroll reveal ---------- */
 (function(){
   const io = new IntersectionObserver(es => {
@@ -1064,27 +1012,46 @@ params = StdioServerParameters(command=<span class="yy">"codevira-python"</span>
   const svg = document.getElementById("gsvg");
   const detail = document.getElementById("gdetail");
   const NS = "http://www.w3.org/2000/svg";
-  const DEC = "#7c8cff", PROT = "#ff6b6b", FILE = "#8a93a8";
+  // Theme-aware: read the accent tokens fresh so nodes track light/dark and
+  // the WCAG-corrected palette, instead of hardcoding hexes that dissolved
+  // on the light ground.
+  const palette = () => {
+    const cs = getComputedStyle(document.documentElement);
+    return {
+      DEC:  cs.getPropertyValue("--violet").trim() || "#7c8cff",
+      PROT: cs.getPropertyValue("--red").trim()    || "#ff6b6b",
+      FILE: cs.getPropertyValue("--dim").trim()    || "#8a93a8",
+    };
+  };
   const nodes = [
-    {id:"D000412", label:"bcrypt for passwords", type:"prot", x:.42, y:.30,
+    {id:"D000412", label:"bcrypt for passwords", type:"prot", x:.40, y:.28,
      why:"md5 considered and rejected — rainbow-table risk. Re-examine only if a NIST recommendation changes.", tags:["security","auth"]},
-    {id:"D000391", label:"JSONL canonical store", type:"prot", x:.68, y:.22,
+    {id:"D000391", label:"JSONL canonical store", type:"prot", x:.70, y:.20,
      why:"SQLite blobs aren't diffable or reviewable. JSONL is git-native; indexes stay rebuildable caches.", tags:["storage","architecture"]},
-    {id:"D000405", label:"retry with backoff", type:"dec", x:.22, y:.42,
+    {id:"D000377", label:"one egress choke point", type:"prot", x:.17, y:.19,
+     why:"Every outbound request funnels through egress.py — a CI test fails the build if any other module imports a network client. “Local-first” becomes checkable, not a promise.", tags:["security","local-first"]},
+    {id:"D000405", label:"retry with backoff", type:"dec", x:.25, y:.49,
      why:"Fixed thundering-herd on the payment webhook. Exponential backoff, 5 attempts, then circuit-break.", tags:["reliability"]},
-    {id:"D000420", label:"feature-flag rollouts", type:"dec", x:.80, y:.48,
+    {id:"D000420", label:"feature-flag rollouts", type:"dec", x:.75, y:.52,
      why:"All risky changes ship behind flags after the March incident.", tags:["process"]},
-    {id:"D000388", label:"no ORM in hot path", type:"dec", x:.30, y:.68,
+    {id:"D000388", label:"no ORM in hot path", type:"dec", x:.34, y:.77,
      why:"Profiling showed 40% of request time in ORM hydration. Raw SQL for the 3 hot queries.", tags:["performance"]},
-    {id:"auth.py", label:"auth.py", type:"file", x:.50, y:.52},
-    {id:"webhooks.py", label:"webhooks.py", type:"file", x:.12, y:.26},
-    {id:"queries.py", label:"queries.py", type:"file", x:.16, y:.82},
-    {id:"store.py", label:"store.py", type:"file", x:.86, y:.16},
-    {id:"flags.py", label:"flags.py", type:"file", x:.66, y:.74},
+    {id:"D000434", label:"content-addressed ids", type:"dec", x:.57, y:.37,
+     why:"uid = sha256(record), so a decision's supersession chain survives a two-host git merge — no lost locks, no dangling history.", tags:["architecture","merge"]},
+    {id:"D000441", label:"block at the commit boundary", type:"dec", x:.55, y:.67,
+     why:"A git pre-commit hook runs the same engine as the IDE hook, so a locked decision is enforced in every editor — because they all commit with git.", tags:["enforcement"]},
+    {id:"auth.py", label:"auth.py", type:"file", x:.48, y:.50},
+    {id:"webhooks.py", label:"webhooks.py", type:"file", x:.12, y:.63},
+    {id:"queries.py", label:"queries.py", type:"file", x:.22, y:.90},
+    {id:"store.py", label:"store.py", type:"file", x:.86, y:.30},
+    {id:"flags.py", label:"flags.py", type:"file", x:.85, y:.72},
+    {id:"egress.py", label:"egress.py", type:"file", x:.08, y:.33},
   ];
-  const edges = [["D000412","auth.py"],["D000391","store.py"],["D000405","webhooks.py"],
-                 ["D000388","queries.py"],["D000420","flags.py"],["D000420","auth.py"],
-                 ["D000412","D000391"],["D000405","D000388"]];
+  const edges = [["D000412","auth.py"],["D000391","store.py"],["D000377","egress.py"],
+                 ["D000405","webhooks.py"],["D000388","queries.py"],["D000420","flags.py"],
+                 ["D000420","auth.py"],["D000434","store.py"],["D000441","auth.py"],
+                 ["D000412","D000391"],["D000405","D000388"],["D000434","D000391"],
+                 ["D000377","D000441"]];
   let W=0,H=0, drag=null;
 
   function size(){
@@ -1095,6 +1062,7 @@ params = StdioServerParameters(command=<span class="yy">"codevira-python"</span>
   const px = n => ({x:n.x*W, y:n.y*H});
 
   function render(){
+    const {DEC,PROT,FILE} = palette();
     svg.innerHTML = "";
     for (const [a,b] of edges){
       const na = nodes.find(n=>n.id===a), nb = nodes.find(n=>n.id===b);
@@ -1102,7 +1070,9 @@ params = StdioServerParameters(command=<span class="yy">"codevira-python"</span>
       const pa = px(na), pb = px(nb);
       l.setAttribute("x1",pa.x); l.setAttribute("y1",pa.y);
       l.setAttribute("x2",pb.x); l.setAttribute("y2",pb.y);
-      l.setAttribute("stroke","rgba(124,140,255,.30)"); l.setAttribute("stroke-width","1.4");
+      // currentColor = --text, so edges stay legible in both themes.
+      l.setAttribute("stroke","currentColor"); l.setAttribute("stroke-opacity",".16");
+      l.setAttribute("stroke-width","1.4");
       svg.appendChild(l);
     }
     for (const n of nodes){

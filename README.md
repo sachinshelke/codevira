@@ -7,7 +7,7 @@
 <p align="center"><strong>Stop re-explaining your codebase to every AI tool. Make the decisions stick.</strong></p>
 
 <p align="center">
-One local, in-repo memory layer that every AI coding agent you use can read and write — decisions, fix history, a code graph, your preferences — so what one tool learns, all of them know.
+Every AI coding agent you use — Claude Code, Cursor, Copilot, Codex, Antigravity — shares one local, in-repo record of the decisions you've made and <em>why</em>. What one tool learns, all of them know. And the decisions you lock, <strong>none of them can silently undo.</strong>
 </p>
 
 [![PyPI version](https://img.shields.io/pypi/v/codevira?color=orange)](https://pypi.org/project/codevira/)
@@ -17,14 +17,12 @@ One local, in-repo memory layer that every AI coding agent you use can read and 
 [![MCP](https://img.shields.io/badge/protocol-MCP-purple)](https://modelcontextprotocol.io)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](CONTRIBUTING.md)
 
-Codevira also **enforces** those decisions. In **Claude Code**, a `PreToolUse`
-hook physically blocks an `Edit`/`Write` that would revert a decision you marked
-`do_not_revert` or re-introduce a fixed bug — before the file changes. In
-**every other editor**, an opt-in git `pre-commit` hook
-(`codevira engine install-git-hook`) runs the same engine at the commit
-boundary, so the veto is physical there too — because every editor commits with
-git. Local-first, MIT, no cloud, no vectors, no account. A production pipx
-install is ~66 MB.
+It doesn't just remember — **it enforces.** Mark a decision `do_not_revert` and
+Codevira physically blocks the edit that would break it: before the file changes
+in **Claude Code**, and at the **commit boundary in every other editor**
+(`codevira engine install-git-hook`) — because they all commit with git. When it
+blocks, it shows you *why* the decision was made, not just that one exists.
+Local-first, MIT, no cloud, no vectors, no account.
 
 **Works with:** Claude Code · Claude Desktop · Cursor · Google
 Antigravity · OpenAI Codex · GitHub Copilot · any MCP-compatible AI tool.
@@ -50,8 +48,19 @@ If you've coded with AI agents on one project for longer than a week, you've fel
    files every session before doing any real work. You pay for the same lookups
    over and over.
 
-Codevira is a persistent memory layer that fixes all four — for every AI tool,
-on every project, on your local machine.
+Under all four is one root cause: **your decisions live in your head, not
+anywhere the AI can be held to them.** The reasoning that justifies a choice —
+why it won, what you rejected, when it stops being valid — is exactly what no
+tool captures. So every new agent is free to overwrite a decision it never knew
+you made.
+
+Codevira fixes that by storing the **decision together with its justification**,
+and *enforcing* the ones you lock. It is **not a knowledge base** — it doesn't
+index your code as facts to search. A knowledge base answers *"what is true?"*
+and hopes the agent reads it; Codevira answers *"what did we decide, and why?"*
+— then physically blocks the edit that would break it. The knowledge is there,
+but it's always bound to a decision, never a corpus you query. Local, in-repo,
+shared across every AI tool.
 
 ---
 
@@ -188,14 +197,16 @@ instead of the AI re-reading docs.
   one project don't race — verified by thread, subprocess, and adversarial chaos
   tests. Details in [Concurrency & safety](#concurrency--safety).
 
-**Latest:** **v3.7.1** — a reliability release. Fixes a migration bug that could
-strand a project's memory, several defects that bound a session to the **wrong
-project**, and a cluster of decision-memory correctness bugs; makes IDE-config
-writes non-destructive. Adds `codevira init --shared` (opt-in **team-shared
-memory**) and a `PreToolUse` enforcement hook for **Antigravity** that surfaces
-and can block decision-reverting edits. Upgrading is automatic — codevira
-migrates on the first server start, no manual steps. All model-free, all local.
-See the [CHANGELOG](CHANGELOG.md#371--2026-07-20).
+**Latest:** **4.0** (beta) — the release that makes enforcement *universal* and
+memory *self-explaining*. A locked decision now blocks a **commit in every
+editor** (git `pre-commit`), not just an edit in Claude Code — and when it
+blocks, it **shows the reasoning**: why the decision was made, what you rejected,
+when to revisit. Content-addressed records survive a two-host git merge; one
+audited module is the only thing that can touch the network (CI-enforced); 15
+unused MCP tools were cut with migration messages. One breaking change (per-tenant
+`global.db`), with `codevira memory undo` as the rollback path. Upgrading is
+automatic on the first server start, no manual steps. All model-free, all local.
+See the [CHANGELOG](CHANGELOG.md).
 
 ---
 

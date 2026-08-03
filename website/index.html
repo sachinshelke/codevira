@@ -58,7 +58,7 @@
     {
       "@type": "Question",
       "name": "What is Codevira?",
-      "acceptedAnswer": {"@type": "Answer", "text": "A persistent memory layer for AI coding agents — so Claude Code, Cursor, and Antigravity all share the same project context, decisions, and history on your local machine. It also enforces past decisions, blocking edits that would revert them or re-introduce a fixed bug."}
+      "acceptedAnswer": {"@type": "Answer", "text": "A governed decision log for AI coding agents. It stores the decisions you make together with the reasoning that justifies them — why a choice won, what you rejected, when to revisit — and enforces the ones you lock across Claude Code, Cursor, Antigravity and every other editor, blocking edits that would revert them or re-introduce a fixed bug. It's not a knowledge base you query; the knowledge is always bound to a decision. Everything is local and lives in your repo."}
     },
     {
       "@type": "Question",
@@ -385,7 +385,7 @@
   <div class="inner">
     <div class="logo">
       <img class="mark" src="assets/logo.png" alt="Codevira" width="32" height="32"> codevira
-      <a class="version" href="https://github.com/sachinshelke/codevira/blob/main/CHANGELOG.md" title="Changelog">v3.7.1</a>
+      <a class="version" href="https://github.com/sachinshelke/codevira/blob/main/CHANGELOG.md" title="Changelog">4.0</a>
     </div>
     <div class="links">
       <a href="#story">Why</a>
@@ -409,10 +409,11 @@
 <div class="wrap">
   <div class="hero">
     <h1 class="reveal">Your AI coding agent<br>has <span class="grad">amnesia</span>.</h1>
-    <p class="sub reveal">Codevira gives every AI tool you use a shared, persistent memory of your
-    project — decisions, fix history, code graph, your preferences — and, in
-    <strong>Claude Code</strong>, <strong>enforces</strong> it: blocking the edit before the
-    regression ships. Other IDEs read the same decisions as guidance.</p>
+    <p class="sub reveal">Every AI tool you use shares one local record of the decisions you've made
+    and <em>why</em> — and codevira <strong>enforces</strong> the ones you lock: blocking the
+    edit before it touches disk in <strong>Claude Code</strong>, and the commit in
+    <strong>every other editor</strong>, because they all commit with git. When it blocks, it
+    shows you the reasoning.</p>
     <div class="btns reveal">
       <a class="btn primary" href="https://github.com/sachinshelke/codevira">Get started free</a>
       <a class="btn ghost" href="#how">See how it works ↓</a>
@@ -440,7 +441,7 @@
 
 <div class="strip reveal">
   <div class="inner glass">
-    <div class="stat"><b data-count="51">51</b><span>MCP tools</span><small>the full agent surface</small></div>
+    <div class="stat"><b data-count="36">36</b><span>MCP tools</span><small>the sharpened agent surface</small></div>
     <div class="stat"><b data-count="8">8</b><span>hook policies</span><small>enforcing memory live</small></div>
     <div class="stat"><b>~2&hairsp;ms</b><span>warm tool call</span><small>never blocks your IDE</small></div>
     <div class="stat"><b data-count="0">0</b><span>cloud dependencies</span><small>your code stays home</small></div>
@@ -593,22 +594,24 @@
         skills that keep failing get archived automatically.</p>
       </div>
       <div class="card glass reveal">
-        <div class="icon">🗺️</div>
-        <h3>Spatial memory</h3>
-        <p>Code-as-space: activity heatmaps, neighborhoods, and what kind of work each
-        part of the codebase affords.</p>
+        <div class="icon">🔎</div>
+        <h3>Refusals that explain themselves <span class="tag">4.0</span></h3>
+        <p>When a locked decision blocks an edit, codevira shows <em>why</em> it was made —
+        the reasoning, the rejected alternatives, the condition to revisit — not just that
+        a rule exists.</p>
       </div>
       <div class="card glass reveal">
-        <div class="icon">✨</div>
-        <h3>Preference capture <span class="tag">3.3</span></h3>
-        <p>Learns how you like your AI to work — "keep answers short", "tests first" —
-        distilled from real prompts by an LLM, not regex. Follows you across projects.</p>
+        <div class="icon">🔗</div>
+        <h3>Survives a team merge <span class="tag">4.0</span></h3>
+        <p>Records are content-addressed, so a decision's supersession chain stays intact
+        when two machines merge the same repo — no lost locks, no dangling history.</p>
       </div>
       <div class="card glass reveal">
-        <div class="icon">🤝</div>
-        <h3>Cross-IDE consensus</h3>
-        <p>When two AI tools write contradicting decisions, codevira surfaces the conflict
-        instead of letting them fight.</p>
+        <div class="icon">↩️</div>
+        <h3>One egress door, one undo <span class="tag">4.0</span></h3>
+        <p>A single audited module is the only thing that can touch the network — a CI test
+        fails the build if any other file imports an HTTP client. <code>codevira memory undo</code>
+        rolls back any change.</p>
       </div>
       <div class="card glass reveal">
         <div class="icon">📦</div>
@@ -625,7 +628,7 @@
         together. Opt-in.</p>
       </div>
     </div>
-    <p class="tabnote reveal" style="text-align:center">The <strong>hard block</strong> — the edit actually refused before it touches disk — runs in <strong>Claude Code</strong>, via its <code style="font-family:var(--mono)">PreToolUse</code> hook. In Cursor, Codex and Copilot the same decisions ride along as strong <code style="font-family:var(--mono)">AGENTS.md</code> guidance (advisory, not a physical veto) — their edits don't route through codevira's hook engine. The shared <em>memory</em> is universal; the verified hard <em>enforcement</em> is Claude Code today. As of 3.7.1, Antigravity also gets a <code style="font-family:var(--mono)">PreToolUse</code> enforcement hook that surfaces and can block decision-reverting edits.</p>
+    <p class="tabnote reveal" style="text-align:center">The <strong>hard block</strong> now runs two ways. In <strong>Claude Code</strong> (and Antigravity), a <code style="font-family:var(--mono)">PreToolUse</code> hook refuses the edit before it touches disk. In <strong>every other editor</strong> — Cursor, Codex, Copilot — an opt-in git <code style="font-family:var(--mono)">pre-commit</code> hook (<code style="font-family:var(--mono)">codevira engine install-git-hook</code>) runs the same engine at the commit boundary, so the veto is physical there too — because every editor commits with git. Without the git hook, those tools still get the decisions as strong <code style="font-family:var(--mono)">AGENTS.md</code> guidance. Shared <em>memory</em> was always universal; as of <strong>4.0</strong>, hard <em>enforcement</em> is too — at whatever point each tool reaches.</p>
   </section>
 
   <!-- WORKS WITH -->
@@ -863,7 +866,7 @@ params = StdioServerParameters(command=<span class="yy">"codevira-python"</span>
     <div class="glass reveal" style="margin-top:36px;padding:8px 22px">
       <details>
         <summary style="cursor:pointer;padding:16px 0;font-weight:600">What is Codevira?</summary>
-        <p style="padding:0 0 16px;color:var(--dim)">A persistent memory layer for AI coding agents — so Claude Code, Cursor, and Antigravity all share the same project context, decisions, and history on your local machine. It also enforces past decisions, blocking edits that would revert them or re-introduce a fixed bug.</p>
+        <p style="padding:0 0 16px;color:var(--dim)">A governed decision log for AI coding agents. It stores the decisions you make together with the reasoning that justifies them — why a choice won, what you rejected, when to revisit — and enforces the ones you lock across Claude Code, Cursor, Antigravity and every other editor, blocking edits that would revert them or re-introduce a fixed bug. It's not a knowledge base you query; the knowledge is always bound to a decision. Everything is local and lives in your repo.</p>
       </details>
       <details>
         <summary style="cursor:pointer;padding:16px 0;font-weight:600;border-top:1px solid var(--glass-edge)">Does Codevira send my code anywhere?</summary>
@@ -901,7 +904,7 @@ params = StdioServerParameters(command=<span class="yy">"codevira-python"</span>
 
 <footer>
   <div class="wrap">
-    <span>© 2026 Codevira · MIT License · <span style="font-family:var(--mono)">v3.7.1</span></span>
+    <span>© 2026 Codevira · MIT License · <span style="font-family:var(--mono)">4.0</span></span>
     <span><a href="https://github.com/sachinshelke/codevira">GitHub</a> · <a href="https://pypi.org/project/codevira/">PyPI</a> · <a href="https://github.com/sachinshelke/codevira/blob/main/CHANGELOG.md">Changelog</a> · <a href="#faq">FAQ</a></span>
   </div>
 </footer>
@@ -1015,9 +1018,9 @@ params = StdioServerParameters(command=<span class="yy">"codevira-python"</span>
     ]},
     {title:"in the background", lines:[
       ['bb','◆ skills      "how we rebase here" — reinforced by git'],
-      ['bb','◆ preferences "keep answers short" — distilled from prompts'],
-      ['bb','◆ skills reusable procedures, reinforced by git outcomes'],
-      ['bb','◆ consensus   cross-IDE contradiction check'],
+      ['bb','◆ outcomes    kept / modified / reverted — read from your commits'],
+      ['bb','◆ anchors     each decision pinned to the symbol it\'s about'],
+      ['bb','◆ merge-safe  content-addressed — survives a two-host merge'],
       ['',''],
       ['gg','memory compounds. every session starts smarter.'],
     ]},

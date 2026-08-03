@@ -206,3 +206,51 @@ class TestOnTheWritePath:
         base = next(r for r in rows if not r.get("_amendment_to_id"))
         amendments = [r for r in rows if r.get("_amendment_to_id")]
         assert {a["_amendment_to_uid"] for a in amendments} == {base["uid"]}
+
+    def test_a_pre_4_0_base_gets_the_uid_id_repair_will_look_for(
+        self, project: Path
+    ) -> None:
+        """The whole existing corpus is uid-LESS, so its uid is DERIVED from
+        content — and derivation is where the two sides disagreed.
+
+        ``_amendment`` read the base through ``get()``, which returns the
+        amendment-MERGED view. ``id_repair`` hashes the RAW base line. For a
+        4.0 base both agree, because the stored uid is never overlaid; for a
+        pre-4.0 base with even one amendment the merged hash includes the
+        folded fields and the two diverge, so the S3b exact edge silently
+        falls back to the (old_id, writer) heuristic it exists to replace.
+
+        The records with the MOST amendments are the ones a two-host merge
+        most needs to attribute, and they were exactly the ones it failed for.
+        """
+        p = project / ".codevira" / "decisions.jsonl"
+        raw_base = {
+            "id": "D000001",
+            "ts": "2026-01-01T00:00:00+00:00",
+            "decision": "use bcrypt",
+            "origin": ALICE,
+        }  # no "uid" — pre-4.0
+        jsonl_store.append(p, raw_base)
+        jsonl_store.append(
+            p,
+            {
+                "id": "D000001",
+                "ts": "2026-01-02T00:00:00+00:00",
+                "_amendment_to_id": "D000001",
+                "origin": ALICE,
+                "tags": ["auth"],
+            },
+        )
+        decisions_store.invalidate_merged_cache()
+
+        decisions_store.mark_protected("D000001")
+
+        newest = [r for r in self._rows(project) if r.get("do_not_revert")][-1]
+        expected = uid.uid_of(raw_base)  # what id_repair._uid computes
+        assert newest["_amendment_to_uid"] == expected, (
+            "the edge names the merged view; id_repair looks up the raw base "
+            "line, so this amendment would never resolve exactly"
+        )
+        assert (
+            uid.uid_of(decisions_store.get("D000001")) != expected
+        ), "fixture assumption: merged and raw genuinely differ here"

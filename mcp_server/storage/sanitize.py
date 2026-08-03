@@ -25,27 +25,56 @@ _SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("aws-akia", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
     # Long hex / base64 blob — 32+ chars of plausible token material.
     ("long-token", re.compile(r"\b[A-Fa-f0-9]{32,}\b")),
-    # Base64 WITHOUT a slash. Safe to match greedily: no filesystem path
-    # survives 40+ chars with no separator.
-    ("long-b64", re.compile(r"\b[A-Za-z0-9+]{40,}={0,2}\b")),
-    # Base64 WITH slashes — gated on the run also containing `+` or `=`.
+    # ONE pattern over the FULL base64 alphabet, including `/`. Whether a
+    # given match is a secret or a filesystem path is decided afterwards by
+    # :func:`_b64_is_path` — deliberately not by a second, narrower regex.
     #
-    # The previous single pattern allowed `/` unconditionally, so any
-    # absolute path longer than 40 chars was redacted as a secret. Measured
-    # on a real store: 596 of 655 working-memory edit observations (91%)
-    # had their file path destroyed, e.g.
-    #   "Edit: touched /<redacted:long-b64>-mcp/mcp_server/graph/template.html"
-    # That silently gutted the capture layer the anchor work depends on.
+    # It was two regexes (a no-slash one, then a slash-one gated on `+`/`=`)
+    # and the ordering leaked: the no-slash pattern fired FIRST on the
+    # pre-slash half of a real token, which broke the run up so the
+    # slash-aware pattern could no longer see it whole. Measured::
     #
-    # `+` and `=` are the discriminator: standard-alphabet base64 of this
-    # length is overwhelmingly likely to carry padding or a `+`, while
-    # POSIX paths essentially never contain either. Over-redaction is still
-    # preferred over a missed secret — this only narrows the SLASH case.
-    (
-        "long-b64",
-        re.compile(r"\b(?=[A-Za-z0-9+/]*[+=])[A-Za-z0-9+/]{40,}={0,2}\b"),
-    ),
+    #     'Q'*45 + '/Zm9vYmFy+secretTAIL1234'
+    #       -> '<redacted:long-b64>/Zm9vYmFy+secretTAIL1234'
+    #
+    # i.e. the tail shipped in the clear, in a module whose whole policy is
+    # "over-redaction is acceptable, missed secrets are not". One pattern
+    # plus one predicate has no ordering to get wrong.
+    ("long-b64", re.compile(r"\b[A-Za-z0-9+/]{40,}={0,2}\b")),
 )
+
+
+def _b64_is_path(run: str) -> bool:
+    """True when a 40+ char base64-alphabet run is really a filesystem path.
+
+    A path is the only realistic non-secret that reaches this length in this
+    alphabet, and it is distinguished by carrying `/` while carrying neither
+    `+` nor `=`: standard-alphabet base64 of this length almost always has
+    padding or a `+`, and POSIX paths essentially never have either.
+
+    Why this matters (4.0 Step 3.1): the rule used to redact any `/`-bearing
+    run unconditionally, so 596 of 655 working-memory edit observations (91%)
+    on a real store had their file path destroyed — gutting the capture layer
+    the anchor work depends on. Narrowing only the slash case keeps every
+    other over-redaction exactly as it was.
+    """
+    return "/" in run and "+" not in run and "=" not in run
+
+
+def _redactor(kind: str):
+    """Replacement callable for one pattern kind."""
+    marker = f"<redacted:{kind}>"
+    if kind != "long-b64":
+        return lambda _m: marker
+
+    def _b64(m: re.Match[str]) -> str:
+        run = m.group(0)
+        return run if _b64_is_path(run) else marker
+
+    return _b64
+
+
+_REDACTORS = {kind: _redactor(kind) for kind, _ in _SECRET_PATTERNS}
 
 
 def scrub_sensitive(text: str) -> str:
@@ -58,6 +87,6 @@ def scrub_sensitive(text: str) -> str:
     if not isinstance(text, str) or not text:
         return text
     out = text
-    for kind, _pattern in _SECRET_PATTERNS:
-        out = _pattern.sub(f"<redacted:{kind}>", out)
+    for kind, pattern in _SECRET_PATTERNS:
+        out = pattern.sub(_REDACTORS[kind], out)
     return out

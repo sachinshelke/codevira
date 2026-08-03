@@ -31,7 +31,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from mcp_server.storage import jsonl_store
+from mcp_server.storage import jsonl_store, text as text_util
 
 # Outcome → weight mapping. Tuned by hand; revisit after outcome tracker
 # (Phase F) lands so we can ground these in real data.
@@ -105,16 +105,12 @@ _WHY_CAP = 140
 
 
 def _clip_why(context: str | None) -> str | None:
-    """First sentence-ish of ``context``, clipped on a word boundary."""
-    text = (context or "").strip().replace("\n", " ")
-    if not text:
-        return None
-    if len(text) <= _WHY_CAP:
-        return text
-    cut = text[: _WHY_CAP - 1]
-    if " " in cut[_WHY_CAP // 2 :]:
-        cut = cut[: cut.rindex(" ")]
-    return cut.rstrip(" ,;:.") + "…"
+    """First sentence-ish of ``context``, or None when there is nothing.
+
+    The clipping itself is ``storage.text.clip`` — shared with the block
+    message, which renders the same field to the same reader.
+    """
+    return text_util.clip(context, _WHY_CAP) or None
 
 
 def regenerate(

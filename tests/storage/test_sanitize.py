@@ -47,6 +47,22 @@ class TestPathsSurviveScrubbing:
         blob = "ab/cd+ef/gh0123456789ABCDEFabcdef0123456789XYZ=="
         assert "<redacted" in sanitize.scrub_sensitive(f"sig {blob}")
 
+    def test_a_slashed_secret_is_redacted_WHOLE_not_shredded(self):
+        """Asserting `"<redacted" in out` is not enough — a PARTIAL redaction
+        satisfies it while printing the rest of the key.
+
+        The narrowing shipped as two regexes: a no-slash one first, then a
+        slash-aware one gated on `+`/`=`. The first fired on the pre-slash
+        half, breaking the run so the second could no longer match it whole,
+        and the tail went out in the clear. This asserts on the SECRET being
+        absent rather than on a marker being present.
+        """
+        head, tail = "Q" * 45, "/Zm9vYmFy+secretTAIL1234"
+        out = sanitize.scrub_sensitive(f"key={head}{tail}")
+        assert "secretTAIL1234" not in out, f"tail survived scrubbing: {out}"
+        assert "Zm9vYmFy" not in out, f"tail survived scrubbing: {out}"
+        assert head not in out
+
     def test_every_other_secret_class_is_unaffected(self):
         for text in (
             "api_key: sk-abc123",

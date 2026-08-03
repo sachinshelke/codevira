@@ -60,6 +60,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 from mcp_server.storage import jsonl_store, origin as origin_module, paths
@@ -144,13 +145,17 @@ def list_recent(
     kind: str | None = None,
     node_id: str | None = None,
     since: datetime | None = None,
+    project_root: Path | None = None,
 ) -> list[dict[str, Any]]:
     """Return the most recent ``limit`` activity rows, newest first.
 
     Optional filters compose AND-wise. ``since`` excludes rows older
     than the cutoff (useful for time-windowed heatmaps).
+
+    ``project_root`` scopes the read to THAT project. ``None`` keeps the
+    previous ambient resolution for every existing caller.
     """
-    raw = jsonl_store.read_recent(paths.activity_path(), limit=limit * 4)
+    raw = jsonl_store.read_recent(paths.activity_path(project_root), limit=limit * 4)
     out: list[dict[str, Any]] = []
     for rec in raw:
         if kind is not None and rec.get("kind") != kind:

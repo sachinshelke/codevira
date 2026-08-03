@@ -38,7 +38,7 @@ Ship plan:
     ``<project>/.codevira-cache/enforcer_outcomes.jsonl`` (per-machine,
     gitignored, size-capped with one-file rotation) so the noise rate is
     measurable from real sessions. Default stays ``warn``.
-  - v3.8.0: default is ``block`` — Claude Code's Stop hook re-engages the
+  - 4.0: default is ``block`` — Claude Code's Stop hook re-engages the
     AI until the log lands. The flip is data-gated on the v3.3.0 outcomes
     file: 324 STOP evaluations over 7 weeks recorded 218 compliant /
     22 gap_warned / 84 skip_no_commits — a 9% warn rate on commit-bearing
@@ -116,7 +116,7 @@ class SessionLogEnforcer(Policy):
                 "env": "CODEVIRA_SESSION_LOG_ENFORCER_MODE",
                 "description": (
                     "off (disabled) | warn (non-blocking nudge) | block "
-                    "(default since v3.8.0 — refuses the Stop so the AI "
+                    "(default since 4.0 — refuses the Stop so the AI "
                     "calls write_session_log; degrades to warn on the "
                     "second consecutive fire so it cannot loop). STOP "
                     "outcomes are recorded to .codevira-cache/"

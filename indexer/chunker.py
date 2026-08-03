@@ -272,12 +272,24 @@ def _expand_alias(
     return out
 
 
+@functools.lru_cache(maxsize=64)
+def _resolved_root(project_root_str: str) -> Path:
+    """``project_root.resolve()``, memoised.
+
+    ``resolve()`` walks and stats every path component, and this used to run
+    once per candidate probe: on a 2,000-file TS project with ~10 imports
+    each that is ~20,000 identical calls for one value. There are only ever a
+    handful of distinct roots in a process.
+    """
+    return Path(project_root_str).resolve()
+
+
 def _probe_ts_file(base_no_ext: Path, project_root: Path) -> str | None:
     """Probe TS/JS extension + index-file candidates for a base path and return
     the first existing one, project-root-relative. project_root is resolved so
     relative_to() matches even when it points through a symlink (e.g. macOS
     /var -> /private/var)."""
-    root = project_root.resolve()
+    root = _resolved_root(str(project_root))
     candidates = [
         base_no_ext.with_name(base_no_ext.name + ".ts"),
         base_no_ext.with_name(base_no_ext.name + ".tsx"),
@@ -288,12 +300,15 @@ def _probe_ts_file(base_no_ext: Path, project_root: Path) -> str | None:
         base_no_ext / "index.js",
     ]
     for c in candidates:
+        # exists() first: a miss is the common case and costs one stat,
+        # where resolve() walks every component of the path.
+        if not c.exists():
+            continue
         resolved = c.resolve()
-        if resolved.exists():
-            try:
-                return str(resolved.relative_to(root))
-            except ValueError:
-                continue
+        try:
+            return str(resolved.relative_to(root))
+        except ValueError:
+            continue
     return None
 
 

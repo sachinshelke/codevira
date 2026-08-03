@@ -104,3 +104,54 @@ def test_the_initializing_branch_still_says_so() -> None:
 
     assert result.get("status") == "initializing"
     assert "hint" in result and "again" in result["hint"].lower()
+
+
+# ── the opt-in gate: the FIFTH not-found path ────────────────────────────
+#
+# The tests above parametrise the progress states, which was the right
+# generalisation for the bug that prompted them — but it stops at the graph
+# lookup. `_opt_in_gate` returns `found=False` BEFORE any of that, on every
+# graph read of a project that never ran `codevira init`, and it carried
+# neither `not_indexed` nor the null counts. That is the same defect one
+# frame further up, and no state-parametrised test could have reached it.
+
+
+@pytest.fixture
+def _not_opted_in(monkeypatch: pytest.MonkeyPatch):
+    """Force the opt-in gate closed."""
+    import mcp_server.opt_in as opt_in
+
+    monkeypatch.setattr(opt_in, "activation_allowed", lambda *a, **k: False)
+
+
+@pytest.mark.parametrize(
+    ("tool", "counts"),
+    [
+        (graph.get_node, COUNT_FIELDS),
+        (graph.get_impact, ("blast_radius", "protected_count", "high_stability_count")),
+    ],
+)
+def test_the_opt_in_gate_answers_with_the_same_shape(
+    _not_opted_in, tool, counts: tuple[str, ...]
+) -> None:
+    """Fails with KeyError on the pre-fix code."""
+    result = tool("does/not/exist.py")
+
+    assert result["found"] is False
+    assert result["not_opted_in"] is True
+    assert result["not_indexed"] is True, (
+        f"{tool.__name__} omitted not_indexed on the opt-in path — a client "
+        f"keying on it gets a KeyError instead of an answer, on the single "
+        f"most common not-found case there is."
+    )
+    for field in counts:
+        assert result[field] is None, (
+            f"{tool.__name__} returned {field}={result[field]!r} rather than "
+            f"None — a zero here reads as an authoritative measurement."
+        )
+
+
+def test_query_graph_gate_carries_the_flag(_not_opted_in) -> None:
+    """query_graph has no counts, but the flag is the contract."""
+    result = graph.query_graph("does/not/exist.py")
+    assert result["not_indexed"] is True

@@ -53,6 +53,7 @@ from mcp_server.storage import (
     origin,
     paths,
     sanitize,
+    text as text_util,
     uid as uid_mod,
 )
 
@@ -97,14 +98,23 @@ def default_session_id(project_root: Path | None = None) -> str:
                     if not line:
                         continue
                     try:
-                        sid = json.loads(line).get("session_id")
-                    except json.JSONDecodeError:
+                        row = json.loads(line)
+                    except ValueError:
                         continue
+                    # A line of `null`, `"abc"` or `[1,2]` PARSES, so catching
+                    # JSONDecodeError alone was not enough: `.get` on the
+                    # result raised AttributeError straight through the
+                    # `except OSError` below, out of a function documented to
+                    # never raise — and record() calls this unconditionally,
+                    # so one malformed marker line failed every write.
+                    if not isinstance(row, dict):
+                        continue
+                    sid = row.get("session_id")
                     if sid:
                         latest = str(sid)
             if latest:
                 return latest
-    except OSError:
+    except (OSError, ValueError):
         pass
 
     global _PROCESS_SESSION_ID
@@ -200,6 +210,19 @@ def _read_merged(project_root: Path | None = None) -> list[dict[str, Any]]:
     records carry the same ``id`` as the base plus a truthy
     ``_amendment_to_id`` marker; later amendments win; orphan
     amendments emit as their own record for diagnosis.
+
+    Callers get shallow COPIES of the cached records, never the cached
+    objects. Handing out the originals made the cache mutable-by-accident:
+    ``list_all(full=True)`` passes records straight through, so a single
+    ``d["decision"] = ...`` anywhere poisoned the merged view for every
+    later reader in the process — verified, ``list_all()[0] is
+    list_all()[0]`` was True and an edit survived into the next call. It
+    never reaches disk, so it disappears on restart; that is the worst
+    shape a bug can take in an enforcement read path. Before the cache,
+    ``read_merged`` reparsed each time and mutation was harmless.
+
+    ``dict(r)`` is ~2 orders of magnitude cheaper than the ``json.loads``
+    it replaces, so the Step 4 budget win survives intact.
     """
     path = paths.decisions_path(project_root)
     try:
@@ -208,10 +231,10 @@ def _read_merged(project_root: Path | None = None) -> list[dict[str, Any]]:
         stamp = (st.st_mtime_ns, st.st_size)
         cached = _MERGED_CACHE.get(key)
         if cached is not None and cached[0] == stamp:
-            return cached[1]
+            return [dict(r) for r in cached[1]]
         merged = jsonl_store.read_merged(path)
         _MERGED_CACHE[key] = (stamp, merged)
-        return merged
+        return [dict(r) for r in merged]
     except OSError:
         # Missing/unreadable store — fall through to the uncached read so
         # the caller sees the same empty-or-error behaviour as before.
@@ -835,6 +858,41 @@ def list_tags_with_counts() -> dict[str, Any]:
 # ─── Mutations (append-as-amendment) ────────────────────────────────
 
 
+def _base_uid(decision_id: str) -> str:
+    """The uid of ``decision_id``'s RAW base line, or ``""``.
+
+    Deliberately not ``uid_of(get(decision_id))``. ``get`` returns the
+    AMENDMENT-MERGED view, and for a pre-4.0 record — which has no stored
+    uid, so the uid is derived from content — the merged view hashes the
+    base's fields PLUS every field folded in from earlier amendments.
+    ``id_repair`` hashes the raw base line. The two therefore disagree the
+    moment a decision has one amendment, and the S3b exact-match edge
+    silently falls back to the ``(old_id, writer)`` heuristic it exists to
+    replace. Reproduced on a base with one amendment: 4aceb79e64579eac
+    (raw) vs a1a5090cabe3c8ab (merged).
+
+    Every one of the ~1,365 decisions in the reference corpus is pre-4.0
+    and uid-less, so this was the whole existing store — and the records
+    with the most amendments, the ones a two-host merge most needs to
+    attribute correctly, were exactly the ones it failed for.
+
+    A 4.0-written base carries a stored ``uid`` that ``read_merged`` never
+    overlays (``_AMENDMENT_NEVER_OVERLAYS``), so both routes already agreed
+    for those; this makes the derived case agree too.
+    """
+    path = paths.decisions_path()
+    try:
+        for rec in jsonl_store.read_all(path):
+            if str(rec.get("id")) != str(decision_id):
+                continue
+            if rec.get("_amendment_to_id"):
+                continue  # an amendment, not the base
+            return uid_mod.uid_of(rec)
+    except OSError:
+        pass
+    return ""
+
+
 def _amendment(
     decision_id: str, *, ts: str | None = None, **fields: Any
 ) -> dict[str, Any]:
@@ -873,11 +931,9 @@ def _amendment(
     # Best-effort: a base with no resolvable uid leaves the edge unset and
     # the (old_id, writer) path handles it exactly as before.
     try:
-        base = get(decision_id)
-        if base:
-            base_uid = uid_mod.uid_of(base)
-            if base_uid:
-                row["_amendment_to_uid"] = base_uid
+        base_uid = _base_uid(decision_id)
+        if base_uid:
+            row["_amendment_to_uid"] = base_uid
     except Exception as exc:  # noqa: BLE001 — never fail a mutation over this
         logger.debug("decisions_store._amendment: uid edge skipped: %s", exc)
 
@@ -1378,22 +1434,9 @@ def _truncate(text: str, cap: int) -> str:
 def one_line_summary(text: str | None, cap: int = 140) -> str:
     """Collapse ``text`` to a single line ≤ ``cap`` chars (E1, Phase 19).
 
-    The summary-first tool defaults need a compact one-liner per decision:
-    newlines/runs of whitespace collapse to single spaces, then the string
-    is cut at a sentence boundary (``. ``) if one sits past the halfway
-    mark, else at the last word boundary, with an ellipsis. Whole text is
-    returned verbatim when it already fits (no spurious ellipsis).
+    Kept as the public name three call sites and a test module already use.
+    The implementation moved to ``storage.text.clip`` so ``digest`` and
+    ``decision_lock`` — which cannot import this module without a cycle —
+    stopped growing their own copies of it. See that module's docstring.
     """
-    if not text:
-        return ""
-    collapsed = " ".join(text.split())
-    if len(collapsed) <= cap:
-        return collapsed
-    cut = collapsed[:cap]
-    dot = cut.rfind(". ")
-    if dot >= cap // 2:
-        return cut[: dot + 1]
-    space = cut.rfind(" ")
-    if space >= cap // 2:
-        cut = cut[:space]
-    return cut + "…"
+    return text_util.clip(text, cap)

@@ -47,8 +47,15 @@ def graphed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)
     (root / "src" / "m.py").write_text(SRC)
 
-    data = tmp_path / "data"
+    # The graph lives in the project's OWN store, so `_resolve_data_dir(root)`
+    # finds it for real. It used to sit in an unrelated tmp dir reachable only
+    # through the monkeypatch below — which meant `_graph_db(project_root=...)`
+    # ignoring its argument was INVISIBLE here: the patched ambient lookup
+    # answered for it. The monkeypatch stays for the project_root=None calls,
+    # now pointed at the same directory so both routes agree.
+    data = root / ".codevira"
     (data / "graph").mkdir(parents=True)
+    (data / "config.yaml").write_text("schema_version: 1\n")
     db = data / "graph" / "graph.db"
     conn = sqlite3.connect(db)
     conn.execute(
@@ -210,3 +217,35 @@ class TestEndToEnd:
         paths.ensure_dirs(graphed)
         did = decisions_store.record("No edits happened", file_path="src/m.py")
         assert decisions_store.get(did)["symbol"] is None
+
+
+class TestProjectScoping:
+    """`project_root` must actually select the graph, not decorate the call.
+
+    `_graph_db` accepted `project_root` and dropped it — `get_data_dir()`
+    takes no argument — so every caller that threaded a root through got the
+    AMBIENT project's graph. `decisions_store.record()` derives `symbol` on
+    this path, so a process resolved to another project would name a function
+    from a different repo and then scope a region lock to it. This module's
+    contract is that a wrong symbol is worse than none; that was the one way
+    to manufacture a confidently wrong one.
+    """
+
+    def test_another_projects_root_does_not_see_this_graph(
+        self, graphed: Path, tmp_path: Path
+    ) -> None:
+        """Pre-fix this returned "alpha": the argument was ignored and the
+        monkeypatched ambient graph answered instead."""
+        other = tmp_path / "unrelated"
+        (other / "src").mkdir(parents=True)
+        assert anchor.symbol_at("src/m.py", 6, project_root=other) is None
+
+    def test_this_projects_root_resolves_without_the_ambient_patch(
+        self, graphed: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """With the ambient lookup pointed somewhere empty, an explicit
+        project_root must still find the project's own graph."""
+        monkeypatch.setattr(
+            "mcp_server.paths.get_data_dir", lambda *a, **k: graphed / "nowhere"
+        )
+        assert anchor.symbol_at("src/m.py", 6, project_root=graphed) == "alpha"

@@ -29,11 +29,27 @@ logger = logging.getLogger(__name__)
 
 
 def _graph_db(project_root: Path | None = None) -> Path | None:
-    """Locate the code graph, or None. Mirrors signals.py's resolution."""
-    try:
-        from mcp_server.paths import get_data_dir
+    """Locate ``project_root``'s code graph, or None.
 
-        p = get_data_dir() / "graph" / "graph.db"
+    ``project_root`` is honoured, not decorative. It used to be accepted and
+    dropped — ``get_data_dir()`` takes no argument, so every caller that
+    carefully threaded a root through resolved the graph AMBIENTLY instead.
+    ``decisions_store.record()`` derives ``symbol`` on this path, so a
+    process whose ambient root was a different project would name a function
+    from ANOTHER repo and then scope a region lock to it. This module's own
+    contract is that a wrong symbol is worse than none, and that was the one
+    way to produce a confidently wrong one. Same cross-project bleed shape as
+    D00011U / D00012O.
+    """
+    try:
+        from mcp_server.paths import _resolve_data_dir, get_data_dir
+
+        data_dir = (
+            _resolve_data_dir(Path(project_root).resolve())
+            if project_root is not None
+            else get_data_dir()
+        )
+        p = data_dir / "graph" / "graph.db"
         return p if p.is_file() else None
     except Exception:  # noqa: BLE001
         return None
@@ -174,7 +190,11 @@ def symbol_for_session_edit(
     try:
         from mcp_server.storage import activity_store
 
-        rows = activity_store.list_recent(limit=200, kind=activity_store.KIND_EDIT)
+        rows = activity_store.list_recent(
+            limit=200,
+            kind=activity_store.KIND_EDIT,
+            project_root=project_root,
+        )
     except Exception:  # noqa: BLE001
         return None
 

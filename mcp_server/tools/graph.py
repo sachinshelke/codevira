@@ -24,7 +24,25 @@ def _get_db() -> SQLiteGraph:
     return SQLiteGraph(db_path)
 
 
-def _opt_in_gate() -> dict[str, Any] | None:
+#: The v2.1.2 Item 2 not-found shape for ``get_node``: every numeric count is
+#: ``None``, never ``0``, so "unindexed" is distinguishable from "indexed and
+#: genuinely empty". Module-level because FOUR return paths share it and the
+#: one that defined its own copy is how the contract got a hole.
+_NODE_NULL_COUNTS: dict[str, Any] = {
+    "rules_count": None,
+    "dependencies_count": None,
+    "key_functions_count": None,
+}
+
+#: Same contract, ``get_impact``'s field names.
+_IMPACT_NULL_COUNTS: dict[str, Any] = {
+    "blast_radius": None,
+    "protected_count": None,
+    "high_stability_count": None,
+}
+
+
+def _opt_in_gate(counts: dict[str, Any] | None = None) -> dict[str, Any] | None:
     """Return an inert response if the project isn't opted in, else None.
 
     v3.7.0 opt-in gate for the graph-READ vector — the DOMINANT ghost-dir
@@ -34,6 +52,14 @@ def _opt_in_gate() -> dict[str, Any] | None:
     by connecting — so merely *reading* a project (e.g. get_impact before an
     edit) would otherwise adopt it. Guarding here, not in SQLiteGraph, keeps the
     high-blast-radius primitive untouched. See mcp_server/opt_in.py.
+
+    ``counts`` is the caller's null-count block. It is not optional decoration:
+    this is a ``found=False`` path like any other, so it MUST satisfy the same
+    v2.1.2 Item 2 contract — ``not_indexed: True`` plus ``None`` for every
+    count. It did not, and an agent doing ``result["not_indexed"]`` got a
+    KeyError on every graph read of a project that had never run
+    ``codevira init`` — which is strictly more common than the mid-index case
+    that contract hole was found in.
     """
     from mcp_server.opt_in import activation_allowed
 
@@ -42,6 +68,10 @@ def _opt_in_gate() -> dict[str, Any] | None:
     return {
         "found": False,
         "not_opted_in": True,
+        # A project with no graph is, necessarily, not indexed. `not_opted_in`
+        # is the more specific WHY; `not_indexed` is the contract.
+        "not_indexed": True,
+        **(counts or {}),
         "message": (
             "This project isn't tracked by codevira yet, so no code graph "
             "exists. Run `codevira init` to enable graph queries "
@@ -125,7 +155,7 @@ def get_node(file_path: str, full: bool = False) -> dict[str, Any]:
 
     For source code itself, call get_signature(file) or get_code(file, symbol).
     """
-    _inert = _opt_in_gate()
+    _inert = _opt_in_gate(_NODE_NULL_COUNTS)
     if _inert is not None:
         _inert["file_path"] = file_path
         return _inert
@@ -142,17 +172,14 @@ def get_node(file_path: str, full: bool = False) -> dict[str, Any]:
     db.close()
 
     if not node:
-        # Defined here, above the first early return, because EVERY
-        # found=False path has to carry the same shape. An agent keying on
-        # `not_indexed` to decide whether a zero blast-radius is trustworthy
-        # must never get a payload that simply lacks the field — that is
-        # indistinguishable from a successful lookup unless it also inspects
-        # `found`, which is exactly the trust bug v2.1.2 Item 2 set out to fix.
-        _not_indexed_counts = {
-            "rules_count": None,
-            "dependencies_count": None,
-            "key_functions_count": None,
-        }
+        # ONE definition, shared by every found=False path including the
+        # opt-in gate above. An agent keying on `not_indexed` to decide
+        # whether a zero blast-radius is trustworthy must never get a payload
+        # that simply lacks the field — that is indistinguishable from a
+        # successful lookup unless it also inspects `found`, which is exactly
+        # the trust bug v2.1.2 Item 2 set out to fix. Two of the five paths
+        # have now been found missing it; a per-branch local copy is how.
+        _not_indexed_counts = _NODE_NULL_COUNTS
         # v1.6: Check if auto-init is running
         try:
             from mcp_server.auto_init import get_init_progress
@@ -330,7 +357,7 @@ def get_impact(
     {blast_radius, protected_count, high_stability_count} — ~80 tokens.
     Use this as a gate check before deciding to modify.
     """
-    _inert = _opt_in_gate()
+    _inert = _opt_in_gate(_IMPACT_NULL_COUNTS)
     if _inert is not None:
         _inert["file_path"] = file_path
         return _inert
@@ -368,11 +395,7 @@ def get_impact(
         # 2026-05-18 v2.1.2 Item 2: add `not_indexed: True` + null counts
         # so agents can distinguish "unindexed" (don't trust safety) from
         # "indexed with no dependents" (legit blast_radius=0).
-        _not_indexed_counts = {
-            "blast_radius": None,
-            "protected_count": None,
-            "high_stability_count": None,
-        }
+        _not_indexed_counts = _IMPACT_NULL_COUNTS
         if not graph_db_present:
             return {
                 "found": False,

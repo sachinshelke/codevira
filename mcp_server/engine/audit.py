@@ -30,9 +30,12 @@ DESIGN CONSTRAINTS (all load-bearing — do not relax without a decision)
   into anything else, nor raise into the hook wiring.
 * **Bounded.** Single-file rotation at ``_MAX_BYTES`` and a per-row cap, so
   a long-lived machine cannot grow this without limit — D00012K rule (c).
-* **Identity stamped.** Every row carries ``host_hash``, ``version`` and
-  ``ide``. The v3.3.0 outcomes file omitted these, which is why its
-  "across multiple machines" question was unanswerable by construction.
+* **Identity stamped.** Every row carries ``device_id``, ``host_hash``,
+  ``version`` and ``ide``. The v3.3.0 outcomes file omitted these, which
+  is why its "across multiple machines" question was unanswerable by
+  construction. ``device_id`` is the one to GROUP by — ``host_hash`` is
+  kept only so pre-4.0 rows stay comparable, and origin.py measured it
+  drifting to 4 values on one machine in 7 weeks.
 
 Mirrors ``session_log_enforcer._record_outcome`` deliberately — one
 instrumentation shape in the codebase, not two.
@@ -126,7 +129,7 @@ def record(
 
 
 def _identity() -> dict[str, Any]:
-    """host_hash / version / ide, or empty on any failure.
+    """device_id / host_hash / version / ide, or empty on any failure.
 
     Reuses ``storage.origin`` rather than deriving a second identity — the
     v3.3.0 outcomes file had no identity at all, which is the defect this
@@ -137,6 +140,14 @@ def _identity() -> dict[str, Any]:
 
         o = origin.current_origin() or {}
         return {
+            # device_id FIRST: host_hash is derived from uuid.getnode() and
+            # drifts — origin.py measured 4 values from one machine over 7
+            # weeks, two live concurrently. Stamping only that would group
+            # one machine as several and compute the false-block rate over a
+            # partitioned denominator, which is the exact "unanswerable by
+            # construction" defect this file exists to close. host_hash stays
+            # so rows written before device_id existed remain comparable.
+            "device_id": o.get("device_id"),
             "host_hash": o.get("host_hash"),
             "ide": o.get("ide"),
             "version": _version(),

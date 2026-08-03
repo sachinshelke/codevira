@@ -144,12 +144,46 @@ class TestBounds:
         for i in range(60):
             (repo / "src" / f"f{i}.py").write_text(f"x = {i}\n")
         _git(repo, "add", "-A")
-        assert len(git_hooks.staged_files(repo)) <= git_hooks._MAX_FILES
+        files, _ = git_hooks.staged_files(repo)
+        assert len(files) <= git_hooks._MAX_FILES
+
+    def test_the_cap_reports_what_it_dropped(
+        self, repo: Path, capsys: pytest.CaptureFixture
+    ) -> None:
+        """A silent cap makes a truncated run indistinguishable from a clean
+        one — so a locked file sorting past #40 reads as 'nothing locked'."""
+        for i in range(60):
+            (repo / "src" / f"f{i:03d}.py").write_text(f"x = {i}\n")
+        _git(repo, "add", "-A")
+
+        files, dropped = git_hooks.staged_files(repo)
+        assert dropped > 0, "expected the cap to drop files in this fixture"
+        assert len(files) == git_hooks._MAX_FILES
+
+        assert git_hooks.handle(repo) == 0
+        err = capsys.readouterr().err
+        assert (
+            "NOT evaluated" in err and str(dropped) in err
+        ), f"the hook must say how many staged files it skipped; got: {err!r}"
 
     def test_binary_and_unknown_suffixes_are_skipped(self, repo: Path) -> None:
         (repo / "blob.bin").write_bytes(b"\x00\x01\x02")
         _git(repo, "add", "-A")
-        assert not any(f.endswith(".bin") for f in git_hooks.staged_files(repo))
+        files, _ = git_hooks.staged_files(repo)
+        assert not any(f.endswith(".bin") for f in files)
+
+    @pytest.mark.parametrize(
+        "name", ["Auth.java", "Service.cs", "handler.rb", "main.cpp", "app.php"]
+    )
+    def test_common_languages_reach_the_engine(self, repo: Path, name: str) -> None:
+        """The allowlist started as 'what the graph parses', which made
+        commit-time enforcement a silent no-op for most of the world."""
+        (repo / "src" / name).write_text("// x\n")
+        _git(repo, "add", "-A")
+        files, _ = git_hooks.staged_files(repo)
+        assert any(
+            f.endswith(name) for f in files
+        ), f"{name} was filtered out before any policy could see it"
 
 
 class TestInstaller:
@@ -178,3 +212,58 @@ class TestInstaller:
 
     def test_refuses_outside_a_repo(self, tmp_path: Path) -> None:
         assert git_hooks.install_hook(tmp_path) == 1
+
+
+class TestWorktreeLayout:
+    """`.git` is a FILE in a linked worktree and in a submodule, not a dir.
+
+    Both `is_merge_commit` and `install_hook` hard-coded `<root>/.git/...`,
+    so in a worktree the never-block-a-merge guarantee silently did not
+    hold and the installer refused to run with a false "not a git
+    repository". This repo does routine work in worktrees, so neither was
+    a hypothetical edge case.
+    """
+
+    @pytest.fixture
+    def worktree(self, repo: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+        wt = repo.parent / "wt"
+        _git(repo, "worktree", "add", "-q", "-b", "wt-branch", str(wt))
+        assert (wt / ".git").is_file(), "fixture assumption: .git is a file here"
+        monkeypatch.chdir(wt)
+        return wt
+
+    def test_git_path_resolves_through_the_gitdir_pointer(self, worktree: Path) -> None:
+        p = git_hooks.git_path(worktree, "MERGE_HEAD")
+        assert p is not None
+        assert ".git" in str(p), p
+        assert not p.exists(), "no merge in progress"
+
+    def test_a_merge_in_a_worktree_is_still_exempt(self, worktree: Path) -> None:
+        """The naive `<root>/.git/MERGE_HEAD` probe returns False here, which
+        would run the full policy set over a merge and can block it."""
+        gitdir = git_hooks.git_path(worktree, "MERGE_HEAD")
+        assert gitdir is not None
+        gitdir.parent.mkdir(parents=True, exist_ok=True)
+        gitdir.write_text("deadbeef\n")
+
+        assert git_hooks.is_merge_commit(worktree) is True
+        assert git_hooks.evaluate(worktree) == []
+
+    def test_install_hook_works_in_a_worktree(self, worktree: Path) -> None:
+        """Pre-fix this printed 'not a git repository' and returned 1."""
+        assert git_hooks.install_hook(worktree) == 0
+        # Hooks are shared across worktrees — they live in the COMMON git dir.
+        hook = Path(
+            subprocess.run(
+                ["git", "rev-parse", "--git-common-dir"],
+                cwd=worktree,
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+        )
+        if not hook.is_absolute():
+            hook = worktree / hook
+        hook = hook / "hooks" / "pre-commit"
+        assert hook.is_file()
+        assert git_hooks._MARKER in hook.read_text()

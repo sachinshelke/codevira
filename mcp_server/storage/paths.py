@@ -54,9 +54,19 @@ def _main_worktree_root(project_root: Path) -> Path:
     Honors the locked write-path guarantee (D000012): the redirected root is
     validated via ``is_invalid_project_root`` and we fall back to
     ``project_root`` if it fails, so memory never resolves to an invalid root.
-    Set ``CODEVIRA_WORKTREE_ISOLATED=1`` to opt out and keep per-worktree memory.
+    Set ``CODEVIRA_WORKTREE_ISOLATED=1`` (or true/yes/on) to opt out and keep
+    per-worktree memory.
     """
-    if os.environ.get("CODEVIRA_WORKTREE_ISOLATED") == "1":
+    # Normalised like every other flag in the product (see egress.py). The
+    # bare `== "1"` meant CODEVIRA_WORKTREE_ISOLATED=true silently did
+    # nothing: the user asked for per-worktree memory and kept getting the
+    # shared store, with no error either way.
+    if os.environ.get("CODEVIRA_WORKTREE_ISOLATED", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    ):
         return project_root
     git_path = project_root / ".git"
     try:

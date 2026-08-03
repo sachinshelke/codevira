@@ -18,6 +18,7 @@ from typing import Any
 from mcp_server.engine.events import EventType, HookEvent
 from mcp_server.engine.policy import Policy, PolicyVerdict
 from mcp_server.engine.signals import SignalContext
+from mcp_server.storage import text as text_util
 
 
 _DEFAULT_MODE = "block"
@@ -25,20 +26,15 @@ _MODES = ("off", "warn", "block")
 
 
 def _clip(text: str, cap: int) -> str:
-    """Truncate on a word boundary with an ellipsis, or return "" for empty.
+    """Truncate on a word boundary with an ellipsis, or "" for empty.
 
-    Used only for the user-visible block message, where readability in a
-    terminal matters more than completeness — the full record is always one
-    ``expand(ids=[...])`` away.
+    Delegates to ``storage.text.clip``: the block message and the injected
+    digest line render the SAME ``context`` field to the SAME reader, so two
+    clippers is two ways to cut one sentence. Readability in a terminal is
+    what is being bought here — the full record is one ``expand(ids=[...])``
+    away.
     """
-    if not text:
-        return ""
-    if len(text) <= cap:
-        return text
-    cut = text[: cap - 1]
-    if " " in cut[cap // 2 :]:
-        cut = cut[: cut.rindex(" ")]
-    return cut.rstrip(" ,;:.") + "…"
+    return text_util.clip(text, cap)
 
 
 # ---------------------------------------------------------------------

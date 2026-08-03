@@ -1097,6 +1097,67 @@ def inject_global_claude_code(
     return str(config_path)
 
 
+def inject_scoped_claude_code(
+    project_root: Path, cmd_path: str, python_exe: str
+) -> str | None:
+    """Register codevira for Claude Code as a PER-PROJECT, ``--project-dir``-pinned
+    entry under ``~/.claude.json`` ``projects[<root>].mcpServers`` — and remove any
+    bare / user-scope ``codevira`` entry.
+
+    This is what makes ``codevira setup`` bind to the right project. The older
+    :func:`inject_global_claude_code` wrote a BARE ``codevira`` entry (via
+    ``claude mcp add --scope user``, args ``[]``) that resolves the project
+    ambiently from cwd — the wrong-project bug D000126 ("a session in agent-mcp
+    wrote its decisions into Agentic/LH"). A bare entry also OUT-RANKS scoped
+    ones, so a single ``setup`` silently re-breaks a machine ``register-all``
+    had fixed.
+
+    Per-project + ``--project-dir`` is already how the Antigravity and Claude
+    Desktop paths register (D00012C / v3.7.1 fix B); this brings Claude Code in
+    line and REUSES ``register_all``'s entry builder so the two cannot drift.
+    """
+    from mcp_server.register_all import _named_entry, slug
+
+    config_path = _claude_global_config_path()
+
+    # Best-effort: drop a user-scope bare entry a prior `setup` added via
+    # `claude mcp add --scope user codevira`. The file-level strip below is the
+    # backstop when the CLI isn't available.
+    cli = _claude_cli_path()
+    if cli is not None:
+        try:
+            import subprocess
+
+            subprocess.run(
+                [cli, "mcp", "remove", "--scope", "user", "codevira"],
+                capture_output=True,
+                timeout=10,
+            )
+        except Exception:  # noqa: BLE001 — never block registration on cleanup
+            pass
+
+    data = _read_json_safe(config_path)
+
+    # 1. Strip any bare / user-scope codevira from the top-level map — it
+    #    out-ranks the scoped entry and re-introduces the wrong-project bug.
+    top = data.get("mcpServers")
+    if isinstance(top, dict):
+        for k in [k for k in top if k == "codevira" or k.startswith("codevira-")]:
+            top.pop(k, None)
+
+    # 2. Write the pinned per-project entry (replacing any stale codevira* for
+    #    this project). One MCP per project, hard-bound to its --project-dir.
+    root = str(project_root)
+    proj = data.setdefault("projects", {}).setdefault(root, {})
+    servers = proj.setdefault("mcpServers", {})
+    for k in [k for k in servers if k == "codevira" or k.startswith("codevira-")]:
+        servers.pop(k, None)
+    servers[slug(root)] = _named_entry(cmd_path, python_exe, root, "claude_code")
+
+    _write_json_safe(config_path, data)
+    return str(config_path)
+
+
 def _claude_cli_add_codevira(
     cli: str,
     cmd_path: str,
@@ -1356,9 +1417,11 @@ def inject_ide_config(
             if global_mode:
                 # Global mode: register once, works for every project
                 if ide == "claude":
-                    path = inject_global_claude_code(cmd_path, python_exe, project_root)
+                    # Per-project + --project-dir (D000126 fix): a bare global
+                    # entry out-ranks scoped ones and mis-binds the session.
+                    path = inject_scoped_claude_code(project_root, cmd_path, python_exe)
                     if path:
-                        results["Claude Code (global)"] = path
+                        results["Claude Code (per-project)"] = path
                 elif ide == "cursor":
                     path = inject_global_cursor(cmd_path, python_exe)
                     if path:

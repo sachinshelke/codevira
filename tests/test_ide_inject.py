@@ -955,13 +955,23 @@ class TestInjectIdeConfigIntegration:
         )
 
         results = inject_ide_config(project, project_name="myproject", global_mode=True)
-        assert "Claude Code (global)" in results
-        config_path = Path(results["Claude Code (global)"])
+        # D000126 fix: Claude Code registers PER-PROJECT (pinned), not a bare
+        # global entry that mis-binds the session.
+        assert "Claude Code (per-project)" in results
+        config_path = Path(results["Claude Code (per-project)"])
         assert config_path.exists()
         data = json.loads(config_path.read_text())
-        assert "codevira" in data["mcpServers"]
-        entry = data["mcpServers"]["codevira"]
-        assert "--project-dir" not in str(entry.get("args", []))
+        # no bare entry at the top level
+        assert "codevira" not in (data.get("mcpServers") or {})
+        # a scoped entry pinned to THIS project
+        scoped = (
+            (data.get("projects") or {}).get(str(project), {}).get("mcpServers", {})
+        )
+        cv = {k: v for k, v in scoped.items() if "codevira" in k.lower()}
+        assert len(cv) == 1 and next(iter(cv)).startswith("codevira-")
+        entry = next(iter(cv.values()))
+        assert "--project-dir" in entry.get("args", [])
+        assert str(project) in entry["args"]
 
     def test_no_ides_detected_returns_empty(self, tmp_path, monkeypatch):
         project = tmp_path / "emptyproject"
@@ -1088,11 +1098,10 @@ class TestInjectIdeConfigIntegration:
                 "--project-dir" in args and str(proj) in args
             ), f"{name} missing --project-dir binding: {args}"
 
-    def test_global_mode_claude_is_single_global_registration(
-        self, tmp_path, monkeypatch
-    ):
-        """A roots-capable IDE (Claude Code) gets ONE global registration in
-        global mode — the core of the single-MCP win."""
+    def test_global_mode_claude_registers_per_project(self, tmp_path, monkeypatch):
+        """D000126 fix: Claude Code registers PER-PROJECT (--project-dir-pinned),
+        not a bare global entry. A bare entry resolves the project ambiently
+        and out-ranks scoped ones — the wrong-project bug this replaces."""
         project = tmp_path / "proj"
         project.mkdir()
 
@@ -1104,17 +1113,16 @@ class TestInjectIdeConfigIntegration:
         )
         captured = {}
 
-        def _fake_global(cmd_path, python_exe, project_root=None):
-            # v3.7.1: takes the project so the bare-entry guard can be decided
-            # PER PROJECT rather than globally.
-            captured["called"] = True
+        def _fake_scoped(project_root, cmd_path, python_exe):
+            captured["project_root"] = project_root
             return "/fake/.claude.json"
 
-        monkeypatch.setattr(ide_inject, "inject_global_claude_code", _fake_global)
+        monkeypatch.setattr(ide_inject, "inject_scoped_claude_code", _fake_scoped)
 
         results = inject_ide_config(project, global_mode=True)
-        assert captured.get("called") is True
-        assert "Claude Code (global)" in results
+        # the SCOPED injector was used, and it was pinned to THIS project
+        assert captured.get("project_root") == project
+        assert "Claude Code (per-project)" in results
 
     # --- New: exception handling (IDE injection failure logged, others continue) ---
     def test_exception_in_one_ide_does_not_block_others(self, tmp_path, monkeypatch):

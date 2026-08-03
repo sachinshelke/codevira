@@ -197,8 +197,7 @@ def resolve_setup_target() -> Path:
     if rejection:
         print(f"Error: {rejection}", file=sys.stderr)
         print(
-            "  → cd into your project directory first, then re-run "
-            "`codevira setup`.",
+            "  → cd into your project directory first, then re-run `codevira setup`.",
             file=sys.stderr,
         )
         raise SystemExit(1)
@@ -263,7 +262,7 @@ def detect_targets(
     unknown = [i for i in only_ides if i not in _KNOWN_IDES]
     if unknown:
         raise ValueError(
-            f"unknown IDE(s) in --ide: {unknown}. " f"Supported: {sorted(_KNOWN_IDES)}"
+            f"unknown IDE(s) in --ide: {unknown}. Supported: {sorted(_KNOWN_IDES)}"
         )
 
     # Stage 2 — reject known-but-not-detected unless --force.
@@ -499,13 +498,16 @@ def _execute_mcp_config(
 
     from mcp_server.ide_inject import (
         _inject_antigravity,
-        inject_global_claude_code,
         inject_global_claude_desktop,
         inject_global_cursor,
+        inject_scoped_claude_code,
     )
 
     handler = {
-        "claude": lambda: inject_global_claude_code(cmd_path, python_exe),
+        # Per-project, --project-dir-pinned (D000126 fix): a bare global entry
+        # bound the session to the wrong project. Mirrors the Antigravity path
+        # just below and register-all.
+        "claude": lambda: inject_scoped_claude_code(project_root, cmd_path, python_exe),
         "claude_desktop": lambda: inject_global_claude_desktop(cmd_path, python_exe),
         "cursor": lambda: inject_global_cursor(cmd_path, python_exe),
         # v3.7.1 fix B: Antigravity can't use a bare global entry (no cwd/roots

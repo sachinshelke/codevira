@@ -1960,6 +1960,59 @@ class TestRemoveCodeviraProjectFromConfig:
         )
         assert ide_inject.remove_codevira_project_from_config(cfg, proj) == []
 
+    def test_removes_nested_project_scoped_claude_code_entry(self, tmp_path):
+        """Backlog task_b95b1c60: ~/.claude.json holds Claude Code project-scope
+        MCP under ``projects[<path>].mcpServers`` (D00013D: setup writes
+        ``codevira-<slug>`` there, pinned to ``--project-dir``). An earlier
+        revision scanned ONLY top-level ``mcpServers``, so untrack silently left
+        the nested entry behind — a dangling server pointing at a project whose
+        data dir was removed. untrack of project A must prune A's nested entry
+        while leaving B's nested entry, the bare global entry, and unrelated
+        servers intact."""
+        cfg = tmp_path / "claude.json"
+        proj_a = tmp_path / "alpha"
+        proj_a.mkdir()
+        proj_b = tmp_path / "beta"
+        proj_b.mkdir()
+        cfg.write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        # bare global entry — must survive (not project-scoped)
+                        "codevira": {"command": "cv", "args": []},
+                    },
+                    "projects": {
+                        str(proj_a): {
+                            "mcpServers": {
+                                "codevira-alpha": {
+                                    "command": "cv",
+                                    "args": ["--project-dir", str(proj_a)],
+                                },
+                                "unrelated-a": {"command": "x"},
+                            }
+                        },
+                        str(proj_b): {
+                            "mcpServers": {
+                                "codevira-beta": {
+                                    "command": "cv",
+                                    "args": ["--project-dir", str(proj_b)],
+                                }
+                            }
+                        },
+                    },
+                }
+            )
+        )
+        removed = ide_inject.remove_codevira_project_from_config(cfg, proj_a)
+        assert removed == ["codevira-alpha"]
+        data = json.loads(cfg.read_text())
+        # bare global entry untouched
+        assert "codevira" in data["mcpServers"]
+        # A's nested codevira entry gone; A's unrelated server preserved
+        assert set(data["projects"][str(proj_a)]["mcpServers"]) == {"unrelated-a"}
+        # B's nested codevira entry fully intact
+        assert set(data["projects"][str(proj_b)]["mcpServers"]) == {"codevira-beta"}
+
 
 class TestRemoveCodeviraFromConfig:
     """remove_codevira_from_config is a public uninstall surface with

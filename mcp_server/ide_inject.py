@@ -408,6 +408,36 @@ def _merge_mcp_config(existing: dict, server_name: str, server_config: dict) -> 
     return result
 
 
+def _iter_mcp_server_maps(data: dict):
+    """Yield every ``mcpServers`` dict inside an IDE config ``data``.
+
+    Claude Code's ``~/.claude.json`` records MCP servers in TWO places:
+
+      * the top-level ``mcpServers`` (user scope), and
+      * ``projects[<path>].mcpServers`` (project scope) — one map per tracked
+        project, where ``codevira setup`` writes the per-project
+        ``codevira-<slug>`` entry pinned to ``--project-dir``.
+
+    Every other IDE config (Cursor, Windsurf, Antigravity, ``.mcp.json``) is a
+    flat file with only the top-level map and no ``projects`` key, so this
+    yields just that one for them — making it the SINGLE source of truth for
+    "where codevira MCP entries can live", safe for all callers.
+
+    Yields the live dict objects: mutating a yielded map mutates ``data`` in
+    place (callers delete keys through it, then persist ``data``).
+    """
+    top = data.get("mcpServers")
+    if isinstance(top, dict):
+        yield top
+    projects = data.get("projects")
+    if isinstance(projects, dict):
+        for pdata in projects.values():
+            if isinstance(pdata, dict):
+                servers = pdata.get("mcpServers")
+                if isinstance(servers, dict):
+                    yield servers
+
+
 def remove_codevira_from_config(
     config_path: Path, key_prefix: str = "codevira"
 ) -> bool:
@@ -530,8 +560,14 @@ def remove_codevira_project_from_config(
     key), this is project-scoped: the bare global ``codevira`` entry and every
     other project's ``codevira-<name>`` entry are left untouched. This is what
     ``codevira untrack <project>`` uses to prune a single project's entries
-    (chiefly the per-project Antigravity entries fix B now writes) without
-    disturbing the rest.
+    (the per-project Antigravity entries fix B writes, AND the Claude Code
+    ``projects[<path>].mcpServers`` entry setup writes) without disturbing the
+    rest.
+
+    Scans BOTH the top-level ``mcpServers`` and every ``projects[<path>].
+    mcpServers`` map (via :func:`_iter_mcp_server_maps`) — an earlier revision
+    saw only the top level, so untrack left the nested Claude Code project-scope
+    entry dangling in ``~/.claude.json`` after the project's data dir was gone.
 
     Returns the list of removed server keys (computed even in ``dry_run``,
     but nothing is written then).
@@ -539,9 +575,6 @@ def remove_codevira_project_from_config(
     if not config_path.exists():
         return []
     data = _read_json_safe(config_path)
-    servers = data.get("mcpServers", {})
-    if not servers:
-        return []
 
     def _norm(p: str | Path) -> str:
         try:
@@ -551,21 +584,29 @@ def remove_codevira_project_from_config(
 
     target = _norm(project_root)
     removed: list[str] = []
-    for key in list(servers):
-        if not (key == "codevira" or key.startswith("codevira-")):
-            continue
-        args = servers[key].get("args", []) or []
-        if "--project-dir" not in args:
-            continue  # bare global entry — not project-scoped, leave it
-        idx = args.index("--project-dir")
-        if idx + 1 >= len(args):
-            continue
-        bound = args[idx + 1]
-        if _norm(bound) == target or str(bound) == str(project_root):
-            removed.append(key)
+    # (server_map, key) pairs staged for deletion. Deferring the deletes lets a
+    # dry_run compute the exact same result without mutating any map.
+    to_delete: list[tuple[dict, str]] = []
+    for servers in _iter_mcp_server_maps(data):
+        for key in list(servers):
+            if not (key == "codevira" or key.startswith("codevira-")):
+                continue
+            entry = servers[key]
+            if not isinstance(entry, dict):
+                continue
+            args = entry.get("args", []) or []
+            if "--project-dir" not in args:
+                continue  # bare global entry — not project-scoped, leave it
+            idx = args.index("--project-dir")
+            if idx + 1 >= len(args):
+                continue
+            bound = args[idx + 1]
+            if _norm(bound) == target or str(bound) == str(project_root):
+                to_delete.append((servers, key))
+                removed.append(key)
 
-    if removed and not dry_run:
-        for key in removed:
+    if to_delete and not dry_run:
+        for servers, key in to_delete:
             del servers[key]
         _write_json_safe(config_path, data)
     return removed

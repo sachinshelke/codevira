@@ -445,6 +445,9 @@ def remove_codevira_from_config(
 
     Deletes keys from mcpServers that match `key_prefix` exactly or start
     with `key_prefix-` (for Antigravity per-project entries like codevira-udap).
+    Sweeps BOTH the top-level ``mcpServers`` and every
+    ``projects[<path>].mcpServers`` (Claude Code's per-project scope) — else
+    uninstall leaves dangling per-project entries behind.
 
     Returns True if any keys were removed, False if nothing to do.
     """
@@ -452,21 +455,17 @@ def remove_codevira_from_config(
         return False
 
     data = _read_json_safe(config_path)
-    servers = data.get("mcpServers", {})
-    if not servers:
-        return False
+    removed = False
+    for servers in _iter_mcp_server_maps(data):
+        for k in [
+            k for k in servers if k == key_prefix or k.startswith(f"{key_prefix}-")
+        ]:
+            del servers[k]
+            removed = True
 
-    keys_to_remove = [
-        k for k in servers if k == key_prefix or k.startswith(f"{key_prefix}-")
-    ]
-    if not keys_to_remove:
-        return False
-
-    for k in keys_to_remove:
-        del servers[k]
-
-    _write_json_safe(config_path, data)
-    return True
+    if removed:
+        _write_json_safe(config_path, data)
+    return removed
 
 
 #: The codevira PreToolUse hook entry Antigravity's hooks.json needs. The

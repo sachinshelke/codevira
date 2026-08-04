@@ -150,19 +150,26 @@ def _build_uninstall_plan(*, keep_data: bool) -> dict:
     if claude_json.is_file():
         # Check if it actually has a codevira entry to avoid noise.
         try:
-            from mcp_server.ide_inject import _read_json_safe
+            from mcp_server.ide_inject import (
+                _iter_mcp_server_maps,
+                _read_json_safe,
+            )
 
             data = _read_json_safe(claude_json) or {}
-            servers = data.get("mcpServers", {}) or {}
+            # Sweep top-level AND projects[<path>].mcpServers (Claude Code's
+            # per-project scope) — the plan must fire when only per-project
+            # scoped entries exist, or uninstall silently leaves them behind.
             has_codevira = any(
-                k == "codevira" or k.startswith("codevira-") for k in servers
+                k == "codevira" or k.startswith("codevira-")
+                for servers in _iter_mcp_server_maps(data)
+                for k in servers
             )
             if has_codevira:
                 actions.append(
                     {
                         "op": "edit-config",
                         "path": str(claude_json),
-                        "detail": "drop mcpServers.codevira* entry",
+                        "detail": "drop mcpServers.codevira* entry (top-level + per-project)",
                         "_action": "remove-mcp-entry",
                     }
                 )

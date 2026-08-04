@@ -2062,6 +2062,46 @@ class TestRemoveCodeviraFromConfig:
     def test_missing_file_returns_false(self, tmp_path):
         assert ide_inject.remove_codevira_from_config(tmp_path / "nope.json") is False
 
+    def test_removes_per_project_scoped_claude_code_entries(self, tmp_path):
+        """~/.claude.json per-project scope (projects[<path>].mcpServers) must
+        be swept. Regression: `codevira setup` writes here since the per-
+        project binding fix, but this function only cleaned top-level, so
+        uninstall left every codevira-<slug> entry behind."""
+        cfg = tmp_path / ".claude.json"
+        cfg.write_text(
+            json.dumps(
+                {
+                    "mcpServers": {"other": {"command": "x"}},
+                    "projects": {
+                        "/repo/a": {
+                            "mcpServers": {
+                                "codevira-a": {
+                                    "command": "codevira",
+                                    "args": ["--project-dir", "/repo/a"],
+                                },
+                                "keep": {"command": "y"},
+                            }
+                        },
+                        "/repo/b": {
+                            "mcpServers": {
+                                "codevira-b": {
+                                    "command": "codevira",
+                                    "args": ["--project-dir", "/repo/b"],
+                                }
+                            }
+                        },
+                    },
+                }
+            )
+        )
+        assert ide_inject.remove_codevira_from_config(cfg) is True
+        data = json.loads(cfg.read_text())
+        # Non-codevira entries preserved everywhere.
+        assert data["mcpServers"] == {"other": {"command": "x"}}
+        assert data["projects"]["/repo/a"]["mcpServers"] == {"keep": {"command": "y"}}
+        # Per-project codevira entries gone.
+        assert data["projects"]["/repo/b"]["mcpServers"] == {}
+
 
 class TestM1UserEnvKeysOnTheCodeviraEntry:
     """`_merge_mcp_config` replaces the entire codevira entry (it is a

@@ -9,6 +9,30 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [4.0.0] — 2026-08-05
+
+Promotes 4.0.0b1 to final — same feature set as the beta (tenant isolation,
+content-addressed records, one MCP server per project). This release adds the
+Claude Code per-project binding fixes below, plus the test-suite and stdio
+hardening that landed during the beta. No product code changed between the
+final real-machine verification of 4.0.0b1 and this tag beyond the fixes listed
+here.
+
+### Fixed — Claude Code per-project MCP binding (setup / uninstall / untrack)
+
+- **`codevira setup` registers Claude Code per-project.** A bare user-scope
+  entry (`args: []`, ambient cwd resolution) let the server bind to the wrong
+  project — a decision recorded in one repo could surface in another
+  (`get_roadmap` returning a sibling project). Setup now writes a scoped
+  `codevira-<slug>` entry pinned with `--project-dir` under
+  `projects[<path>].mcpServers`, and removes any pre-existing bare entry.
+- **`codevira uninstall` sweeps per-project entries.** It cleaned only the
+  top-level `mcpServers`, leaving the scoped `codevira-<slug>` entries that
+  `setup` now writes under `projects[<path>].mcpServers`. It now sweeps both.
+- **`codevira untrack <project>` sweeps per-project entries.** Same nested
+  blindness; it now removes the target project's scoped Claude Code entry too,
+  matched by its `--project-dir`.
+
 ### Fixed — test suite: three process-global leaks made tests order-dependent
 
 Seven tests passed in collection order — the order CI and `make test-unit` use

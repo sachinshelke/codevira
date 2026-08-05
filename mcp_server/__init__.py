@@ -14,4 +14,4 @@ internals — internal APIs may change between minor versions.
 from mcp_server.cli import main
 
 __all__ = ["main"]
-__version__ = "4.0.0b1"
+__version__ = "4.0.0"

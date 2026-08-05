@@ -2,7 +2,7 @@
 agents_md_generator.py — render AGENTS.md from .codevira/decisions.jsonl.
 
 v2.2.0 makes AGENTS.md a **slim contract** that other AI tools (Copilot,
-Codex, Cursor, Gemini, Factory, Amp, Windsurf, Zed, RooCode, Jules) load
+Codex, Cursor, Gemini, Factory, Amp, Zed, RooCode, Jules) load
 on every prompt. To respect their token budgets, the file has a HARD
 5 KB cap regardless of decision count.
 
@@ -89,7 +89,7 @@ def _render_block(decisions: list[dict[str, Any]], project_name: str | None) -> 
     # id within); others get cut first when over budget.
     # `is_outdated` was missing here, so a decision retired via
     # mark_decision_outdated was hidden from search yet still PUBLISHED to
-    # AGENTS.md — i.e. still shown to Cursor, Copilot, Codex and Windsurf,
+    # AGENTS.md — i.e. still shown to Cursor, Copilot and Codex,
     # which read that file. Retiring a decision has to retire it everywhere.
     active = [
         d
@@ -311,7 +311,7 @@ def _merged_decisions() -> list[dict[str, Any]]:
     # its base through ``_amendment_to_id``. So ``did`` was empty for every
     # amendment and the `if not did: continue` above dropped them all.
     #
-    # Consequence: AGENTS.md — the file Cursor, Copilot, Codex and Windsurf read
+    # Consequence: AGENTS.md — the file Cursor, Copilot and Codex read
     # on every prompt — reflected NO amendment whatsoever. Unprotecting a
     # decision, marking it outdated, or superseding it left the original text
     # published to every other AI tool indefinitely.

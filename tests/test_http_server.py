@@ -419,6 +419,23 @@ class TestRunHttpServerBearerToken:
     make their imports raise to suppress them cleanly.
     """
 
+    # A `_no_real_outcome_analysis` fixture stood here, stubbing
+    # `indexer.outcome_tracker.analyze_session_outcomes` so the
+    # `codevira-startup-outcome-analysis` daemon thread this class leaked
+    # would exit immediately.
+    #
+    # It is unnecessary on 4.0 and cannot even import: run_http_server no
+    # longer spawns that thread (http_server.py:390 — the startup sweep was
+    # removed outright after outcomes_writer.observe_all() measured 5.15s,
+    # 50x worse than the no-op it replaced, D00012U), and
+    # indexer/outcome_tracker.py was deleted with it. Patching a module that
+    # does not exist raises AttributeError at fixture setup, erroring all
+    # four bearer-token tests.
+    #
+    # Kept as a comment rather than silently dropped: the fixture was written
+    # against a pre-4.0 base, so anyone backporting the thread-leak detector
+    # to a 3.x branch still needs it there.
+
     @staticmethod
     def _make_mock_uvicorn():
         """Create a mock uvicorn module with a .run callable."""
@@ -520,7 +537,7 @@ class TestRunHttpServer:
                 "indexer.index_codebase.start_background_watcher",
                 return_value=MagicMock(),
             ),
-            patch("indexer.outcome_tracker.analyze_session_outcomes"),
+            patch("mcp_server.storage.outcomes_writer.observe_all"),
             patch("mcp_server.global_sync.import_global_to_project", return_value=None),
             patch("uvicorn.run"),
         ):
@@ -543,7 +560,7 @@ class TestRunHttpServer:
                 "indexer.index_codebase.start_background_watcher",
                 return_value=MagicMock(),
             ),
-            patch("indexer.outcome_tracker.analyze_session_outcomes"),
+            patch("mcp_server.storage.outcomes_writer.observe_all"),
             patch("mcp_server.global_sync.import_global_to_project", return_value=None),
             patch("uvicorn.run"),
         ):
@@ -561,7 +578,7 @@ class TestRunHttpServer:
                 "indexer.index_codebase.start_background_watcher",
                 return_value=MagicMock(),
             ),
-            patch("indexer.outcome_tracker.analyze_session_outcomes"),
+            patch("mcp_server.storage.outcomes_writer.observe_all"),
             patch("mcp_server.global_sync.import_global_to_project", return_value=None),
             patch("uvicorn.run"),
         ):
@@ -575,7 +592,7 @@ class TestRunHttpServer:
                 "indexer.index_codebase.start_background_watcher",
                 side_effect=ImportError("watchdog missing"),
             ),
-            patch("indexer.outcome_tracker.analyze_session_outcomes"),
+            patch("mcp_server.storage.outcomes_writer.observe_all"),
             patch("mcp_server.global_sync.import_global_to_project", return_value=None),
             patch("uvicorn.run"),
         ):
@@ -590,7 +607,7 @@ class TestRunHttpServer:
                 return_value=MagicMock(),
             ),
             patch(
-                "indexer.outcome_tracker.analyze_session_outcomes",
+                "mcp_server.storage.outcomes_writer.observe_all",
                 side_effect=RuntimeError("learning fail"),
             ),
             patch("mcp_server.global_sync.import_global_to_project", return_value=None),
@@ -606,7 +623,7 @@ class TestRunHttpServer:
                 "indexer.index_codebase.start_background_watcher",
                 return_value=MagicMock(),
             ),
-            patch("indexer.outcome_tracker.analyze_session_outcomes"),
+            patch("mcp_server.storage.outcomes_writer.observe_all"),
             patch(
                 "mcp_server.global_sync.import_global_to_project",
                 side_effect=RuntimeError("sync fail"),
@@ -630,7 +647,7 @@ class TestRunHttpServer:
                 "indexer.index_codebase.start_background_watcher",
                 return_value=MagicMock(),
             ),
-            patch("indexer.outcome_tracker.analyze_session_outcomes"),
+            patch("mcp_server.storage.outcomes_writer.observe_all"),
             patch("mcp_server.global_sync.import_global_to_project", return_value=None),
             patch("mcp_server.http_server._certs_exist", return_value=False),
             patch("mcp_server.http_server.generate_mkcert_certs") as mock_gen,
@@ -650,7 +667,7 @@ class TestRunHttpServer:
                 "indexer.index_codebase.start_background_watcher",
                 return_value=MagicMock(),
             ),
-            patch("indexer.outcome_tracker.analyze_session_outcomes"),
+            patch("mcp_server.storage.outcomes_writer.observe_all"),
             patch("mcp_server.global_sync.import_global_to_project", return_value=None),
             patch("mcp_server.http_server._certs_exist", return_value=False),
             patch(
@@ -678,7 +695,7 @@ class TestRunHttpServer:
                 "indexer.index_codebase.start_background_watcher",
                 return_value=MagicMock(),
             ),
-            patch("indexer.outcome_tracker.analyze_session_outcomes"),
+            patch("mcp_server.storage.outcomes_writer.observe_all"),
             patch("mcp_server.global_sync.import_global_to_project", return_value=None),
             patch("mcp_server.http_server._certs_exist", return_value=True),
             patch("mcp_server.http_server.generate_mkcert_certs") as mock_gen,
@@ -699,7 +716,7 @@ class TestRunHttpServer:
                 "indexer.index_codebase.start_background_watcher",
                 return_value=MagicMock(),
             ),
-            patch("indexer.outcome_tracker.analyze_session_outcomes"),
+            patch("mcp_server.storage.outcomes_writer.observe_all"),
             patch("mcp_server.global_sync.import_global_to_project", return_value=None),
             patch("uvicorn.run"),
         ):
@@ -716,7 +733,7 @@ class TestRunHttpServer:
                 "indexer.index_codebase.start_background_watcher",
                 return_value=MagicMock(),
             ),
-            patch("indexer.outcome_tracker.analyze_session_outcomes"),
+            patch("mcp_server.storage.outcomes_writer.observe_all"),
             patch("mcp_server.global_sync.import_global_to_project", return_value=None),
             patch("uvicorn.run"),
         ):

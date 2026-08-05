@@ -429,6 +429,28 @@ def _compute_next_id_locked(
 # overlay dance five times.
 # =====================================================================
 
+#: Fields an amendment must NEVER write onto the record it amends.
+#:
+#: ``origin`` is *creation* provenance: who made this decision. An
+#: amendment's origin is who later flipped a flag on it. Overlaying one
+#: onto the other silently rewrites authorship — open a decision someone
+#: else made, mark it outdated, and the record now says you wrote it.
+#:
+#: This has no effect on existing stores (no amendment carries ``origin``
+#: today — 0 of 96 in the reference store) and exists because 4.0 starts
+#: stamping it, so that amendments become attributable on a merge.
+#:
+#: Unlike ``ts``, there is no "heal if missing" case. A base with no
+#: origin means unknown provenance, and filling it in from whoever
+#: amended it would assert something nobody knows to be true.
+#:
+#: ``uid`` is here for the same structural reason: it is the *record's own*
+#: content identity (4.0 Step 9 · S2). An amendment has its own uid, and
+#: letting it overlay meant a merged record reported the identity of the
+#: last thing that happened to it rather than of itself — so every
+#: uid-keyed edge pointing at that record resolved to nothing.
+_AMENDMENT_NEVER_OVERLAYS = frozenset({"origin", "uid"})
+
 
 def read_merged(
     path: Path,
@@ -510,7 +532,9 @@ def read_merged(
                         # data) would otherwise merge to ts=None, which sorts to
                         # the bottom, is dropped by `since=` filters, and never
                         # soft-expires. Let the amendment heal a missing ts.
-                        if not k.startswith("_") and (k != "ts" or not base.get("ts"))
+                        if not k.startswith("_")
+                        and (k != "ts" or not base.get("ts"))
+                        and k not in _AMENDMENT_NEVER_OVERLAYS
                     }
                 )
         else:
@@ -528,7 +552,9 @@ def read_merged(
                     {
                         k: v
                         for k, v in incumbent.items()
-                        if not k.startswith("_") and (k != "ts" or not merged.get("ts"))
+                        if not k.startswith("_")
+                        and (k != "ts" or not merged.get("ts"))
+                        and k not in _AMENDMENT_NEVER_OVERLAYS
                     }
                 )
                 by_id[did] = merged

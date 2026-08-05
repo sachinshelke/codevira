@@ -53,6 +53,28 @@ jobs:
       - name: First-contact e2e (G2)
         run: make test-e2e
 
+  test-random-order:
+    # Collection order is ONE order out of many. A test that leaks
+    # process-global state only fails in the orders where its victim runs
+    # after it, so the `test` job above — which always runs one fixed order —
+    # is structurally blind to that class of bug. Three such leaks sat green
+    # in CI until 2026-08-02. Separate job, single interpreter: this is a
+    # correctness check on the suite, not a compatibility matrix.
+    #
+    # On failure, pytest-randomly prints the seed it picked. Reproduce with
+    # `make test-unit-random PYTEST_ADDOPTS=--randomly-seed=<n>`.
+    name: Test (random order)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -e ".[dev]"
+      - name: Unit tests, shuffled
+        run: make test-unit-random
+
   type-check:
     name: Type-check (mypy)
     runs-on: ubuntu-latest

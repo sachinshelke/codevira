@@ -2,7 +2,7 @@
 http_server.py — HTTP/Streamable transport for Codevira MCP server.
 
 Runs the same 50 MCP tools as stdio mode but over HTTP, enabling:
-  - URL-based MCP registration in Claude Code, Cursor, Windsurf
+  - URL-based MCP registration in Claude Code, Cursor
   - HTTPS via mkcert for locally-trusted certificates (required by Claude.ai)
   - Parallel multi-client connections without spawning a process per client
 
@@ -68,7 +68,7 @@ a { color: #0969da; }
 
 <h2>This is not a web app</h2>
 <p>Codevira is a <strong>Model Context Protocol</strong> server. It's designed to
-be consumed by AI coding tools (Claude Code, Cursor, Windsurf), not visited in a browser.</p>
+be consumed by AI coding tools (Claude Code, Cursor), not visited in a browser.</p>
 
 <div class="note">
 <strong>Note:</strong> The <code>/mcp</code> endpoint requires <code>Accept: text/event-stream</code>
@@ -387,27 +387,13 @@ def run_http_server(
             except Exception:
                 pass
 
-    # v3.0.0 audit cleanup: dropped `run_rule_inference()` (module
-    # deleted in 2026-05-22 audit). Outcome tracking stays — feeds
-    # AntiRegression + decision-confidence.
-    #
-    # v3.0 perf: runs in a daemon thread so HTTP `/` first response
-    # isn't blocked by git subprocess fanout. Same fix as stdio server.
-    def _run_startup_outcome_analysis() -> None:
-        try:
-            from indexer.outcome_tracker import analyze_session_outcomes
-
-            analyze_session_outcomes()
-        except Exception as e:
-            logger.warning("Could not run startup outcome analysis: %s", e)
-
-    import threading
-
-    threading.Thread(
-        target=_run_startup_outcome_analysis,
-        name="codevira-startup-outcome-analysis",
-        daemon=True,
-    ).start()
+    # 4.0: the startup outcome-analysis thread was removed. It ran
+    # indexer.outcome_tracker, which queried graph.db tables holding 0 rows
+    # since v3.0.0 moved the canonical store to JSONL — a guaranteed no-op
+    # costing ~102ms of git fanout per start. Repointing it at
+    # outcomes_writer.observe_all() measured 5.15s, 50x worse. Outcome
+    # labels come from the write-time fan-out and the explicit
+    # `codevira observe-git` CLI; neither needs a git sweep at boot.
 
     # v3.0 (2026-05-23 RC-audit follow-up): register HTTP MCP process in
     # the running-MCP registry so `codevira doctor` can detect stale

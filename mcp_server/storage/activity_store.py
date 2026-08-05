@@ -1,9 +1,15 @@
 """
-activity_store.py — v3.1.0 M4 Phase 1: spatial-activity log.
+activity_store.py — per-file attention log (v3.1.0 M4; retained in 4.0).
 
 Records *where* in the codebase the agent has been working — edits,
-decisions tagged with a file. The downstream spatial tools
-(``spatial_nearby``, ``spatial_heat``) read this log to surface
+decisions tagged with a file.
+
+4.0: the spatial tools that used to read this log were removed (they
+queried a database nothing writes). The log is RETAINED because it is
+now load-bearing for two other things: session identity (a decision must
+share a session_id with an edit row) and the 4.0 capture pipeline, which
+will derive anchors from it. It is currently write-mostly — that is a
+known, deliberate state, not an oversight. It once served to surface
 focus zones and rank neighbors by recent attention.
 
 # Why a separate store
@@ -12,7 +18,7 @@ focus zones and rank neighbors by recent attention.
   Living in ``.codevira-cache/activity.jsonl`` (gitignored, per
   machine) avoids polluting the team's git diff with someone else's
   exploration history.
-- **Opt-in team export**: ``codevira spatial export-activity``
+- **Per-machine, gitignored, size-capped.**
   aggregates and writes ``.codevira/activity_summary.yaml`` when a
   team wants the heat map shared.
 - **Compaction-friendly**: append-only JSONL with capped retention
@@ -54,6 +60,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 from mcp_server.storage import jsonl_store, origin as origin_module, paths
@@ -86,6 +93,7 @@ def add(
     kind: str = KIND_EDIT,
     session_id: str | None = None,
     origin_override: dict | None = None,
+    line: int | None = None,
 ) -> str:
     """Append an activity row; return the generated A-id.
 
@@ -113,6 +121,14 @@ def add(
         "origin": origin_override or origin_module.current_origin(),
         "_schema_v": SCHEMA_V,
     }
+    # 4.0 Step 7: optional 1-indexed line of the edit. The store has been
+    # per-file since v3.1.0 — its own docstring deferred per-symbol
+    # granularity to "v3.2+" — and without a line there is no way to
+    # resolve which SYMBOL an edit touched, which is what region-level
+    # decision locking needs. Omitted (not null) when unknown, so existing
+    # rows and readers are untouched.
+    if isinstance(line, int) and line > 0:
+        rec["line"] = line
     return jsonl_store.append_with_generated_id(
         paths.activity_path(), rec, prefix="A", width=6
     )
@@ -129,13 +145,17 @@ def list_recent(
     kind: str | None = None,
     node_id: str | None = None,
     since: datetime | None = None,
+    project_root: Path | None = None,
 ) -> list[dict[str, Any]]:
     """Return the most recent ``limit`` activity rows, newest first.
 
     Optional filters compose AND-wise. ``since`` excludes rows older
     than the cutoff (useful for time-windowed heatmaps).
+
+    ``project_root`` scopes the read to THAT project. ``None`` keeps the
+    previous ambient resolution for every existing caller.
     """
-    raw = jsonl_store.read_recent(paths.activity_path(), limit=limit * 4)
+    raw = jsonl_store.read_recent(paths.activity_path(project_root), limit=limit * 4)
     out: list[dict[str, Any]] = []
     for rec in raw:
         if kind is not None and rec.get("kind") != kind:
@@ -218,7 +238,7 @@ def list_top_k_files(
 
 def visit_count_30d(node_id: str, *, now: datetime | None = None) -> int:
     """Total ``edit`` + ``decision_ref`` events for ``node_id`` in the
-    last 30 days. Used by ``spatial_nearby`` ranking.
+    last 30 days. Retained for the 4.0 capture pipeline.
     """
     now_dt = now or datetime.now(timezone.utc)
     cutoff = now_dt - timedelta(days=30)
@@ -251,7 +271,7 @@ def compact(*, retention_days: int = DEFAULT_RETENTION_DAYS) -> int:
 
     Holds the file lock for the entire read-filter-write via
     ``jsonl_store.compact``. The default 90-day window is long
-    enough for monthly spatial heatmaps without unbounded growth on
+    enough for attention analysis without unbounded growth on
     a project the agent has worked on for a year.
     """
     path = paths.activity_path()

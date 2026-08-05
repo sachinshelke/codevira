@@ -10,7 +10,7 @@ read from project A while the user is working in project B).
 
 The fix: when the server is not explicitly pinned, ask the MCP client
 for its workspace **roots** (which every modern client — Claude Code,
-Cursor, Windsurf — exposes) and bind to the real project. Pure helpers
+Cursor — exposes) and bind to the real project. Pure helpers
 here are unit-tested; the server wires :func:`resolve_project_root_from_roots`
 into ``call_tool`` (once per process, best-effort, never blocking).
 """
@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 def root_uri_to_path(uri: str | None) -> Path | None:
     """Convert an MCP root URI to a Path, cross-platform.
 
-    Handles the three real-world ``file://`` shapes (Cursor / Windsurf run
+    Handles the three real-world ``file://`` shapes (Cursor runs
     on Windows, so these matter):
       - POSIX:           ``file:///Users/x/proj``     -> ``/Users/x/proj``
       - Windows drive:   ``file:///C:/Users/x/proj``  -> ``C:/Users/x/proj``

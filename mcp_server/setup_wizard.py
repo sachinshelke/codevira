@@ -197,8 +197,7 @@ def resolve_setup_target() -> Path:
     if rejection:
         print(f"Error: {rejection}", file=sys.stderr)
         print(
-            "  → cd into your project directory first, then re-run "
-            "`codevira setup`.",
+            "  → cd into your project directory first, then re-run `codevira setup`.",
             file=sys.stderr,
         )
         raise SystemExit(1)
@@ -217,7 +216,6 @@ _KNOWN_IDES: frozenset[str] = frozenset(
         "claude",
         "claude_desktop",
         "cursor",
-        "windsurf",
         "antigravity",
         # The agents_md sentinel covers the universal AGENTS.md write
         # (the only nudge file v3.0.0 still emits).
@@ -264,7 +262,7 @@ def detect_targets(
     unknown = [i for i in only_ides if i not in _KNOWN_IDES]
     if unknown:
         raise ValueError(
-            f"unknown IDE(s) in --ide: {unknown}. " f"Supported: {sorted(_KNOWN_IDES)}"
+            f"unknown IDE(s) in --ide: {unknown}. Supported: {sorted(_KNOWN_IDES)}"
         )
 
     # Stage 2 — reject known-but-not-detected unless --force.
@@ -500,17 +498,18 @@ def _execute_mcp_config(
 
     from mcp_server.ide_inject import (
         _inject_antigravity,
-        inject_global_claude_code,
         inject_global_claude_desktop,
         inject_global_cursor,
-        inject_global_windsurf,
+        inject_scoped_claude_code,
     )
 
     handler = {
-        "claude": lambda: inject_global_claude_code(cmd_path, python_exe),
+        # Per-project, --project-dir-pinned (D000126 fix): a bare global entry
+        # bound the session to the wrong project. Mirrors the Antigravity path
+        # just below and register-all.
+        "claude": lambda: inject_scoped_claude_code(project_root, cmd_path, python_exe),
         "claude_desktop": lambda: inject_global_claude_desktop(cmd_path, python_exe),
         "cursor": lambda: inject_global_cursor(cmd_path, python_exe),
-        "windsurf": lambda: inject_global_windsurf(cmd_path, python_exe),
         # v3.7.1 fix B: Antigravity can't use a bare global entry (no cwd/roots
         # — D00011M / D00011N); write a working per-project --project-dir entry.
         "antigravity": lambda: _inject_antigravity(
@@ -791,7 +790,6 @@ def _mcp_config_path_for(ide: str) -> Path | None:
         _claude_global_config_path,
         _claude_desktop_config_path,
         _cursor_global_config_path,
-        _windsurf_global_config_path,
         _antigravity_config_path,
     )
 
@@ -801,8 +799,6 @@ def _mcp_config_path_for(ide: str) -> Path | None:
         return _claude_desktop_config_path()
     if ide == "cursor":
         return _cursor_global_config_path()
-    if ide == "windsurf":
-        return _windsurf_global_config_path()
     if ide == "antigravity":
         return _antigravity_config_path()
     # Tier 2 — no MCP config injection
@@ -813,7 +809,6 @@ _DISPLAY_NAMES: dict[str, str] = {
     "claude": "Claude Code",
     "claude_desktop": "Claude Desktop",
     "cursor": "Cursor",
-    "windsurf": "Windsurf",
     "antigravity": "Antigravity",
     "codex": "OpenAI Codex",
     "copilot": "GitHub Copilot",
@@ -881,14 +876,14 @@ def cmd_setup(
         print(f"Error: {e}", file=sys.stderr)
         print(
             "  → check your --ide value against `codevira setup --help`. "
-            "Valid IDEs: claude, cursor, windsurf, antigravity, agents_md.",
+            "Valid IDEs: claude, cursor, antigravity, agents_md.",
             file=sys.stderr,
         )
         return 1
 
     if not detected:
         print("No supported AI tools detected on this machine.")
-        print("Install Claude Code, Cursor, Windsurf, Antigravity, or Codex,")
+        print("Install Claude Code, Cursor, Antigravity, or Codex,")
         print("then re-run `codevira setup`. To configure an IDE we missed,")
         print("pass `--ide <name> --force`.")
         return 0

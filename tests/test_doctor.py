@@ -212,6 +212,40 @@ class TestCrashLogSize:
         assert r.state == "WARN"
         assert "1 crash" in r.message and "ValueError" in r.message
 
+    def test_crash_logger_singleton_does_not_survive_the_previous_test(
+        self, isolated_project: Path
+    ):
+        """Regression guard (2026-08-02) for ``conftest._reset_crash_logger``.
+
+        ``crash_logger._logger`` memoises a RotatingFileHandler bound to
+        ``<global_home>/logs/crashes.log`` at first use. Every test gets its
+        own fake global home, so a surviving singleton keeps writing into an
+        EARLIER test's tmp dir — ``log_crash()`` appears to succeed and
+        ``check_crash_log_size()`` then reads an empty log and returns PASS.
+
+        Reproduce the pre-fix failure with::
+
+            pytest tests/engine/test_runner.py::TestErrorHandling \\
+                   tests/test_doctor.py::TestCrashLogSize
+        """
+        from mcp_server import crash_logger
+
+        assert crash_logger._logger is None, (
+            "a memoised crash logger leaked in from an earlier test — it is "
+            "still bound to that test's tmp global home"
+        )
+        assert not crash_logger._recent_crashes, (
+            "the duplicate-suppression window leaked in from an earlier test — "
+            "a repeated signature gets silently dropped instead of written"
+        )
+        try:
+            raise ValueError("boom")
+        except ValueError as e:
+            crash_logger.log_crash(e, context="test")
+        log = crash_logger.get_crash_log_path()
+        assert log.is_file(), f"crash went somewhere other than {log}"
+        assert "ValueError" in log.read_text()
+
 
 class TestNudgeFiles:
     def test_warn_when_missing(self, isolated_project: Path):

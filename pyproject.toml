@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "codevira"
-version = "3.7.1"
+version = "4.0.0b1"
 description = "Cross-IDE decision enforcement for AI coding agents. 1 MB per project, in your repo, no cloud, no vectors. Claude Code, Cursor, Windsurf, Antigravity, Codex all share the same in-repo memory; hooks block AI tool calls that violate prior decisions. MIT, local-first."
 readme = "README.md"
 license = { text = "MIT" }
@@ -62,8 +62,6 @@ dependencies = [
   "tree-sitter-go>=0.23.0",
   "tree-sitter-rust>=0.23.0",
   "rich>=13.0.0",
-  "uvicorn>=0.27.0",
-  "starlette>=0.36.0",
   "pathspec>=0.12.0",
   # v2.2.0: chromadb / sentence-transformers / torch REMOVED. Decision
   # search uses SQLite FTS5 (stdlib). 200 MB pipx install → ~50 MB.
@@ -76,6 +74,16 @@ dependencies = [
 # extra (the legacy tree-sitter-language-pack was removed along with the
 # v2.1.x carryover user base). v2.3.0 may re-introduce specific
 # long-tail grammars as individual deps if real demand emerges.
+# HTTP transport (`codevira serve`).
+#
+# MEASURED CAVEAT — this does NOT shrink the install. `mcp` itself
+# requires starlette and uvicorn transitively, so both land in every
+# venv regardless; the pipx install is 67 MB either way. What this
+# extra buys is honesty about OUR direct requirements: codevira needs
+# them only for `codevira serve`, and if the MCP SDK ever drops them
+# the declaration is already correct. The dependency COUNT moves
+# 13 -> 11; the FOOTPRINT does not. Do not cite this as a size win.
+http = ["uvicorn>=0.27.0", "starlette>=0.36.0"]
 search = []
 all = []
 # Dev dependencies for contributors. Installed via: pip install -e ".[dev]"
@@ -85,10 +93,31 @@ dev = [
   "pytest>=7.0",
   "pytest-asyncio>=0.21",
   "pytest-timeout>=2.1",
-  "ruff>=0.6.0",
+  # Shuffles test order for `make test-unit-random` (a separate CI job — the
+  # default `make test-unit` stays in collection order so the local loop is
+  # reproducible). Collection order is one order out of many; a test that
+  # leaks process-global state only fails in the orders where its victim runs
+  # after it, so gating solely on collection order cannot see that class of
+  # bug. Three such leaks were invisible to CI until 2026-08-02.
+  "pytest-randomly>=3.12",
+  # Upper bound is load-bearing. This repo carries NO [tool.ruff] config, so
+  # `make lint` inherits whatever rule set the installed version defaults to
+  # — which means a ruff release can turn CI red with no commit of ours. That
+  # happened on 2026-08-02: 0.16 widened the defaults and CI went from green
+  # to 484 errors, identically on main and on the release branch, none of them
+  # introduced by either. Raise this bound deliberately, with the findings
+  # triaged, rather than letting a resolver decide the project's lint policy.
+  # `.pre-commit-config.yaml` pins ruff for the same reason.
+  "ruff>=0.6.0,<0.16",
   "mypy>=1.10",
   "types-PyYAML",
   "pre-commit>=3.5",
+  # tests/test_sdist_completeness.py builds a real sdist, because a
+  # MANIFEST.in directive that parses is not evidence the archive contains
+  # the file. Guarding that test with a skip-if-missing would delete the
+  # packaging check in CI — the one environment where nobody notices it is
+  # gone — so the dependency is declared instead.
+  "build>=1.0",
 ]
 
 [project.scripts]
@@ -116,3 +145,11 @@ mcp_server = ["data/**/*", "data/*", "graph/*.html"]
 markers = [
     "integration: end-to-end / dispatcher / wheel-install tests (slower; opt-in)",
 ]
+# pytest-randomly auto-enables the moment it is installed, which would silently
+# shuffle EVERY existing command — `pytest`, `make test-unit`, `make test-e2e`,
+# the release gauntlet. Ordering coverage is worth having (see
+# `make test-unit-random`) but it should be a job you opt into, not a property
+# that changes under a `pip install`. Default off here; `-p randomly` on the
+# command line re-enables it (a later `-p <name>` overrides an earlier
+# `-p no:<name>`), which is exactly what `test-unit-random` passes.
+addopts = ["-p", "no:randomly"]

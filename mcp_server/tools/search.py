@@ -30,6 +30,8 @@ def write_session_log(
     files_changed: list[str],
     decisions: list[dict],
     next_steps: list[str],
+    task_type: str | None = None,
+    skill_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """Write a structured session log (v2.2.0: appends to sessions.jsonl).
 
@@ -37,6 +39,14 @@ def write_session_log(
     keeps the SAME session_id semantics (no auto-suffix; the
     sessions.jsonl format is append-only with timestamps, so multiple
     entries for the same session_id naturally coexist as audit trail).
+
+    ``task_type`` / ``skill_ids`` (4.0 Step 2.4): ``sessions_store.write``
+    has accepted both since v3.1.x, but neither this signature nor the MCP
+    inputSchema exposed them — so every session on record carries
+    ``task_type: None``, and ``cli_induce._build_proposals`` filters on
+    exactly that field. Skill induction could therefore never fire, no
+    matter how much the project was used. Both default to None so existing
+    callers are unaffected.
     """
     from mcp_server.storage import sessions_store
 
@@ -50,6 +60,8 @@ def write_session_log(
             for d in (decisions or [])
             if isinstance(d, dict) and d.get("id")
         ],
+        task_type=task_type,
+        skill_ids=skill_ids,
     )
 
     return {
@@ -173,6 +185,12 @@ def search_decisions(
             "tags": r.get("tags") or [],
             "created_at": r.get("created_at"),
             "score": r.get("score"),
+            # 4.0 Step 6: `score_breakdown` is deliberately NOT in the
+            # compact row. Measured at +122 tokens on a 5-row payload
+            # (449 -> 571, +27%) — a real cost on EVERY search for an aid
+            # needed rarely, and E1 (D0000ZQ) chose token discipline for
+            # the default. It ships under full=True, the documented
+            # escape hatch, alongside snippet and origin.
             # v3.6.0: present only on all_projects results.
             **(
                 {"project": r["project"], "project_path": r.get("project_path")}

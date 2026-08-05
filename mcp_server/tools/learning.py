@@ -796,54 +796,15 @@ def get_session_context(since: str | None = None) -> dict:
         except Exception:
             pass
 
-        # v3.1.0 M6 Phase B: consensus panel. Top-3 pending cross-IDE
-        # conflicts ordered by (do_not_revert × recency). Capped at
-        # ~200 tokens. Best-effort: missing pending_conflicts.jsonl,
-        # store errors, etc. surface an empty count without crashing.
-        consensus_panel: dict = {"pending_count": 0, "top": []}
-        try:
-            from mcp_server.storage import consensus_store
-
-            pending = consensus_store.list_pending(limit=20)
-            # Sort: do_not_revert first, then by recency (already
-            # newest-first from read_recent).
-            pending.sort(
-                key=lambda r: (bool(r.get("do_not_revert")), r.get("ts") or ""),
-                reverse=True,
-            )
-            consensus_panel = {
-                "pending_count": len(pending),
-                "top": [
-                    {
-                        "pending_conflict_id": r.get("id"),
-                        "foreign_decision_id": r.get("foreign_decision_id"),
-                        "foreign_ide": (r.get("foreign_origin") or {}).get("ide"),
-                        "current_decision_id": r.get("current_decision_id"),
-                        "conflict_kind": r.get("conflict_kind"),
-                        "do_not_revert": r.get("do_not_revert"),
-                        "summary": _truncate(r.get("summary"), 80),
-                    }
-                    for r in pending[:3]
-                ],
-            }
-        except Exception:
-            pass
-
-        # v3.3.0 Phase 4 (D0000LU): one budgeted style line from LLM-
-        # distilled preferences (~30 tokens). Omitted entirely when no
-        # communication preferences exist — token-frugal per D000018.
+        # 4.0: the style panel was removed with the preferences subsystem.
+        # It read LLM-distilled communication preferences from
+        # ~/.codevira/global.db, which held 0 rows across 24 registered
+        # projects despite 380 captured prompts — the distillation path
+        # required MCP sampling, which the primary client does not
+        # advertise. The panel was therefore omitted on every call it ever
+        # made. Kept as an explicit None so the response shape is stable
+        # for one release.
         style_line: str | None = None
-        try:
-            from mcp_server.tools.preferences import search_preferences
-
-            _prefs = search_preferences(category="communication", top_k=3)
-            _signals = [
-                p["signal"] for p in _prefs.get("preferences", []) if p.get("signal")
-            ]
-            if _signals:
-                style_line = "; ".join(_signals)[:160]
-        except Exception:  # noqa: BLE001 — the brief must never fail on this
-            style_line = None
 
         # v3.7.0 Lane-A safety net: echo the RESOLVED project (path + name) so a
         # single-registration server that bound to the WRONG project is a
@@ -864,7 +825,6 @@ def get_session_context(since: str | None = None) -> dict:
             "drift_warning": drift_warning,
             **({"style": style_line} if style_line else {}),
             "working": working_panel,
-            "consensus": consensus_panel,
             "recent_sessions": [
                 {
                     "session_id": s["session_id"],

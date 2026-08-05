@@ -689,40 +689,41 @@ class TestE_PublicAPIContract:
             ), f"Hero CLI subcommand {sub!r} missing from help output"
 
     def test_pillar_1_doctor_subcommand_status(self):
-        """KNOWN GAP audit: Pillar 1.3 (master plan) called for a
-        `codevira doctor` health check. It is NOT shipped in v2.0
-        hero weeks — Pillar 1 work was deprioritized.
+        """Pillar 1.3 called for a `codevira doctor` health check.
 
-        This test documents the gap so we don't ship v2.0 GA forgetting
-        about it. When `doctor` ships, flip the assertion.
+        This began as a gap marker: `doctor` was not shipped in the v2.0
+        hero weeks, so the test asserted its ABSENCE and skipped itself
+        the day it appeared, with a note to flip the assertion. `doctor`
+        shipped in v2.x. The note was never acted on, so this skipped
+        every run since — a gap marker that stopped marking anything.
+
+        Flipped, as instructed, and extended to `--fix`, which is this
+        release's addition and the reason the branch exists.
         """
         import subprocess
 
         repo = Path(__file__).resolve().parents[2]
         env = os.environ.copy()
         env["PYTHONPATH"] = str(repo) + os.pathsep + env.get("PYTHONPATH", "")
-        result = subprocess.run(
-            [sys.executable, "-m", "mcp_server.cli", "--help"],
-            cwd=str(repo),
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-        # Currently `doctor` is NOT shipped. Lock that fact so a
-        # silent late-merge doesn't slip in unnoticed.
-        if "doctor" in result.stdout:
-            # When `doctor` ships, this becomes a positive assertion
-            # — pytest skips below.
-            pytest.skip(
-                "doctor subcommand is now shipped — flip this test "
-                "to a positive assertion"
+
+        def _cli(*args: str) -> str:
+            result = subprocess.run(
+                [sys.executable, "-m", "mcp_server.cli", *args],
+                cwd=str(repo),
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=15,
             )
-        # Otherwise, document the gap loudly via test name.
-        # (Test passes trivially; the assertion is in the docstring.)
-        assert (
-            "doctor" not in result.stdout
-        ), "Pillar 1.3 doctor subcommand status changed unexpectedly"
+            return result.stdout + result.stderr
+
+        assert "doctor" in _cli("--help"), "doctor missing from the subcommand list"
+
+        # The gap this branch closed: `doctor` could report a clean bill
+        # while a bare top-level MCP entry silently out-ranked the
+        # project-scoped ones (D00012X). Detecting it is only half the
+        # fix — `--fix` is what removes it.
+        assert "--fix" in _cli("doctor", "--help"), "doctor --fix is not exposed"
 
     def test_engine_version_documented(self):
         """Engine carries a version string for compatibility checks."""
@@ -943,7 +944,6 @@ class TestG_FinalDeepReAudit:
             AntiRegression,
             BlastRadiusVeto,
             DecisionLock,
-            PromptCapture,
             RelevanceInject,
             SessionLogEnforcer,
             TokenBudgetPersist,
@@ -961,7 +961,6 @@ class TestG_FinalDeepReAudit:
             AntiRegression,
             BlastRadiusVeto,
             DecisionLock,
-            PromptCapture,
             RelevanceInject,
             SessionLogEnforcer,
             TokenBudgetPersist,
@@ -997,39 +996,17 @@ class TestH_CrossToolUniversality:
     and .cursor/rules/codevira.mdc).
     """
 
-    def test_canonical_nudge_content_consistent_across_ides(self):
-        """If `mcp_server/agents_md.py` (or equivalent generator) ships,
-        verify the canonical instructions content is identical across
-        the rendered files. v2.0 may not have all of these wired yet
-        (Pillar 2 was scoped); this test is permissive on which files
-        exist but strict on consistency where they DO exist."""
-        # The Pillar 2 generator may live in setup_wizard or agents_md;
-        # detect what's available.
-        try:
-            from mcp_server import setup_wizard  # noqa: F401
-        except ImportError:
-            pytest.skip("Pillar 2 generator not yet in this build")
-
-        # If the canonical block file exists, verify it has the
-        # essential content the wedge promises.
-        canonical_path = (
-            Path(__file__).resolve().parents[2]
-            / "mcp_server"
-            / "data"
-            / "templates"
-            / "canonical_block.md"
-        )
-        if not canonical_path.exists():
-            pytest.skip(
-                "canonical_block.md template not yet in this build "
-                "(Pillar 2 may have been deprioritized for alpha)"
-            )
-        content = canonical_path.read_text(encoding="utf-8")
-        # Essential mentions (the universality wedge promise)
-        for must_contain in ("codevira", "session_context"):
-            assert (
-                must_contain in content.lower()
-            ), f"canonical nudge content missing {must_contain!r}"
+    # NOTE (removed): test_canonical_nudge_content_consistent_across_ides.
+    # It skipped forever on a missing `canonical_block.md` template. That
+    # template never shipped, and the feature it guarded — one canonical
+    # nudge block rendered identically into CLAUDE.md / AGENTS.md /
+    # .cursor/rules/codevira.mdc — was DELETED in v2.2.0 (2026-05-22
+    # surface-cut audit): the per-IDE nudge matrix collapsed into a single
+    # `<project>/AGENTS.md` (see mcp_server/setup_wizard.py). With one file
+    # there is no cross-IDE drift left to assert. AGENTS.md block generation
+    # is covered by tests/storage/test_agents_md_generator.py and
+    # tests/test_setup_wizard.py, so nothing is lost by deleting a test that
+    # could only ever skip.
 
     def test_setup_wizard_module_importable(self):
         """If Pillar 1 (UX install) shipped, the setup wizard imports."""

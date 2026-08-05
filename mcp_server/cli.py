@@ -842,7 +842,7 @@ def main() -> None:
             "Detect every AI coding tool installed on this machine, then "
             "configure them all to use Codevira: MCP server entries, Claude "
             "Code lifecycle hooks, and per-IDE nudge files (CLAUDE.md, "
-            "AGENTS.md, .cursor/rules/codevira.mdc, .windsurfrules, "
+            "AGENTS.md, .cursor/rules/codevira.mdc, "
             "GEMINI.md, .github/copilot-instructions.md). Idempotent — "
             "re-run any time to re-sync."
         ),
@@ -864,7 +864,7 @@ def main() -> None:
         metavar="IDE",
         help=(
             "Only configure this IDE (repeatable). One of: claude, "
-            "claude_desktop, cursor, windsurf, antigravity, agents_md. "
+            "claude_desktop, cursor, antigravity, agents_md. "
             "By default the wizard configures ALL auto-detected IDEs; "
             "use this to scope down. Pairs with --force when the IDE "
             "you want isn't auto-detected."
@@ -924,6 +924,42 @@ def main() -> None:
         "--verbose",
         action="store_true",
         help="Show extra details under each warning / failure",
+    )
+    doctor_parser.add_argument(
+        "--fix",
+        action="store_true",
+        help=(
+            "Auto-fix the safely-fixable warnings (currently: remove a bare "
+            "global Claude Code 'codevira' entry that shadows project pins). "
+            "Backs up ~/.claude.json first; only touches the 'codevira' key."
+        ),
+    )
+
+    # register-all (4.0) — clean-slate one-MCP-per-project registration
+    register_all_parser = subparsers.add_parser(
+        "register-all",
+        help="Register every existing project as its own named MCP (heals wrong-project binding)",
+        description=(
+            "Zero every codevira MCP entry across all detected IDEs, then "
+            "register each discovered project as its OWN uniquely-named MCP "
+            "(codevira-<slug>) pinned to --project-dir. Replaces the fragile "
+            "shared auto-detect entry that could bind sessions to the wrong "
+            "project's memory. Every config is backed up first; only "
+            "'codevira*' keys are touched. Nested monorepo sub-stores are "
+            "excluded automatically."
+        ),
+    )
+    register_all_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would change; write nothing.",
+    )
+    register_all_parser.add_argument(
+        "--scan-root",
+        action="append",
+        default=[],
+        metavar="DIR",
+        help="Extra directory to scan for codevira projects (repeatable).",
     )
 
     # projects (Bug 21b, rc.4) — inventory of every tracked project on this machine
@@ -1080,17 +1116,50 @@ def main() -> None:
     # learned_rules per the 2026-05-22 surface-cut audit).
 
     # clean (P2-1 + P2-10 rc.5: added description + self-contained flag help)
+    prune_parser = subparsers.add_parser(
+        "prune",
+        help="Remove orphaned/ghost project dirs and stale registry rows (safe)",
+        description=(
+            "Tidy ~/.codevira/ WITHOUT uninstalling anything. Removes project "
+            "data dirs whose path no longer exists, bare global.db rows "
+            "pointing at missing paths, 'ghost' dirs left by incomplete "
+            "inits, and legacy .codevira.migrated/ backups. Your decisions, "
+            "IDE configs and hooks are never touched.\n\n"
+            "This is what `clean` sounded like it did. `clean` is the "
+            "UNINSTALLER — see D00012X."
+        ),
+    )
+    prune_parser.add_argument(
+        "--orphans", action="store_true", help="Only prune orphaned project dirs"
+    )
+    prune_parser.add_argument(
+        "--ghosts", action="store_true", help="Only prune ghost (incomplete-init) dirs"
+    )
+    prune_parser.add_argument(
+        "--legacy", action="store_true", help="Only prune .codevira.migrated/ backups"
+    )
+    prune_parser.add_argument(
+        "--dry-run", action="store_true", help="Show what would be removed"
+    )
+    prune_parser.add_argument(
+        "-y", "--yes", action="store_true", help="Skip confirmation prompts"
+    )
+
     clean_parser = subparsers.add_parser(
         "clean",
-        help="Remove all Codevira data, IDE configs, and services",
+        help="DEPRECATED — this UNINSTALLS codevira. Use `prune` to tidy, "
+        "`uninstall` to remove.",
         description=(
-            "Uninstall codevira's machine-wide state: wipe ~/.codevira/ (all "
-            "project data, learned preferences/rules, decisions), remove "
-            "mcpServers.codevira from every detected IDE config, and remove any "
-            "installed launchd service. Use --all to also remove per-project "
-            "artifacts (legacy .codevira/ directories committed into repos, git "
-            "post-commit hooks, per-project IDE config files). Always preview "
-            "with --dry-run first."
+            "DEPRECATED: the name is misleading and cost a real installation. "
+            "`clean` with no flags is a full UNINSTALL — it wipes ~/.codevira/ "
+            "(project data dirs, global.db, snapshots, device_id), strips "
+            "mcpServers.codevira from every IDE config, and removes the launchd "
+            "service.\n\n"
+            "  To tidy stale state:  codevira prune\n"
+            "  To uninstall:         codevira uninstall\n\n"
+            "Kept as an alias so existing scripts do not break. The destructive "
+            "path now requires you to TYPE 'uninstall' (as `reset` does), so a "
+            "piped 'y' cannot confirm it."
         ),
     )
     clean_parser.add_argument(
@@ -1483,50 +1552,6 @@ def main() -> None:
         ),
     )
 
-    # v3.1.0 M8: reflections — codevira reflect [--period 7d]
-    # [--from-file PATH] [--apply] [--yes]. Without --from-file the
-    # CLI prints the rendered prompt + source-context summary for the
-    # user to feed to their own LLM; with --from-file it parses the
-    # LLM response and writes a proposal (or commits with --apply).
-    reflect_parser = subparsers.add_parser(
-        "reflect",
-        help="Build a reflection over recent decisions + sessions. "
-        "Inside an MCP client with sampling support, the `reflect` "
-        "tool runs the LLM call directly; this CLI renders the "
-        "prompt and accepts an LLM response via --from-file.",
-    )
-    reflect_parser.add_argument(
-        "--period",
-        type=int,
-        default=7,
-        help="Look-back window in days (default 7).",
-    )
-    reflect_parser.add_argument(
-        "--from-file",
-        type=str,
-        default=None,
-        help="Read an LLM YAML response from this file (per the prompt "
-        "template) and persist it as a reflection proposal.",
-    )
-    reflect_parser.add_argument(
-        "--apply",
-        action="store_true",
-        help="Commit to .codevira/reflections.jsonl (otherwise the "
-        "result lands in reflection_proposals.jsonl for review).",
-    )
-    reflect_parser.add_argument(
-        "--yes",
-        action="store_true",
-        help="With --apply: skip the interactive confirm prompt.",
-    )
-    reflect_parser.add_argument(
-        "--from-sessions",
-        action="store_true",
-        help="E2: fold a READ-ONLY scan of local IDE session transcripts "
-        "(tool failures + user corrections) into the reflect prompt as "
-        "extra signal. Candidates only — nothing is committed.",
-    )
-
     # v3.5.0 E3: read-side relevance eval — codevira eval [--k N]
     # [--max-cases N] [--min-recall F]. Self-derived cases from real memory;
     # non-gating quality signal.
@@ -1554,42 +1579,6 @@ def main() -> None:
         type=float,
         default=None,
         help="Opt-in CI gate: exit 1 if recall@k falls below this (0-1).",
-    )
-
-    # v3.5.0 Phase 13: learn relevance_inject ranking weights from real memory
-    # (E3 objective) — codevira tune-weights [--k N] [--dry-run].
-    tune_parser = subparsers.add_parser(
-        "tune-weights",
-        help="Learn relevance_inject ranking weights from real memory via the "
-        "E3 objective; persists only a meaningful win. Cold-path, non-gating.",
-    )
-    tune_parser.add_argument(
-        "--k", type=int, default=5, help="top-k cutoff (default 5)."
-    )
-    tune_parser.add_argument(
-        "--max-cases", type=int, default=200, help="cap on eval cases (default 200)."
-    )
-    tune_parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Compute + report but do NOT persist learned_weights.json.",
-    )
-
-    # v3.1.0 M6 Phase B: cross-IDE consensus check (read-only). The
-    # MCP surface (consensus_check / consensus_status) is also exposed.
-    consensus_parser = subparsers.add_parser(
-        "consensus",
-        help="Cross-IDE consensus operations. `check` materializes "
-        "conflicts between decisions written by this IDE vs other "
-        "IDEs into .codevira/pending_conflicts.jsonl for human "
-        "review. Nothing is resolved automatically; the supersession "
-        "handshake is opt-in via config.",
-    )
-    consensus_sub = consensus_parser.add_subparsers(dest="consensus_action")
-    consensus_sub.add_parser(
-        "check",
-        help="Scan for conflicts since the last checkpoint; advance "
-        "this IDE's checkpoint.",
     )
 
     # v3.1.0 M5: induced-skill candidate generation. CLI-only — the MCP
@@ -1638,6 +1627,44 @@ def main() -> None:
         "passed to working_add).",
     )
 
+    memory_parser = subparsers.add_parser(
+        "memory",
+        help="Snapshot and roll back .codevira/ — the memory store. "
+        "`.codevira/` is gitignored, so `git revert` cannot undo a bad "
+        "migration or an accidental wipe; this can.",
+    )
+    memory_sub = memory_parser.add_subparsers(dest="memory_action")
+
+    mem_snap = memory_sub.add_parser(
+        "snapshot", help="Capture the current state of .codevira/."
+    )
+    mem_snap.add_argument("--note", default="", help="Why you took it.")
+    mem_snap.add_argument(
+        "--all-projects",
+        action="store_true",
+        help="Snapshot every registered project, not just this one.",
+    )
+
+    mem_list = memory_sub.add_parser("list", help="Show available snapshots.")
+    mem_list.add_argument("--all-projects", action="store_true")
+
+    mem_undo = memory_sub.add_parser(
+        "undo",
+        help="Restore .codevira/ from a snapshot (most recent by default). "
+        "The current state is captured first, so undo is itself undoable.",
+    )
+    mem_undo.add_argument(
+        "--snapshot", default=None, help="Snapshot name from `memory list`."
+    )
+    mem_undo.add_argument(
+        "--all-projects",
+        action="store_true",
+        help="Restore every registered project's most recent snapshot.",
+    )
+    mem_undo.add_argument(
+        "--yes", action="store_true", help="Skip the confirmation prompt."
+    )
+
     engine_parser = subparsers.add_parser(
         "engine",
         help="Internal: lifecycle-hook engine entry (called by hook scripts)",
@@ -1652,6 +1679,20 @@ def main() -> None:
         ),
     )
     engine_sub = engine_parser.add_subparsers(dest="engine_action")
+    # 4.0 Step 8: enforce at the COMMIT boundary, which every IDE crosses.
+    # Hard PreToolUse blocking reaches 2 of ~7 supported editors; git
+    # reaches all of them, including ones that do not exist yet.
+    engine_sub.add_parser(
+        "pre-commit",
+        help="Evaluate staged changes against locked decisions. Exit 1 "
+        "blocks the commit. Called by the installed git pre-commit hook; "
+        "override once with `git commit --no-verify`.",
+    )
+    engine_sub.add_parser(
+        "install-git-hook",
+        help="Install the codevira pre-commit hook into this repo "
+        "(.git/hooks/pre-commit). Preserves any existing hook.",
+    )
     handle_parser = engine_sub.add_parser(
         "handle",
         help="Process a Claude Code lifecycle hook event from stdin",
@@ -1784,6 +1825,24 @@ def main() -> None:
         )
     # v2.2.0+: `report` dispatch deleted (command removed).
     elif args.command == "serve":
+        # 4.0: uvicorn + starlette are declared in the optional `[http]`
+        # extra rather than as direct deps. In practice `mcp` requires both
+        # transitively, so this guard is defensive and will not normally
+        # fire — it exists so that IF the MCP SDK ever drops them, `serve`
+        # fails with a fix rather than an ImportError traceback.
+        try:
+            import starlette  # noqa: F401
+            import uvicorn  # noqa: F401
+        except ImportError:
+            print(
+                "Error: the HTTP transport is not installed.\n"
+                "  Fix: pipx install --force 'codevira[http]'\n"
+                "       (or `pip install 'codevira[http]'`)\n"
+                "  Note: stdio is the default transport and needs nothing "
+                "extra — this is only for `codevira serve`.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
         # --project-dir may appear after "serve" — merge with pre-parsed value
         sub_project_dir = getattr(args, "project_dir", None)
         if sub_project_dir and project_dir is None:
@@ -1819,7 +1878,19 @@ def main() -> None:
         # Pillar 1.3 — health check
         from mcp_server.doctor import cmd_doctor
 
-        rc = cmd_doctor(verbose=getattr(args, "verbose", False))
+        rc = cmd_doctor(
+            verbose=getattr(args, "verbose", False),
+            fix=getattr(args, "fix", False),
+        )
+        sys.exit(rc)
+    elif args.command == "register-all":
+        # 4.0 — clean-slate one-MCP-per-project registration
+        from mcp_server.register_all import cmd_register_all
+
+        rc = cmd_register_all(
+            dry_run=getattr(args, "dry_run", False),
+            scan_root=getattr(args, "scan_root", []),
+        )
         sys.exit(rc)
     elif args.command == "projects":
         # Bug 21b (rc.4) — project inventory
@@ -1867,7 +1938,46 @@ def main() -> None:
             output_json=getattr(args, "output_json", False),
         )
         sys.exit(rc)
+    elif args.command == "prune":
+        # The safe half of the old `clean`, promoted to its own name.
+        selective = any(
+            getattr(args, f, False) for f in ("orphans", "ghosts", "legacy")
+        )
+        for flag, kwarg in (
+            ("ghosts", "ghosts_only"),
+            ("orphans", "orphans_only"),
+            ("legacy", "legacy_only"),
+        ):
+            if selective and not getattr(args, flag, False):
+                continue
+            cmd_clean(
+                dry_run=getattr(args, "dry_run", False),
+                yes=getattr(args, "yes", False),
+                **{kwarg: True},
+            )
     elif args.command == "clean":
+        # DEPRECATED. Bare `clean` is a full uninstall; the name reads as
+        # tidy-up and cost a real installation (D00012X). Kept working so
+        # scripts do not break, but it says what it is first.
+        _selective = any(
+            getattr(args, f, False) for f in ("orphans", "ghosts", "legacy")
+        )
+        if _selective:
+            print(
+                "  note: `codevira clean --orphans/--ghosts/--legacy` is now "
+                "`codevira prune`.",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                "\n  ⚠  `codevira clean` is DEPRECATED and is a full UNINSTALL.\n"
+                "     It deletes ~/.codevira/ (project data dirs, global.db,\n"
+                "     snapshots, device_id), strips codevira from every IDE\n"
+                "     config, and removes the launchd service.\n\n"
+                "       To tidy stale state:  codevira prune\n"
+                "       To uninstall:         codevira uninstall\n",
+                file=sys.stderr,
+            )
         cmd_clean(
             clean_all=getattr(args, "all", False),
             dry_run=getattr(args, "dry_run", False),
@@ -1981,19 +2091,6 @@ def main() -> None:
             keep_data=getattr(args, "keep_data", False),
         )
         sys.exit(rc)
-    elif args.command == "reflect":
-        # v3.1.0 M8: reflections CLI.
-        from mcp_server.cli_reflect import cmd_reflect
-
-        sys.exit(
-            cmd_reflect(
-                period_days=getattr(args, "period", 7),
-                from_file=getattr(args, "from_file", None),
-                apply=getattr(args, "apply", False),
-                yes=getattr(args, "yes", False),
-                from_sessions=getattr(args, "from_sessions", False),
-            )
-        )
     elif args.command == "eval":
         # v3.5.0 E3: read-side relevance eval.
         from mcp_server.cli_eval import cmd_eval
@@ -2006,28 +2103,6 @@ def main() -> None:
                 min_recall=getattr(args, "min_recall", None),
             )
         )
-    elif args.command == "tune-weights":
-        # v3.5.0 Phase 13: learned hot-path weight tuning.
-        from mcp_server.cli_eval import cmd_tune_weights
-
-        sys.exit(
-            cmd_tune_weights(
-                k=getattr(args, "k", 5),
-                max_cases=getattr(args, "max_cases", 200),
-                apply=not getattr(args, "dry_run", False),
-            )
-        )
-    elif args.command == "consensus":
-        # v3.1.0 M6: cross-IDE consensus CLI.
-        consensus_action = getattr(args, "consensus_action", None)
-        if consensus_action == "check":
-            from mcp_server.cli_consensus import cmd_consensus_check
-
-            sys.exit(cmd_consensus_check())
-        sys.stderr.write(
-            "codevira consensus: missing subcommand. Try `codevira consensus check`.\n"
-        )
-        sys.exit(2)
     elif args.command == "induce-skills":
         # v3.1.0 M5: skill induction CLI.
         from mcp_server.cli_induce import cmd_induce_skills
@@ -2050,9 +2125,21 @@ def main() -> None:
             "<session_id>`.\n"
         )
         sys.exit(2)
+    elif args.command == "memory":
+        from mcp_server.cli_memory import cmd_memory
+
+        sys.exit(cmd_memory(args))
     elif args.command == "engine":
         # Internal — Claude Code hook scripts call us with `engine handle <event>`.
         engine_action = getattr(args, "engine_action", None)
+        if engine_action == "pre-commit":
+            from mcp_server.engine.wiring.git_hooks import handle as _git_handle
+
+            sys.exit(_git_handle())
+        if engine_action == "install-git-hook":
+            from mcp_server.engine.wiring.git_hooks import install_hook
+
+            sys.exit(install_hook())
         if engine_action == "handle":
             # Register every Hero policy that ships enabled-by-default.
             # Without this, the hook runs the engine but ZERO policies
@@ -2704,10 +2791,20 @@ def cmd_clean(
         return
 
     if not yes:
-        # Bug 22 (rc.4): shared confirm() helper.
-        from mcp_server._prompts import confirm
+        # TYPED confirmation, not a y/n. `codevira reset` has required this
+        # since v2.1.2 for exactly the same reason: a destructive op must not
+        # be confirmable by a stray keystroke.
+        #
+        # This path used the plain y/n `confirm()` helper, so `yes | codevira
+        # clean` answered it and wiped a real installation — the operator
+        # never saw the prompt. `yes` emits "y", which is not "uninstall", so
+        # the same pipe now aborts. (D00012X.)
+        from mcp_server._prompts import confirm_typed
 
-        if not confirm("Remove all of the above?", default=False):
+        if not confirm_typed(
+            "This UNINSTALLS codevira — everything listed above is removed.",
+            "uninstall",
+        ):
             print("  Aborted.")
             print()
             return
@@ -2795,10 +2892,14 @@ def _collect_project_cleanup(project_path: Path, actions: list) -> None:
         ("windsurf", project_path / ".windsurf" / "mcp.json"),
     ]:
         if config_path.exists():
-            from mcp_server.ide_inject import _read_json_safe
+            from mcp_server.ide_inject import _read_json_safe, has_codevira_server
 
             data = _read_json_safe(config_path)
-            if "codevira" in data.get("mcpServers", {}):
+            # Prefix match, not `"codevira" in servers`. `register-all`
+            # names entries after the project (`codevira-agent-mcp`), so an
+            # exact match here silently skipped them — uninstall reported
+            # success and left the registration behind.
+            if has_codevira_server(data.get("mcpServers")):
                 print(f"    • {name}/.{ide_name} config")
                 actions.append(
                     (

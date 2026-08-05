@@ -4,7 +4,7 @@ Honest comparison vs the agent-memory tools shipping in 2026. Not marketing — 
 
 ## TL;DR
 
-**Pick codevira if you**: code with AI agents, switch between Claude Code / Cursor / Windsurf / Antigravity on the same project, want decision protection (`do_not_revert`) + outcome scoring, and want it all local-first with no signup.
+**Pick codevira if you**: code with AI agents, switch between Claude Code / Cursor / Antigravity on the same project, want decision protection (`do_not_revert`) + outcome scoring, and want it all local-first with no signup.
 
 **Pick something else if you**: need cross-process memory across machines (Mem0 cloud), need temporal knowledge graphs at enterprise scale (Zep), or want the highest LongMemEval benchmark score (MemPalace).
 
@@ -25,7 +25,7 @@ Honest comparison vs the agent-memory tools shipping in 2026. Not marketing — 
 
 ### 1. Per-project memory across **every** AI tool
 
-The wedge. You're working on Project A. You open Claude Code, ask "what did I decide about retries last week?" Then close Claude Code, open Cursor on the same project, ask the same question — **same answer**. Switch to Windsurf — same answer. Antigravity — same answer.
+The wedge. You're working on Project A. You open Claude Code, ask "what did I decide about retries last week?" Then close Claude Code, open Cursor on the same project, ask the same question — **same answer**. Switch to Antigravity — same answer.
 
 Then open Project B. Different memory.
 
@@ -75,7 +75,7 @@ Honest:
 
 ```
 Want decision protection + anti-regression?         → codevira
-Need it to work across Claude/Cursor/Windsurf?   → codevira
+Need it to work across Claude/Cursor?   → codevira
 Want max LongMemEval score?                      → MemPalace
 Need cloud + non-coding memory?                  → Mem0
 Need enterprise temporal graph?                  → Zep

@@ -7,6 +7,422 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [Unreleased]
+
+### Fixed — test suite: three process-global leaks made tests order-dependent
+
+Seven tests passed in collection order — the order CI and `make test-unit` use
+— and failed under a randomized order, so no gate could see them. An eighth
+and ninth passed *vacuously*. Three leaks in the test harness, not in shipped
+code:
+
+- **`tests/test_index_codebase.py` mutated the real `rich` modules.** Two
+  helpers built fake `rich` sub-modules for `patch.dict(sys.modules, ...)`,
+  but when the real module was already imported — always, since `rich>=13` is
+  a hard dependency — they assigned `Console`/`Table`/`Panel` straight onto it.
+  `patch.dict` restores the `sys.modules` *mapping*; it cannot undo an
+  in-place attribute mutation on a module it never owned. Once those tests had
+  run, every later test in the process rendered through a `MagicMock`:
+  `cmd_status` output came back empty, or with `<MagicMock id=...>` where the
+  table belonged. Replaced with one `patch.object`-based context manager, which
+  unwinds. The `_restore_real_rich` fixture that partially papered over this
+  (it reloaded `rich.console`, never `rich.table` / `rich.panel`) is gone.
+- **`crash_logger`'s two module-level caches survived across tests.** `_logger`
+  memoises a `RotatingFileHandler` bound to `<global_home>/logs/crashes.log` at
+  first use, and every test gets a different fake global home — so the first
+  test to record a crash kept every later `log_crash()` writing into *its* tmp
+  dir. `_recent_crashes`, the 60-second duplicate-suppression window, has the
+  same problem: the whole suite runs inside one window, so two tests raising
+  the same placeholder exception share a signature and the later write is
+  silently dropped. Both are now cleared per-test by the autouse
+  `_isolate_global_home` fixture.
+- **`mcp_server.server._is_http_transport` latched `True` for the session.**
+  `run_http_server()` sets it and never unsets it — correct in production, one
+  process serves one transport — but once `tests/test_http_server.py` had run,
+  `_bind_project_from_client_roots` short-circuited for every later test. The
+  two positive cases in `tests/test_binding_e2e.py` failed; the two negative
+  cases ("must NOT bind") passed for the wrong reason, which is the more
+  dangerous half. A new autouse fixture clears it, and `_roots_bind_attempted`,
+  per test.
+
+Regression guards added for each; each fails if its fix is reverted.
+
+### Added — a shuffled-order CI job (`make test-unit-random`)
+
+Contributor-facing. `pytest-randomly` joins `[dev]`, and CI gains a
+`test-random-order` job that runs the unit suite in a random order — the check
+that would have caught all three leaks above years earlier. It is deliberately
+**off by default**: the plugin auto-enables the moment it is installed, so
+`addopts = ["-p", "no:randomly"]` keeps `pytest`, `make test-unit`,
+`make test-e2e` and the release gauntlet in collection order, and only
+`make test-unit-random` opts back in. On failure pytest-randomly prints the
+seed it chose; reproduce with `--randomly-seed=<n>`.
+
+### Fixed — a background index thread wrote to the MCP stdio transport
+
+`start_background_full_index()` runs `cmd_full_rebuild()` on a daemon thread
+inside the MCP server process, where `sys.stdout` **is** the JSON-RPC
+transport. `cmd_full_rebuild` rendered its progress bars and its
+`✓ Graph built: N nodes, M edges.` line to a stdout `rich` Console, so an
+auto-init rebuild could inject text mid-protocol and corrupt the stream for
+any stdio client.
+
+`cmd_incremental` already took a `quiet` flag and `start_background_watcher`
+already passed `quiet=True`; `cmd_full_rebuild` was the missing half of that
+pair. It now accepts `quiet` (which also mutes the `rich` Progress bars — they
+share the console) and the background caller passes `quiet=True`. Completion
+is logged via `logger.info`, so a quiet background run stays observable.
+`codevira index --full` and `codevira init` output are unchanged.
+
+Surfaced as an order-dependent CI failure: the stray line landed in an
+unrelated test's captured stdout and broke its `json.loads`.
+
+### Fixed — `codevira search --json` could emit a non-JSON stdout
+
+A machine-readable mode that emits nothing on failure turns a local problem
+into an `Expecting value: line 1 column 1 (char 0)` several layers from the
+cause. `--json` now writes exactly one JSON object on **every** exit path: a
+backend exception yields `{query, count: 0, results: [], error}` with exit
+code 1, a non-dict backend result is tolerated, and all human-readable
+diagnostics go to stderr where they cannot pollute the document.
+
+---
+
+## [4.0.0b1] — 2026-08-01
+
+> **Upgrading?** See [MIGRATING.md](MIGRATING.md). Take a snapshot first:
+> `codevira memory snapshot --all-projects --note "before 4.0"`.
+
+### Breaking
+
+- **`global.db` gains a `tenant` column** — the one change that cannot be
+  downgraded. Cross-project preferences and rules are now scoped to
+  `$CODEVIRA_TENANT` (default `local`). A single-user machine sees no
+  change; a shared `$HOME` (CI runner, devcontainer, server) stops
+  bleeding one person's learned state into another's. The `UNIQUE`
+  constraints were rebuilt to include `tenant` — without that, one tenant
+  holding a signal would permanently block another from storing it. The
+  migration verifies its row count and rolls back rather than completing
+  a lossy rewrite.
+- **15 MCP tools removed (52 → 37 defined, 36 advertised)** — the
+  thirty-seventh, `refresh_graph`, is deliberately hidden from
+  `tools/list` and still callable; an agent counting its own tool list
+  sees 36. Each cut on measured usage across
+  4,203 transcripts: the consensus (4), reflections (3), spatial (4) and
+  preferences (2) subsystems, plus `get_code` / `get_signature` (zero
+  calls in 2.5 months). `origin_of` is retained. The CLI subcommand
+  `codevira tune-weights` is also gone. **No recorded data is deleted** —
+  these were surfaces; `codevira export` still includes everything.
+- **`session_log_enforcer` defaults to `block`** (was `warn`).
+- **`codevira clean` now requires typing `uninstall`** and will no longer
+  accept a piped `y`. If you have a script doing `yes | codevira clean`
+  it will now abort — which is the point. `clean` is the full
+  uninstaller: it wipes `~/.codevira/` including snapshots, strips
+  codevira from every IDE config, and removes the launchd service. The
+  name says tidy-up. On 2026-08-01 that gap destroyed a real
+  installation on this project's own machine, so `clean` is deprecated
+  in favour of `codevira uninstall`, and `codevira reset`'s typed
+  confirmation (v2.1.2) now guards it too. Scripted use keeps working
+  via the explicit `--yes`; the fix targets *accidental* confirmation.
+
+### Added — a way back, and a way to enforce everywhere
+
+- **`codevira memory snapshot | list | undo`.** `.codevira/` is
+  gitignored, so `git revert` could never roll back the memory store.
+  Now something can — and undo is itself undoable, because restoring
+  captures the current state first. `--all-projects` covers every
+  registered repo.
+- **Commit-boundary enforcement.** `codevira engine install-git-hook`
+  runs locked decisions against staged changes through the same engine
+  the IDE hooks use, so a `do_not_revert` decision is a physical veto in
+  *any* editor — they all commit with git. Merge commits are never
+  blocked; `git commit --no-verify` overrides once.
+- **`mcp_server/egress.py`** is now the only module permitted to import a
+  network client, enforced by a CI test that walks the import graph and
+  fails the build. `CODEVIRA_NO_NETWORK=1` is an absolute kill switch,
+  checked before any config file. The entire network surface remains one
+  advisory PyPI version check.
+- **`$CODEVIRA_HOME`** relocates the global data directory — separate
+  profiles, containers with a read-only `$HOME`, CI runners.
+- **`codevira prune`** — the tidy-up `clean` sounded like. Removes
+  project data dirs whose path no longer exists, `global.db` rows
+  pointing at nothing, ghost dirs from interrupted inits, and legacy
+  `.codevira.migrated/` backups. Decisions, IDE configs and hooks are
+  never touched. `--dry-run` first; `--orphans` / `--ghosts` /
+  `--legacy` to narrow. The safe operations used to be the ones hidden
+  behind flags while the destructive one was the bare default — that is
+  now inverted.
+
+### Fixed — the sdist shipped a test suite that could not run
+
+Left to itself, setuptools inherits distutils' legacy `test*.py` default:
+non-recursive, and no match for `conftest.py`. The result was **96 of 167
+test files** — the flat `tests/` directory alone, without `e2e/`,
+`integration/`, `engine/` or `storage/`, and without the conftest that
+sets `CODEVIRA_HOME` and prepends the repo to `PYTHONPATH`.
+
+Missing those two lines, a packager building from the sdist would have
+had the suite write into their own `~/.codevira/` and import
+site-packages instead of the tree under test — the two bugs this release
+fixes for us, packaged for redelivery. `MANIFEST.in` now states the
+intent explicitly, including the e2e fixtures' `.md`/`.json`/`.ts`/`.yaml`
+that a `*.py` rule would have shipped the tests without.
+
+The wheel is byte-identical: this touches only the sdist.
+
+- Contributors: the `check_real_ide_smoke.sh` gate (G3) no longer
+  registers its throwaway project in your real `~/.codevira/`. It boots
+  under its own `CODEVIRA_HOME`, so a killed run leaves nothing either.
+
+### Fixed — memory that survives a two-host merge
+
+- **A stable machine identity (`origin.device_id`).** `host_hash` derived
+  from `uuid.getnode()`, which returns whichever of a laptop's many
+  interfaces enumerates first — measured **4 distinct values from one
+  machine over 7 weeks**, two of them live concurrently. `id_repair` keys
+  amendment attribution on writer identity, so a developer whose VPN
+  reconnected became a stranger to their own decision.
+- **Amendments record who made them.** `mark_protected`, `reaffirm`,
+  `mark_outdated`, `set_flag` and `supersede` wrote anonymous rows (0 of
+  96 carried provenance), so on a two-host merge a supersession landed on
+  whoever won the id race — retiring the wrong engineer's decision.
+- **`id_repair` repoints decision-to-decision edges.** It renumbered
+  colliding records without updating `superseded_by`, leaving dangling
+  supersessions.
+- **Content-addressed `uid`** on every record, plus `_amendment_to_uid`
+  edges so attribution needs no heuristic. Deliberately *not* `uuid4`,
+  which measurably breaks cherry-pick dedup (1 record → 2). **Nothing is
+  back-filled** — a pre-4.0 record's uid derives from its content.
+- **`origin` and `uid` are never overlaid onto a base record** by an
+  amendment, so amending someone else's decision no longer rewrites its
+  authorship.
+
+### Changed — less surface, faster reads
+
+- Warm-call p95 **10.18 ms → 1.92 ms** against D00012K's 3 ms ceiling.
+- One ranking definition (`mcp_server/retrieval/score.py`) replaces four
+  implementations on three incompatible scales.
+- `symbol` is derived from the session's own edit instead of being typed
+  by an agent (it sat at 1 of 123 populated).
+
+### Added — the product explains itself (Step 2)
+
+A refusal used to show an id, 120 truncated characters and a date. It now
+carries the decision's reasoning, the alternatives that were rejected, and the
+condition that would justify revisiting it — so a `do_not_revert` lock is
+something a user can actually satisfy rather than a ratchet nobody dares touch.
+
+- `record_decision` now **declares and forwards** `alternatives_considered` and
+  `would_re_examine_if`. Both were accepted by every layer beneath the MCP
+  surface since v3.1.x but never declared in the inputSchema, so they read
+  0/1365 across every project — a dead write path, not agent laziness.
+- `write_session_log` gains `task_type` + `skill_ids`. Skill induction filters
+  on `task_type`; with 62/62 sessions at `None` it was structurally guaranteed
+  to yield nothing regardless of usage.
+- `context` now reaches every reader: `search_decisions`, the digest that feeds
+  prompt injection, and the injected block itself.
+
+### Fixed — cross-project memory bleed in the engine
+
+Both halves of the engine resolved storage paths **ambiently** rather than from
+the project the event came from. Verified live: a context built for a fresh
+one-decision project returned 10 of another project's decisions including its
+`do_not_revert` locks, and a `UserPromptSubmit` was injected with a different
+repo's decisions.
+
+This is the enforcement- and injection-side twin of the v3.7.1 binding bugs, and
+it is the symptom that caused enforcement to be switched off on two large
+projects (D00012O).
+
+- `signals.decisions()` / `signals.search_decisions()` → scoped
+- `relevance_inject` `_load_indexes` / `_fts_candidates` / `_config` → scoped
+  (a project can no longer inherit another's injection budget)
+- `decisions_store.list_all()` gains `project_root`; `None` preserves prior
+  behaviour for every other caller
+
+### Fixed — pre-release builds silently stopped receiving update notices
+
+`_is_newer` applied the strict release-only parser to the **local** version, so
+any `dev`/`rc`/`a`/`b`/`post`/`+local` build parsed to `None` and never
+notified. `latest` stays strict — we never nag toward a pre-release.
+
+### Added — per-verdict enforcement audit log
+
+`decision_lock`, `anti_regression` and `blast_radius` recorded nothing, so the
+false-block rate was unmeasurable. Verdicts now append to
+`.codevira-cache/enforcement.jsonl` with `host_hash`, `version` and `ide`.
+Cache-only, bounded, and provably unable to change a verdict.
+
+### Removed — Windsurf is no longer a supported injection target
+
+Windsurf was discontinued (folded into Cursor), so codevira no longer
+auto-detects it or writes MCP config for it. Removed from setup detection,
+the `--ide` menu, `inject_ide_config`, doctor hints, and all user-facing
+docs/website. **Backward-compatible:** `origin.py` still *recognizes*
+`"windsurf"` so decisions recorded by Windsurf before 4.0 read back
+correctly, and `codevira uninstall` / `untrack` still clean up any existing
+`.windsurf/` and `.windsurfrules` files left on disk. No migration needed —
+nothing writes new Windsurf entries, and existing ones are inert.
+
+### Changed — `session_log_enforcer` defaults to `block` (data-gated flip)
+
+v3.3.0 shipped the enforcer in `warn` mode with instrumentation, promising to
+flip the default "once that data confirms warn-mode is low-noise". The recorded
+data (`.codevira-cache/enforcer_outcomes.jsonl`) now says so: **324 STOP
+evaluations over 7 weeks — 218 compliant / 22 gap_warned / 84 skip_no_commits**,
+a 9% warn rate on commit-bearing sessions.
+
+A session that ships commits without calling `write_session_log` now has its
+Stop refused so the AI can write the log, rather than getting a nudge it can
+ignore.
+
+- `CODEVIRA_SESSION_LOG_ENFORCER_MODE=warn` restores the previous default;
+  `=off` disables the policy entirely.
+- **Honest caveat:** the sample is 7 distinct sessions on one maintainer
+  machine — the compliance ceiling, not a representative population. Expect a
+  higher fire rate in the wild, and the escape hatch above to matter.
+
+### Fixed — Stop-event blocks re-engage the AI instead of halting the turn
+
+Found while flipping the enforcer default. `claude_code_hooks._emit` emitted
+`{"continue": false, "stopReason": ...}` for **every** blocking verdict. On
+`Stop` that ends Claude's processing and addresses the *user* — the opposite of
+the documented block-mode behavior ("force the AI to retry"). Any Stop policy
+that blocked would have cut the final response off.
+
+- Stop / SubagentStop blocks now emit `{"decision": "block", "reason": ...}`,
+  which refuses the stop and feeds the reason back to the AI.
+- Claude Code's `stop_hook_active` flag (previously read nowhere in the
+  codebase) now degrades the second consecutive block to a warn, so a policy
+  the AI *cannot* satisfy — MCP unreachable, read-only store — can never loop.
+- PreToolUse / UserPromptSubmit block shapes are unchanged, with a regression
+  test pinning that.
+
+### Added — `codevira register-all`: one MCP per project (heals wrong-project binding)
+
+The shared "single `codevira` entry that auto-detects the project" model proved
+fragile: a bare (project-less) entry out-ranks project-scoped ones, so a session
+opened in project A could read project B's memory (the "opened LH, got UDAP"
+class of bug). On non-project-aware clients (Claude Desktop, Antigravity) there
+is no reliable auto-detect at all.
+
+`codevira register-all` abandons auto-detect for the reliable model: it **zeroes
+every `codevira*` MCP entry** across all detected IDEs, then registers each
+discovered project as its **own uniquely-named MCP** (`codevira-<slug>`)
+hard-pinned to `--project-dir`. One MCP per project — no collisions.
+
+- **Dynamic discovery, nothing hardcoded.** Projects are the union of dirs
+  already registered in an IDE config and dirs with a `.codevira/` store found
+  by scanning the ancestors of those (plus any `--scan-root`). Nested monorepo
+  sub-stores (e.g. `repo/packages/db/.codevira`) are excluded automatically.
+- **Safe.** Every config is backed up (`*.bak-registerall-*`) before it is
+  rewritten, and only `codevira*` keys are touched — all other MCP servers and
+  settings are preserved. `--dry-run` shows the plan and writes nothing.
+- Spans Claude Code (project-scope), Claude Desktop, and Antigravity.
+
+### Added — `codevira doctor --fix`
+
+`doctor` flagged a bare-global-entry binding conflict and told users to run
+`codevira init`, but `init` only warned and never removed the bare entry.
+`codevira doctor --fix` now applies the auto-fixer for any WARN/FAIL check that
+has one (currently: remove the bare `codevira` entry that shadows project pins),
+backing up `~/.claude.json` first and touching only the `codevira` key.
+
+### Fixed — Claude Desktop setup overwrote the previous project (wrong-project bleed)
+
+Claude Desktop is **not project-aware** — it reads one global config with no
+per-window `cwd`. But `codevira setup` wrote every project under the *same* bare
+`codevira` key, so setting up a second project silently overwrote the first and
+Desktop pointed every project at whichever was configured last. Setup now mints a
+**named per-project entry** (`codevira-<project>`) for Desktop, matching the
+Antigravity path and byte-identical to what `register-all` / `doctor --fix` write
+(no duplicate keys). Existing bare entries are still healed by those commands.
+
+### Fixed — git worktrees fragmented memory (and a migration to re-unify it)
+
+A `.git` file (not dir) meant a linked worktree looked like its own project, so
+`codevira_dir()` gave each worktree a **separate** `.codevira/` — decisions made
+in a worktree couldn't be merged back to the main checkout. Now a linked
+worktree's memory redirects to the **main** worktree root (opt out with
+`CODEVIRA_WORKTREE_ISOLATED=1`), so worktrees write straight into the shared
+store — nothing to merge. Honors the write-path root validation (`D000012`): if
+the derived main root is invalid, it falls back to the worktree rather than
+writing memory somewhere bad.
+
+For worktrees that already wrote their own `.codevira/` before this fix, a
+startup migration folds those decisions into the main store via the same
+union+dedup as the git merge driver, then renames the worktree store to
+`.codevira.premerge-<ts>` — **never deleted** (honors `D00011Z`). Re-runs on
+every startup, so it self-heals.
+
+---
+
+### Fixed — a background auto-init could report progress into a record it no longer owned
+
+`auto_init._update_progress` re-resolved the module global `_progress` on every
+write, so an init run that was still going after that global had been rebound
+underneath it wrote its stale status into the *current* record. Production never
+rebinds `_progress`, so runtime behaviour is unchanged — but any harness that
+re-initialises module state (the test suite does, between tests) could have a
+finished-with run stamp `status="indexing"` over a fresh record.
+
+`ensure_project_initialized` now hands the thread the progress record that
+exists when it launches, and `_update_progress` takes an optional
+positional-only `_record`. Late writes from a superseded run land in their own
+abandoned dict instead of the live one.
+
+This surfaced as two intermittent CI failures that no amount of state-resetting
+could fix, because the reset and the stale write are concurrent by construction:
+`test_auto_init.py::TestGetInitProgress::test_default_state`
+(`assert 'indexing' == 'not_started'`, Python 3.10 job only) and
+`test_tools_graph.py::TestGetNode::test_get_node_not_indexed_returns_null_counts`
+(`KeyError: 'not_indexed'`, order-independent).
+
+### Fixed — the test suite now fails any test that leaks a background thread
+
+Every thread codevira starts is named `codevira-*`. A new autouse fixture joins
+any that are still alive at teardown and fails the test if one survives, so a
+leaked thread can no longer run inside a later, unrelated test — mutating its
+module state and writing to the filesystem after that test's `$HOME` and
+`get_data_dir` patches have been torn down. Set
+`CODEVIRA_TEST_THREAD_JOIN_TIMEOUT=0` to run it as a zero-grace audit.
+
+### Fixed — `get_node` broke the v2.1.2 Item 2 contract during background indexing
+
+`get_node()` has four not-found branches. Three of them (no graph DB / empty
+graph / file absent from a populated graph) carried the v2.1.2 Item 2 contract:
+every not-found return ships `not_indexed: True` plus `null` for
+`rules_count`, `dependencies_count` and `key_functions_count`, precisely so an
+agent cannot confuse "never indexed" with "indexed and genuinely has zero
+dependencies".
+
+The fourth branch did not. The v1.6 early return taken while auto-init's
+background index is still running (`get_init_progress()["status"]` is
+`initializing` or `indexing`) predated Item 2 and returned only
+`found` / `status` / `file_path` / `message` / `hint`. An AI agent that called
+`get_node` mid-index got a `KeyError` on `result["not_indexed"]`, or — reading
+via `.get()` — saw the fields absent, which is the exact ambiguity Item 2 was
+written to remove.
+
+The root cause was placement, not an omission: the shared `_not_indexed_counts`
+dict was defined *below* the auto-init check, so the initializing branch could
+not reference it. It is now hoisted to the top of the `if not node:` block, so
+one definition serves all four branches and any branch added later has the
+contract in scope. `status`, `message` and `hint` are unchanged — this is
+purely additive to the response.
+
+`get_impact()` was checked for the same hole and does **not** have one: it has
+no initializing early return and falls through to its three
+contract-carrying branches. The regression test asserts `get_impact`'s contract
+under `status="indexing"` anyway, so one cannot be introduced later.
+
+Diagnosis in `D000138`; the code fix landed in `03c461a`, covered by
+`tests/test_graph_not_indexed_contract.py` (parametrised over every
+`_progress["status"]` value, because the defect was a *missing* case and a test
+that only covers the known case cannot catch the next one).
+
+---
+
 ## [3.7.1] — 2026-07-20
 
 ### Fixed — the centralization migration silently orphaned ALL memory (critical)

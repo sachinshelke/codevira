@@ -200,6 +200,116 @@ class TestHelpTextConsistency:
             )
 
 
+class TestDestructiveCommandsAreDocumentedHonestly:
+    """A destructive command's README line must not read as a safe one.
+
+    Until v4.0 the command table said:
+
+        | `codevira clean` / `reset` | Remove orphaned data / ... |
+
+    `clean` is the full uninstaller — it wipes ~/.codevira/ including
+    snapshots, strips codevira from every IDE config, and removes the
+    launchd service. On 2026-08-01 an agent read that description, ran
+    `yes | codevira clean` to tidy some stale registry rows, and
+    destroyed a real installation. The name misled, and the docs
+    confirmed the misreading rather than correcting it.
+
+    These tests guard the description, not just the presence of a row.
+    """
+
+    def _readme(self) -> str:
+        from pathlib import Path
+
+        return (Path(__file__).resolve().parents[2] / "README.md").read_text()
+
+    def test_prune_is_documented(self):
+        """The safe operation needs a name users can find."""
+        assert "`codevira prune`" in self._readme(), (
+            "codevira prune ships but is absent from the README command "
+            "table — leaving `clean` as the only discoverable tidy-up, "
+            "which is what caused the incident."
+        )
+
+    def test_clean_is_not_described_as_a_tidy_up(self):
+        """The exact wording that misled, as a regression test."""
+        readme = self._readme()
+        for line in readme.splitlines():
+            if "`codevira clean`" not in line:
+                continue
+            low = line.lower()
+            assert "orphan" not in low, (
+                "README describes `clean` as removing orphaned data. That is "
+                f"`prune`. Line:\n  {line.strip()}"
+            )
+            assert "uninstall" in low or "deprecated" in low, (
+                "the `clean` row must say it uninstalls or is deprecated:\n"
+                f"  {line.strip()}"
+            )
+
+    def test_uninstall_names_what_it_removes(self):
+        """ "Reverses every system write" is true but not concrete enough
+        to stop someone running it to free disk space."""
+        readme = self._readme()
+        row = next(
+            (ln for ln in readme.splitlines() if "`codevira uninstall`" in ln), ""
+        )
+        assert row, "no README row for `codevira uninstall`"
+        assert "snapshot" in row.lower(), (
+            "the uninstall row should name snapshots — they are the one "
+            "loss that cannot be recovered from the repo:\n  " + row.strip()
+        )
+
+
+class TestToolCountClaimsMatchReality:
+    """ "52 → 37" is a headline claim in three docs. Check it against the
+    server rather than against itself.
+
+    The number is genuinely two numbers: 37 tools are defined, 36 are
+    advertised, because `refresh_graph` is hidden from `tools/list` while
+    staying callable. README and MIGRATING.md said "37 defined, 36
+    advertised"; the CHANGELOG's Breaking entry said only "52 → 37",
+    which is the first thing a user reads and one more than the 36 an
+    agent counts in its own tool list.
+    """
+
+    ADVERTISED = 36
+
+    def test_server_advertises_the_documented_count(self):
+        import asyncio
+
+        import mcp_server.server as server
+
+        tools = asyncio.run(server.list_tools())
+        assert len(tools) == self.ADVERTISED, (
+            f"server advertises {len(tools)} tools, docs claim "
+            f"{self.ADVERTISED}. Update the docs and this constant together."
+        )
+
+    @pytest.mark.parametrize("doc", ["README.md", "MIGRATING.md", "CHANGELOG.md"])
+    def test_docs_carry_both_numbers(self, doc: str):
+        """A doc citing only "37" leaves the reader unable to reconcile it
+        with the 36 they can see."""
+        from pathlib import Path
+
+        text = (Path(__file__).resolve().parents[2] / doc).read_text()
+
+        # Anchor on the CLAIM, not on the first "52" in the file — these
+        # docs are long and full of unrelated numbers. The claim is a 52
+        # and a 37 within a sentence of each other.
+        claims = [m for m in re.finditer(r"52[^\n]{0,80}?37", text, flags=re.DOTALL)]
+        if not claims:
+            pytest.skip(f"{doc} makes no 52→37 tool-count claim")
+
+        for m in claims:
+            window = text[m.start() : m.end() + 300]
+            assert str(self.ADVERTISED) in window, (
+                f"{doc} cites the 52→37 cut without the advertised count of "
+                f"{self.ADVERTISED}; a reader counting their own tool list "
+                f"sees a mismatch. Claim at offset {m.start()}:\n"
+                f"  {window[:160].strip()}"
+            )
+
+
 class TestAllSubcommandHelpRenders:
     """Every subcommand's --help must render without raising.
 

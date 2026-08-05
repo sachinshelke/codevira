@@ -258,7 +258,6 @@ class TestGetSessionContext:
                 "status": "in_progress",
             },
         }
-        mock_changesets = {"open_changesets": [], "count": 0, "warning": None}
 
         with patch(
             "mcp_server.tools.learning.get_roadmap",
@@ -268,11 +267,7 @@ class TestGetSessionContext:
             with patch(
                 "mcp_server.tools.roadmap.get_roadmap", return_value=mock_roadmap
             ):
-                with patch(
-                    "mcp_server.tools.changesets.list_open_changesets",
-                    return_value=mock_changesets,
-                ):
-                    result = learning.get_session_context()
+                result = learning.get_session_context()
 
         assert "recent_sessions" in result
         assert "recent_decisions" in result
@@ -311,11 +306,7 @@ class TestGetSessionContext:
             },
         }
         with patch("mcp_server.tools.roadmap.get_roadmap", return_value=mock_roadmap):
-            with patch(
-                "mcp_server.tools.changesets.list_open_changesets",
-                return_value={"open_changesets": [], "count": 0, "warning": None},
-            ):
-                result = learning.get_session_context()
+            result = learning.get_session_context()
 
         # New shape: current_phase at top level (no more nested `roadmap` key)
         assert result["current_phase"]["name"] == "API Refactor"
@@ -329,11 +320,7 @@ class TestGetSessionContext:
         with patch(
             "mcp_server.tools.roadmap.get_roadmap", side_effect=Exception("broken")
         ):
-            with patch(
-                "mcp_server.tools.changesets.list_open_changesets",
-                return_value={"open_changesets": [], "count": 0, "warning": None},
-            ):
-                result = learning.get_session_context()
+            result = learning.get_session_context()
 
         # On failure current_phase stays empty dict
         assert result["current_phase"] == {}
@@ -537,11 +524,7 @@ class TestGetSessionContext:
             with patch(
                 "mcp_server.tools.roadmap._load_roadmap", return_value=mock_roadmap_data
             ):
-                with patch(
-                    "mcp_server.tools.changesets.list_open_changesets",
-                    return_value={"open_changesets": [], "count": 0, "warning": None},
-                ):
-                    result = learning.get_session_context()
+                result = learning.get_session_context()
 
         assert "recent_phase_decisions" in result, (
             "Bug 5 regression: get_session_context must include "
@@ -571,11 +554,7 @@ class TestGetSessionContext:
         with patch(
             "mcp_server.tools.roadmap._load_roadmap", return_value=mock_roadmap_data
         ):
-            with patch(
-                "mcp_server.tools.changesets.list_open_changesets",
-                return_value={"open_changesets": [], "count": 0, "warning": None},
-            ):
-                result = learning.get_session_context()
+            result = learning.get_session_context()
 
         assert len(result["recent_phase_decisions"]) <= 5
 
@@ -589,11 +568,7 @@ class TestGetSessionContext:
             "mcp_server.tools.roadmap._load_roadmap",
             return_value={"completed_phases": []},
         ):
-            with patch(
-                "mcp_server.tools.changesets.list_open_changesets",
-                return_value={"open_changesets": [], "count": 0, "warning": None},
-            ):
-                result = learning.get_session_context()
+            result = learning.get_session_context()
 
         assert result["recent_phase_decisions"] == []
 
@@ -614,12 +589,7 @@ class TestGetSessionContext:
             ],
         )
         db.close()
-
-        with patch(
-            "mcp_server.tools.changesets.list_open_changesets",
-            return_value={"open_changesets": [], "count": 0, "warning": None},
-        ):
-            result = learning.get_session_context()
+        result = learning.get_session_context()
 
         if result["recent_decisions"]:
             for d in result["recent_decisions"]:
@@ -781,10 +751,6 @@ class TestSessionContextFocus:
                 "mcp_server.tools.roadmap.get_roadmap",
                 return_value={"current_phase": {}},
             ),
-            patch(
-                "mcp_server.tools.changesets.list_open_changesets",
-                return_value={"open_changesets": [], "count": 0, "warning": None},
-            ),
         ):
             result = learning.get_session_context()
         assert "focus_source" in result
@@ -808,10 +774,6 @@ class TestSessionContextFocus:
         }
         with (
             patch("mcp_server.tools.roadmap.get_roadmap", return_value=roadmap),
-            patch(
-                "mcp_server.tools.changesets.list_open_changesets",
-                return_value={"open_changesets": [], "count": 0, "warning": None},
-            ),
         ):
             result = learning.get_session_context()
 
@@ -826,10 +788,6 @@ class TestSessionContextFocus:
             patch(
                 "mcp_server.tools.roadmap.get_roadmap",
                 return_value={"current_phase": {}},
-            ),
-            patch(
-                "mcp_server.tools.changesets.list_open_changesets",
-                return_value={"open_changesets": [], "count": 0, "warning": None},
             ),
         ):
             result = learning.get_session_context()
@@ -867,93 +825,3 @@ def _seed_communication_prefs(db_path, signals: list[str]) -> None:
             db.upsert_preference("communication", sig, None, "proj-a")
     finally:
         db.close()
-
-
-class TestSessionContextStylePanel:
-    def _run(self, monkeypatch, db_path):
-        """Call get_session_context with roadmap + changesets mocked and the
-        global DB pointed at db_path."""
-        monkeypatch.setattr(paths, "get_global_db_path", lambda: db_path)
-        mock_roadmap = {
-            "current_phase": {
-                "name": "Phase 5",
-                "next_action": "Do stuff",
-                "status": "in_progress",
-            },
-        }
-        with patch("mcp_server.tools.roadmap.get_roadmap", return_value=mock_roadmap):
-            with patch(
-                "mcp_server.tools.changesets.list_open_changesets",
-                return_value={"open_changesets": [], "count": 0, "warning": None},
-            ):
-                return learning.get_session_context()
-
-    def test_style_present_when_communication_prefs_exist(self, tmp_path, monkeypatch):
-        _setup_project(tmp_path, monkeypatch)
-        db_path = tmp_path / "global.db"
-        _seed_communication_prefs(db_path, ["keep answers short", "tests first"])
-
-        result = self._run(monkeypatch, db_path)
-
-        assert "style" in result
-        assert "keep answers short" in result["style"]
-        assert "tests first" in result["style"]
-
-    def test_style_omitted_when_no_communication_prefs(self, tmp_path, monkeypatch):
-        _setup_project(tmp_path, monkeypatch)
-        db_path = tmp_path / "global.db"
-        _seed_communication_prefs(db_path, [])  # schema only, no rows
-
-        result = self._run(monkeypatch, db_path)
-        assert "style" not in result
-
-    def test_style_omitted_when_global_db_missing(self, tmp_path, monkeypatch):
-        _setup_project(tmp_path, monkeypatch)
-        db_path = tmp_path / "never-created.db"
-
-        result = self._run(monkeypatch, db_path)
-        assert "style" not in result
-
-    def test_style_truncated_to_budget(self, tmp_path, monkeypatch):
-        _setup_project(tmp_path, monkeypatch)
-        db_path = tmp_path / "global.db"
-        _seed_communication_prefs(db_path, ["x" * 300])
-
-        result = self._run(monkeypatch, db_path)
-        assert "style" in result
-        assert len(result["style"]) <= 160
-
-    def test_style_survives_preferences_error(self, tmp_path, monkeypatch):
-        """If preference lookup raises, the brief still returns — minus the
-        style key. The panel must never break get_session_context."""
-        _setup_project(tmp_path, monkeypatch)
-        db_path = tmp_path / "global.db"
-        _seed_communication_prefs(db_path, ["keep answers short"])
-        monkeypatch.setattr(paths, "get_global_db_path", lambda: db_path)
-
-        def boom(*a, **k):
-            raise RuntimeError("preferences exploded")
-
-        mock_roadmap = {
-            "current_phase": {
-                "name": "P",
-                "next_action": "x",
-                "status": "in_progress",
-            },
-        }
-        with patch("mcp_server.tools.preferences.search_preferences", side_effect=boom):
-            with patch(
-                "mcp_server.tools.roadmap.get_roadmap", return_value=mock_roadmap
-            ):
-                with patch(
-                    "mcp_server.tools.changesets.list_open_changesets",
-                    return_value={
-                        "open_changesets": [],
-                        "count": 0,
-                        "warning": None,
-                    },
-                ):
-                    result = learning.get_session_context()
-
-        assert "style" not in result
-        assert "current_phase" in result  # brief still returned

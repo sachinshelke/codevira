@@ -13,8 +13,10 @@ Tools:
   # update_node / add_node / list_nodes removed in v2.2.0 — graph generator owns mutations
   update_next_action(next_action)        → update roadmap next action
   refresh_graph(file_paths?)             → auto-generate graph nodes for new files
-  get_signature(file_path)               → skeleton: public symbols, signatures, line ranges
-  get_code(file_path, symbol?)           → full source of one function or class from disk
+  # get_signature / get_code removed in 4.0 — measured ZERO calls across
+  #   4,203 transcripts over 2.5 months; agents Read the file instead
+  # consensus_* / reflect / spatial_* / *_preferences removed in 4.0 —
+  #   see MIGRATING.md "15 MCP tools were removed"
 
 Usage (Claude Code .claude/settings.json):
   {
@@ -27,7 +29,7 @@ Usage (Claude Code .claude/settings.json):
     }
   }
 
-Usage (Cursor / Windsurf): configure via their MCP settings UI with same command.
+Usage (Cursor): configure via its MCP settings UI with same command.
 """
 
 from __future__ import annotations
@@ -53,6 +55,8 @@ except ImportError:
     raise
 
 import json
+
+
 from mcp_server.tools.graph import (
     get_node,
     get_impact,
@@ -87,7 +91,6 @@ from mcp_server.tools.search import (
 # v2.2.0: search_codebase removed. AI agents grep + read files; semantic
 # code search was the source of 90%+ of v2.1.x disk + bug surface.
 from mcp_server.tools.playbook import get_playbook
-from mcp_server.tools.code_reader import get_signature, get_code
 from mcp_server.tools.learning import (
     get_session_context as learning_get_session_context,
 )
@@ -100,6 +103,36 @@ from mcp_server import __version__ as _codevira_version
 # misleading — clients use serverInfo.version for telemetry and version
 # gating.
 server = Server("codevira", version=_codevira_version)
+
+#: Tools cut in 4.0, mapped to what to reach for instead.
+#:
+#: The 4.0 plan made this a release guardrail: "removed tools return
+#: 'removed in 4.0, see MIGRATING' — never an unknown-tool error (agents
+#: cache tool lists for weeks)." A session opened before the upgrade keeps
+#: calling these, and `Unknown tool: consensus_check` tells it nothing.
+#:
+#: Each value names a real successor rather than pointing everyone at the
+#: migration guide — an agent that gets a usable answer inline does not
+#: need to go read a document.
+_REMOVED_IN_4_0 = {
+    "consensus_check": "origin_of(decision_id) for provenance",
+    "consensus_status": "origin_of(decision_id) for provenance",
+    "consensus_propose_supersession": "supersede_decision(...)",
+    "consensus_resolve": "supersede_decision(...) or mark_decision_outdated(...)",
+    "reflect": "record_decision(...); reflections held zero data machine-wide",
+    "get_reflections": "search_decisions(query)",
+    "list_reflections": "list_decisions(...)",
+    "spatial_nearby": "get_impact(file_path) for structural neighbours",
+    "spatial_heat": "get_impact(file_path)",
+    "spatial_neighborhood": "get_impact(file_path)",
+    "spatial_affordances": "get_impact(file_path)",
+    "distill_preferences": "get_session_context(); its `style` panel carries these",
+    "search_preferences": "get_session_context(); its `style` panel carries these",
+    "get_code": "read the file directly; measured zero calls in 2.5 months",
+    "get_signature": "read the file directly; measured zero calls in 2.5 months",
+}
+# Values stay ASCII on purpose: this dict is JSON-serialised to the agent,
+# and a non-ASCII dash arrives as a literal — in the payload it reads.
 
 
 # ---- MCP Prompts (workflow templates) ----
@@ -873,7 +906,33 @@ async def list_tools() -> list[Tool]:
                     },
                     "context": {
                         "type": "string",
-                        "description": "Why this won (alternatives, what would force re-examination)",
+                        "description": (
+                            "Free prose: why this won, what it depended on, "
+                            "what evidence backed it. Surfaced verbatim when "
+                            "a locked decision blocks an edit — this is what "
+                            "the next agent reads instead of guessing."
+                        ),
+                    },
+                    "alternatives_considered": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "The strongest options you REJECTED, one per entry "
+                            '(e.g. ["polling — simpler but 3s worst-case '
+                            'latency", "webhooks — needs a public endpoint"]). '
+                            "Surfaces the losers so a future session can weigh "
+                            "whether to revisit instead of re-deriving them."
+                        ),
+                    },
+                    "would_re_examine_if": {
+                        "type": "string",
+                        "description": (
+                            "The condition that should trigger reconsidering "
+                            'this (e.g. "if the payload exceeds 1 MB" or "if '
+                            'we add a second write path"). Especially valuable '
+                            "with do_not_revert — it turns a one-way ratchet "
+                            "into a lock with a stated release condition."
+                        ),
                     },
                     "do_not_revert": {
                         "type": "boolean",
@@ -937,6 +996,34 @@ async def list_tools() -> list[Tool]:
                         "description": "Original developer prompt",
                     },
                     "phase": {"type": "string", "description": "phase"},
+                    "task_type": {
+                        "type": "string",
+                        "enum": [
+                            "feature",
+                            "bug",
+                            "refactor",
+                            "release",
+                            "docs",
+                            "other",
+                        ],
+                        "description": (
+                            "What KIND of work this session was. Skill "
+                            "induction clusters sessions by task_type — "
+                            "without it a session can never contribute to a "
+                            "learned skill, which is why induction has yielded "
+                            "zero across every project to date."
+                        ),
+                    },
+                    "skill_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "IDs of skills you actually applied this session. "
+                            "Feeds the outcomes fan-out that reinforces or "
+                            "retires a skill based on whether its session's "
+                            "work survived in git."
+                        ),
+                    },
                     "files_changed": {"type": "array", "items": {"type": "string"}},
                     "decisions": {
                         "type": "array",
@@ -1022,50 +1109,6 @@ async def list_tools() -> list[Tool]:
                 },
             },
         ),
-        Tool(
-            name="get_signature",
-            description=(
-                "Get the skeleton of a Python file — all public function and class names, "
-                "their signatures, docstrings, and line ranges. "
-                "Call this after get_node() to understand file structure before deciding "
-                "which symbol to read with get_code(). Much cheaper than reading the full file. "
-                "Note: Python files only. For other languages, read the file directly."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "file_path": {
-                        "type": "string",
-                        "description": "Relative file path (e.g. 'src/services/generator.py')",
-                    }
-                },
-                "required": ["file_path"],
-            },
-        ),
-        Tool(
-            name="get_code",
-            description=(
-                "Get the full source of a single function or class by name. "
-                "Always reads from disk — always current, never stale. "
-                "Call get_signature() first to discover available symbol names and line ranges. "
-                "Omit symbol to get module-level constants and assignments only. "
-                "Note: Python files only. For other languages, read the file directly."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "file_path": {
-                        "type": "string",
-                        "description": "Relative file path",
-                    },
-                    "symbol": {
-                        "type": "string",
-                        "description": "Function or class name to retrieve. Omit for module-level constants.",
-                    },
-                },
-                "required": ["file_path"],
-            },
-        ),
         # v2.2.0+: export_graph, get_graph_diff, get_decision_confidence,
         # get_project_maturity tools deleted per 2026-05-22 surface-cut
         # audit. Vestigial / never-used / dashboard-only surfaces.
@@ -1076,7 +1119,7 @@ async def list_tools() -> list[Tool]:
                 "Returns current roadmap phase, recent decisions with confidence, "
                 "learned preferences, and active rules — everything a new session needs. "
                 "Call this at the START of every session instead of multiple separate calls. "
-                "Works seamlessly across AI tools: Cursor, Claude Code, Windsurf, Antigravity."
+                "Works seamlessly across AI tools: Cursor, Claude Code, Antigravity."
             ),
             inputSchema={"type": "object", "properties": {}},
         ),
@@ -1410,160 +1453,6 @@ async def list_tools() -> list[Tool]:
                 "required": ["skill_id", "task_type"],
             },
         ),
-        # ---- v3.1.0 M4: spatial memory ----
-        Tool(
-            name="spatial_nearby",
-            description=(
-                "v3.1.0 M4: Files topologically near a given file, ranked by "
-                "recent activity. Candidate set = BFS distance ≤ 2 over the "
-                "indexer graph (imports + call edges) ∪ same-neighborhood "
-                "files. Ranking: (1 / (1 + bfs_dist)) × log(1 + visit_count_30d). "
-                "Falls back to neighborhood-only if the indexer graph isn't built."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "file_path": {
-                        "type": "string",
-                        "description": "Project-relative file path",
-                    },
-                    "k": {
-                        "type": "integer",
-                        "description": "Max neighbors to return (default 5)",
-                        "default": 5,
-                    },
-                },
-                "required": ["file_path"],
-            },
-        ),
-        Tool(
-            name="spatial_heat",
-            description=(
-                "v3.1.0 M4: Top-K most-touched files in a time window by "
-                "weighted activity (edits + decision_refs). Useful for "
-                "'where has attention been this week?' queries. Pass "
-                "since_days to limit the window; omit for all-time."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "top_k": {"type": "integer", "default": 20},
-                    "since_days": {
-                        "type": "integer",
-                        "description": (
-                            "Only count activity within the trailing N days "
-                            "(omit for all-time)"
-                        ),
-                    },
-                },
-            },
-        ),
-        Tool(
-            name="spatial_neighborhood",
-            description=(
-                "v3.1.0 M4: Return the neighborhood id + members for a file. "
-                "Folder-tree default (top-2 dir components, e.g., "
-                "'mcp_server/storage'); overridable via "
-                ".codevira/neighborhoods.yaml."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "file_path": {"type": "string"},
-                },
-                "required": ["file_path"],
-            },
-        ),
-        Tool(
-            name="spatial_affordances",
-            description=(
-                "v3.1.0 M4: Return the affordance keys (task_types) applicable "
-                "to a file based on the bundled + project affordances.yaml. "
-                "E.g., a file under mcp_server/tools/ typically affords "
-                "{add_tool, write_test}. Use the returned keys with "
-                "get_playbook(task_type) for relevant rules."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "file_path": {"type": "string"},
-                },
-                "required": ["file_path"],
-            },
-        ),
-        # ---- v3.1.0 M6 Phase B: consensus (read-only) ----
-        Tool(
-            name="consensus_check",
-            description=(
-                "v3.1.0 M6 Phase B: Scan decisions written since this IDE's "
-                "checkpoint, surface cross-IDE conflicts to "
-                ".codevira/pending_conflicts.jsonl, advance the checkpoint. "
-                "Read-only — no automatic resolution. The Phase C handshake "
-                "protocol (one IDE proposing supersession to another) is "
-                "M7 and ships disabled by default."
-            ),
-            inputSchema={"type": "object", "properties": {}},
-        ),
-        Tool(
-            name="consensus_status",
-            description=(
-                "v3.1.0 M6: Return the count of pending cross-IDE conflicts + "
-                "top-K rows (default 3). Useful as a status check from inside "
-                "the agent loop; the get_session_context payload also "
-                "carries a 'consensus' panel based on this data."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "top_k": {"type": "integer", "default": 3},
-                },
-            },
-        ),
-        Tool(
-            name="consensus_propose_supersession",
-            description=(
-                "v3.1.0 M7 Phase C: Open a cross-IDE supersession proposal. "
-                "Writes a 'proposed_supersession' row to pending_conflicts.jsonl "
-                "with expires_at = ts + handshake_timeout_days (default 14). "
-                "Opt-in: returns {disabled: True} unless "
-                "memory.consensus.handshake_enabled is set in "
-                ".codevira/config.yaml. Same-author fast-path returns "
-                "{fast_path: True} so the caller can route to "
-                "supersede_decision directly."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "target_decision_id": {"type": "string"},
-                    "new_decision": {"type": "string"},
-                    "reason": {"type": "string"},
-                },
-                "required": ["target_decision_id", "new_decision", "reason"],
-            },
-        ),
-        Tool(
-            name="consensus_resolve",
-            description=(
-                "v3.1.0 M7 Phase C: Approve, reject, or withdraw a pending "
-                "supersession proposal. Opt-in via "
-                "memory.consensus.handshake_enabled. The approving IDE should "
-                "match the target decision's origin IDE (or be 'unknown') "
-                "for cross-IDE proposals; withdrawals come from the "
-                "proposing IDE."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "proposal_id": {"type": "string"},
-                    "action": {
-                        "type": "string",
-                        "enum": ["approved", "rejected", "withdrawn"],
-                    },
-                    "comment": {"type": "string"},
-                },
-                "required": ["proposal_id", "action"],
-            },
-        ),
         Tool(
             name="origin_of",
             description=(
@@ -1578,90 +1467,7 @@ async def list_tools() -> list[Tool]:
             },
         ),
         # ---- v3.3.0 Phase 4: preference capture (D0000LU) ----
-        Tool(
-            name="distill_preferences",
-            description=(
-                "v3.3.0: Distill captured user prompts into durable "
-                "preferences (communication style, workflow habits) via the "
-                "host LLM (sampling/createMessage). Call at SESSION END when "
-                "the Stop-hook nudge fires, with dry_run=false to persist "
-                "into cross-project memory (~/.codevira/global.db) and clear "
-                "the capture file. Degrades to {rendered_prompt} when the "
-                "host doesn't support sampling."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "dry_run": {"type": "boolean", "default": True},
-                },
-            },
-        ),
-        Tool(
-            name="search_preferences",
-            description=(
-                "v3.3.0: Search learned user preferences (cross-project, "
-                "LLM-distilled). Filter by category: 'communication', "
-                "'workflow', 'formatting'. Use before adopting a tone or "
-                "workflow the user may have expressed opinions about. "
-                "Highest-frequency first."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "category": {"type": "string"},
-                    "top_k": {"type": "integer", "default": 10},
-                },
-            },
-        ),
         # ---- v3.1.0 M8: reflections (episodic abstraction) ----
-        Tool(
-            name="reflect",
-            description=(
-                "v3.1.0 M8: Build the source context + rendered prompt for an "
-                "LLM abstraction over recent decisions + sessions. v3.1.0 "
-                "returns {sampling_supported: False, rendered_prompt, "
-                "source_context} so callers can feed the prompt to a locally-"
-                "available LLM. The MCP sampling/createMessage RPC integration "
-                "is the v3.2 deliverable; until then, use `codevira reflect "
-                "--from-file` to commit an LLM-supplied abstraction."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "period_days": {"type": "integer", "default": 7},
-                    "dry_run": {"type": "boolean", "default": True},
-                },
-            },
-        ),
-        Tool(
-            name="get_reflections",
-            description=("v3.1.0 M8: Top-K most recent reflections (newest first)."),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "top_k": {"type": "integer", "default": 5},
-                },
-            },
-        ),
-        Tool(
-            name="list_reflections",
-            description=(
-                "v3.1.0 M8: Filtered reflection list. 'since' is an ISO 8601 "
-                "timestamp cutoff; 'tags' is set intersection (every requested "
-                "tag must appear)."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "since": {"type": "string"},
-                    "tags": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                    },
-                    "limit": {"type": "integer", "default": 50},
-                },
-            },
-        ),
         # ---- v1.5: Deep Graph Intelligence Tools ----
         Tool(
             name="query_graph",
@@ -1736,19 +1542,20 @@ async def list_tools() -> list[Tool]:
     # MCP tool annotations (spec 2025-03-26): tell the client which tools are
     # safe reads vs state mutations, so a host can run read tools without a
     # confirmation prompt and reason about side effects. Codevira's reads
-    # (search / get / list / query / spatial / status) never mutate; everything
+    # (search / get / list / query / status) never mutate; everything
     # else appends to the JSONL stores. Nothing here is destructive — the
     # destructive ops (reset / uninstall) are CLI-only, not MCP tools.
     _READ_ONLY = {
         "get_session_context", "get_roadmap", "get_phase", "get_playbook",
         "search_decisions", "list_decisions", "expand", "get_history",
-        "list_tags", "check_conflict", "get_node", "get_impact", "get_code",
-        "get_signature", "query_graph", "get_reflections", "list_reflections",
-        "get_skill", "list_skills", "get_working_context", "working_get",
-        "spatial_nearby", "spatial_heat", "spatial_neighborhood",
-        "spatial_affordances", "consensus_status", "origin_of",
-        "search_preferences",
+        "list_tags", "check_conflict", "get_node", "get_impact",
+        "query_graph", "get_skill", "list_skills", "get_working_context",
+        "working_get", "origin_of",
     }  # fmt: skip
+    # 4.0 Step 5 removed get_code, get_signature, get_reflections and
+    # list_reflections from this set along with the tools themselves. A
+    # dead name here is inert (it is only ever a membership test) but it
+    # misleads the next reader into thinking the tool still exists.
     if ToolAnnotations is not None:
         for t in tools:
             if t.annotations is None:
@@ -1832,7 +1639,7 @@ def _maybe_bind_from_tool_path(arguments: dict) -> None:
     invalidates the per-root data-dir cache, so subsequent reads come from
     the right project's ``.codevira/``). Sticky: a path-less follow-up tool
     keeps the last resolved project. Gated to ``CODEVIRA_IDE=claude_desktop``
-    so strictly workspace-bound IDEs (Claude Code / Cursor / Windsurf) are
+    so strictly workspace-bound IDEs (Claude Code / Cursor) are
     untouched. Best-effort, never raises, never blocks dispatch.
     """
     import os
@@ -2079,6 +1886,13 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 files_changed=arguments["files_changed"],
                 decisions=arguments["decisions"],
                 next_steps=arguments["next_steps"],
+                # 4.0 Step 2.4: sessions_store.write has accepted both since
+                # v3.1.x; the MCP surface never declared or forwarded them, so
+                # 62/62 sessions carry task_type=None and skill induction is
+                # structurally guaranteed to yield zero. Same dead-write-path
+                # shape as record_decision's alternatives_considered.
+                task_type=arguments.get("task_type"),
+                skill_ids=arguments.get("skill_ids"),
             )
         elif name == "record_decision":
             from mcp_server.tools.learning import (
@@ -2099,6 +1913,13 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 session_id=arguments.get("session_id"),
                 tags=arguments.get("tags"),
                 force=arguments.get("force", False),
+                # 4.0 Step 2.1: these two were accepted by
+                # learning.record_decision and decisions_store.record since
+                # v3.1.x but were never DECLARED in the inputSchema above nor
+                # forwarded here — so they read 0/1365 across every project.
+                # That was a dead write path, not agent laziness.
+                alternatives_considered=arguments.get("alternatives_considered"),
+                would_re_examine_if=arguments.get("would_re_examine_if"),
             )
         # v2.2.0+ batch 6: mark_decision_protected dispatch deleted
         # (use supersede_decision with do_not_revert=True). refresh_index
@@ -2109,13 +1930,6 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             result = update_next_action(arguments["next_action"])
         elif name == "refresh_graph":
             result = refresh_graph(file_paths=arguments.get("file_paths"))
-        elif name == "get_signature":
-            result = get_signature(arguments["file_path"])
-        elif name == "get_code":
-            result = get_code(arguments["file_path"], symbol=arguments.get("symbol"))
-        # v2.2.0+: export_graph, get_graph_diff, get_decision_confidence,
-        # get_project_maturity, analyze_changes, find_hotspots dispatchers
-        # deleted per surface-cut audit.
         elif name == "get_session_context":
             # v2.1.2 Item 25: pass through optional since= cutoff.
             result = learning_get_session_context(since=arguments.get("since"))
@@ -2219,111 +2033,23 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 name=arguments.get("name"),
                 force=arguments.get("force", False),
             )
-        # ---- v3.1.0 M4: spatial memory dispatch ----
-        elif name == "spatial_nearby":
-            from mcp_server.tools.spatial import spatial_nearby
-
-            result = spatial_nearby(
-                file_path=arguments["file_path"],
-                k=arguments.get("k", 5),
-            )
-        elif name == "spatial_heat":
-            from mcp_server.tools.spatial import spatial_heat
-
-            result = spatial_heat(
-                top_k=arguments.get("top_k", 20),
-                since_days=arguments.get("since_days"),
-            )
-        elif name == "spatial_neighborhood":
-            from mcp_server.tools.spatial import spatial_neighborhood
-
-            result = spatial_neighborhood(file_path=arguments["file_path"])
-        elif name == "spatial_affordances":
-            from mcp_server.tools.spatial import spatial_affordances
-
-            result = spatial_affordances(file_path=arguments["file_path"])
-        # ---- v3.1.0 M6 Phase B: consensus dispatch ----
-        elif name == "consensus_check":
-            from mcp_server.tools.consensus import consensus_check
-
-            result = consensus_check()
-        elif name == "consensus_status":
-            from mcp_server.tools.consensus import consensus_status
-
-            result = consensus_status(top_k=arguments.get("top_k", 3))
-        # ---- v3.1.0 M7 Phase C: handshake dispatch ----
-        elif name == "consensus_propose_supersession":
-            from mcp_server.tools.consensus import consensus_propose_supersession
-
-            result = consensus_propose_supersession(
-                target_decision_id=arguments["target_decision_id"],
-                new_decision=arguments["new_decision"],
-                reason=arguments["reason"],
-            )
-        elif name == "consensus_resolve":
-            from mcp_server.tools.consensus import consensus_resolve
-
-            result = consensus_resolve(
-                proposal_id=arguments["proposal_id"],
-                action=arguments["action"],
-                comment=arguments.get("comment"),
-            )
         elif name == "origin_of":
-            from mcp_server.tools.consensus import origin_of
+            from mcp_server.tools.provenance import origin_of
 
             result = origin_of(decision_id=arguments["decision_id"])
         # ---- v3.3.0 Phase 4: preference capture dispatch ----
-        elif name == "distill_preferences":
-            from mcp_server.tools.preferences import distill_preferences_async
-
-            mcp_session = None
-            try:
-                mcp_session = server.request_context.session
-            except LookupError:
-                pass
-
-            result = await distill_preferences_async(
-                dry_run=arguments.get("dry_run", True),
-                server_session=mcp_session,
-            )
-        elif name == "search_preferences":
-            from mcp_server.tools.preferences import search_preferences
-
-            result = search_preferences(
-                category=arguments.get("category"),
-                top_k=arguments.get("top_k", 10),
-            )
-        # ---- v3.1.0 M8: reflections dispatch ----
-        elif name == "reflect":
-            from mcp_server.tools.reflections import reflect_async
-
-            # v3.2.0: try the host LLM via sampling/createMessage when
-            # this tool runs inside an active MCP request context.
-            # reflect_async degrades to the v3.1.0 stub on any failure,
-            # so this is safe even when the host doesn't support sampling.
-            mcp_session = None
-            try:
-                mcp_session = server.request_context.session
-            except LookupError:
-                pass
-
-            result = await reflect_async(
-                period_days=arguments.get("period_days", 7),
-                dry_run=arguments.get("dry_run", True),
-                server_session=mcp_session,
-            )
-        elif name == "get_reflections":
-            from mcp_server.tools.reflections import get_reflections
-
-            result = get_reflections(top_k=arguments.get("top_k", 5))
-        elif name == "list_reflections":
-            from mcp_server.tools.reflections import list_reflections
-
-            result = list_reflections(
-                since=arguments.get("since"),
-                tags=arguments.get("tags"),
-                limit=arguments.get("limit", 50),
-            )
+        elif name in _REMOVED_IN_4_0:
+            # A removed tool is not an unknown tool. Agents cache tool
+            # lists for weeks, so a session opened before the upgrade will
+            # keep calling these — and "Unknown tool: consensus_check"
+            # tells it nothing about what to do instead. Named in the 4.0
+            # plan's guardrails for exactly this reason.
+            result = {
+                "error": f"`{name}` was removed in codevira 4.0.",
+                "removed_in": "4.0.0",
+                "use_instead": _REMOVED_IN_4_0[name],
+                "see": "MIGRATING.md, '15 MCP tools were removed'",
+            }
         else:
             result = {"error": f"Unknown tool: {name}"}
 
@@ -2519,16 +2245,18 @@ def main():
     # timeout. Surfaced via "looks hanged on first tool call" during
     # Claude Desktop dogfood (2026-05-23).
     def _run_startup_outcome_analysis() -> None:
-        try:
-            from indexer.outcome_tracker import analyze_session_outcomes
-
-            analyze_session_outcomes()
-            logger.info("Outcome analysis complete (background)")
-        except Exception as e:
-            logger.warning("Could not run startup outcome analysis: %s", e)
-            from mcp_server._safe_crash import safe_log_crash
-
-            safe_log_crash(e, context="startup outcome analysis")
+        # 4.0: the outcome-analysis call that used to open this function was
+        # removed. It ran indexer.outcome_tracker, which queried graph.db
+        # tables that have held 0 rows since v3.0.0 moved the canonical store
+        # to JSONL — a guaranteed no-op costing ~102ms of git fanout at every
+        # server start. Repointing it at outcomes_writer.observe_all() was
+        # measured at 5.15s, i.e. 50x worse, so the whole call is dropped:
+        # outcome labels are produced by the write-time fan-out and by the
+        # explicit `codevira observe-git` CLI, neither of which needs a
+        # 5-second git sweep on every startup. D000006 exists because this
+        # fanout is slow; the right answer was to stop doing it, not to
+        # thread it. The git fix-history scan below is UNRELATED and stays —
+        # it feeds anti_regression.
 
         # v3.0.0 audit (§4.1): wire AntiRegression git populator
         import os as _os

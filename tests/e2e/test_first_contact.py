@@ -147,6 +147,46 @@ def run_codevira(
     return CodeviraResult(proc.returncode, proc.stdout, proc.stderr)
 
 
+# Parseable-code extensions the graph indexer builds file nodes from.
+# Mirrors indexer/graph_generator.py's matcher exactly
+# (``list(TS_EXTENSION_MAP.keys()) + [".py"]``). Kept as a literal set so
+# this e2e suite stays subprocess-only (no product imports); the Bug A test
+# below fails loudly if the two ever drift, which is precisely Bug A.
+_CODE_EXTS = {".py", ".go", ".js", ".jsx", ".rs", ".ts", ".tsx"}
+
+# Dirs the indexer skips; used to count on-disk code files the same way.
+_SKIP_PARTS = {"node_modules", ".venv", "venv", ".git", "__pycache__", ".codevira"}
+
+
+def _parse_graph_nodes(text: str) -> int | None:
+    """Pull the integer node count out of `codevira status` output.
+
+    Matches the panel line ``Graph Nodes:  N``. Returns None if the label
+    isn't present (UI changed) so callers can distinguish "malformed" from
+    a genuine zero.
+    """
+    import re
+
+    for line in text.splitlines():
+        if "Graph Nodes" in line:
+            m = re.search(r"\d+", line.split("Graph Nodes", 1)[1])
+            if m:
+                return int(m.group())
+    return None
+
+
+def _code_files(project_root: Path) -> list[Path]:
+    """Parseable-code files under project_root, counted the way the indexer
+    walks them (skip vendored/VCS dirs; match _CODE_EXTS)."""
+    return [
+        p
+        for p in project_root.rglob("*")
+        if p.is_file()
+        and p.suffix in _CODE_EXTS
+        and not (set(p.relative_to(project_root).parts) & _SKIP_PARTS)
+    ]
+
+
 # ─── The actual gauntlet tests (one per fixture, parameterized) ────────────
 
 
@@ -400,11 +440,6 @@ class TestFirstContact:
                 f"Should tell user what to do.\n  output: {result.stdout}"
             )
 
-    @pytest.mark.skip(
-        reason="Placeholder — real Bug A test needs `configure --json --accept-all` "
-        "non-interactive mode (planned in v2.1 alongside the matcher unification "
-        "fix). Today this test would have to drive an interactive prompt."
-    )
     def test_configure_uses_same_matcher_as_index(
         self,
         codevira_bin: str,
@@ -412,14 +447,80 @@ class TestFirstContact:
         project_root: Path,
     ) -> None:
         """
-        Bug A: configure and index must use the same file matcher.
-        If configure discovers N files but index matches 0, that's the
-        canonical silent-failure pattern.
+        Bug A: discovery and indexing must agree on what counts as a source
+        file. v2.0.0 shipped the divergence — discovery reported N source
+        files but index matched 0, leaving a silently EMPTY index on a repo
+        full of code. That is the canonical silent-failure pattern and it
+        has had no regression test since it shipped.
 
-        When unskipped: drive `configure --json --accept-all`, parse the
-        emitted file-count, then run index --verbose and compare counts.
+        The original placeholder wanted `configure --json --accept-all` to
+        emit a file count to diff against `index --verbose`. That plan is
+        obsolete: v2.2.0 folded the standalone `configure` command into
+        `init` (already fully non-interactive — no prompt to drive), and
+        removed chromadb, so `index` builds the code graph rather than
+        semantic chunks. So this reproduces the SAME count-comparison against
+        today's surface: init IS the discovery step, and the graph node count
+        is the index's file count.
+
+        Two assertions, one per side of the matcher:
+          - discovery: `init` must advertise every code extension present on
+            disk (under-advertising silently drops those files from indexing)
+          - index: the node count must equal the number of parseable-code
+            files init discovered — divergent matchers show up as
+            (discovery > 0, index == 0), or any count mismatch.
         """
-        pass
+        code_files = _code_files(project_root)
+        if not code_files:
+            # docs_only: no parseable code at all. An empty index there is
+            # Bug E (docs-only silent 0-chunks), covered separately — not the
+            # matcher-divergence Bug A.
+            pytest.skip(
+                f"fixture {project_root.name} has no parseable code — "
+                f"empty index is Bug E territory, not Bug A"
+            )
+
+        init_result = run_codevira(codevira_bin, ["init"], cwd=project_root)
+        assert (
+            init_result.returncode == 0
+        ), f"init failed for fixture {project_root.name}:\n{init_result.combined}"
+
+        # Discovery side: init advertises detected extensions. Every code
+        # extension that exists on disk MUST appear, or those files never
+        # reach the indexer (silent under-match — half of Bug A).
+        disk_exts = sorted({p.suffix for p in code_files})
+        for ext in disk_exts:
+            assert ext in init_result.combined, (
+                f"Bug A regression (discovery side): init did not advertise "
+                f"{ext!r} for fixture {project_root.name}, but {ext} files "
+                f"exist on disk. Discovery under-matches; the indexer will "
+                f"silently skip them.\n  init output:\n{init_result.stdout}"
+            )
+
+        # Index side: run the standard flow and read the resulting node count.
+        index_result = run_codevira(codevira_bin, ["index"], cwd=project_root)
+        assert (
+            index_result.returncode == 0
+        ), f"index failed for fixture {project_root.name}:\n{index_result.combined}"
+        status = run_codevira(codevira_bin, ["status"], cwd=project_root)
+        nodes = _parse_graph_nodes(status.combined)
+        assert nodes is not None, (
+            f"status output missing a 'Graph Nodes' line for fixture "
+            f"{project_root.name} — UI changed?\n{status.combined}"
+        )
+
+        # The matcher agreement: index must have turned exactly the files
+        # discovery found into graph nodes. index == 0 (or any mismatch) on a
+        # repo with parseable code is the v2.0.0 silent-empty-index bug.
+        rel = sorted(str(p.relative_to(project_root)) for p in code_files)
+        assert nodes == len(code_files), (
+            f"Bug A regression: init discovered {len(code_files)} parseable "
+            f"source file(s) for fixture {project_root.name} but index "
+            f"produced {nodes} graph node(s). Discovery and index matchers "
+            f"disagree — the silent-empty-index pattern.\n"
+            f"  code files ({len(rel)}): {rel}\n"
+            f"  init output:\n{init_result.combined}\n"
+            f"  status output:\n{status.combined}"
+        )
 
     def test_status_is_well_formed(
         self,

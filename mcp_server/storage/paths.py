@@ -30,6 +30,7 @@ module covers ONLY the project-local storage that lives in the repo.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from mcp_server.paths import get_project_root, is_invalid_project_root
@@ -38,11 +39,65 @@ CODEVIRA_DIR_NAME = ".codevira"
 CODEVIRA_CACHE_DIR_NAME = ".codevira-cache"
 
 
+def _main_worktree_root(project_root: Path) -> Path:
+    """If ``project_root`` is a LINKED git worktree, return the MAIN worktree's
+    root so every worktree of a repo shares ONE ``.codevira/`` memory store —
+    otherwise a worktree gets its own store and decisions made there can't be
+    merged back (the classic worktree fragmentation, D000130).
+
+    A linked worktree has a ``.git`` *file* (not dir) reading
+    ``gitdir: <main>/.git/worktrees/<name>``; the main worktree root is the
+    parent of that common ``.git`` dir. Returns ``project_root`` unchanged for
+    a normal checkout (``.git`` is a dir) — so non-worktree behavior is
+    identical.
+
+    Honors the locked write-path guarantee (D000012): the redirected root is
+    validated via ``is_invalid_project_root`` and we fall back to
+    ``project_root`` if it fails, so memory never resolves to an invalid root.
+    Set ``CODEVIRA_WORKTREE_ISOLATED=1`` (or true/yes/on) to opt out and keep
+    per-worktree memory.
+    """
+    # Normalised like every other flag in the product (see egress.py). The
+    # bare `== "1"` meant CODEVIRA_WORKTREE_ISOLATED=true silently did
+    # nothing: the user asked for per-worktree memory and kept getting the
+    # shared store, with no error either way.
+    if os.environ.get("CODEVIRA_WORKTREE_ISOLATED", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    ):
+        return project_root
+    git_path = project_root / ".git"
+    try:
+        if not git_path.is_file():  # normal checkout (dir) or no repo — unchanged
+            return project_root
+        text = git_path.read_text(encoding="utf-8").strip()
+        if not text.startswith("gitdir:"):
+            return project_root
+        gitdir = Path(text.split("gitdir:", 1)[1].strip())
+        if not gitdir.is_absolute():
+            gitdir = (project_root / gitdir).resolve()
+        # gitdir == <main>/.git/worktrees/<name>
+        if gitdir.parent.name == "worktrees" and gitdir.parent.parent.name == ".git":
+            main_root = gitdir.parent.parent.parent
+            if main_root.is_dir() and not is_invalid_project_root(main_root):
+                return main_root
+    except (OSError, ValueError):
+        pass
+    return project_root
+
+
 def codevira_dir(project_root: Path | None = None) -> Path:
-    """Return ``<project>/.codevira/`` — the in-repo source-of-truth dir."""
+    """Return ``<project>/.codevira/`` — the in-repo source-of-truth dir.
+
+    In a linked git worktree this resolves to the MAIN worktree's
+    ``.codevira/`` so all worktrees share one memory store (see
+    :func:`_main_worktree_root`).
+    """
     if project_root is None:
         project_root = get_project_root()
-    return project_root / CODEVIRA_DIR_NAME
+    return _main_worktree_root(project_root) / CODEVIRA_DIR_NAME
 
 
 def codevira_cache_dir(project_root: Path | None = None) -> Path:
@@ -222,10 +277,10 @@ def working_path(project_root: Path | None = None) -> Path:
 
 
 def activity_path(project_root: Path | None = None) -> Path:
-    """v3.1.0 M4: spatial-activity log (per-machine, gitignored).
+    """Per-file attention log (per-machine, gitignored).
 
     Stores ``edit`` / ``decision_ref`` rows as the agent works through
-    the codebase. The ``codevira spatial export-activity`` CLI is the
+    the codebase. It is per-machine and rebuildable; the
     opt-in path to share aggregated heat with a team; the raw log
     itself stays local because attention patterns are per-developer.
 

@@ -26,15 +26,20 @@ Contract
   an id is the collision we repair (amendments legitimately reuse a base id
   and are exempt).
 - Among colliding base records, the WINNER keeps the id, chosen by a total
-  order every machine computes identically: ``(ts, origin.host_hash,
-  content_hash)`` — the final content hash guarantees a strict order even when
-  ts and host collide.
+  order every machine computes identically: ``(ts, writer_id, content_hash)``
+  — the final content hash guarantees a strict order even when ts and writer
+  collide. ``writer_id`` is ``origin.device_id`` falling back to
+  ``origin.host_hash``; see ``_host`` for why the fallback matters.
 - Byte-identical records are the SAME decision (a cherry-pick / double-commit)
   and are DEDUPED, not renumbered.
 - LOSERS are renumbered to a content-derived id ``D<sha1(content)[:12]>`` — a
   pure function of content, so convergence needs zero shared state.
 - Amendments follow their base when unambiguous (same old id + same
-  ``origin.host_hash``); otherwise they stay with the winner (never guessed).
+  ``writer_id``); otherwise they stay with the winner (never guessed).
+- Decision-to-decision EDGES (``superseded_by``) are repointed by the same
+  rule. Without this a renumbered base leaves a dangling supersession: the
+  chain stops resolving, and ``list_decisions`` shows a decision that was
+  retired months ago as still current.
 
 This is Tier-0 (structural, deterministic). Tier-1 (semantic dedup / conflict
 escalation) layers on top via the reconcile engine — see Phase 29.
@@ -57,6 +62,23 @@ _LOSER_HASH_WIDTH = 12
 # loses the "earliest writer keeps the id" race instead of winning it.
 _TS_SENTINEL = "~"
 
+#: Fields whose VALUE is another decision's id. Renumbering a record without
+#: repointing these leaves a dangling edge — a supersession chain that stops
+#: resolving. ``superseded_by`` is the one that exists in real stores (7 of 228
+#: records here); ``supersedes`` is in the record schema and reserved.
+#:
+#: NOT included: the ``[supersedes D000120: reason]`` marker that
+#: ``decisions_store`` embeds in the decision TEXT. Rewriting prose would
+#: change what the user wrote, and the text is the audit trail — the
+#: structured field is what readers resolve.
+_REFERENCE_FIELDS = ("superseded_by", "supersedes")
+
+#: Bumped whenever the winner-selection or reference-rewriting rules change.
+#: Two machines running DIFFERENT versions over the same merged store converge
+#: to different files, so callers surface this rather than silently disagreeing.
+#: 1 = v3.7.0 (ids + amendments only). 2 = 4.0 (also repoints references).
+ORDER_VERSION = 2
+
 
 def _canonical(record: dict[str, Any], *, exclude: tuple[str, ...] = ()) -> str:
     """Stable JSON encoding of a record, optionally excluding fields."""
@@ -78,10 +100,38 @@ def _content_hash(
 
 
 def _host(record: dict[str, Any]) -> str:
-    origin = record.get("origin") or {}
-    if isinstance(origin, dict):
-        return str(origin.get("host_hash") or "")
-    return ""
+    """Identity of the machine that wrote ``record``, or ``""``.
+
+    4.0 Step 9 · S1: this used to read ``origin.host_hash`` directly,
+    which is derived from ``uuid.getnode()`` and therefore changes when
+    a network interface appears — measured 4 distinct values from one
+    machine over 7 weeks. Amendment-following keys on this value, so a
+    developer whose VPN reconnected became a stranger to their own
+    earlier decision and their amendment was attributed elsewhere.
+
+    ``origin.writer_id`` prefers the persisted ``device_id`` and falls
+    back to ``host_hash``, so pre-4.0 records compare exactly as before
+    and mixed-era records simply fail to match — which lands every
+    caller here on its conservative branch rather than a wrong guess.
+    """
+    from mcp_server.storage.origin import writer_id
+
+    return writer_id(record.get("origin"))
+
+
+def _uid(record: dict[str, Any]) -> str:
+    """The record's content identity, stored or derived. ``""`` on failure.
+
+    Derivation matters: a pre-4.0 record has no stored uid but yields the
+    same value a 4.0 one with identical content would, so uid-keyed
+    following works across both eras with no file rewritten.
+    """
+    try:
+        from mcp_server.storage.uid import uid_of
+
+        return uid_of(record)
+    except Exception:  # noqa: BLE001 — repair must never raise
+        return ""
 
 
 def _order_key(
@@ -124,6 +174,47 @@ def _mint_loser_id(
     while f"{prefix}{h}-{n}" in claimed:
         n += 1
     return f"{prefix}{h}-{n}"
+
+
+def _rewrite_references(
+    rec: dict[str, Any],
+    *,
+    follow: dict[tuple[str, str], str],
+    split_ids: set[str],
+    writer: str,
+) -> tuple[dict[str, Any], bool]:
+    """Repoint this record's decision-to-decision edges at renumbered bases.
+
+    Returns ``(record, ambiguous)``. Only touches a field whose value is an id
+    that was actually SPLIT by this repair — an edge pointing at an id nobody
+    renumbered is already correct and is left exactly as written.
+
+    Attribution uses the same ``(old_id, writer)`` rule as amendments: an edge
+    written by machine M pointing at a contested id means M's copy of it. When
+    that can't be established the edge stays on the WINNER (which kept the id)
+    and the record is flagged, because a supersession pointed at the wrong
+    engineer's decision would mark their work obsolete.
+    """
+    updates: dict[str, str] = {}
+    ambiguous = False
+    for field in _REFERENCE_FIELDS:
+        val = rec.get(field)
+        if not isinstance(val, str) or val not in split_ids:
+            continue
+        resolved = follow.get((val, writer))
+        if resolved:
+            updates[field] = resolved
+        else:
+            ambiguous = True
+
+    if not updates and not ambiguous:
+        return rec, False
+
+    out = dict(rec)
+    out.update(updates)
+    if ambiguous:
+        out["_reference_ambiguous"] = True
+    return out, ambiguous
 
 
 def find_collisions(
@@ -265,36 +356,74 @@ def normalize(
         else:
             ambiguous_keys.add((old, host))
 
+    # Ids that lost at least one record to renumbering. An edge pointing at
+    # anything else needs no attention: nobody moved what it points at.
+    split_ids: set[str] = {old for old, _ in loser_keys}
+
     ambiguous_amendments = 0
+    ambiguous_references = 0
     out: list[dict[str, Any]] = []
+
+    def _emit(rec: dict[str, Any]) -> None:
+        """Apply reference rewriting, then append.
+
+        Every surviving record goes through here — winners, renumbered
+        losers and amendments alike. A renumbered record can itself carry a
+        ``superseded_by`` that needs repointing, so this cannot live on only
+        the untouched-record branch.
+        """
+        nonlocal ambiguous_references
+        rec, amb = _rewrite_references(
+            rec, follow=follow, split_ids=split_ids, writer=_host(rec)
+        )
+        if amb:
+            ambiguous_references += 1
+        out.append(rec)
+
+    # Step 9 · S3b. An amendment that names its base by CONTENT needs no
+    # attribution heuristic at all: a uid identifies exactly one record,
+    # however many machines minted the same id. Built only from renumbered
+    # losers — a base that kept its id needs no redirect.
+    by_uid: dict[str, str] = {}
+    for idx, new_id in reassign.items():
+        u = _uid(recs[idx])
+        if u:
+            by_uid[u] = new_id
+
     for i, r in enumerate(recs):
         if i in dropped:
             continue
         if i in reassign:
             r = dict(r)
             r[id_field] = reassign[i]
-            out.append(r)
+            _emit(r)
             continue
         if r.get(amendment_field):
+            exact = by_uid.get(str(r.get("_amendment_to_uid") or ""))
+            if exact:
+                r = dict(r)
+                r[id_field] = exact
+                r[amendment_field] = exact
+                _emit(r)
+                continue
             key = (str(r.get(amendment_field)), _host(r))
             if key in follow:
                 r = dict(r)
                 r[id_field] = follow[key]
                 r[amendment_field] = follow[key]
-                out.append(r)
+                _emit(r)
                 continue
             if key in ambiguous_keys or (
-                str(r.get(amendment_field)) in {k[0] for k in loser_keys}
-                and not _host(r)
+                str(r.get(amendment_field)) in split_ids and not _host(r)
             ):
                 # Its base id was split among renumbered losers but we can't
                 # attribute this amendment — keep it on the winner, flag it.
                 r = dict(r)
                 r["_amendment_ambiguous"] = True
                 ambiguous_amendments += 1
-                out.append(r)
+                _emit(r)
                 continue
-        out.append(dict(r))
+        _emit(dict(r))
 
     return {
         "records": out,
@@ -302,4 +431,6 @@ def normalize(
         "collisions": collisions,
         "deduped": len(dropped),
         "ambiguous_amendments": ambiguous_amendments,
+        "ambiguous_references": ambiguous_references,
+        "order_version": ORDER_VERSION,
     }

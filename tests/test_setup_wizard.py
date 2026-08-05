@@ -426,7 +426,7 @@ class TestPerformance:
             t = time.perf_counter()
             build_setup_plan(
                 isolated,
-                detected_ides=("claude", "cursor", "windsurf", "antigravity", "codex"),
+                detected_ides=("claude", "cursor", "antigravity", "codex"),
             )
             durations.append((time.perf_counter() - t) * 1000)
         p95 = sorted(durations)[18]
@@ -447,7 +447,7 @@ class TestPerformance:
 
         plan = build_setup_plan(
             isolated,
-            detected_ides=("claude", "cursor", "windsurf", "codex"),
+            detected_ides=("claude", "cursor", "codex"),
             install_mcp=False,  # avoids real ~/.codeium etc.
         )
         t = time.perf_counter()
@@ -624,15 +624,15 @@ class TestIntegrationFindings:
             _claude_global_config_path,
             _claude_desktop_config_path,
             _cursor_global_config_path,
-            _windsurf_global_config_path,
             _antigravity_config_path,
         )
 
         assert _mcp_config_path_for("claude") == _claude_global_config_path()
         assert _mcp_config_path_for("claude_desktop") == _claude_desktop_config_path()
         assert _mcp_config_path_for("cursor") == _cursor_global_config_path()
-        assert _mcp_config_path_for("windsurf") == _windsurf_global_config_path()
         assert _mcp_config_path_for("antigravity") == _antigravity_config_path()
+        # v3.8.0: windsurf is no longer a config target — no path mapping.
+        assert _mcp_config_path_for("windsurf") is None
 
     def test_claude_desktop_step_is_planned_when_detected(self, isolated: Path):
         """Bug 6b regression: when claude_desktop is in the detected list,
@@ -871,3 +871,73 @@ class TestColdInstall:
         )
         rc = setup_wizard.cmd_setup(yes=True)
         assert rc == 0
+
+
+# =====================================================================
+# Regression: `codevira setup` must bind Claude Code PER PROJECT
+# =====================================================================
+
+
+class TestClaudeCodeRegistrationIsPerProject:
+    """`codevira setup` wrote a BARE ``codevira`` entry (no ``--project-dir``)
+    that resolves the project ambiently from cwd — the wrong-project bug
+    D000126, where "a session in agent-mcp wrote its decisions into
+    Agentic/LH". A bare entry also OUT-RANKS a scoped one, so a single setup
+    re-broke a machine register-all had fixed.
+
+    Setup must now register a per-project, ``--project-dir``-pinned entry and
+    leave NO bare entry. These fail against the pre-fix wizard, which called
+    ``inject_global_claude_code`` (bare) for the ``claude`` handler.
+    """
+
+    def _run(self, project: Path):
+        plan = build_setup_plan(
+            project,
+            detected_ides=("claude",),
+            install_mcp=True,
+            install_hooks=False,
+            write_nudge_files=False,
+        )
+        result = execute_plan(plan, dry_run=False)
+        assert result.all_succeeded, [r.action for r in result.steps]
+        cj = json.loads((project.parent / "home" / ".claude.json").read_text())
+        return cj
+
+    def test_no_bare_or_user_scope_codevira_entry(self, isolated: Path):
+        cj = self._run(isolated)
+        top = {k for k in (cj.get("mcpServers") or {}) if "codevira" in k.lower()}
+        assert top == set(), (
+            f"setup left a bare/user-scope codevira entry {top}; it out-ranks "
+            f"the scoped one and mis-binds the session (D000126)."
+        )
+
+    def test_writes_a_project_dir_pinned_scoped_entry(self, isolated: Path):
+        cj = self._run(isolated)
+        proj = (cj.get("projects") or {}).get(str(isolated)) or {}
+        cv = {
+            k: v
+            for k, v in (proj.get("mcpServers") or {}).items()
+            if "codevira" in k.lower()
+        }
+        assert len(cv) == 1, f"expected exactly one scoped entry, got {list(cv)}"
+        ((key, entry),) = cv.items()
+        assert key.startswith("codevira-"), f"not a named per-project key: {key}"
+        args = entry.get("args") or []
+        assert "--project-dir" in args, f"entry is not pinned: {args}"
+        assert args[args.index("--project-dir") + 1] == str(
+            isolated
+        ), "the pin must point at THIS project, not an ambient one"
+        assert (entry.get("env") or {}).get("CODEVIRA_IDE") == "claude_code"
+
+    def test_a_prior_bare_entry_is_removed(self, isolated: Path):
+        """Upgrading a machine that already has the buggy bare entry must
+        collapse it, not leave it coexisting (where it would still win)."""
+        home = isolated.parent / "home"
+        cfg = home / ".claude.json"
+        cfg.write_text(
+            json.dumps({"mcpServers": {"codevira": {"command": "x", "args": []}}})
+        )
+        cj = self._run(isolated)
+        assert "codevira" not in (
+            cj.get("mcpServers") or {}
+        ), "the pre-existing bare entry survived setup"

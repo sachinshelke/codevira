@@ -98,7 +98,7 @@ These are the real-world tests our automated suite can't simulate:
 Open the project in **Claude Code**, ask the AI:
 > "What did I decide about [some-architecture-thing] last week?"
 
-If you have prior decisions logged (record one with `record_decision` MCP tool), the AI should cite them. Then close Claude Code, open the same project in **Cursor** (or Windsurf, or Antigravity). Ask the same question.
+If you have prior decisions logged (record one with `record_decision` MCP tool), the AI should cite them. Then close Claude Code, open the same project in **Cursor** (or Antigravity). Ask the same question.
 
 **Expected**: same answer surfaces. **If different / missing**: the wedge is broken on your real install — file a critical bug.
 
@@ -163,7 +163,7 @@ Open `/tmp/budget-week.txt` and `/tmp/insights-week.txt`. Assess:
 - [ ] Did codevira save tokens? (Look at the budget breakdown.)
 - [ ] Did codevira surface decisions you'd forgotten?
 - [ ] Did any hero block you incorrectly? (How many times did you reach for `mode=warn` or `mode=off`?)
-- [ ] Did the wedge work — did Cursor / Windsurf / Antigravity see the same memory as Claude Code?
+- [ ] Did the wedge work — did Cursor / Antigravity see the same memory as Claude Code?
 - [ ] Any UI / message / wording you'd change?
 - [ ] Any feature you missed?
 

@@ -211,10 +211,6 @@ WRITE_TOOLS: frozenset[str] = frozenset(
         "apply_skill_outcome",
         "supersede_skill",
         "promote_skill_to_playbook",
-        "consensus_propose_supersession",
-        "consensus_resolve",
-        "distill_preferences",
-        "reflect",
     }
 )
 
@@ -231,24 +227,13 @@ READ_TOOLS: frozenset[str] = frozenset(
         "expand",
         "get_history",
         "get_playbook",
-        "get_signature",
-        "get_code",
         "get_session_context",
         "query_graph",
         "working_get",
         "get_working_context",
         "get_skill",
         "list_skills",
-        "spatial_nearby",
-        "spatial_heat",
-        "spatial_neighborhood",
-        "spatial_affordances",
-        "consensus_check",
-        "consensus_status",
         "origin_of",
-        "search_preferences",
-        "get_reflections",
-        "list_reflections",
         "check_conflict",
     }
 )

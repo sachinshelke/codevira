@@ -130,7 +130,7 @@ def _classify_decision(project_root: Path, decision: dict[str, Any]) -> str | No
 
     Phase 17: delegates to the shared :func:`indexer.outcome_classifier.
     classify_outcome` so this (JSONL → digest/replay/skills) surface and the
-    SQLite → confidence surface (``outcome_tracker``) label every decision
+    SQLite → confidence surface (removed in 4.0) labelled every decision
     IDENTICALLY. Returns None when the decision has no file_path or can't be
     classified confidently (leaves the prior outcome untouched).
     """

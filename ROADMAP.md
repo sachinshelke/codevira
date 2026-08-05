@@ -2,7 +2,7 @@
 
 **Local-first persistent memory for AI coding agents.**
 
-Codevira gives every AI coding tool — Claude Code, Cursor, Windsurf, Google Antigravity, or any MCP-compatible agent — persistent memory that survives across sessions, learns from developer behavior, and works on any project in any language.
+Codevira gives every AI coding tool — Claude Code, Cursor, Google Antigravity, or any MCP-compatible agent — persistent memory that survives across sessions, learns from developer behavior, and works on any project in any language.
 
 **Local-first, and now team-safe.** The decision log lives in the committed in-repo `.codevira/` (git-diffable, team-shareable); only the cross-project `global.db` + rebuildable caches sit under `~/.codevira/`. No cloud, no accounts. As of v3.7.0 two engineers can share one repo without silently losing decisions on merge (a deterministic git merge driver + `codevira repair-ids`). One install handles every project you work on.
 
@@ -46,7 +46,7 @@ Full notes in [CHANGELOG.md](CHANGELOG.md#350--2026-06-19).
 One user-scope server now serves **every** project correctly:
 
 - **Per-call project binding** — a single shared MCP entry resolves the right project on each tool call (from the client's workspace roots, or the file path the call touches), instead of contaminating memory across projects.
-- **Windows / UNC workspace roots** — `file:///C:/...` and `file://host/share/...` paths bind correctly (Cursor / Windsurf on Windows).
+- **Windows / UNC workspace roots** — `file:///C:/...` and `file://host/share/...` paths bind correctly (Cursor on Windows).
 - **HTTP-transport isolation** — the shared HTTPS server no longer mis-binds from client roots.
 - **`codevira doctor` binding check** — surfaces exactly which project the server is bound to and why.
 - **Honest `search_decisions` docs** — the tool now states plainly it is keyword (FTS5/BM25) search, not semantic.
@@ -137,7 +137,7 @@ Make Codevira instant to set up and intelligent across all projects.
 
 - **Zero-config init** — auto-detects language, source dirs, file extensions from project markers (15+ languages); no interactive prompts
 - **Smart directory scanning** — scans actual project tree for source files instead of relying on fixed folder conventions; skips known noise dirs (`node_modules`, `.venv`, `build`, etc.)
-- **IDE auto-inject** — writes MCP config directly into Claude Code, Cursor, Windsurf, and Google Antigravity on `init`; non-destructive merge preserves existing settings
+- **IDE auto-inject** — writes MCP config directly into Claude Code, Cursor, and Google Antigravity on `init`; non-destructive merge preserves existing settings
 - **Reliable binary resolution** — finds `codevira` binary across PATH, pipx venvs, pip --user, and sibling bin; falls back to `python -m mcp_server` if needed
 - **Cross-project global memory** — `~/.codevira/global.db` aggregates preferences and rules across all projects; imported on startup with confidence decay
 - **Optional ML dependencies** — base install is lightweight (~50MB); `pip install 'codevira[search]'` adds ChromaDB + sentence-transformers for semantic search
@@ -184,7 +184,7 @@ Today a developer must: install → `cd project` → `codevira init` → restart
 
 ### Distribution
 - **Publish to PyPI** — `pipx install codevira` works for anyone worldwide
-- **List on MCP registries** — Anthropic MCP registry, Cursor marketplace, Windsurf plugin store
+- **List on MCP registries** — Anthropic MCP registry, Cursor marketplace
 
 ---
 
@@ -372,7 +372,7 @@ Key changes:
   team-shareable, replaces graph.db SQLite).
 - AGENTS.md auto-generated with hard 5 KB cap (other AI tools read it
   natively — decisions are portable across Copilot, Codex, Cursor,
-  Gemini, Factory, Amp, Windsurf, Zed, RooCode, Jules).
+  Gemini, Factory, Amp, Zed, RooCode, Jules).
 - Relevance-gated UserPromptSubmit: off-topic → 0 tokens; on-topic →
   ≤600 tokens / ≤3 decisions; deterministic byte output (Anthropic
   prompt-cache friendly).
@@ -710,7 +710,7 @@ stories.
 
 One conversation per partner. If Claude Code's onboarding suggests
 codevira as the recommended memory server → mass adoption in weeks.
-Backup plays in priority order: Cursor team, Windsurf team,
+Backup plays in priority order: Cursor team,
 Antigravity team.
 
 ### Framework reach + ecosystem adapters

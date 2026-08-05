@@ -296,6 +296,23 @@ def search(
         conn.close()
 
 
+#: Memoized "not stale" verdicts, keyed by (index path, source mtime_ns,
+#: source size) — 4.0 Step 4.
+#:
+#: This function ran on EVERY search and opened a connection plus
+#: ``_ensure_tables`` (CREATE VIRTUAL TABLE IF NOT EXISTS + a sqlite_master
+#: scan) to do it. Two connections per search, ~11 SQL statements, for a
+#: question whose answer only changes when decisions.jsonl is written.
+#: Only NEGATIVE results are memoized: a "stale" verdict must always be
+#: re-derived so a rebuild is never skipped.
+_FRESH_CACHE: dict[str, tuple[int, int]] = {}
+
+
+def invalidate_staleness_cache() -> None:
+    """Drop memoized freshness verdicts (tests, and in-place rewrites)."""
+    _FRESH_CACHE.clear()
+
+
 def staleness_check(decisions_path: Path, index_path: Path) -> bool:
     """Return True if the index is older than decisions.jsonl.
 
@@ -305,6 +322,15 @@ def staleness_check(decisions_path: Path, index_path: Path) -> bool:
         return True
     if not decisions_path.is_file():
         return False  # nothing to index against; not stale
+
+    try:
+        src_stat = decisions_path.stat()
+        stamp = (src_stat.st_mtime_ns, src_stat.st_size)
+        if _FRESH_CACHE.get(str(index_path)) == stamp:
+            return False
+    except OSError:
+        stamp = None  # type: ignore[assignment]
+
     src_mtime = decisions_path.stat().st_mtime
 
     conn = _connect(index_path)
@@ -321,7 +347,12 @@ def staleness_check(decisions_path: Path, index_path: Path) -> bool:
         except (TypeError, ValueError):
             return True
         # Use a 1-second epsilon to tolerate filesystems with second-precision mtime.
-        return src_mtime > idx_mtime + 1.0
+        stale = src_mtime > idx_mtime + 1.0
+        if not stale and stamp is not None:
+            # Memoize ONLY the fresh verdict — a stale one must be
+            # re-derived so a rebuild is never skipped.
+            _FRESH_CACHE[str(index_path)] = stamp
+        return stale
     finally:
         conn.close()
 

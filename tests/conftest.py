@@ -4,6 +4,8 @@ Shared pytest fixtures for the Codevira MCP test suite.
 
 import os
 import sys
+import threading
+import time
 import types
 from unittest.mock import MagicMock
 
@@ -16,6 +18,49 @@ import pytest
 # tests/test_update_check.py re-enables it per-test via monkeypatch.delenv.
 # ---------------------------------------------------------------------------
 os.environ.setdefault("CODEVIRA_NO_UPDATE_CHECK", "1")
+
+# ---------------------------------------------------------------------------
+# Isolate the global home for SUBPROCESSES too.
+#
+# `_isolate_global_home` below patches `paths.get_global_home` with
+# monkeypatch — which does not cross a process boundary. 18 test files spawn
+# a `codevira` subprocess, and every one of them was writing into the
+# developer's real ~/.codevira/global.db: 371 of 387 rows in the reference
+# machine's registry were pytest temp dirs, and the count grew during a
+# single suite run.
+#
+# An env var is the only isolation a child inherits, so it is set here at
+# import time — before any test, fixture or collection-time code can spawn
+# anything. Deliberately NOT tmp_path_factory: this must exist before pytest
+# builds its fixtures.
+# ---------------------------------------------------------------------------
+import tempfile as _tempfile  # noqa: E402
+
+os.environ.setdefault("CODEVIRA_HOME", _tempfile.mkdtemp(prefix="codevira-test-home-"))
+
+# ---------------------------------------------------------------------------
+# Make spawned subprocesses import THIS working tree, not whatever is
+# installed.
+#
+# A subprocess started with `cwd=tmp_path` (which most CLI tests do) has no
+# repo on sys.path, so `import mcp_server` falls through to site-packages —
+# a copy from an earlier `pip install`. Those tests were therefore
+# exercising an OLD build rather than the code under test, and passing.
+#
+# That is how the global.db registry leak survived four rounds of tracing:
+# every tracer patched the repo's classes inside the pytest process, while
+# the writes happened in a subprocess importing a DIFFERENT copy of the
+# module — one predating $CODEVIRA_HOME, so it wrote to the real
+# ~/.codevira. Measured: +4 rows per run without this, +0 with it.
+#
+# Prepend rather than replace, so a caller's own PYTHONPATH still applies.
+# ---------------------------------------------------------------------------
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+os.environ["PYTHONPATH"] = (
+    _REPO_ROOT + os.pathsep + os.environ["PYTHONPATH"]
+    if os.environ.get("PYTHONPATH")
+    else _REPO_ROOT
+)
 
 # ---------------------------------------------------------------------------
 # Pre-import numpy at conftest load time.
@@ -143,6 +188,59 @@ import mcp_server.storage.paths  # noqa: E402,F401 — eager-load, see above
 from indexer.sqlite_graph import SQLiteGraph  # noqa: E402 — must follow stub install
 
 
+def _reset_crash_logger() -> None:
+    """Drop crash_logger's two process-global caches.
+
+    1. ``_logger`` — a memoised Logger whose file handler is bound to
+       ``<global_home>/logs/crashes.log`` at first use. See the call site in
+       ``_isolate_global_home``.
+    2. ``_recent_crashes`` — the 60-second duplicate-suppression window, keyed
+       on ``type(exc).__name__ + str(exc)``. The whole unit suite runs inside
+       one window, so two tests raising the same placeholder exception (say
+       ``ValueError("boom")``) are ONE signature: after ``_RATE_LIMIT_MAX``
+       hits ``log_crash()`` silently drops the write and the test that reads
+       the log back sees nothing.
+
+    Import lazily so conftest import order stays independent of crash_logger's
+    own imports.
+    """
+    from mcp_server import crash_logger
+
+    logger = crash_logger._logger
+    if logger is not None:
+        for handler in list(logger.handlers):
+            logger.removeHandler(handler)
+            try:
+                handler.close()
+            except Exception:  # noqa: BLE001 — best-effort fd release
+                pass
+    crash_logger._logger = None
+    with crash_logger._RATE_LIMIT_LOCK:
+        crash_logger._recent_crashes.clear()
+
+
+@pytest.fixture(autouse=True)
+def _reset_server_transport_globals():
+    """Reset ``mcp_server.server``'s process-global transport / binding latches.
+
+    ``run_http_server()`` sets ``_is_http_transport = True`` and never unsets
+    it — correct in production (one process serves exactly one transport) but
+    permanent for the rest of a pytest session. Once ``tests/test_http_server``
+    had run, ``_bind_project_from_client_roots`` short-circuited for EVERY
+    later test: ``tests/test_binding_e2e.py``'s positive cases failed, and —
+    worse — its negative cases ("must NOT bind") passed vacuously.
+    ``_roots_bind_attempted`` is a once-per-process latch with the same shape.
+
+    Read from ``sys.modules`` rather than importing, so tests that never touch
+    the server don't pay for importing the whole tool surface — if the module
+    isn't loaded there is no global to leak.
+    """
+    srv = sys.modules.get("mcp_server.server")
+    if srv is not None:
+        srv._is_http_transport = False
+        srv._roots_bind_attempted = False
+
+
 @pytest.fixture(autouse=True)
 def _isolate_global_home(tmp_path_factory, monkeypatch):
     """Prevent ALL tests from writing to real codevira storage — BOTH the
@@ -180,6 +278,17 @@ def _isolate_global_home(tmp_path_factory, monkeypatch):
     from mcp_server import opt_in as _opt_in
 
     _opt_in.invalidate_opt_in_cache()
+    # crash_logger memoises a Logger whose RotatingFileHandler is bound to
+    # <global_home>/logs/crashes.log AT FIRST USE. Every test gets a DIFFERENT
+    # fake global home above, so that singleton must not survive: the first test
+    # to trigger a crash write (tests/engine/test_runner.py, in collection
+    # order) otherwise kept every later log_crash() writing into ITS tmp dir,
+    # and a test that recorded a crash then read the log back saw nothing.
+    # Invisible in collection order; broke test_doctor.py's
+    # TestCrashLogSize::test_surfaces_recorded_crashes under `-p randomly`.
+    # Closing the handler also releases the fd on the (by then deleted) tmp
+    # file. Also clears the duplicate-suppression window — see the helper.
+    _reset_crash_logger()
     monkeypatch.setattr(paths, "_project_dir_override", None)
     iso_project = base / "project"
     (iso_project / ".codevira").mkdir(parents=True)
@@ -187,6 +296,108 @@ def _isolate_global_home(tmp_path_factory, monkeypatch):
         "project:\n  name: isolated-test\n"
     )
     monkeypatch.chdir(iso_project)
+
+
+# ---------------------------------------------------------------------------
+# Background-thread leak detector.
+#
+# Every thread codevira starts is named ``codevira-*`` (auto-init, bg-index,
+# startup-outcome-analysis, post-edit-refresh). A test that starts one and
+# returns without joining it leaves that thread running INSIDE the next,
+# unrelated test — where it mutates process-global module state and writes to
+# the filesystem after this test's monkeypatches (fake $HOME, patched
+# get_data_dir) have been torn down.
+#
+# That is a RACE, not an ordering problem: a setup-time reset in the next test
+# cannot prevent a concurrent write from a thread that is already running.
+# It is why tests/test_auto_init.py::TestGetInitProgress::test_default_state
+# saw ``status == "indexing"`` on a fresh record in CI run 30764652633
+# (Python 3.10 only — slower scheduling widened the window).
+#
+# The rule this enforces: a test owns the threads it starts. Join them, or
+# don't start real ones.
+# ---------------------------------------------------------------------------
+
+_CODEVIRA_THREAD_PREFIX = "codevira-"
+
+# How long teardown waits before calling a thread leaked.
+#
+# Correctness does not depend on this number: the join happens at teardown, so
+# no thread crosses a test boundary regardless of how long the wait is. The
+# timeout only controls how loudly we REPORT a leak — generous enough that a
+# slow-but-terminating thread on a loaded CI runner doesn't cause a spurious
+# failure, short enough that a genuinely stuck thread fails fast.
+#
+# To audit instead of tolerate, drop the grace to zero — then ANY codevira
+# thread still alive at teardown is reported, however briefly it would have
+# lived:
+#
+#     CODEVIRA_TEST_THREAD_JOIN_TIMEOUT=0 python -m pytest tests/ -q
+#
+# That sweep is expected to come back clean. If it doesn't, a test started a
+# real background thread it doesn't own.
+_THREAD_JOIN_TIMEOUT = float(
+    os.environ.get("CODEVIRA_TEST_THREAD_JOIN_TIMEOUT", "10.0")
+)
+
+
+def _live_codevira_threads():
+    """Threads codevira started that are still running."""
+    return [
+        t
+        for t in threading.enumerate()
+        if t.is_alive() and t.name.startswith(_CODEVIRA_THREAD_PREFIX)
+    ]
+
+
+@pytest.fixture(autouse=True)
+def _no_leaked_background_threads(_isolate_global_home):
+    """Fail any test that leaves a codevira background thread running.
+
+    Depends on ``_isolate_global_home`` purely for ordering: pytest tears
+    fixtures down in reverse setup order, so taking it as an argument
+    guarantees this join happens BEFORE the fake-$HOME monkeypatches are
+    undone. Otherwise the very thread we're waiting on could spend the join
+    window writing to the developer's real ``~/.codevira/``.
+    """
+    yield
+
+    deadline = time.monotonic() + _THREAD_JOIN_TIMEOUT
+    for t in _live_codevira_threads():
+        t.join(timeout=max(0.0, deadline - time.monotonic()))
+
+    leaked = _live_codevira_threads()
+    if not leaked:
+        return
+
+    # Containment. The thread is still running and we cannot kill it, so at
+    # minimum sever its handle on the progress record — otherwise this one
+    # leak cascades into a string of unrelated failures and buries the
+    # culprit. Threads launched by ensure_project_initialized write to the
+    # record they were handed (see auto_init._update_progress), so rebinding
+    # the global makes their remaining writes inert.
+    import mcp_server.auto_init as _auto_init
+
+    _auto_init._progress = {
+        "status": "not_started",
+        "files_indexed": 0,
+        "total_files": 0,
+        "elapsed_seconds": 0.0,
+        "error": None,
+    }
+
+    names = ", ".join(sorted(t.name for t in leaked))
+    pytest.fail(
+        f"Test leaked {len(leaked)} live codevira background thread(s) after "
+        f"{_THREAD_JOIN_TIMEOUT}s: {names}.\n"
+        "A leaked thread keeps running inside later tests and mutates "
+        "process-global state there — the resulting failure looks like it "
+        "belongs to whichever test happened to be running.\n"
+        "Fix the test that started it: join the thread before the test ends "
+        "(inside the `with patch(...)` block, so the patches still cover the "
+        "thread's whole life), or stub the call so no real thread starts.",
+        pytrace=False,
+    )
 
 
 @pytest.fixture

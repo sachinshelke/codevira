@@ -36,12 +36,15 @@ Failure-mode policy (P9 — never block user write on cache failure):
 from __future__ import annotations
 
 import fnmatch
+import json
 import logging
+import re
 import secrets
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from mcp_server.retrieval import score as retrieval_score
 from mcp_server.storage import (
     digest,
     fts5_index,
@@ -50,30 +53,154 @@ from mcp_server.storage import (
     origin,
     paths,
     sanitize,
+    text as text_util,
+    uid as uid_mod,
 )
 
 logger = logging.getLogger(__name__)
 
 
-def default_session_id() -> str:
-    """Generate a unique ad-hoc session id when the caller didn't supply one.
+#: Process-stable fallback id. Minted once per process so that, absent any
+#: live session marker, every write from one process at least shares an id.
+_PROCESS_SESSION_ID: str | None = None
 
-    v3.0.1 fix: prior to this, an unattributed ``record_decision`` /
-    ``write_session_log`` defaulted to the LITERAL string ``"ad-hoc"``.
-    Every concurrent IDE (Claude Code, Cursor, Windsurf, Antigravity)
-    that didn't pass a slug collided into the same bucket — masking
-    session boundaries and breaking the v3.1.0 working-memory design
-    (which keys observations by session_id). Generating a unique
-    suffix per call disambiguates without forcing every caller to
-    invent a name.
+
+def default_session_id(project_root: Path | None = None) -> str:
+    """Resolve the current session id when the caller didn't supply one.
+
+    v3.0.1 replaced a literal ``"ad-hoc"`` with ``ad-hoc-<random>`` to stop
+    concurrent IDEs colliding into one bucket. That fixed collisions and
+    created the opposite defect: a fresh id was minted on EVERY call, so
+    nothing could ever be correlated. Measured before this fix — 754
+    activity rows carrying 754 distinct session ids, and **0 of 116
+    decisions shared a session with an edit row**. Session-scoped features
+    (working memory, skill induction, anchor derivation) were therefore
+    joining on a key that was unique by construction.
+
+    4.0 resolution order:
+
+    1. The live hook session recorded by ``session_log_enforcer`` on
+       SESSION_START in ``.codevira-cache/active_sessions.jsonl``. This is
+       the real client session id, shared by every process the client
+       spawns — the only handle that spans the MCP server and the hooks.
+    2. A process-stable ``ad-hoc-<random>``, so writes from a single
+       process still correlate.
+
+    Never raises: any read failure falls through to (2).
     """
-    return f"ad-hoc-{secrets.token_hex(3)}"
+    try:
+        marker = paths.codevira_cache_dir(project_root) / "active_sessions.jsonl"
+        if marker.is_file():
+            latest: str | None = None
+            with marker.open("r", encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        row = json.loads(line)
+                    except ValueError:
+                        continue
+                    # A line of `null`, `"abc"` or `[1,2]` PARSES, so catching
+                    # JSONDecodeError alone was not enough: `.get` on the
+                    # result raised AttributeError straight through the
+                    # `except OSError` below, out of a function documented to
+                    # never raise — and record() calls this unconditionally,
+                    # so one malformed marker line failed every write.
+                    if not isinstance(row, dict):
+                        continue
+                    sid = row.get("session_id")
+                    if sid:
+                        latest = str(sid)
+            if latest:
+                return latest
+    except (OSError, ValueError):
+        pass
+
+    global _PROCESS_SESSION_ID
+    if _PROCESS_SESSION_ID is None:
+        _PROCESS_SESSION_ID = f"ad-hoc-{secrets.token_hex(3)}"
+    return _PROCESS_SESSION_ID
 
 
 # ─── Internal: merge amendments into base records ─────────────────────
 
 
-def _read_merged() -> list[dict[str, Any]]:
+#: Fields that have been observed leaking into decision bodies as
+#: ``<parameter name="X">value`` blocks. Anything not listed is left in the
+#: text rather than silently guessed at.
+_RECOVERABLE_PARAMS = frozenset(
+    {"file_path", "symbol", "context", "tags", "do_not_revert"}
+)
+
+_STRANDED_RE = re.compile(
+    r'</?(?:decision|parameter)(?:\s+name="(?P<name>[a-z_]+)")?>[ \t]*(?P<value>[^<\n]*)',
+    re.IGNORECASE,
+)
+
+
+def _recover_stranded_parameters(text: str) -> tuple[str, dict[str, Any]]:
+    """Split a malformed decision body into (clean_text, recovered_fields).
+
+    A decision recorded through a malformed tool call can arrive with its
+    other arguments serialized into the body::
+
+        Use bcrypt for passwords.</decision>
+        <parameter name="file_path">auth.py</parameter>
+        <parameter name="do_not_revert">true
+
+    The decision itself is fine; only the envelope is broken. Rejecting it
+    would lose real memory, so we parse the block out, hand the values back
+    to the caller, and keep the prose.
+
+    Unknown parameter names are dropped from the returned mapping but their
+    text is still removed, so the stored decision stays readable.
+    Returns the input unchanged when no marker is present (the common case,
+    so this costs one substring check).
+    """
+    if not text or "<parameter name=" not in text:
+        return text, {}
+
+    recovered: dict[str, Any] = {}
+    for m in _STRANDED_RE.finditer(text):
+        name = (m.group("name") or "").lower()
+        value = (m.group("value") or "").strip()
+        if not name or name not in _RECOVERABLE_PARAMS or not value:
+            continue
+        if name == "do_not_revert":
+            recovered[name] = value.lower() in ("true", "1", "yes", "on")
+        elif name == "tags":
+            parts = [t.strip(" \"'[]") for t in value.split(",")]
+            cleaned = [t for t in parts if t]
+            if cleaned:
+                recovered[name] = cleaned
+        else:
+            recovered[name] = value
+
+    clean = _STRANDED_RE.sub("", text).strip()
+    # If stripping consumed everything, keep the original rather than
+    # persisting an empty decision.
+    return (clean or text), recovered
+
+
+#: Merged-view cache, keyed by (path, mtime_ns, size) — 4.0 Step 4.
+#:
+#: ``read_merged`` re-parsed the ENTIRE decision store on every call.
+#: Profiled at 178 ``json.loads`` per ``search()``, which put p95 at
+#: 10.18 ms against D00012K's 3 ms warm-call ceiling. The store is
+#: append-only, so mtime+size is a sound invalidation key: any write
+#: changes both. A stale read is therefore impossible, and the cost of a
+#: cold miss is exactly what the old path paid every time.
+_MERGED_CACHE: dict[str, tuple[tuple[int, int], list[dict[str, Any]]]] = {}
+
+
+def invalidate_merged_cache() -> None:
+    """Drop the merged-view cache. Tests and repair paths that rewrite the
+    store in place (rather than appending) should call this."""
+    _MERGED_CACHE.clear()
+
+
+def _read_merged(project_root: Path | None = None) -> list[dict[str, Any]]:
     """Read decisions.jsonl + fold amendment lines into their base records.
 
     Thin wrapper around the v3.0.1 shared primitive
@@ -83,8 +210,35 @@ def _read_merged() -> list[dict[str, Any]]:
     records carry the same ``id`` as the base plus a truthy
     ``_amendment_to_id`` marker; later amendments win; orphan
     amendments emit as their own record for diagnosis.
+
+    Callers get shallow COPIES of the cached records, never the cached
+    objects. Handing out the originals made the cache mutable-by-accident:
+    ``list_all(full=True)`` passes records straight through, so a single
+    ``d["decision"] = ...`` anywhere poisoned the merged view for every
+    later reader in the process — verified, ``list_all()[0] is
+    list_all()[0]`` was True and an edit survived into the next call. It
+    never reaches disk, so it disappears on restart; that is the worst
+    shape a bug can take in an enforcement read path. Before the cache,
+    ``read_merged`` reparsed each time and mutation was harmless.
+
+    ``dict(r)`` is ~2 orders of magnitude cheaper than the ``json.loads``
+    it replaces, so the Step 4 budget win survives intact.
     """
-    return jsonl_store.read_merged(paths.decisions_path())
+    path = paths.decisions_path(project_root)
+    try:
+        st = path.stat()
+        key = str(path)
+        stamp = (st.st_mtime_ns, st.st_size)
+        cached = _MERGED_CACHE.get(key)
+        if cached is not None and cached[0] == stamp:
+            return [dict(r) for r in cached[1]]
+        merged = jsonl_store.read_merged(path)
+        _MERGED_CACHE[key] = (stamp, merged)
+        return [dict(r) for r in merged]
+    except OSError:
+        # Missing/unreadable store — fall through to the uncached read so
+        # the caller sees the same empty-or-error behaviour as before.
+        return jsonl_store.read_merged(path)
 
 
 def get(decision_id: str) -> dict[str, Any] | None:
@@ -128,6 +282,30 @@ def record(
     """
     paths.ensure_dirs()
 
+    # 4.0 Step 3.4: recover fields the caller serialized INTO the decision
+    # body instead of passing as arguments. D000014 diagnosed this in May
+    # 2026 and it was never systematically fixed; measured across all
+    # registered projects, 262 of 1269 base decisions (21%) carry a leaked
+    # `<parameter name="...">` block — 164 lost their context, 99 lost
+    # file_path, and 14 were INTENDED do_not_revert with the lock never
+    # landing. Recovering beats rejecting: the decision is real, only its
+    # envelope was malformed.
+    decision, _rec = _recover_stranded_parameters(decision)
+    if _rec:
+        file_path = file_path or _rec.get("file_path")
+        symbol = symbol or _rec.get("symbol")
+        context = context or _rec.get("context")
+        if not tags and _rec.get("tags"):
+            tags = _rec["tags"]
+        if not do_not_revert and _rec.get("do_not_revert"):
+            do_not_revert = True
+        logger.warning(
+            "decisions_store.record: recovered %s from a malformed decision "
+            "body (fields serialized into the text instead of passed as "
+            "arguments)",
+            sorted(_rec),
+        )
+
     # Normalize tags: lowercase, strip whitespace, dedup, sort
     # (lowercase normalization is the same rule manifest.incremental_add
     # applies; doing it here keeps the on-disk record clean too).
@@ -159,6 +337,37 @@ def record(
     # malformed value can't bloat the record / AGENTS.md.
     norm_symbol = symbol.strip()[:200] if symbol and symbol.strip() else None
 
+    # 4.0 Step 7: DERIVE the symbol when the caller didn't name one.
+    #
+    # `symbol` has existed since v3.6.0 and is what makes region-level
+    # locking possible — decision_lock then blocks only edits INSIDE the
+    # named function instead of anywhere in the file. It sits at 1/123
+    # populated, because setting it requires an agent to type it. Every
+    # field a MACHINE writes is populated (outcome 21%, origin 68%); every
+    # field an AGENT must type is not. So derive it from the session's own
+    # edits rather than asking harder.
+    #
+    # Best-effort and conservative: an unresolved anchor leaves symbol
+    # None and the decision stays file-scoped, exactly as today. A WRONG
+    # symbol is worse than none — it would scope a lock to a region the
+    # decision has nothing to do with — so anchor.py returns None on any
+    # ambiguity rather than guessing.
+    if norm_symbol is None and file_path:
+        try:
+            from mcp_server.storage import anchor as _anchor
+
+            _sid = session_id or default_session_id(project_root=None)
+            _derived = _anchor.symbol_for_session_edit(str(file_path), _sid)
+            if _derived:
+                norm_symbol = _derived[:200]
+                logger.debug(
+                    "decisions_store.record: derived symbol %r for %s",
+                    norm_symbol,
+                    file_path,
+                )
+        except Exception as exc:  # noqa: BLE001 — never fail a write on this
+            logger.debug("decisions_store.record: symbol derivation failed: %s", exc)
+
     base_record = {
         "ts": datetime.now(timezone.utc).isoformat(),
         "session_id": session_id or default_session_id(),
@@ -180,6 +389,11 @@ def record(
         # records have no origin; readers treat as ide="unknown").
         "origin": origin.current_origin(),
     }
+
+    # Content identity, computed BEFORE the id exists — which is the point:
+    # `id` is minted per-store and rewritten by id_repair, `uid` is the same
+    # value on every machine that holds this decision (Step 9 · S2).
+    base_record["uid"] = uid_mod.compute(base_record)
 
     decision_id = jsonl_store.append_with_generated_id(
         paths.decisions_path(), base_record
@@ -206,7 +420,7 @@ def record(
         logger.warning("decisions_store.record: digest update failed: %s", exc)
 
     # v3.1.0 M4: a decision tied to a file is a high-signal "attention"
-    # event. Mirror it into the activity log so spatial_heat surfaces
+    # event. Mirror it into the activity log so the capture pipeline sees
     # the file. Best-effort (P9 — the decision is already persisted).
     _activity_origin = base_record["origin"]
     _activity_session = base_record["session_id"]
@@ -226,7 +440,7 @@ def record(
             logger.warning("decisions_store.record: activity add failed: %s", exc)
 
     # Phase D — regenerate AGENTS.md so other AI tools (Copilot, Codex,
-    # Cursor, Gemini, Factory, Amp, Windsurf, Zed, RooCode, Jules) see
+    # Cursor, Gemini, Factory, Amp, Zed, RooCode, Jules) see
     # the new decision on their next prompt. Best-effort (P9).
     _sync_agents_md_best_effort()
 
@@ -333,6 +547,7 @@ def list_all(
     include_superseded: bool = False,
     include_outdated: bool = False,
     full: bool = False,
+    project_root: Path | None = None,
 ) -> dict[str, Any]:
     """Filter + paginate decisions. Filters are AND-combined.
 
@@ -342,8 +557,16 @@ def list_all(
     ``include_outdated`` (v3.7.0): outdated-tombstoned decisions
     (``mark_outdated``) are hidden by default so stale memory stops
     surfacing; pass True to include them.
+
+    ``project_root`` (4.0): read THAT project's store rather than
+    resolving one ambiently from cwd/env. The enforcement path must pass
+    it — a policy evaluating project A's edit against project B's locked
+    decisions is the cross-project bleed shape of D00011U/D00011V, and it
+    was reachable here because ``SignalContext`` carried a project_root
+    that this function ignored. ``None`` preserves the previous ambient
+    behaviour for every other caller.
     """
-    merged = _read_merged()
+    merged = _read_merged(project_root)
     filtered: list[dict[str, Any]] = []
 
     norm_tags_filter = (
@@ -454,11 +677,13 @@ def search(
         return []
 
     # Load merged decisions; map by id for quick lookup.
-    merged = jsonl_store.read_merged(decisions_p)
+    # 4.0 Step 4: go through the mtime-keyed cache rather than re-parsing
+    # the whole store per search (178 json.loads/search before this).
+    merged = _read_merged(project_root)
     by_id = {str(d.get("id")): d for d in merged}
 
     results: list[dict[str, Any]] = []
-    for hit in hits:
+    for hit_rank, hit in enumerate(hits):
         d = by_id.get(hit["decision_id"])
         if d is None:
             continue
@@ -474,11 +699,31 @@ def search(
         result = {
             "id": d.get("id"),
             "decision": d.get("decision"),
+            # 4.0 Step 2.3: `context` holds the reasoning on ~81% of
+            # decisions and was dropped here, so even full=True returned a
+            # decision with no "why". The evidence existed and never reached
+            # a reader.
+            "context": d.get("context"),
+            "alternatives_considered": d.get("alternatives_considered"),
+            "would_re_examine_if": d.get("would_re_examine_if"),
             "file_path": d.get("file_path"),
             "do_not_revert": bool(d.get("do_not_revert", False)),
             "tags": d.get("tags") or [],
             "created_at": d.get("ts"),
             "score": hit["score"],
+            # 4.0 Step 6: say WHY this surfaced. `score` alone is a raw
+            # FTS5 BM25 figure — unbounded, negative, and meaningless to a
+            # reader. skills_store.search has emitted a breakdown since
+            # v3.1.0; decision search never did, so the one surface agents
+            # actually use was the one that could not be debugged. Bounded
+            # rank_norm is included because raw BM25 cannot be compared
+            # across queries.
+            "score_breakdown": {
+                "bm25": hit["score"],
+                "rank": hit_rank,
+                "rank_norm": retrieval_score.rank_norm(hit_rank, len(hits)),
+                "matched": "fts5",
+            },
             "snippet": hit.get("snippet"),
             # v3.7.0: expose outcome for freshness-ranking (reverted down-rank).
             "outcome": d.get("outcome"),
@@ -613,18 +858,96 @@ def list_tags_with_counts() -> dict[str, Any]:
 # ─── Mutations (append-as-amendment) ────────────────────────────────
 
 
+def _base_uid(decision_id: str) -> str:
+    """The uid of ``decision_id``'s RAW base line, or ``""``.
+
+    Deliberately not ``uid_of(get(decision_id))``. ``get`` returns the
+    AMENDMENT-MERGED view, and for a pre-4.0 record — which has no stored
+    uid, so the uid is derived from content — the merged view hashes the
+    base's fields PLUS every field folded in from earlier amendments.
+    ``id_repair`` hashes the raw base line. The two therefore disagree the
+    moment a decision has one amendment, and the S3b exact-match edge
+    silently falls back to the ``(old_id, writer)`` heuristic it exists to
+    replace. Reproduced on a base with one amendment: 4aceb79e64579eac
+    (raw) vs a1a5090cabe3c8ab (merged).
+
+    Every one of the ~1,365 decisions in the reference corpus is pre-4.0
+    and uid-less, so this was the whole existing store — and the records
+    with the most amendments, the ones a two-host merge most needs to
+    attribute correctly, were exactly the ones it failed for.
+
+    A 4.0-written base carries a stored ``uid`` that ``read_merged`` never
+    overlays (``_AMENDMENT_NEVER_OVERLAYS``), so both routes already agreed
+    for those; this makes the derived case agree too.
+    """
+    path = paths.decisions_path()
+    try:
+        for rec in jsonl_store.read_all(path):
+            if str(rec.get("id")) != str(decision_id):
+                continue
+            if rec.get("_amendment_to_id"):
+                continue  # an amendment, not the base
+            return uid_mod.uid_of(rec)
+    except OSError:
+        pass
+    return ""
+
+
+def _amendment(
+    decision_id: str, *, ts: str | None = None, **fields: Any
+) -> dict[str, Any]:
+    """Build an amendment row, carrying the provenance of whoever made it.
+
+    4.0 Step 9. Amendments used to omit ``origin`` entirely — 0 of 96 in
+    the reference store — which left every one of them unattributable.
+    That is what breaks a two-host merge: ``id_repair`` renumbers a
+    colliding base and needs ``(old_id, writer)`` to decide which copy an
+    amendment belongs to. With no writer it cannot, so the amendment
+    stays on whoever won the id race. A supersession then marks the wrong
+    engineer's decision retired while the real one still reads current.
+
+    Ordering matters here and is not incidental: this could only land
+    AFTER ``device_id`` (S1). Stamping a writer that drifts every few
+    weeks would have made the same case resolve to the WRONG loser with
+    no flag, which is worse than not resolving it at all.
+
+    The base's own ``origin`` is safe — ``jsonl_store`` refuses to
+    overlay it (``_AMENDMENT_NEVER_OVERLAYS``), so amending someone
+    else's decision does not rewrite its authorship to you.
+    """
+    row = {
+        "id": decision_id,
+        "ts": ts or datetime.now(timezone.utc).isoformat(),
+        "_amendment_to_id": decision_id,
+        "origin": origin.current_origin(),
+        **fields,
+    }
+
+    # Step 9 · S3b: name the base by CONTENT, not by id. `_amendment_to_id`
+    # is ambiguous the moment two machines mint the same id — which is the
+    # whole reason id_repair has to guess at all. A uid names exactly one
+    # record, so an amendment carrying one needs no guessing.
+    #
+    # Best-effort: a base with no resolvable uid leaves the edge unset and
+    # the (old_id, writer) path handles it exactly as before.
+    try:
+        base_uid = _base_uid(decision_id)
+        if base_uid:
+            row["_amendment_to_uid"] = base_uid
+    except Exception as exc:  # noqa: BLE001 — never fail a mutation over this
+        logger.debug("decisions_store._amendment: uid edge skipped: %s", exc)
+
+    row["uid"] = uid_mod.compute(row)
+    return row
+
+
 def mark_protected(decision_id: str) -> dict[str, Any]:
     """Flip do_not_revert=True via an amendment line."""
     paths.ensure_dirs()
     if get(decision_id) is None:
         return {"success": False, "error": f"decision {decision_id} not found"}
 
-    amendment = {
-        "id": decision_id,
-        "ts": datetime.now(timezone.utc).isoformat(),
-        "_amendment_to_id": decision_id,
-        "do_not_revert": True,
-    }
+    amendment = _amendment(decision_id, do_not_revert=True)
     jsonl_store.append(paths.decisions_path(), amendment)
     rebuild_indexes()
     return {"success": True, "decision_id": decision_id, "do_not_revert": True}
@@ -650,12 +973,7 @@ def reaffirm(decision_id: str) -> dict[str, Any]:
         return {"success": False, "error": f"decision {decision_id} not found"}
 
     now_iso = datetime.now(timezone.utc).isoformat()
-    amendment = {
-        "id": decision_id,
-        "ts": now_iso,
-        "_amendment_to_id": decision_id,
-        "reaffirmed_at": now_iso,
-    }
+    amendment = _amendment(decision_id, ts=now_iso, reaffirmed_at=now_iso)
     jsonl_store.append(paths.decisions_path(), amendment)
     rebuild_indexes()
     return {
@@ -794,16 +1112,13 @@ def mark_outdated(
             "do_not_revert": True,
         }
     now = datetime.now(timezone.utc).isoformat()
-    amendment = {
-        "id": decision_id,
-        "ts": now,
-        "_amendment_to_id": decision_id,
-        "is_outdated": True,
-        "outdated_at": now,
-        "outdated_reason": (
-            reason.strip()[:500] if reason and reason.strip() else None
-        ),
-    }
+    amendment = _amendment(
+        decision_id,
+        ts=now,
+        is_outdated=True,
+        outdated_at=now,
+        outdated_reason=(reason.strip()[:500] if reason and reason.strip() else None),
+    )
     jsonl_store.append(paths.decisions_path(), amendment)
     rebuild_indexes()
     return {"success": True, "decision_id": decision_id, "is_outdated": True}
@@ -860,12 +1175,7 @@ def set_flag(
     if not updates:
         return {"success": True, "decision_id": decision_id, "updates": {}}
 
-    amendment = {
-        "id": decision_id,
-        "ts": datetime.now(timezone.utc).isoformat(),
-        "_amendment_to_id": decision_id,
-        **updates,
-    }
+    amendment = _amendment(decision_id, **updates)
     jsonl_store.append(paths.decisions_path(), amendment)
     rebuild_indexes()
     return {"success": True, "decision_id": decision_id, "updates": updates}
@@ -945,13 +1255,7 @@ def supersede(
         alternatives_considered=alternatives_considered,
         would_re_examine_if=would_re_examine_if,
     )
-    amendment = {
-        "id": old_id,
-        "ts": datetime.now(timezone.utc).isoformat(),
-        "_amendment_to_id": old_id,
-        "is_superseded": True,
-        "superseded_by": new_id,
-    }
+    amendment = _amendment(old_id, is_superseded=True, superseded_by=new_id)
     jsonl_store.append(paths.decisions_path(), amendment)
     rebuild_indexes()
     return {
@@ -1079,7 +1383,16 @@ def rebuild_indexes() -> None:
     Called after amendments (mark_protected, supersede) and on
     ``codevira sync``. Also triggers an AGENTS.md regen so the slim
     contract reflects the new state.
+
+    4.0 Step 4: this is the single chokepoint every amendment AND the
+    id-repair rewrite already funnels through, so dropping the read
+    caches here covers every in-place rewrite at once. The (mtime, size)
+    key already catches appends; a rewrite that happened to preserve both
+    would not, and ``repair_ids`` genuinely rewrites the file.
     """
+    invalidate_merged_cache()
+    fts5_index.invalidate_staleness_cache()
+
     paths.ensure_dirs()
     try:
         manifest.regenerate(paths.decisions_path(), paths.manifest_path())
@@ -1121,22 +1434,9 @@ def _truncate(text: str, cap: int) -> str:
 def one_line_summary(text: str | None, cap: int = 140) -> str:
     """Collapse ``text`` to a single line ≤ ``cap`` chars (E1, Phase 19).
 
-    The summary-first tool defaults need a compact one-liner per decision:
-    newlines/runs of whitespace collapse to single spaces, then the string
-    is cut at a sentence boundary (``. ``) if one sits past the halfway
-    mark, else at the last word boundary, with an ellipsis. Whole text is
-    returned verbatim when it already fits (no spurious ellipsis).
+    Kept as the public name three call sites and a test module already use.
+    The implementation moved to ``storage.text.clip`` so ``digest`` and
+    ``decision_lock`` — which cannot import this module without a cycle —
+    stopped growing their own copies of it. See that module's docstring.
     """
-    if not text:
-        return ""
-    collapsed = " ".join(text.split())
-    if len(collapsed) <= cap:
-        return collapsed
-    cut = collapsed[:cap]
-    dot = cut.rfind(". ")
-    if dot >= cap // 2:
-        return cut[: dot + 1]
-    space = cut.rfind(" ")
-    if space >= cap // 2:
-        cut = cut[:space]
-    return cut + "…"
+    return text_util.clip(text, cap)

@@ -75,12 +75,56 @@ try:
     data = json.loads(open(cfg_path).read())
 except Exception as e:
     print(f"PARSE_FAIL: {e}"); sys.exit(2)
+
+def cv_keys(servers):
+    return [k for k in (servers or {}) if k == "codevira" or k.startswith("codevira-")]
+
+# 4.0: register-all writes ONE codevira-<project> entry per project under
+# projects.<path>.mcpServers, with no top-level entry at all — that's the
+# CORRECT post-`doctor --fix` state (D00012X: a bare top-level entry
+# out-ranks project-scoped ones and causes wrong-project binding). A
+# top-level-only check here means G3 fails forever on every properly
+# configured 4.0 install. Check both surfaces the way Claude Code itself
+# resolves servers: top-level (legacy/global) OR any project scope.
 servers = data.get("mcpServers") or {}
-matches = [k for k in servers if k == "codevira" or k.startswith("codevira-")]
+matches = cv_keys(servers)
+scope = "global"
+n_projects = 0
 if not matches:
-    print("NO_CODEVIRA"); sys.exit(2)
+    # Count every registered project, not just the first. Reporting one
+    # arbitrary key here reads as "this is your binding" — during the
+    # 4.0 verification it printed `key=codevira-udap` while running in
+    # agent-mcp, which cost a round of chasing a non-bug. The one-per-
+    # project total is the fact worth showing.
+    for ppath, pdata in (data.get("projects") or {}).items():
+        if isinstance(pdata, dict):
+            found = cv_keys(pdata.get("mcpServers"))
+            if found:
+                n_projects += 1
+                if not matches:
+                    servers = pdata["mcpServers"]  # so servers[k] below resolves
+                    matches, scope = found, "project-scoped"
+    if n_projects:
+        scope = f"project-scoped ({n_projects} project(s))"
+if not matches:
+    # 2026-08-01/02: this used to be exit 2 (hard fail), which is wrong for
+    # the same reason EMPTY_FILE_NOT_CONFIGURED above is exit 1. A detected
+    # config with valid JSON and zero codevira entries means "never set up
+    # here" — indistinguishable from a fresh install on an untouched IDE.
+    # That is not a release defect. It became impossible to green reliably
+    # once observed live: registering into Claude Desktop's config while
+    # the app itself is running got silently overwritten by the app's own
+    # autosave (in-memory state wins, discarding the external write) TWICE
+    # within a 90s window — a testing-environment race, not a bug in
+    # codevira's writer, which applied the entry correctly both times (see
+    # git log around 4.0.0b1 for the reproduction).
+    #
+    # PARSE_FAIL stays a hard fail (exit 2): a config codevira's own writer
+    # touched turning up corrupt IS evidence of a real regression. "Never
+    # configured" and "not yet configured" are not that.
+    print("NO_CODEVIRA_NOT_CONFIGURED"); sys.exit(1)
 warn = False
-out = []
+out = [f"scope={scope}"]
 for k in matches[:3]:  # cap output at 3 entries — Antigravity often has many
     entry = servers[k]
     cmd = entry.get("command") or entry.get("url") or ""
@@ -98,7 +142,15 @@ EOF
     echo "  ✓ $name → $result"
   elif [ "$rc" = "1" ]; then
     echo "  ⚠ $name → $result"
-    echo "    (env.CODEVIRA_IDE missing — pre-v3.1.0 install; re-run setup after pipx upgrade)"
+    case "$result" in
+      EMPTY_FILE_NOT_CONFIGURED*)
+        echo "    (config file exists but is empty — not yet set up, not a release blocker)" ;;
+      NO_CODEVIRA_NOT_CONFIGURED*)
+        echo "    (no codevira entry found — not yet set up, not a release blocker; run"
+        echo "     \`codevira setup --ide $name\` to configure)" ;;
+      *)
+        echo "    (env.CODEVIRA_IDE missing — pre-v3.1.0 install; re-run setup after pipx upgrade)" ;;
+    esac
   else
     echo "  ✗ $name → $result"
     REG_FAILED=$((REG_FAILED + 1))
@@ -115,18 +167,31 @@ fi
 # ─── check 2: MCP stdio handshake speed against a tmp project ──────────
 echo
 TMP_PROJECT=$(mktemp -d -t codevira-g3-XXXXXXXX)
-trap 'rm -rf "$TMP_PROJECT"' EXIT
+# Booting a server auto-registers its project, and there is no deregister
+# counterpart by design (a missing path is usually an unmounted volume, not
+# a dead project). So an evening of gauntlet runs used to leave one
+# codevira-g3-XXXXXXXX row per run in the maintainer's real global.db, plus
+# a matching ~/.codevira/projects/<slug>/ dir — removing TMP_PROJECT never
+# removed its registration. Give the handshake its own throwaway
+# CODEVIRA_HOME instead: containment survives a killed run, cleanup would
+# not. See tests/test_g3_hermetic.py.
+TMP_HOME=$(mktemp -d -t codevira-g3-home-XXXXXXXX)
+trap 'rm -rf "$TMP_PROJECT" "$TMP_HOME"' EXIT
 mkdir -p "$TMP_PROJECT/.codevira"
 printf 'project:\n  name: g3-smoke\n' > "$TMP_PROJECT/.codevira/config.yaml"
 
-python3 - "$CODEVIRA" "$TMP_PROJECT" <<'PYEOF'
+python3 - "$CODEVIRA" "$TMP_PROJECT" "$TMP_HOME" <<'PYEOF'
 import json, os, subprocess, sys, time
 
-codevira, project = sys.argv[1], sys.argv[2]
+codevira, project, g3_home = sys.argv[1], sys.argv[2], sys.argv[3]
 env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"),
        "HOME": os.environ.get("HOME", ""),
        # Avoid the background watcher thread — irrelevant for stdio handshake.
-       "CODEVIRA_NO_WATCHER": "1"}
+       "CODEVIRA_NO_WATCHER": "1",
+       # Keep the throwaway project out of the real registry. This measures
+       # boot+tools/list speed, which does not depend on the machine's own
+       # store — so isolating it costs the gate nothing.
+       "CODEVIRA_HOME": g3_home}
 
 # No subcommand → MCP stdio server (the path IDEs invoke).
 proc = subprocess.Popen(

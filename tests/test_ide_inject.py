@@ -14,7 +14,7 @@ Covers:
   - detect_installed_ides
   - _resolve_command
   - inject_ide_config integration tests
-  - _inject_claude, _inject_cursor, _inject_windsurf per-project
+  - _inject_claude, _inject_cursor per-project
   - inject_ide_config global_mode=True (skips Desktop + Antigravity)
   - inject_ide_config exception handling
   - Chaos: corrupt files, read-only, concurrency, long paths
@@ -39,7 +39,6 @@ from mcp_server.ide_inject import (
     _inject_claude,
     _inject_claude_desktop,
     _inject_cursor,
-    _inject_windsurf,
     _merge_mcp_config,
     _read_json_safe,
     _resolve_command,
@@ -49,7 +48,6 @@ from mcp_server.ide_inject import (
     inject_global_claude_code,
     inject_global_claude_desktop,
     inject_global_cursor,
-    inject_global_windsurf,
     inject_ide_config,
 )
 
@@ -165,7 +163,10 @@ class TestClaudeDesktopInject:
         _inject_claude_desktop(project, "/usr/bin/codevira", "python3")
 
         data = json.loads(config_file.read_text())
-        entry = data["mcpServers"]["codevira"]
+        # D000131: Desktop (not project-aware) gets a NAMED per-project key so a
+        # second project can't overwrite it. No bare "codevira" key.
+        assert "codevira" not in data["mcpServers"]
+        entry = data["mcpServers"]["codevira-my-project"]
         assert entry["command"] == "/usr/bin/codevira"
         assert "--project-dir" in entry["args"]
         assert str(project) in entry["args"]
@@ -193,7 +194,35 @@ class TestClaudeDesktopInject:
         data = json.loads(config_file.read_text())
         assert data["globalShortcut"] == "Ctrl+Shift+C"
         assert "other-mcp" in data["mcpServers"]
-        assert "codevira" in data["mcpServers"]
+        assert "codevira-proj" in data["mcpServers"]
+
+    def test_two_projects_do_not_collide(self, tmp_path, monkeypatch):
+        """D000131 regression: Claude Desktop reads ONE global config with no
+        cwd. Setting up a SECOND project must NOT overwrite the first — each
+        gets its own named key, and both point at their own --project-dir.
+
+        FAILS before the fix: both projects wrote the bare "codevira" key, so
+        the second overwrote the first (the wrong-project memory bleed).
+        """
+        config_file = tmp_path / "claude_desktop_config.json"
+        monkeypatch.setattr(
+            ide_inject, "_claude_desktop_config_path", lambda: config_file
+        )
+        lh = tmp_path / "LH"
+        lh.mkdir()
+        udap = tmp_path / "UDAP"
+        udap.mkdir()
+
+        _inject_claude_desktop(lh, "/usr/bin/codevira", "python3")
+        _inject_claude_desktop(udap, "/usr/bin/codevira", "python3")
+
+        servers = json.loads(config_file.read_text())["mcpServers"]
+        # both projects survive as distinct named entries
+        assert {"codevira-lh", "codevira-udap"} <= set(servers)
+        assert "codevira" not in servers  # no bare, collidable key
+        # each entry is pinned to its OWN project dir
+        assert str(lh) in servers["codevira-lh"]["args"]
+        assert str(udap) in servers["codevira-udap"]["args"]
 
     def test_full_binary_path_required(self, tmp_path, monkeypatch):
         config_file = tmp_path / "claude_desktop_config.json"
@@ -207,7 +236,7 @@ class TestClaudeDesktopInject:
         _inject_claude_desktop(project, full_path, "python3")
 
         data = json.loads(config_file.read_text())
-        assert data["mcpServers"]["codevira"]["command"] == full_path
+        assert data["mcpServers"]["codevira-proj"]["command"] == full_path
 
     def test_claude_desktop_config_path_macos(self, monkeypatch):
         monkeypatch.setattr(sys, "platform", "darwin")
@@ -223,7 +252,7 @@ class TestClaudeDesktopInject:
 
 
 # ===========================================================================
-# Per-project injection: _inject_claude, _inject_cursor, _inject_windsurf
+# Per-project injection: _inject_claude, _inject_cursor
 # ===========================================================================
 
 
@@ -294,33 +323,6 @@ class TestInjectCursor:
         assert "codevira" in data["mcpServers"]
 
 
-class TestInjectWindsurf:
-    def test_writes_per_project_mcp_json(self, tmp_path):
-        project = tmp_path / "proj"
-        project.mkdir()
-        result = _inject_windsurf(project, "/usr/bin/codevira", "python3")
-        config_path = Path(result)
-        assert config_path.exists()
-        assert config_path == project / ".windsurf" / "mcp.json"
-        data = json.loads(config_path.read_text())
-        assert "codevira" in data["mcpServers"]
-        entry = data["mcpServers"]["codevira"]
-        assert entry["command"] == "/usr/bin/codevira"
-        assert entry["cwd"] == str(project)
-
-    def test_preserves_existing_windsurf_config(self, tmp_path):
-        project = tmp_path / "proj"
-        ws_dir = project / ".windsurf"
-        ws_dir.mkdir(parents=True)
-        mcp_json = ws_dir / "mcp.json"
-        mcp_json.write_text(json.dumps({"mcpServers": {"other-ws": {"command": "z"}}}))
-
-        _inject_windsurf(project, "/usr/bin/codevira", "python3")
-        data = json.loads(mcp_json.read_text())
-        assert "other-ws" in data["mcpServers"]
-        assert "codevira" in data["mcpServers"]
-
-
 # ===========================================================================
 # v3.1.0 M1: CODEVIRA_IDE env stamping (origin tagging Phase A)
 # ===========================================================================
@@ -355,7 +357,7 @@ class TestM1IdeEnvStamp:
         project = tmp_path / "proj"
         project.mkdir()
         _inject_claude_desktop(project, "/usr/bin/codevira", "python3")
-        entry = self._read_codevira_entry(tmp_path / "desktop.json")
+        entry = self._read_codevira_entry(tmp_path / "desktop.json", "codevira-proj")
         assert entry["env"]["CODEVIRA_IDE"] == "claude_desktop"
 
     def test_per_project_cursor(self, tmp_path):
@@ -364,13 +366,6 @@ class TestM1IdeEnvStamp:
         _inject_cursor(project, "/usr/bin/codevira", "python3")
         entry = self._read_codevira_entry(project / ".cursor" / "mcp.json")
         assert entry["env"]["CODEVIRA_IDE"] == "cursor"
-
-    def test_per_project_windsurf(self, tmp_path):
-        project = tmp_path / "proj"
-        project.mkdir()
-        _inject_windsurf(project, "/usr/bin/codevira", "python3")
-        entry = self._read_codevira_entry(project / ".windsurf" / "mcp.json")
-        assert entry["env"]["CODEVIRA_IDE"] == "windsurf"
 
     def test_global_claude_desktop(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
@@ -391,16 +386,6 @@ class TestM1IdeEnvStamp:
         inject_global_cursor("/usr/bin/codevira", "python3")
         entry = self._read_codevira_entry(tmp_path / "cursor-global.json")
         assert entry["env"]["CODEVIRA_IDE"] == "cursor"
-
-    def test_global_windsurf(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(
-            ide_inject,
-            "_windsurf_global_config_path",
-            lambda: tmp_path / "ws-global.json",
-        )
-        inject_global_windsurf("/usr/bin/codevira", "python3")
-        entry = self._read_codevira_entry(tmp_path / "ws-global.json")
-        assert entry["env"]["CODEVIRA_IDE"] == "windsurf"
 
     def test_env_preserves_existing_keys(self, tmp_path):
         """If a user has manually added other env vars to an existing
@@ -451,19 +436,6 @@ class TestGlobalModeInject:
         )
 
         inject_global_cursor("/usr/bin/codevira", "python3")
-
-        data = json.loads(config_file.read_text())
-        entry = data["mcpServers"]["codevira"]
-        assert entry["args"] == []
-        assert "cwd" not in entry
-
-    def test_global_windsurf_has_no_project_path(self, tmp_path, monkeypatch):
-        config_file = tmp_path / "mcp_config.json"
-        monkeypatch.setattr(
-            ide_inject, "_windsurf_global_config_path", lambda: config_file
-        )
-
-        inject_global_windsurf("/usr/bin/codevira", "python3")
 
         data = json.loads(config_file.read_text())
         entry = data["mcpServers"]["codevira"]
@@ -753,30 +725,15 @@ class TestDetectInstalledIdes:
         )
         assert "cursor" not in detect_installed_ides(tmp_path)
 
-    def test_windsurf_detected_via_mcp_config_json(self, tmp_path, monkeypatch):
-        """v3.0.0: Windsurf requires the actual mcp_config.json file
-        (in either standard location)."""
+    def test_windsurf_NOT_detected_after_removal(self, tmp_path, monkeypatch):
+        """v3.8.0: Windsurf was discontinued/folded into Cursor and is no
+        longer an injection target, so even a fully-populated ~/.windsurf/
+        mcp_config.json must NOT be auto-detected."""
         fakehome = tmp_path / "fakehome"
         fakehome.mkdir()
         windsurf_dir = fakehome / ".windsurf"
         windsurf_dir.mkdir()
         (windsurf_dir / "mcp_config.json").write_text("{}")
-        monkeypatch.setattr(Path, "home", lambda: fakehome)
-        monkeypatch.setattr("shutil.which", lambda name: None)
-        monkeypatch.setattr(
-            ide_inject,
-            "_claude_desktop_config_path",
-            lambda: fakehome / "nonexistent" / "config.json",
-        )
-        result = detect_installed_ides(tmp_path)
-        assert "windsurf" in result
-
-    def test_windsurf_NOT_detected_via_empty_dir(self, tmp_path, monkeypatch):
-        """Bare ~/.windsurf/ without mcp_config.json is a false
-        positive — explicitly NOT detected in v3.0.0."""
-        fakehome = tmp_path / "fakehome"
-        fakehome.mkdir()
-        (fakehome / ".windsurf").mkdir()  # empty
         monkeypatch.setattr(Path, "home", lambda: fakehome)
         monkeypatch.setattr("shutil.which", lambda name: None)
         monkeypatch.setattr(
@@ -998,13 +955,23 @@ class TestInjectIdeConfigIntegration:
         )
 
         results = inject_ide_config(project, project_name="myproject", global_mode=True)
-        assert "Claude Code (global)" in results
-        config_path = Path(results["Claude Code (global)"])
+        # D000126 fix: Claude Code registers PER-PROJECT (pinned), not a bare
+        # global entry that mis-binds the session.
+        assert "Claude Code (per-project)" in results
+        config_path = Path(results["Claude Code (per-project)"])
         assert config_path.exists()
         data = json.loads(config_path.read_text())
-        assert "codevira" in data["mcpServers"]
-        entry = data["mcpServers"]["codevira"]
-        assert "--project-dir" not in str(entry.get("args", []))
+        # no bare entry at the top level
+        assert "codevira" not in (data.get("mcpServers") or {})
+        # a scoped entry pinned to THIS project
+        scoped = (
+            (data.get("projects") or {}).get(str(project), {}).get("mcpServers", {})
+        )
+        cv = {k: v for k, v in scoped.items() if "codevira" in k.lower()}
+        assert len(cv) == 1 and next(iter(cv)).startswith("codevira-")
+        entry = next(iter(cv.values()))
+        assert "--project-dir" in entry.get("args", [])
+        assert str(project) in entry["args"]
 
     def test_no_ides_detected_returns_empty(self, tmp_path, monkeypatch):
         project = tmp_path / "emptyproject"
@@ -1131,11 +1098,10 @@ class TestInjectIdeConfigIntegration:
                 "--project-dir" in args and str(proj) in args
             ), f"{name} missing --project-dir binding: {args}"
 
-    def test_global_mode_claude_is_single_global_registration(
-        self, tmp_path, monkeypatch
-    ):
-        """A roots-capable IDE (Claude Code) gets ONE global registration in
-        global mode — the core of the single-MCP win."""
+    def test_global_mode_claude_registers_per_project(self, tmp_path, monkeypatch):
+        """D000126 fix: Claude Code registers PER-PROJECT (--project-dir-pinned),
+        not a bare global entry. A bare entry resolves the project ambiently
+        and out-ranks scoped ones — the wrong-project bug this replaces."""
         project = tmp_path / "proj"
         project.mkdir()
 
@@ -1147,17 +1113,16 @@ class TestInjectIdeConfigIntegration:
         )
         captured = {}
 
-        def _fake_global(cmd_path, python_exe, project_root=None):
-            # v3.7.1: takes the project so the bare-entry guard can be decided
-            # PER PROJECT rather than globally.
-            captured["called"] = True
+        def _fake_scoped(project_root, cmd_path, python_exe):
+            captured["project_root"] = project_root
             return "/fake/.claude.json"
 
-        monkeypatch.setattr(ide_inject, "inject_global_claude_code", _fake_global)
+        monkeypatch.setattr(ide_inject, "inject_scoped_claude_code", _fake_scoped)
 
         results = inject_ide_config(project, global_mode=True)
-        assert captured.get("called") is True
-        assert "Claude Code (global)" in results
+        # the SCOPED injector was used, and it was pinned to THIS project
+        assert captured.get("project_root") == project
+        assert "Claude Code (per-project)" in results
 
     # --- New: exception handling (IDE injection failure logged, others continue) ---
     def test_exception_in_one_ide_does_not_block_others(self, tmp_path, monkeypatch):
@@ -1218,9 +1183,6 @@ class TestInjectIdeConfigIntegration:
         cursor_dir = fakehome / ".cursor"
         cursor_dir.mkdir()
         (cursor_dir / "mcp.json").write_text("{}")
-        windsurf_dir = fakehome / ".windsurf"
-        windsurf_dir.mkdir()
-        (windsurf_dir / "mcp_config.json").write_text("{}")
         antigravity_cfg = fakehome / ".gemini" / "antigravity" / "mcp_config.json"
         antigravity_cfg.parent.mkdir(parents=True)
         antigravity_cfg.write_text("{}")
@@ -1253,8 +1215,9 @@ class TestInjectIdeConfigIntegration:
         assert "Claude Code" in results
         assert "Claude Desktop" in results
         assert "Cursor" in results
-        assert "Windsurf" in results
         assert "Antigravity" in results
+        # v3.8.0: Windsurf is no longer an injection target even if present.
+        assert not any("Windsurf" in k for k in results)
 
     def test_project_name_defaults_to_dirname(self, tmp_path, monkeypatch):
         """When project_name is empty, it defaults to project_root.name."""
@@ -1997,6 +1960,59 @@ class TestRemoveCodeviraProjectFromConfig:
         )
         assert ide_inject.remove_codevira_project_from_config(cfg, proj) == []
 
+    def test_removes_nested_project_scoped_claude_code_entry(self, tmp_path):
+        """Backlog task_b95b1c60: ~/.claude.json holds Claude Code project-scope
+        MCP under ``projects[<path>].mcpServers`` (D00013D: setup writes
+        ``codevira-<slug>`` there, pinned to ``--project-dir``). An earlier
+        revision scanned ONLY top-level ``mcpServers``, so untrack silently left
+        the nested entry behind — a dangling server pointing at a project whose
+        data dir was removed. untrack of project A must prune A's nested entry
+        while leaving B's nested entry, the bare global entry, and unrelated
+        servers intact."""
+        cfg = tmp_path / "claude.json"
+        proj_a = tmp_path / "alpha"
+        proj_a.mkdir()
+        proj_b = tmp_path / "beta"
+        proj_b.mkdir()
+        cfg.write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        # bare global entry — must survive (not project-scoped)
+                        "codevira": {"command": "cv", "args": []},
+                    },
+                    "projects": {
+                        str(proj_a): {
+                            "mcpServers": {
+                                "codevira-alpha": {
+                                    "command": "cv",
+                                    "args": ["--project-dir", str(proj_a)],
+                                },
+                                "unrelated-a": {"command": "x"},
+                            }
+                        },
+                        str(proj_b): {
+                            "mcpServers": {
+                                "codevira-beta": {
+                                    "command": "cv",
+                                    "args": ["--project-dir", str(proj_b)],
+                                }
+                            }
+                        },
+                    },
+                }
+            )
+        )
+        removed = ide_inject.remove_codevira_project_from_config(cfg, proj_a)
+        assert removed == ["codevira-alpha"]
+        data = json.loads(cfg.read_text())
+        # bare global entry untouched
+        assert "codevira" in data["mcpServers"]
+        # A's nested codevira entry gone; A's unrelated server preserved
+        assert set(data["projects"][str(proj_a)]["mcpServers"]) == {"unrelated-a"}
+        # B's nested codevira entry fully intact
+        assert set(data["projects"][str(proj_b)]["mcpServers"]) == {"codevira-beta"}
+
 
 class TestRemoveCodeviraFromConfig:
     """remove_codevira_from_config is a public uninstall surface with
@@ -2045,6 +2061,46 @@ class TestRemoveCodeviraFromConfig:
 
     def test_missing_file_returns_false(self, tmp_path):
         assert ide_inject.remove_codevira_from_config(tmp_path / "nope.json") is False
+
+    def test_removes_per_project_scoped_claude_code_entries(self, tmp_path):
+        """~/.claude.json per-project scope (projects[<path>].mcpServers) must
+        be swept. Regression: `codevira setup` writes here since the per-
+        project binding fix, but this function only cleaned top-level, so
+        uninstall left every codevira-<slug> entry behind."""
+        cfg = tmp_path / ".claude.json"
+        cfg.write_text(
+            json.dumps(
+                {
+                    "mcpServers": {"other": {"command": "x"}},
+                    "projects": {
+                        "/repo/a": {
+                            "mcpServers": {
+                                "codevira-a": {
+                                    "command": "codevira",
+                                    "args": ["--project-dir", "/repo/a"],
+                                },
+                                "keep": {"command": "y"},
+                            }
+                        },
+                        "/repo/b": {
+                            "mcpServers": {
+                                "codevira-b": {
+                                    "command": "codevira",
+                                    "args": ["--project-dir", "/repo/b"],
+                                }
+                            }
+                        },
+                    },
+                }
+            )
+        )
+        assert ide_inject.remove_codevira_from_config(cfg) is True
+        data = json.loads(cfg.read_text())
+        # Non-codevira entries preserved everywhere.
+        assert data["mcpServers"] == {"other": {"command": "x"}}
+        assert data["projects"]["/repo/a"]["mcpServers"] == {"keep": {"command": "y"}}
+        # Per-project codevira entries gone.
+        assert data["projects"]["/repo/b"]["mcpServers"] == {}
 
 
 class TestM1UserEnvKeysOnTheCodeviraEntry:

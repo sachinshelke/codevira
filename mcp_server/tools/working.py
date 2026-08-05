@@ -174,6 +174,119 @@ def get_working_context(*, top_k: int = 5) -> dict[str, Any]:
 # ──────────────────────────────────────────────────────────────────────
 
 
+def _promote_to_skill(
+    source: dict[str, Any],
+    *,
+    entry_id: str,
+    tags: list[str] | None,
+    do_not_revert: bool,
+    force: bool,
+) -> dict[str, Any]:
+    """Write a working-memory entry into the skill library.
+
+    4.0. The write path this replaces had been a stub since v3.1.0,
+    deferring to a milestone that shipped in the same release — so
+    ``working_promote(entry_id, to="skill")`` returned success-shaped
+    JSON (``promoted: False, deferred: True``) and wrote nothing. An
+    agent following the documented workflow had no way to tell that its
+    procedure was discarded.
+
+    Shape follows the decision branch deliberately: conflict-check
+    first, respect ``force``, tombstone the source only after the write
+    succeeds.
+    """
+    # Goes through the TOOL, not skills_store directly: record_skill is
+    # where the duplicate/conflict check lives, and promoting an
+    # observation is exactly the case most likely to restate a skill the
+    # library already has. Bypassing it to reach the store would make
+    # this path the one writer that skips the check.
+    from mcp_server.storage import working_store
+    from mcp_server.tools.skills import record_skill
+
+    content = (source.get("content") or "").strip()
+    if not content:
+        return {
+            "promoted": False,
+            "error": f"working_promote: entry {entry_id!r} has no content to promote",
+        }
+
+    # A skill needs a name. The first line is the agent's own summary of
+    # what it did, which is a better name than anything derived here.
+    first_line = content.split("\n", 1)[0].strip()
+    name = first_line[:80] if first_line else f"skill from {entry_id}"
+
+    try:
+        result = record_skill(
+            name=name,
+            procedure=content,
+            summary=first_line[:200] or None,
+            triggers={"tags": [t for t in (tags or []) if t]} if tags else None,
+            # `explicit`, not a new `promoted` value. The vocabulary is
+            # {explicit, induced} — hand-authored vs cluster-induced — and
+            # a promotion IS explicit: an agent deliberately chose to keep
+            # this procedure. Adding a third value would make every reader
+            # handle it for provenance that `source_session_ids` already
+            # carries.
+            source="explicit",
+            do_not_revert=do_not_revert,
+            force=force,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "promoted": False,
+            "error": f"working_promote: record_skill failed: {exc}",
+        }
+
+    if not result.get("recorded"):
+        # Two distinct refusals share this shape and must not be
+        # collapsed: a near-duplicate (retryable with force) and a
+        # validation error (force will not help). Reporting a validation
+        # failure as "pass force=True" sends the caller in a circle.
+        if result.get("_conflict_warning"):
+            return {
+                "promoted": False,
+                "conflict_warning": result["_conflict_warning"],
+                "hint": (
+                    "A near-duplicate skill already exists. Pass force=True to "
+                    "record anyway, or supersede_skill(old_id, ...) to version "
+                    "it. The working-memory entry is untouched."
+                ),
+            }
+        return {
+            "promoted": False,
+            "error": f"working_promote: {result.get('error') or 'record_skill refused'}",
+            "hint": "The working-memory entry is untouched.",
+        }
+
+    skill_id = result.get("skill_id") or ""
+    if not skill_id:
+        return {
+            "promoted": False,
+            "error": "working_promote: record_skill reported success with no id",
+        }
+
+    # Tombstone only AFTER the write lands. A skill recorded but not
+    # tombstoned can be promoted twice; a source tombstoned before a
+    # failed write loses the observation entirely.
+    tombstoned = False
+    try:
+        tombstoned = bool(working_store.mark_promoted(entry_id, str(skill_id)))
+    except Exception:  # noqa: BLE001 — the skill is already persisted
+        tombstoned = False
+
+    return {
+        "promoted": True,
+        "target": "skill",
+        "skill_id": skill_id,
+        "name": name,
+        "source_tombstoned": tombstoned,
+        "hint": (
+            "Retrieve it with get_skill(query). Reinforcement comes from git "
+            "via the outcomes fan-out; apply_skill_outcome is the manual override."
+        ),
+    }
+
+
 def working_promote(
     entry_id: str,
     *,
@@ -225,16 +338,18 @@ def working_promote(
         }
 
     if to == _PROMOTE_SKILL:
-        return {
-            "promoted": False,
-            "deferred": True,
-            "milestone": "M3",
-            "hint": (
-                "Skill promotion lands in v3.1.0 M3 (skills_store). "
-                "The API surface is reserved; no caller-side change "
-                "needed when M3 ships."
-            ),
-        }
+        # 4.0: this used to return {"deferred": True, "milestone": "M3"}
+        # with the hint "Skill promotion lands in v3.1.0 M3 (skills_store)".
+        # skills_store SHIPPED in v3.1.0 — the stub outlived the thing it
+        # was waiting for by months, so the one path that turns an
+        # observation into a reusable procedure silently did nothing.
+        return _promote_to_skill(
+            source,
+            entry_id=entry_id,
+            tags=tags,
+            do_not_revert=do_not_revert,
+            force=force,
+        )
     if to == _PROMOTE_PLAYBOOK:
         return {
             "promoted": False,

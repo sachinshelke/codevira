@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Codevira — persistent memory &amp; decision enforcement for AI coding agents</title>
-<meta name="description" content="Persistent, team-shareable memory for AI coding agents — shared across Claude Code, Cursor, Windsurf & Copilot. Enforces past decisions, blocks regressions. Local-first, MIT.">
+<meta name="description" content="Persistent, team-shareable memory for AI coding agents — shared across Claude Code, Cursor & Copilot. Enforces past decisions, blocks regressions. Local-first, MIT.">
 <link rel="canonical" href="https://sachinshelke.github.io/codevira/">
 <meta name="robots" content="index, follow">
 <meta name="theme-color" content="#0b0d12">
@@ -58,7 +58,7 @@
     {
       "@type": "Question",
       "name": "What is Codevira?",
-      "acceptedAnswer": {"@type": "Answer", "text": "A persistent memory layer for AI coding agents — so Claude Code, Cursor, Windsurf, and Antigravity all share the same project context, decisions, and history on your local machine. It also enforces past decisions, blocking edits that would revert them or re-introduce a fixed bug."}
+      "acceptedAnswer": {"@type": "Answer", "text": "A governed decision log for AI coding agents. It stores the decisions you make together with the reasoning that justifies them — why a choice won, what you rejected, when to revisit — and enforces the ones you lock across Claude Code, Cursor, Antigravity and every other editor, blocking edits that would revert them or re-introduce a fixed bug. It's not a knowledge base you query; the knowledge is always bound to a decision. Everything is local and lives in your repo."}
     },
     {
       "@type": "Question",
@@ -78,7 +78,17 @@
     {
       "@type": "Question",
       "name": "Which AI coding tools does Codevira work with?",
-      "acceptedAnswer": {"@type": "Answer", "text": "Claude Code, Claude Desktop, Cursor, Windsurf, and Google Antigravity via MCP; OpenAI Codex and GitHub Copilot read the generated AGENTS.md natively. One codevira setup configures every tool it detects on your machine. Claude Code additionally gets lifecycle hooks, where hard enforcement lives."}
+      "acceptedAnswer": {"@type": "Answer", "text": "Claude Code, Claude Desktop, Cursor, and Google Antigravity via MCP; OpenAI Codex and GitHub Copilot read the generated AGENTS.md natively. One codevira setup configures every tool it detects. As of 4.0, hard enforcement is no longer Claude-Code-only: it blocks the edit before it touches disk in Claude Code and Antigravity (a PreToolUse hook), and the commit in every other editor (an opt-in git pre-commit hook)."}
+    },
+    {
+      "@type": "Question",
+      "name": "How does Codevira block edits in editors other than Claude Code?",
+      "acceptedAnswer": {"@type": "Answer", "text": "Every editor commits with git. codevira engine install-git-hook adds a pre-commit hook that runs the same decision engine as the IDE hook, so a locked decision physically blocks the commit in Cursor, Codex, Copilot — any tool. In Claude Code the block happens even earlier, before the file changes. Without the git hook, other tools still get the decisions as strong AGENTS.md guidance."}
+    },
+    {
+      "@type": "Question",
+      "name": "Does Codevira work for a team or across machines?",
+      "acceptedAnswer": {"@type": "Answer", "text": "Yes. .codevira/ lives in your repo, so decisions travel with git clone. Records are content-addressed (uid = sha256 of the record), so a decision's supersession chain survives a two-host git merge — no lost locks. codevira export setup carries your cross-project learning (preferences, learned rules) to a new machine, merged rather than overwritten."}
     },
     {
       "@type": "Question",
@@ -90,10 +100,15 @@
 </script>
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
   :root{
-    --blue:#0a84ff; --violet:#7c8cff; --red:#ff6b6b; --amber:#ffb340;
+    /* Light-mode accents darkened for WCAG AA as TEXT on the #f3f5f9 ground:
+       was blue 3.34:1 · violet 2.73:1 · red 2.54:1 (all failing, "dissolved").
+       Now 5.07 / 4.64 / 4.83:1. Amber stays bright — it's only ever a
+       decorative gradient fill, never text. Dark-mode accents already pass
+       7–12:1 and are left untouched. */
+    --blue:#0064d6; --violet:#5a5fe0; --red:#cc2d2d; --amber:#ffb340;
     --bg:#f3f5f9; --text:#1b1f27; --dim:#5b6472;
     --glass:rgba(255,255,255,.58); --glass-strong:rgba(255,255,255,.78);
     --glass-line:rgba(255,255,255,.85); --glass-edge:rgba(27,31,39,.08);
@@ -103,8 +118,8 @@
     --term-bg:rgba(18,20,28,.92); --term-text:#e8eaf2;
     --blob1:#bcd6ff; --blob2:#e4ccff; --blob3:#ffd9d9;
     --mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
-    --sans:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
-    --display:"Space Grotesk","IBM Plex Sans",-apple-system,sans-serif;
+    --sans:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+    --display:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
     /* single centered logo watermark + ripple rings */
     --wm-size:min(70vmin,680px); --wm-logo-op:.055; --wm-ring:255,106,26; --wm-ring-op:.10;
   }
@@ -274,8 +289,13 @@
   .step:hover{opacity:.9}
   .step.active{opacity:1;background:var(--glass);border-color:var(--glass-line);box-shadow:var(--shadow)}
   .step b{display:flex;align-items:center;gap:10px;font-size:15px;font-weight:600}
-  .step b .n{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;font-family:var(--mono);font-size:12px;
+  .step b .n{width:24px;height:24px;padding:0;border-radius:50%;display:grid;place-items:center;font-family:var(--mono);font-size:12px;
       background:linear-gradient(135deg,var(--blue),var(--violet));color:#fff;flex:none}
+  /* `.step span` sets padding-left:34px for the description text; the .n badge
+     is also a <span> inside .step, so it inherited that padding and rendered
+     as a 34px oval with the glyph shoved out. The explicit padding:0 above
+     resets it. */
+  .step b .n svg{display:block}
   .step span{display:block;font-size:13px;color:var(--dim);margin-top:5px;padding-left:34px}
   .step .bar{height:3px;border-radius:3px;background:var(--glass-edge);margin:12px 0 0 34px;overflow:hidden;display:none}
   .step.active .bar{display:block}
@@ -385,7 +405,7 @@
   <div class="inner">
     <div class="logo">
       <img class="mark" src="assets/logo.png" alt="Codevira" width="32" height="32"> codevira
-      <a class="version" href="https://github.com/sachinshelke/codevira/blob/main/CHANGELOG.md" title="Changelog">v3.7.1</a>
+      <a class="version" href="https://github.com/sachinshelke/codevira/blob/main/CHANGELOG.md" title="Changelog">4.0</a>
     </div>
     <div class="links">
       <a href="#story">Why</a>
@@ -394,14 +414,9 @@
       <a href="#integrate">Integrate</a>
       <a href="#faq">FAQ</a>
       <a href="docs.html">Docs</a>
-      <a href="https://github.com/sachinshelke/codevira">GitHub</a>
-      <button id="font-toggle" title="Try a different font" aria-label="Font options">Aa</button>
+      <a href="https://github.com/sachinshelke/codevira" style="display:inline-flex;align-items:center"><svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor" aria-hidden="true" style="vertical-align:-3px;margin-right:7px"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.03 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>GitHub</a>
       <button id="theme-toggle" title="Toggle light / dark" aria-label="Toggle theme">◐</button>
     </div>
-  </div>
-  <div id="font-menu" class="glass" hidden>
-    <div class="fm-head">Typeface <span>pick one — saved locally</span></div>
-    <div class="fm-list" id="fm-list"></div>
   </div>
 </nav>
 
@@ -409,10 +424,11 @@
 <div class="wrap">
   <div class="hero">
     <h1 class="reveal">Your AI coding agent<br>has <span class="grad">amnesia</span>.</h1>
-    <p class="sub reveal">Codevira gives every AI tool you use a shared, persistent memory of your
-    project — decisions, fix history, code graph, your preferences — and, in
-    <strong>Claude Code</strong>, <strong>enforces</strong> it: blocking the edit before the
-    regression ships. Other IDEs read the same decisions as guidance.</p>
+    <p class="sub reveal">Every AI tool you use shares one local record of the decisions you've made
+    and <em>why</em> — and codevira <strong>enforces</strong> the ones you lock: blocking the
+    edit before it touches disk in <strong>Claude Code</strong>, and the commit in
+    <strong>every other editor</strong>, because they all commit with git. When it blocks, it
+    shows you the reasoning.</p>
     <div class="btns reveal">
       <a class="btn primary" href="https://github.com/sachinshelke/codevira">Get started free</a>
       <a class="btn ghost" href="#how">See how it works ↓</a>
@@ -440,7 +456,7 @@
 
 <div class="strip reveal">
   <div class="inner glass">
-    <div class="stat"><b data-count="51">51</b><span>MCP tools</span><small>the full agent surface</small></div>
+    <div class="stat"><b data-count="36">36</b><span>MCP tools</span><small>the sharpened agent surface</small></div>
     <div class="stat"><b data-count="8">8</b><span>hook policies</span><small>enforcing memory live</small></div>
     <div class="stat"><b>~2&hairsp;ms</b><span>warm tool call</span><small>never blocks your IDE</small></div>
     <div class="stat"><b data-count="0">0</b><span>cloud dependencies</span><small>your code stays home</small></div>
@@ -514,7 +530,7 @@
         </div>
         <div class="step" data-step="3">
           <b><span class="n">4</span> Learn</b>
-          <span>Skills, preferences, and reflections accumulate on top.</span>
+          <span>Skills and fix history accumulate on top.</span>
           <div class="bar"><i></i></div>
         </div>
       </div>
@@ -536,10 +552,13 @@
     <div class="graphbox glass reveal">
       <div class="pane">
         <svg id="gsvg" role="img" aria-label="Interactive decision graph demo"></svg>
+        <span class="glive" style="position:absolute;top:14px;left:14px;display:inline-flex;align-items:center;gap:7px;font:500 11px var(--mono);letter-spacing:.02em;color:var(--dim);background:var(--glass);border:1px solid var(--glass-edge);border-radius:99px;padding:5px 11px;pointer-events:none;z-index:2">
+          <span style="width:7px;height:7px;border-radius:50%;background:#2fbf71;box-shadow:0 0 8px #2fbf71"></span>live · drag &amp; click a node
+        </span>
         <div class="legend">
-          <span><i style="background:#7c8cff"></i>decision</span>
-          <span><i style="background:#ff6b6b"></i>protected</span>
-          <span><i style="background:#8a93a8"></i>file</span>
+          <span><i style="background:var(--red)"></i>protected</span>
+          <span><i style="background:var(--violet)"></i>decision</span>
+          <span><i style="background:var(--dim)"></i>file</span>
         </div>
       </div>
       <div class="gdetail" id="gdetail">
@@ -593,22 +612,24 @@
         skills that keep failing get archived automatically.</p>
       </div>
       <div class="card glass reveal">
-        <div class="icon">🗺️</div>
-        <h3>Spatial memory</h3>
-        <p>Code-as-space: activity heatmaps, neighborhoods, and what kind of work each
-        part of the codebase affords.</p>
+        <div class="icon">🔎</div>
+        <h3>Refusals that explain themselves <span class="tag">4.0</span></h3>
+        <p>When a locked decision blocks an edit, codevira shows <em>why</em> it was made —
+        the reasoning, the rejected alternatives, the condition to revisit — not just that
+        a rule exists.</p>
       </div>
       <div class="card glass reveal">
-        <div class="icon">✨</div>
-        <h3>Preference capture <span class="tag">3.3</span></h3>
-        <p>Learns how you like your AI to work — "keep answers short", "tests first" —
-        distilled from real prompts by an LLM, not regex. Follows you across projects.</p>
+        <div class="icon">🔗</div>
+        <h3>Survives a team merge <span class="tag">4.0</span></h3>
+        <p>Records are content-addressed, so a decision's supersession chain stays intact
+        when two machines merge the same repo — no lost locks, no dangling history.</p>
       </div>
       <div class="card glass reveal">
-        <div class="icon">🤝</div>
-        <h3>Cross-IDE consensus</h3>
-        <p>When two AI tools write contradicting decisions, codevira surfaces the conflict
-        instead of letting them fight.</p>
+        <div class="icon">↩️</div>
+        <h3>One egress door, one undo <span class="tag">4.0</span></h3>
+        <p>A single audited module is the only thing that can touch the network — a CI test
+        fails the build if any other file imports an HTTP client. <code>codevira memory undo</code>
+        rolls back any change.</p>
       </div>
       <div class="card glass reveal">
         <div class="icon">📦</div>
@@ -625,7 +646,7 @@
         together. Opt-in.</p>
       </div>
     </div>
-    <p class="tabnote reveal" style="text-align:center">The <strong>hard block</strong> — the edit actually refused before it touches disk — runs in <strong>Claude Code</strong>, via its <code style="font-family:var(--mono)">PreToolUse</code> hook. In Cursor, Windsurf, Codex and Copilot the same decisions ride along as strong <code style="font-family:var(--mono)">AGENTS.md</code> guidance (advisory, not a physical veto) — their edits don't route through codevira's hook engine. The shared <em>memory</em> is universal; the verified hard <em>enforcement</em> is Claude Code today. As of 3.7.1, Antigravity also gets a <code style="font-family:var(--mono)">PreToolUse</code> enforcement hook that surfaces and can block decision-reverting edits.</p>
+    <p class="tabnote reveal" style="text-align:center">The <strong>hard block</strong> now runs two ways. In <strong>Claude Code</strong> (and Antigravity), a <code style="font-family:var(--mono)">PreToolUse</code> hook refuses the edit before it touches disk. In <strong>every other editor</strong> — Cursor, Codex, Copilot — an opt-in git <code style="font-family:var(--mono)">pre-commit</code> hook (<code style="font-family:var(--mono)">codevira engine install-git-hook</code>) runs the same engine at the commit boundary, so the veto is physical there too — because every editor commits with git. Without the git hook, those tools still get the decisions as strong <code style="font-family:var(--mono)">AGENTS.md</code> guidance. Shared <em>memory</em> was always universal; as of <strong>4.0</strong>, hard <em>enforcement</em> is too — at whatever point each tool reaches.</p>
   </section>
 
   <!-- WORKS WITH -->
@@ -633,12 +654,11 @@
     <div class="kicker reveal">Cross-IDE</div>
     <h2 class="reveal">One memory. Every tool.</h2>
     <p class="lede reveal">A decision logged in Claude Code shows up in Cursor. A fix recorded today blocks
-    the same regression in Windsurf tomorrow — through MCP plus an auto-generated
+    the same regression in Cursor tomorrow — through MCP plus an auto-generated
     <code>AGENTS.md</code> every modern tool reads natively.</p>
     <div class="ides">
       <div class="ide glass reveal"><span class="chip"><img src="assets/claude.svg" alt="Claude Code"></span>Claude Code<small>MCP + hooks</small></div>
       <div class="ide glass reveal"><span class="chip"><img src="assets/cursor.png" alt="Cursor"></span>Cursor<small>MCP + AGENTS.md</small></div>
-      <div class="ide glass reveal"><span class="chip"><img src="assets/windsurf.svg" alt="Windsurf"></span>Windsurf<small>MCP + AGENTS.md</small></div>
       <div class="ide glass reveal"><span class="chip"><img src="assets/copilot.svg" alt="GitHub Copilot"></span>Copilot<small>AGENTS.md</small></div>
       <div class="ide glass reveal"><span class="chip"><img src="assets/gemini.svg" alt="Gemini CLI"></span>Gemini CLI<small>MCP + AGENTS.md</small></div>
       <div class="ide glass reveal"><span class="chip"><img src="assets/codex.png" alt="OpenAI Codex"></span>Codex<small>MCP + AGENTS.md</small></div>
@@ -751,15 +771,15 @@
       </div>
       <div class="steps">
         <div class="step active" style="cursor:default">
-          <b><span class="n">✓</span> Moves with git</b>
-          <span>Decisions, sessions, skills, reflections — already in your repo. Clone and they're there.</span>
+          <b><span class="n"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span> Moves with git</b>
+          <span>Decisions, sessions, skills — already in your repo. Clone and they're there.</span>
         </div>
         <div class="step active" style="cursor:default">
-          <b><span class="n">✓</span> Moves in the archive</b>
+          <b><span class="n"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span> Moves in the archive</b>
           <span>Cross-project learning: your preferences and learned rules, merged — not overwritten — into the new machine.</span>
         </div>
         <div class="step active" style="cursor:default">
-          <b><span class="n">⟳</span> Rebuilt fresh</b>
+          <b><span class="n"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 4v5h-5"/></svg></span> Rebuilt fresh</b>
           <span>Code-graph caches and indexes are machine-local and regenerate on first run. Nothing to migrate, nothing to break.</span>
         </div>
       </div>
@@ -778,7 +798,6 @@
       <button class="tab active" data-pane="p-auto">⚡ Automatic</button>
       <button class="tab" data-pane="p-claude">Claude Code</button>
       <button class="tab" data-pane="p-cursor">Cursor</button>
-      <button class="tab" data-pane="p-windsurf">Windsurf</button>
       <button class="tab" data-pane="p-any">Any MCP client</button>
       <button class="tab" data-pane="p-data">Raw data</button>
     </div>
@@ -790,7 +809,6 @@
 
 <span class="ok">✓</span> Claude Code    MCP config + 5 lifecycle hooks
 <span class="ok">✓</span> Cursor         MCP config + AGENTS.md
-<span class="ok">✓</span> Windsurf       MCP config + AGENTS.md
 <span class="ok">✓</span> Gemini CLI     MCP config + AGENTS.md</pre></div>
         <p class="tabnote">Fully reversible: <code style="font-family:var(--mono)">codevira uninstall</code> removes every system write.</p>
       </div>
@@ -818,18 +836,6 @@
 }</pre></div>
         <p class="tabnote">One entry, project resolved from workspace roots at runtime. Cursor also reads the repo's <code style="font-family:var(--mono)">AGENTS.md</code> natively — the decision digest rides along with zero config.</p>
       </div>
-      <div class="tabpane" id="p-windsurf">
-        <div class="codecard"><pre><span class="cm">// ~/.codeium/windsurf/mcp_config.json  — one user-scope entry</span>
-{
-  <span class="bb">"mcpServers"</span>: {
-    <span class="bb">"codevira"</span>: {
-      <span class="bb">"command"</span>: <span class="yy">"/path/to/codevira-python"</span>,
-      <span class="bb">"args"</span>: [<span class="yy">"-m"</span>, <span class="yy">"mcp_server"</span>]
-    }
-  }
-}</pre></div>
-        <p class="tabnote">To pin a specific project instead of resolving from workspace roots, add <code style="font-family:var(--mono)">"--project-dir", "/path/to/project"</code> to <code style="font-family:var(--mono)">args</code> (or run <code style="font-family:var(--mono)">codevira init --per-project</code>).</p>
-      </div>
       <div class="tabpane" id="p-any">
         <div class="codecard"><pre><span class="cm"># Codevira is a standard MCP stdio server — any client in any</span>
 <span class="cm"># language connects with the usual MCP SDK. Python example:</span>
@@ -842,7 +848,7 @@ params = StdioServerParameters(command=<span class="yy">"codevira-python"</span>
     <span class="vv">async with</span> ClientSession(r, w) <span class="vv">as</span> s:
         <span class="vv">await</span> s.initialize()
         ctx = <span class="vv">await</span> s.call_tool(<span class="yy">"get_session_context"</span>, {})</pre></div>
-        <p class="tabnote">51 tools: decisions, roadmap, code graph, working memory, skills, spatial, consensus, reflections, preferences. TypeScript, Go, Rust, Java MCP SDKs all work the same way.</p>
+        <p class="tabnote">36 tools: decisions, roadmap, code graph, working memory, skills, provenance. TypeScript, Go, Rust, Java MCP SDKs all work the same way.</p>
       </div>
       <div class="tabpane" id="p-data">
         <div class="codecard"><pre><span class="cm"># No SDK at all? The memory is just files in your repo.</span>
@@ -864,7 +870,7 @@ params = StdioServerParameters(command=<span class="yy">"codevira-python"</span>
           <tr><td>Cross-IDE memory via AGENTS.md</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
           <tr><td>Roadmap, sessions, skills, preferences</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
           <tr><td>Code graph + blast-radius analysis</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="n">reads file</td></tr>
-          <tr><td>Symbol-level tools (get_signature / get_code)</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="n">reads file</td></tr>
+          <tr><td>Symbol-level <code>query_graph</code></td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="n">reads file</td></tr>
         </tbody>
       </table>
     </div>
@@ -878,7 +884,7 @@ params = StdioServerParameters(command=<span class="yy">"codevira-python"</span>
     <div class="glass reveal" style="margin-top:36px;padding:8px 22px">
       <details>
         <summary style="cursor:pointer;padding:16px 0;font-weight:600">What is Codevira?</summary>
-        <p style="padding:0 0 16px;color:var(--dim)">A persistent memory layer for AI coding agents — so Claude Code, Cursor, Windsurf, and Antigravity all share the same project context, decisions, and history on your local machine. It also enforces past decisions, blocking edits that would revert them or re-introduce a fixed bug.</p>
+        <p style="padding:0 0 16px;color:var(--dim)">A governed decision log for AI coding agents. It stores the decisions you make together with the reasoning that justifies them — why a choice won, what you rejected, when to revisit — and enforces the ones you lock across Claude Code, Cursor, Antigravity and every other editor, blocking edits that would revert them or re-introduce a fixed bug. It's not a knowledge base you query; the knowledge is always bound to a decision. Everything is local and lives in your repo.</p>
       </details>
       <details>
         <summary style="cursor:pointer;padding:16px 0;font-weight:600;border-top:1px solid var(--glass-edge)">Does Codevira send my code anywhere?</summary>
@@ -894,7 +900,15 @@ params = StdioServerParameters(command=<span class="yy">"codevira-python"</span>
       </details>
       <details>
         <summary style="cursor:pointer;padding:16px 0;font-weight:600;border-top:1px solid var(--glass-edge)">Which AI coding tools does it work with?</summary>
-        <p style="padding:0 0 16px;color:var(--dim)">Claude Code, Claude Desktop, Cursor, Windsurf, and Google Antigravity via MCP; OpenAI Codex and GitHub Copilot read the generated <code style="font-family:var(--mono)">AGENTS.md</code> natively. One <code style="font-family:var(--mono)">codevira setup</code> configures every tool it detects on your machine. Claude Code additionally gets lifecycle hooks — that's where hard enforcement lives.</p>
+        <p style="padding:0 0 16px;color:var(--dim)">Claude Code, Claude Desktop, Cursor, and Google Antigravity via MCP; OpenAI Codex and GitHub Copilot read the generated <code style="font-family:var(--mono)">AGENTS.md</code> natively. One <code style="font-family:var(--mono)">codevira setup</code> configures every tool it detects. As of 4.0, hard enforcement is no longer Claude-Code-only: it blocks the edit before it touches disk in Claude Code and Antigravity (a <code style="font-family:var(--mono)">PreToolUse</code> hook), and the commit in every other editor (an opt-in git <code style="font-family:var(--mono)">pre-commit</code> hook).</p>
+      </details>
+      <details>
+        <summary style="cursor:pointer;padding:16px 0;font-weight:600;border-top:1px solid var(--glass-edge)">How does it block edits in editors other than Claude Code?</summary>
+        <p style="padding:0 0 16px;color:var(--dim)">Every editor commits with git. <code style="font-family:var(--mono)">codevira engine install-git-hook</code> adds a <code style="font-family:var(--mono)">pre-commit</code> hook that runs the same decision engine as the IDE hook, so a locked decision physically blocks the commit in Cursor, Codex, Copilot — any tool. In Claude Code the block happens even earlier, before the file changes. Without the git hook, other tools still get the decisions as strong <code style="font-family:var(--mono)">AGENTS.md</code> guidance. Override a single commit with <code style="font-family:var(--mono)">git commit --no-verify</code>.</p>
+      </details>
+      <details>
+        <summary style="cursor:pointer;padding:16px 0;font-weight:600;border-top:1px solid var(--glass-edge)">Does it work for a team, or across my machines?</summary>
+        <p style="padding:0 0 16px;color:var(--dim)">Yes. <code style="font-family:var(--mono)">.codevira/</code> lives in your repo, so decisions travel with <code style="font-family:var(--mono)">git clone</code>. Records are content-addressed (uid = sha256 of the record), so a decision's supersession chain survives a two-host git merge — no lost locks, no dangling history. <code style="font-family:var(--mono)">codevira export setup</code> carries your cross-project learning (preferences, learned rules) to a new machine, merged rather than overwritten.</p>
       </details>
       <details>
         <summary style="cursor:pointer;padding:16px 0;font-weight:600;border-top:1px solid var(--glass-edge)">How much does it cost?</summary>
@@ -907,7 +921,7 @@ params = StdioServerParameters(command=<span class="yy">"codevira-python"</span>
     <h2>Give your agents a memory.</h2>
     <p>Open source, MIT, local-first. Two commands and every AI tool on your machine shares it.</p>
     <div style="margin-top:28px;display:flex;gap:14px;justify-content:center;flex-wrap:wrap">
-      <a class="btn primary" href="https://github.com/sachinshelke/codevira">Get started on GitHub</a>
+      <a class="btn primary" href="https://github.com/sachinshelke/codevira"><svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor" aria-hidden="true" style="vertical-align:-3px;margin-right:7px"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.03 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>Get started on GitHub</a>
       <a class="btn ghost" href="https://pypi.org/project/codevira/">View on PyPI</a>
     </div>
   </div>
@@ -916,8 +930,8 @@ params = StdioServerParameters(command=<span class="yy">"codevira-python"</span>
 
 <footer>
   <div class="wrap">
-    <span>© 2026 Codevira · MIT License · <span style="font-family:var(--mono)">v3.7.1</span></span>
-    <span><a href="https://github.com/sachinshelke/codevira">GitHub</a> · <a href="https://pypi.org/project/codevira/">PyPI</a> · <a href="https://github.com/sachinshelke/codevira/blob/main/CHANGELOG.md">Changelog</a> · <a href="#faq">FAQ</a></span>
+    <span>© 2026 Codevira · MIT License · <span style="font-family:var(--mono)">4.0</span></span>
+    <span><a href="https://github.com/sachinshelke/codevira" style="display:inline-flex;align-items:center"><svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor" aria-hidden="true" style="vertical-align:-3px;margin-right:7px"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.03 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>GitHub</a> · <a href="https://pypi.org/project/codevira/">PyPI</a> · <a href="https://github.com/sachinshelke/codevira/blob/main/CHANGELOG.md">Changelog</a> · <a href="#faq">FAQ</a></span>
   </div>
 </footer>
 
@@ -937,56 +951,6 @@ params = StdioServerParameters(command=<span class="yy">"codevira-python"</span>
     const next = root.getAttribute("data-theme") === "dark" ? "light" : "dark";
     apply(next); localStorage.setItem("cv-theme", next);
   });
-})();
-
-/* ---------- font picker ---------- */
-(function(){
-  const FONTS = [
-    {id:"inter",    label:"Inter",                       note:"rocket.new · lovable",       display:'"Inter"', body:'"Inter"', gf:"Inter:wght@400;500;600"},
-    {id:"plex",     label:"Space Grotesk + IBM Plex",    note:"current",                    display:'"Space Grotesk"', body:'"IBM Plex Sans"', gf:"Space+Grotesk:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600"},
-    {id:"archivo",  label:"Archivo + Inter",             note:"Anthropic-like grotesque",   display:'"Archivo"', body:'"Inter"', gf:"Archivo:wght@400;500;600&family=Inter:wght@400;500;600"},
-    {id:"serif",    label:"Source Serif + Inter",        note:"Anthropic editorial",        display:'"Source Serif 4"', body:'"Inter"', gf:"Source+Serif+4:wght@500;600&family=Inter:wght@400;500;600"},
-    {id:"geist",    label:"Geist",                       note:"Vercel modern",              display:'"Geist"', body:'"Geist"', gf:"Geist:wght@400;500;600"},
-    {id:"manrope",  label:"Manrope",                     note:"soft geometric",             display:'"Manrope"', body:'"Manrope"', gf:"Manrope:wght@400;500;600"},
-    {id:"jakarta",  label:"Plus Jakarta Sans",           note:"friendly premium",           display:'"Plus Jakarta Sans"', body:'"Plus Jakarta Sans"', gf:"Plus+Jakarta+Sans:wght@400;500;600"},
-    {id:"dmsans",   label:"DM Sans",                     note:"clean geometric",            display:'"DM Sans"', body:'"DM Sans"', gf:"DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600"},
-    {id:"sora",     label:"Sora + Inter",                note:"techy display",              display:'"Sora"', body:'"Inter"', gf:"Sora:wght@400;500;600&family=Inter:wght@400;500;600"},
-    {id:"system",   label:"System (SF Pro / Segoe)",     note:"native feel",                display:'-apple-system', body:'-apple-system', gf:null},
-  ];
-  const loaded = new Set();
-  function loadGF(opt){
-    if (!opt.gf || loaded.has(opt.id)) return;
-    const l = document.createElement("link");
-    l.rel = "stylesheet";
-    l.href = `https://fonts.googleapis.com/css2?family=${opt.gf}&display=swap`;
-    document.head.appendChild(l); loaded.add(opt.id);
-  }
-  function apply(opt){
-    loadGF(opt);
-    const fb = ',-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif';
-    document.documentElement.style.setProperty("--sans", opt.body + fb);
-    document.documentElement.style.setProperty("--display", opt.display + fb);
-    localStorage.setItem("cv-font", opt.id);
-    document.querySelectorAll(".fm-opt").forEach(el => el.classList.toggle("active", el.dataset.id === opt.id));
-  }
-  const menu = document.getElementById("font-menu");
-  const list = document.getElementById("fm-list");
-  FONTS.forEach(opt => {
-    const row = document.createElement("div");
-    row.className = "fm-opt"; row.dataset.id = opt.id;
-    row.innerHTML = `<b>${opt.label}</b><small>${opt.note}</small>`;
-    row.querySelector("b").style.fontFamily = opt.display;
-    row.addEventListener("click", () => apply(opt));
-    list.appendChild(row);
-  });
-  document.getElementById("font-toggle").addEventListener("click", e => {
-    e.stopPropagation();
-    menu.hidden = !menu.hidden;
-    if (!menu.hidden) FONTS.forEach(loadGF);   // load all for live previews
-  });
-  document.addEventListener("click", e => { if (!menu.contains(e.target)) menu.hidden = true; });
-  const saved = FONTS.find(f => f.id === localStorage.getItem("cv-font"));
-  if (saved) apply(saved); else document.querySelector('.fm-opt[data-id="plex"]')?.classList.add("active");
 })();
 
 /* ---------- scroll reveal ---------- */
@@ -1030,9 +994,9 @@ params = StdioServerParameters(command=<span class="yy">"codevira-python"</span>
     ]},
     {title:"in the background", lines:[
       ['bb','◆ skills      "how we rebase here" — reinforced by git'],
-      ['bb','◆ preferences "keep answers short" — distilled from prompts'],
-      ['bb','◆ reflections weekly abstraction over decisions'],
-      ['bb','◆ consensus   cross-IDE contradiction check'],
+      ['bb','◆ outcomes    kept / modified / reverted — read from your commits'],
+      ['bb','◆ anchors     each decision pinned to the symbol it\'s about'],
+      ['bb','◆ merge-safe  content-addressed — survives a two-host merge'],
       ['',''],
       ['gg','memory compounds. every session starts smarter.'],
     ]},
@@ -1071,27 +1035,46 @@ params = StdioServerParameters(command=<span class="yy">"codevira-python"</span>
   const svg = document.getElementById("gsvg");
   const detail = document.getElementById("gdetail");
   const NS = "http://www.w3.org/2000/svg";
-  const DEC = "#7c8cff", PROT = "#ff6b6b", FILE = "#8a93a8";
+  // Theme-aware: read the accent tokens fresh so nodes track light/dark and
+  // the WCAG-corrected palette, instead of hardcoding hexes that dissolved
+  // on the light ground.
+  const palette = () => {
+    const cs = getComputedStyle(document.documentElement);
+    return {
+      DEC:  cs.getPropertyValue("--violet").trim() || "#7c8cff",
+      PROT: cs.getPropertyValue("--red").trim()    || "#ff6b6b",
+      FILE: cs.getPropertyValue("--dim").trim()    || "#8a93a8",
+    };
+  };
   const nodes = [
-    {id:"D000412", label:"bcrypt for passwords", type:"prot", x:.42, y:.30,
+    {id:"D000412", label:"bcrypt for passwords", type:"prot", x:.40, y:.28,
      why:"md5 considered and rejected — rainbow-table risk. Re-examine only if a NIST recommendation changes.", tags:["security","auth"]},
-    {id:"D000391", label:"JSONL canonical store", type:"prot", x:.68, y:.22,
+    {id:"D000391", label:"JSONL canonical store", type:"prot", x:.70, y:.20,
      why:"SQLite blobs aren't diffable or reviewable. JSONL is git-native; indexes stay rebuildable caches.", tags:["storage","architecture"]},
-    {id:"D000405", label:"retry with backoff", type:"dec", x:.22, y:.42,
+    {id:"D000377", label:"one egress choke point", type:"prot", x:.17, y:.19,
+     why:"Every outbound request funnels through egress.py — a CI test fails the build if any other module imports a network client. “Local-first” becomes checkable, not a promise.", tags:["security","local-first"]},
+    {id:"D000405", label:"retry with backoff", type:"dec", x:.25, y:.49,
      why:"Fixed thundering-herd on the payment webhook. Exponential backoff, 5 attempts, then circuit-break.", tags:["reliability"]},
-    {id:"D000420", label:"feature-flag rollouts", type:"dec", x:.80, y:.48,
+    {id:"D000420", label:"feature-flag rollouts", type:"dec", x:.75, y:.52,
      why:"All risky changes ship behind flags after the March incident.", tags:["process"]},
-    {id:"D000388", label:"no ORM in hot path", type:"dec", x:.30, y:.68,
+    {id:"D000388", label:"no ORM in hot path", type:"dec", x:.34, y:.77,
      why:"Profiling showed 40% of request time in ORM hydration. Raw SQL for the 3 hot queries.", tags:["performance"]},
-    {id:"auth.py", label:"auth.py", type:"file", x:.50, y:.52},
-    {id:"webhooks.py", label:"webhooks.py", type:"file", x:.12, y:.26},
-    {id:"queries.py", label:"queries.py", type:"file", x:.16, y:.82},
-    {id:"store.py", label:"store.py", type:"file", x:.86, y:.16},
-    {id:"flags.py", label:"flags.py", type:"file", x:.66, y:.74},
+    {id:"D000434", label:"content-addressed ids", type:"dec", x:.57, y:.37,
+     why:"uid = sha256(record), so a decision's supersession chain survives a two-host git merge — no lost locks, no dangling history.", tags:["architecture","merge"]},
+    {id:"D000441", label:"block at the commit boundary", type:"dec", x:.55, y:.67,
+     why:"A git pre-commit hook runs the same engine as the IDE hook, so a locked decision is enforced in every editor — because they all commit with git.", tags:["enforcement"]},
+    {id:"auth.py", label:"auth.py", type:"file", x:.48, y:.50},
+    {id:"webhooks.py", label:"webhooks.py", type:"file", x:.12, y:.63},
+    {id:"queries.py", label:"queries.py", type:"file", x:.22, y:.90},
+    {id:"store.py", label:"store.py", type:"file", x:.86, y:.30},
+    {id:"flags.py", label:"flags.py", type:"file", x:.85, y:.72},
+    {id:"egress.py", label:"egress.py", type:"file", x:.08, y:.33},
   ];
-  const edges = [["D000412","auth.py"],["D000391","store.py"],["D000405","webhooks.py"],
-                 ["D000388","queries.py"],["D000420","flags.py"],["D000420","auth.py"],
-                 ["D000412","D000391"],["D000405","D000388"]];
+  const edges = [["D000412","auth.py"],["D000391","store.py"],["D000377","egress.py"],
+                 ["D000405","webhooks.py"],["D000388","queries.py"],["D000420","flags.py"],
+                 ["D000420","auth.py"],["D000434","store.py"],["D000441","auth.py"],
+                 ["D000412","D000391"],["D000405","D000388"],["D000434","D000391"],
+                 ["D000377","D000441"]];
   let W=0,H=0, drag=null;
 
   function size(){
@@ -1102,6 +1085,7 @@ params = StdioServerParameters(command=<span class="yy">"codevira-python"</span>
   const px = n => ({x:n.x*W, y:n.y*H});
 
   function render(){
+    const {DEC,PROT,FILE} = palette();
     svg.innerHTML = "";
     for (const [a,b] of edges){
       const na = nodes.find(n=>n.id===a), nb = nodes.find(n=>n.id===b);
@@ -1109,7 +1093,9 @@ params = StdioServerParameters(command=<span class="yy">"codevira-python"</span>
       const pa = px(na), pb = px(nb);
       l.setAttribute("x1",pa.x); l.setAttribute("y1",pa.y);
       l.setAttribute("x2",pb.x); l.setAttribute("y2",pb.y);
-      l.setAttribute("stroke","rgba(124,140,255,.30)"); l.setAttribute("stroke-width","1.4");
+      // currentColor = --text, so edges stay legible in both themes.
+      l.setAttribute("stroke","currentColor"); l.setAttribute("stroke-opacity",".16");
+      l.setAttribute("stroke-width","1.4");
       svg.appendChild(l);
     }
     for (const n of nodes){

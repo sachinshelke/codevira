@@ -346,8 +346,7 @@ def check_detected_ides() -> CheckResult:
             _WARN,
             "No AI coding tools detected (Claude Code, Cursor, etc.)",
             fix_command=(
-                "Install at least one: claude.ai/download · cursor.sh · "
-                "windsurf.com · etc."
+                "Install at least one: claude.ai/download · cursor.sh · " "etc."
             ),
         )
     return CheckResult(
@@ -513,7 +512,7 @@ def check_claude_mcp_visibility() -> CheckResult:
             details=(
                 "This check verifies Claude Code's MCP runtime sees "
                 "codevira. Without the `claude` CLI we can't probe it. "
-                "If you only use Claude Desktop / Cursor / Windsurf, "
+                "If you only use Claude Desktop / Cursor, "
                 "this is fine — those tools have their own indicators."
             ),
         )
@@ -983,7 +982,7 @@ def check_claude_binding_conflict() -> CheckResult:
             f"~/.claude.json has a BARE global 'codevira' entry alongside "
             f"{len(scoped)} project-scoped one(s) — the bare entry wins, so "
             f"sessions can bind to the wrong project's memory",
-            fix_command="codevira init  # displaces the bare entry automatically",
+            fix_command="codevira doctor --fix  # removes the bare entry (backs up first)",
         )
     return CheckResult(
         "claude_binding_conflict",
@@ -1090,10 +1089,92 @@ def run_all_checks() -> DoctorReport:
 # =====================================================================
 
 
-def cmd_doctor(*, verbose: bool = False, out: IO[str] | None = None) -> int:
+def _autofix_claude_binding() -> str | None:
+    """Auto-fixer for ``claude_binding_conflict``: remove the BARE global
+    codevira entry from ~/.claude.json (the fix ``codevira init`` was documented
+    to do but never actually performed). Backs the file up first, only touches
+    the ``codevira`` key. Returns a one-line summary, or None if nothing to do.
+    """
+    import shutil
+    import time
+
+    try:
+        from mcp_server.ide_inject import (
+            _claude_global_config_path,
+            bare_global_claude_entry,
+            remove_bare_global_claude_entry,
+        )
+    except Exception as e:  # noqa: BLE001
+        return f"could not load fixer: {e}"
+
+    if bare_global_claude_entry() is None:
+        return None  # already clean
+
+    cfg = _claude_global_config_path()
+    backup_name = "n/a"
+    try:
+        if cfg.is_file():
+            bak = cfg.with_name(
+                cfg.name + f".bak-doctorfix-{time.strftime('%Y%m%d-%H%M%S')}"
+            )
+            shutil.copy(cfg, bak)
+            backup_name = bak.name
+    except Exception:  # noqa: BLE001 — backup best-effort; removal still guarded below
+        pass
+
+    removed = remove_bare_global_claude_entry()
+    if removed is None:
+        return None
+    return (
+        f"removed bare global 'codevira' entry from {cfg.name} "
+        f"(backup: {backup_name}) — project-scoped pins now win"
+    )
+
+
+# Registry: check name -> zero-arg fixer returning a summary (or None if noop).
+# Only checks with an entry here are touched by `codevira doctor --fix`.
+_AUTOFIXERS: dict[str, Callable[[], "str | None"]] = {
+    "claude_binding_conflict": _autofix_claude_binding,
+}
+
+
+def apply_autofixes(report: "DoctorReport", out: IO[str]) -> bool:
+    """Run the registered auto-fixer for every WARN/FAIL check that has one.
+    Returns True if anything was changed."""
+    fixable = [
+        r for r in report.results if r.state in (_WARN, _FAIL) and r.name in _AUTOFIXERS
+    ]
+    out.write("\n── auto-fix ──\n")
+    if not fixable:
+        out.write("  (no auto-fixable issues found)\n")
+        return False
+    changed = False
+    for r in fixable:
+        try:
+            summary = _AUTOFIXERS[r.name]()
+        except Exception as e:  # noqa: BLE001 — one fixer must not abort the rest
+            out.write(f"  ✗ {r.name}: fix failed: {e}\n")
+            continue
+        if summary:
+            out.write(f"  ✓ {r.name}: {summary}\n")
+            changed = True
+        else:
+            out.write(f"  – {r.name}: nothing to change\n")
+    return changed
+
+
+def cmd_doctor(
+    *, verbose: bool = False, fix: bool = False, out: IO[str] | None = None
+) -> int:
     """`codevira doctor` — print the report. Returns:
        0 if all checks PASS or WARN
        1 if any check FAILed
+
+    With ``fix=True`` (``codevira doctor --fix``), after printing the report,
+    apply the registered auto-fixers for any WARN/FAIL check that has one
+    (currently: claude_binding_conflict), then re-run and print the result of
+    the fixed checks. Only ``~/.claude.json``'s ``codevira`` key is touched, and
+    the file is backed up first.
 
     P0-1 (rc.5): the doctor checks unfortunately trip a per-project mkdir
     somewhere inside the path-resolution stack we haven't been able to
@@ -1150,6 +1231,20 @@ def cmd_doctor(*, verbose: bool = False, out: IO[str] | None = None) -> int:
         f"summary: {report.pass_count} pass · "
         f"{report.warn_count} warn · {report.fail_count} fail\n"
     )
+
+    if fix:
+        changed = apply_autofixes(report, out)
+        if changed:
+            # re-run and show the post-fix state of the checks we auto-fix
+            confirm = run_all_checks()
+            out.write("\n── after fix ──\n")
+            for r in confirm.results:
+                if r.name in _AUTOFIXERS:
+                    icon = icons.get(r.state, "?")
+                    out.write(f"  {icon}  {r.name:<22} {r.message}\n")
+            out.write(
+                "\n→ Restart any open Claude Code window to load the new bindings.\n"
+            )
 
     if report.has_failures:
         return 1

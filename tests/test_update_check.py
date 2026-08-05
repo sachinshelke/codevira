@@ -183,3 +183,41 @@ class TestRefreshCache:
         assert uc.refresh_cache() == 1
         cache = json.loads((cache_dir / "update_check.json").read_text())
         assert "unrecognized version" in cache["error"]
+
+
+class TestPreReleaseCurrentVersion:
+    """Regression: a pre-release LOCAL version silently killed all update
+    notices. `_parse_version` rejects non-plain releases (correct for the
+    PyPI side — never nag toward a pre-release), but it was also applied to
+    the local version, so `4.0.0.dev1` parsed to None and `_is_newer`
+    returned False for every input. Found when 4.0.0.dev1 was installed.
+    """
+
+    def test_dev_build_still_receives_notices(self):
+        assert uc._is_newer("99.0.0", "4.0.0.dev1") is True
+
+    @pytest.mark.parametrize(
+        "current",
+        [
+            "4.0.0.dev1",
+            "4.0.0rc1",
+            "4.0.0a2",
+            "4.0.0b1",
+            "4.0.0.post1",
+            "4.0.0+local.1",
+        ],
+    )
+    def test_all_pre_release_forms_compare_on_the_release_part(self, current):
+        assert uc._is_newer("99.0.0", current) is True
+        assert uc._is_newer("1.0.0", current) is False
+
+    def test_dev_build_is_not_told_to_downgrade_to_its_own_release(self):
+        """4.0.0.dev1 vs a published 4.0.0 — same release part, no notice."""
+        assert uc._is_newer("4.0.0", "4.0.0.dev1") is False
+
+    def test_pypi_pre_releases_are_still_never_suggested(self):
+        assert uc._is_newer("99.0.0rc1", "3.7.1") is False
+
+    def test_garbage_still_yields_no_notice(self):
+        assert uc._is_newer("99.0.0", "not-a-version") is False
+        assert uc._is_newer("99.0.0", "") is False

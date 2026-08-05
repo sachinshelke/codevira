@@ -46,6 +46,8 @@ Env var overrides (machine-wide):
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import hashlib
 import logging
 import os
@@ -86,41 +88,17 @@ _TAG_WEIGHT = 0.4
 _FILE_WEIGHT = 0.4
 _FTS_WEIGHT = 0.2
 
-# Phase 13: OPT-IN learned weights. When CODEVIRA_LEARNED_WEIGHTS is set, the
-# tuner-learned vector from .codevira/learned_weights.json replaces the
-# defaults above. Loaded ONCE per process and cached so the injected block
-# stays cache-stable within a session (a mid-session weight change would
-# bust the Anthropic prompt cache). Default OFF + transparent fallback to the
-# shipped defaults, so this can never regress the wedge unless explicitly
-# enabled — and the tuner only persists weights that beat the defaults on E3.
-_UNSET: Any = object()
-_LEARNED_WEIGHTS_CACHE: Any = _UNSET
-
-
-def _learned_weights_enabled() -> bool:
-    return os.environ.get("CODEVIRA_LEARNED_WEIGHTS", "").strip().lower() in (
-        "1",
-        "true",
-        "on",
-        "yes",
-    )
+# 4.0: the Phase-13 opt-in learned-weights path was removed with the
+# tuner that produced it. The tuner optimised (recall@k, MRR) only —
+# blind to the noise complaint in D00005N — so every vector it learned
+# was fitted against a metric that could not see our documented failure
+# mode. It was default-off and set in zero live configs. Removing it
+# also retires one of the divergent scorers (eval/composite.py) and one
+# env flag, per G3.
 
 
 def _effective_weights() -> tuple[float, float, float]:
-    """Return ``(tag, file, fts)`` — learned (opt-in, cached) or shipped."""
-    if not _learned_weights_enabled():
-        return _TAG_WEIGHT, _FILE_WEIGHT, _FTS_WEIGHT
-    global _LEARNED_WEIGHTS_CACHE
-    if _LEARNED_WEIGHTS_CACHE is _UNSET:
-        try:
-            from mcp_server.storage import learned_weights
-
-            w = learned_weights.load()
-        except Exception:  # noqa: BLE001 — hot path never breaks on bad config
-            w = None
-        _LEARNED_WEIGHTS_CACHE = (w["tag"], w["file"], w["fts"]) if w else None
-    if _LEARNED_WEIGHTS_CACHE:
-        return _LEARNED_WEIGHTS_CACHE
+    """Return the shipped ``(tag, file, fts)`` weights."""
     return _TAG_WEIGHT, _FILE_WEIGHT, _FTS_WEIGHT
 
 
@@ -142,8 +120,12 @@ class RelevanceInject(Policy):
 
     # ─── Config resolution ─────────────────────────────────────────────
 
-    def _config(self) -> dict[str, Any]:
-        """Env vars > project config.yaml > defaults."""
+    def _config(self, project_root: Path | None = None) -> dict[str, Any]:
+        """Env vars > project config.yaml > defaults.
+
+        4.0: ``project_root`` scopes the config read. Previously ambient,
+        so one project could inherit another's injection budget and mode.
+        """
         mode_raw = os.environ.get("CODEVIRA_INJECT_MODE", "").strip().lower()
         max_decisions_raw = os.environ.get("CODEVIRA_INJECT_MAX_DECISIONS", "")
         max_tokens_raw = os.environ.get("CODEVIRA_INJECT_MAX_TOKENS", "")
@@ -154,7 +136,7 @@ class RelevanceInject(Policy):
             try:
                 from mcp_server.storage import paths
 
-                cfg_path = paths.config_path()
+                cfg_path = paths.config_path(project_root)
                 if cfg_path.is_file():
                     cfg = yaml.safe_load(cfg_path.read_text()) or {}
                     if not mode_raw and "inject_mode" in cfg:
@@ -250,22 +232,24 @@ class RelevanceInject(Policy):
             return PolicyVerdict.allow()
 
         # Gate 3: config
-        config = self._config()
+        config = self._config(event.project_root)
         if config["mode"] == "off":
             return PolicyVerdict.allow()
 
-        # Gate 4: storage availability
+        # Gate 4: storage availability — scoped to THIS event's project.
+        # 4.0: previously resolved ambiently, which injected another
+        # project's decisions into this one. See _load_indexes.
         try:
             from mcp_server.storage import paths
 
-            if not paths.is_initialized():
+            if not paths.is_initialized(event.project_root):
                 # No .codevira/ in this project; nothing to inject.
                 return PolicyVerdict.allow()
         except Exception:
             return PolicyVerdict.allow()
 
         # Stage 1: load manifest + digest
-        manifest_data, digest_records = self._load_indexes()
+        manifest_data, digest_records = self._load_indexes(event.project_root)
         if not manifest_data.get("active_decisions"):
             # Empty project.
             return PolicyVerdict.allow()
@@ -274,7 +258,11 @@ class RelevanceInject(Policy):
         prompt_lower = prompt.lower()
         tag_candidates = self._tag_candidates(prompt_lower, manifest_data)
         file_candidates = self._file_candidates(prompt_lower, manifest_data)
-        fts_candidates = self._fts_candidates(prompt, limit=config["max_decisions"] * 4)
+        fts_candidates = self._fts_candidates(
+            prompt,
+            limit=config["max_decisions"] * 4,
+            project_root=event.project_root,
+        )
 
         # Stage 3: score
         scored = self._score_candidates(
@@ -313,13 +301,25 @@ class RelevanceInject(Policy):
 
     # ─── Stage helpers ────────────────────────────────────────────────
 
-    def _load_indexes(self) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-        """Read manifest + digest. Both files are small (KB range)."""
+    def _load_indexes(
+        self, project_root: Path | None = None
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """Read manifest + digest for ``project_root``. Both are KB-range.
+
+        4.0: these were resolved ambiently (``manifest_path()`` /
+        ``digest_path()`` with no argument), so the hook injected whichever
+        project the PROCESS resolved rather than the one the event came
+        from. Verified live: a UserPromptSubmit in a fresh project was
+        injected with agent-mcp's decisions. This is the injection-side
+        twin of the same bleed fixed in signals.decisions(), and it is the
+        shape users actually notice — "why is it telling me about another
+        repo's decisions?" (D00012O).
+        """
         try:
             from mcp_server.storage import jsonl_store, manifest as manifest_mod, paths
 
-            manifest_data = manifest_mod.load(paths.manifest_path())
-            digest_records = jsonl_store.read_all(paths.digest_path())
+            manifest_data = manifest_mod.load(paths.manifest_path(project_root))
+            digest_records = jsonl_store.read_all(paths.digest_path(project_root))
         except Exception as exc:  # noqa: BLE001
             logger.warning("relevance_inject._load_indexes failed: %s", exc)
             return ({}, [])
@@ -354,12 +354,19 @@ class RelevanceInject(Policy):
                 out[fp] = list(ids)
         return out
 
-    def _fts_candidates(self, prompt: str, *, limit: int) -> list[dict[str, Any]]:
-        """FTS5 keyword search on prompt text; returns BM25-ranked hits."""
+    def _fts_candidates(
+        self, prompt: str, *, limit: int, project_root: Path | None = None
+    ) -> list[dict[str, Any]]:
+        """FTS5 keyword search on prompt text; returns BM25-ranked hits.
+
+        4.0: scoped to ``project_root`` — see ``_load_indexes``.
+        """
         try:
             from mcp_server.storage import decisions_store
 
-            return decisions_store.search(prompt, limit=limit)
+            return decisions_store.search(
+                prompt, limit=limit, project_root=project_root
+            )
         except Exception as exc:  # noqa: BLE001
             logger.warning("relevance_inject._fts_candidates failed: %s", exc)
             return []
@@ -415,12 +422,18 @@ class RelevanceInject(Policy):
                 do_not_revert = False
                 file_path = None
                 tags: list[str] = []
+                why: str | None = None
             else:
                 weight = float(digest_rec.get("weight", 0.5))
                 summary = str(digest_rec.get("summary", ""))
                 do_not_revert = bool(digest_rec.get("do_not_revert", False))
                 file_path = digest_rec.get("file")
                 tags = list(digest_rec.get("tags", []))
+                # 4.0 Step 2.3: carry the reasoning through the scorer.
+                # The digest holds it and _format_decision_line renders it,
+                # but this dict is rebuilt from scratch — so without this
+                # line the "why" was silently dropped between the two.
+                why = digest_rec.get("why")
 
             final = base * max(weight, 0.1)  # never zero-out a real match
             if final < min_score:
@@ -434,6 +447,7 @@ class RelevanceInject(Policy):
                     "do_not_revert": do_not_revert,
                     "file": file_path,
                     "tags": tags,
+                    "why": why,
                     "_components": {
                         "tag": tag_score.get(did, 0.0),
                         "file": file_score.get(did, 0.0),
@@ -504,7 +518,16 @@ class RelevanceInject(Policy):
         return "\n".join(lines)
 
     def _format_decision_line(self, d: dict[str, Any]) -> str:
-        """One line per decision. Cache-stable (no timestamp, no score)."""
+        """One line per decision. Cache-stable (no timestamp, no score).
+
+        4.0 Step 2.3: appends a clipped "why" when the digest carries one.
+        The budget loop above is greedy, so a longer line means fewer
+        decisions injected — that trade is intentional. A decision the agent
+        understands is worth more than two it merely sees, and injecting a
+        bare assertion with no reasoning is how tangential decisions earned
+        the "mediocre signal-to-noise" verdict in D00005N.
+        """
         prefix = "🔒 " if d["do_not_revert"] else "• "
         file_part = f"  `{d['file']}`" if d.get("file") else ""
-        return f"{prefix}**{d['id']}** {d['summary']}{file_part}"
+        why_part = f"\n    ↳ {d['why']}" if d.get("why") else ""
+        return f"{prefix}**{d['id']}** {d['summary']}{file_part}{why_part}"

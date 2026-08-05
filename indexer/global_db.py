@@ -80,6 +80,10 @@ class GlobalDB:
                 last_synced_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
 
+            -- 4.0: `tenant` and the UNIQUE that includes it are here so a
+            -- FRESH install lands on the right schema directly. Existing
+            -- databases are carried over by _add_tenant_column() +
+            -- _widen_unique_to_tenant() below.
             CREATE TABLE IF NOT EXISTS global_preferences (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 category TEXT NOT NULL,
@@ -88,20 +92,205 @@ class GlobalDB:
                 frequency INTEGER DEFAULT 1,
                 source_projects TEXT DEFAULT '[]',
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(category, signal)
+                tenant TEXT NOT NULL DEFAULT 'local',
+                UNIQUE(tenant, category, signal)
             );
 
             CREATE TABLE IF NOT EXISTS global_rules (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                rule_text TEXT NOT NULL UNIQUE,
+                rule_text TEXT NOT NULL,
                 confidence REAL DEFAULT 0.5,
                 source_projects TEXT DEFAULT '[]',
                 category TEXT,
                 language TEXT,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                tenant TEXT NOT NULL DEFAULT 'local',
+                UNIQUE(tenant, rule_text)
             );
         """)
         self.conn.commit()
+        self._add_tenant_column()
+        self._widen_unique_to_tenant()
+
+    # ------------------------------------------------------------------
+    # 4.0 Step 10 — tenant scoping
+    # ------------------------------------------------------------------
+
+    #: Tables whose rows belong to a person rather than to the machine.
+    _TENANT_TABLES = ("global_preferences", "global_rules")
+
+    def _add_tenant_column(self) -> None:
+        """Add ``tenant`` to the cross-project tables, backfilled to
+        ``local``.
+
+        This is 4.0's one genuinely breaking schema change, and the break
+        is in the READ direction: a 3.x client has no WHERE tenant clause,
+        so on a shared home it would read every tenant's preferences as
+        its own. Adding the column cannot be downgraded away.
+
+        Writing it is safe in every direction that matters. The column is
+        additive (``ALTER TABLE ADD COLUMN``, no rewrite), every existing
+        row is backfilled to ``local``, and a 3.x client ignores a column
+        it does not select. A single-user install therefore sees no
+        change at all — which is the overwhelmingly common case and the
+        one least entitled to be disrupted by a multi-tenant feature.
+
+        ``projects`` is deliberately NOT scoped: it is an inventory of
+        what exists on this filesystem, which is a property of the
+        machine, not of a person. Scoping it would hide a colleague's
+        project from `codevira projects` on a shared box and make the
+        registry lie about what is there.
+        """
+        from mcp_server.tenant import DEFAULT_TENANT
+
+        for table in self._TENANT_TABLES:
+            try:
+                cols = [
+                    row[1]
+                    for row in self.conn.execute(
+                        f"PRAGMA table_info({table})"
+                    ).fetchall()
+                ]
+                if "tenant" in cols:
+                    continue
+                self.conn.execute(
+                    f"ALTER TABLE {table} ADD COLUMN tenant TEXT "
+                    f"NOT NULL DEFAULT '{DEFAULT_TENANT}'"
+                )
+                # Backfill is what the DEFAULT already does for existing
+                # rows in SQLite, but being explicit costs nothing and
+                # makes the migration legible in a diff.
+                self.conn.execute(
+                    f"UPDATE {table} SET tenant = ? WHERE tenant IS NULL",
+                    (DEFAULT_TENANT,),
+                )
+                self.conn.commit()
+                logger.info("global_db: added tenant column to %s", table)
+            except sqlite3.Error as exc:
+                # Never make an unmigrated global.db unusable. Reads fall
+                # back to unscoped behaviour, which is exactly 3.x.
+                logger.warning(
+                    "global_db: could not add tenant column to %s: %s", table, exc
+                )
+
+    def _has_tenant(self, table: str) -> bool:
+        try:
+            return "tenant" in [
+                r[1]
+                for r in self.conn.execute(f"PRAGMA table_info({table})").fetchall()
+            ]
+        except sqlite3.Error:
+            return False
+
+    def _tenant(self) -> str:
+        """Tenant owning this connection's writes. ``local`` if anything
+        goes wrong — never an empty string, which would create an
+        invisible partition nothing else could match."""
+        try:
+            from mcp_server.tenant import current_tenant
+
+            return current_tenant()
+        except Exception:  # noqa: BLE001
+            from mcp_server.tenant import DEFAULT_TENANT
+
+            return DEFAULT_TENANT
+
+    #: Rebuilds needed because the original UNIQUE constraints predate
+    #: tenancy. ``UNIQUE(category, signal)`` means tenant A holding
+    #: "communication/be-concise" BLOCKS tenant B from ever storing it —
+    #: the upsert finds no row for B, inserts, and hits the constraint.
+    #: Isolation is not optional-extra here; without this the tenant
+    #: column would be decorative.
+    _TENANT_REBUILDS = {
+        "global_preferences": (
+            """CREATE TABLE global_preferences__new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                category TEXT NOT NULL,
+                signal TEXT NOT NULL,
+                example TEXT,
+                frequency INTEGER DEFAULT 1,
+                source_projects TEXT DEFAULT '[]',
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                tenant TEXT NOT NULL DEFAULT 'local',
+                UNIQUE(tenant, category, signal)
+            )""",
+            "category, signal, example, frequency, source_projects, updated_at, tenant",
+        ),
+        "global_rules": (
+            """CREATE TABLE global_rules__new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                rule_text TEXT NOT NULL,
+                confidence REAL DEFAULT 0.5,
+                source_projects TEXT DEFAULT '[]',
+                category TEXT,
+                language TEXT,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                tenant TEXT NOT NULL DEFAULT 'local',
+                UNIQUE(tenant, rule_text)
+            )""",
+            "rule_text, confidence, source_projects, category, language, updated_at, tenant",
+        ),
+    }
+
+    def _widen_unique_to_tenant(self) -> None:
+        """Rebuild the cross-project tables so UNIQUE includes ``tenant``.
+
+        SQLite cannot ALTER a constraint, so this is create-copy-swap. It
+        runs inside one transaction: either the new table is in place with
+        every row, or nothing changed. It is a no-op once the constraint
+        already mentions ``tenant``, so it costs one sqlite_master read on
+        every subsequent open.
+
+        Every row is carried over — this migration must not be the thing
+        that loses someone's learned preferences.
+        """
+        for table, (ddl, cols) in self._TENANT_REBUILDS.items():
+            try:
+                row = self.conn.execute(
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
+                    (table,),
+                ).fetchone()
+                if not row or not row[0]:
+                    continue
+                if "UNIQUE(tenant" in row[0].replace(" ", "").replace("\n", ""):
+                    continue  # already migrated
+
+                before = self.conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[
+                    0
+                ]
+
+                self.conn.execute("BEGIN IMMEDIATE")
+                self.conn.execute(ddl)
+                self.conn.execute(
+                    f"INSERT INTO {table}__new ({cols}) SELECT {cols} FROM {table}"
+                )
+                self.conn.execute(f"DROP TABLE {table}")
+                self.conn.execute(f"ALTER TABLE {table}__new RENAME TO {table}")
+                after = self.conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                if after != before:
+                    self.conn.execute("ROLLBACK")
+                    logger.error(
+                        "global_db: tenant rebuild of %s would have lost rows "
+                        "(%d -> %d); rolled back",
+                        table,
+                        before,
+                        after,
+                    )
+                    continue
+                self.conn.commit()
+                logger.info(
+                    "global_db: widened %s UNIQUE to include tenant (%d rows)",
+                    table,
+                    after,
+                )
+            except sqlite3.Error as exc:
+                try:
+                    self.conn.execute("ROLLBACK")
+                except sqlite3.Error:
+                    pass
+                logger.warning(
+                    "global_db: tenant UNIQUE rebuild skipped for %s: %s", table, exc
+                )
 
     def close(self) -> None:
         self.conn.close()
@@ -162,9 +351,12 @@ class GlobalDB:
         frequency: int = 1,
     ) -> None:
         """Insert or update a global preference. Aggregates frequency across projects."""
+        tenant = self._tenant()
+        scoped = self._has_tenant("global_preferences")
         existing = self.conn.execute(
-            "SELECT id, frequency, source_projects FROM global_preferences WHERE category = ? AND signal = ?",
-            (category, signal),
+            "SELECT id, frequency, source_projects FROM global_preferences "
+            "WHERE category = ? AND signal = ?" + (" AND tenant = ?" if scoped else ""),
+            (category, signal, tenant) if scoped else (category, signal),
         ).fetchone()
 
         if existing:
@@ -178,21 +370,46 @@ class GlobalDB:
                 (new_freq, json.dumps(projects), example, existing["id"]),
             )
         else:
-            self.conn.execute(
-                "INSERT INTO global_preferences (category, signal, example, frequency, source_projects) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (category, signal, example, frequency, json.dumps([source_project])),
-            )
+            if scoped:
+                self.conn.execute(
+                    "INSERT INTO global_preferences "
+                    "(category, signal, example, frequency, source_projects, tenant) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        category,
+                        signal,
+                        example,
+                        frequency,
+                        json.dumps([source_project]),
+                        tenant,
+                    ),
+                )
+            else:
+                self.conn.execute(
+                    "INSERT INTO global_preferences "
+                    "(category, signal, example, frequency, source_projects) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (
+                        category,
+                        signal,
+                        example,
+                        frequency,
+                        json.dumps([source_project]),
+                    ),
+                )
         self.conn.commit()
 
     def get_preferences(
         self, min_frequency: int = 3, language: str | None = None
     ) -> list[dict]:
         """Get global preferences above the frequency threshold."""
+        scoped = self._has_tenant("global_preferences")
         rows = self.conn.execute(
-            "SELECT category, signal, example, frequency, source_projects FROM global_preferences "
-            "WHERE frequency >= ? ORDER BY frequency DESC",
-            (min_frequency,),
+            "SELECT category, signal, example, frequency, source_projects "
+            "FROM global_preferences WHERE frequency >= ?"
+            + (" AND tenant = ?" if scoped else "")
+            + " ORDER BY frequency DESC",
+            (min_frequency, self._tenant()) if scoped else (min_frequency,),
         ).fetchall()
         return [dict(r) for r in rows]
 
@@ -209,9 +426,12 @@ class GlobalDB:
         language: str | None = None,
     ) -> None:
         """Insert or update a global rule. Merges confidence via weighted average."""
+        tenant = self._tenant()
+        scoped = self._has_tenant("global_rules")
         existing = self.conn.execute(
-            "SELECT id, confidence, source_projects FROM global_rules WHERE rule_text = ?",
-            (rule_text,),
+            "SELECT id, confidence, source_projects FROM global_rules "
+            "WHERE rule_text = ?" + (" AND tenant = ?" if scoped else ""),
+            (rule_text, tenant) if scoped else (rule_text,),
         ).fetchone()
 
         if existing:
@@ -223,6 +443,20 @@ class GlobalDB:
                 "UPDATE global_rules SET confidence = ?, source_projects = ?, "
                 "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                 (new_conf, json.dumps(projects), existing["id"]),
+            )
+        elif scoped:
+            self.conn.execute(
+                "INSERT INTO global_rules "
+                "(rule_text, confidence, source_projects, category, language, tenant) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    rule_text,
+                    confidence,
+                    json.dumps([source_project]),
+                    category,
+                    language,
+                    tenant,
+                ),
             )
         else:
             self.conn.execute(
@@ -255,25 +489,35 @@ class GlobalDB:
         a Python project. Set ``strict_language=False`` to opt back into
         the loose behavior for legacy callers (none exist in v2.1.2).
         """
+        # 4.0: tenant scoping. This read is the leak the tenant key
+        # exists to close — an unscoped SELECT here would hand one
+        # person's learned rules to another on a shared home, which is
+        # the same class of bug as the 2026-05-18 language leak above.
+        scoped = self._has_tenant("global_rules")
+        cols = (
+            "SELECT rule_text, confidence, source_projects, category, language "
+            "FROM global_rules WHERE confidence >= ?"
+        )
+        tenant_clause = " AND tenant = ?" if scoped else ""
+        params: tuple
+
         if language:
-            if strict_language:
-                rows = self.conn.execute(
-                    "SELECT rule_text, confidence, source_projects, category, language FROM global_rules "
-                    "WHERE confidence >= ? AND language = ? ORDER BY confidence DESC",
-                    (min_confidence, language),
-                ).fetchall()
-            else:
-                rows = self.conn.execute(
-                    "SELECT rule_text, confidence, source_projects, category, language FROM global_rules "
-                    "WHERE confidence >= ? AND (language = ? OR language IS NULL) ORDER BY confidence DESC",
-                    (min_confidence, language),
-                ).fetchall()
+            lang_clause = (
+                " AND language = ?"
+                if strict_language
+                else " AND (language = ? OR language IS NULL)"
+            )
+            sql = cols + lang_clause + tenant_clause + " ORDER BY confidence DESC"
+            params = (
+                (min_confidence, language, self._tenant())
+                if scoped
+                else (min_confidence, language)
+            )
         else:
-            rows = self.conn.execute(
-                "SELECT rule_text, confidence, source_projects, category, language FROM global_rules "
-                "WHERE confidence >= ? ORDER BY confidence DESC",
-                (min_confidence,),
-            ).fetchall()
+            sql = cols + tenant_clause + " ORDER BY confidence DESC"
+            params = (min_confidence, self._tenant()) if scoped else (min_confidence,)
+
+        rows = self.conn.execute(sql, params).fetchall()
         return [dict(r) for r in rows]
 
     # ------------------------------------------------------------------

@@ -19,7 +19,13 @@ from mcp_server.storage import origin
 class TestCurrentOrigin:
     def test_shape(self) -> None:
         o = origin.current_origin()
-        assert set(o.keys()) == {"ide", "agent_model", "host_hash", "ts"}
+        assert set(o.keys()) == {
+            "ide",
+            "agent_model",
+            "device_id",  # 4.0 Step 9 · S1 — the stable machine identity
+            "host_hash",  # retained so a 3.x reader still understands us
+            "ts",
+        }
 
     def test_ide_defaults_to_unknown(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("CODEVIRA_IDE", raising=False)

@@ -38,34 +38,20 @@
 # Rationale: blocking `ls` because the hook can't parse JSON is a
 # productivity disaster. Blocking `twine upload` because we can't
 # verify the gauntlet is the entire point.
+#
+# False positives are their own failure mode. This hook's block message
+# advertises CODEVIRA_RELEASE_OVERRIDE=1 as the escape hatch, so every
+# innocent command it refuses trains the maintainer to reach for the
+# override. A guard that cries wolf stops being a wall. Hence: match on
+# the command being EXECUTED, never on quoted prose that merely names a
+# release (see the detector below).
+#
+# Scope note: this is a guard against an *accidental* release, not a
+# sandbox. It does not defend against someone deliberately obfuscating a
+# publish command, and it isn't trying to.
 
 set -uo pipefail   # NOTE: no `e` — we handle errors explicitly so a
                    # python3 stderr or grep fail doesn't kill the hook.
-
-# ─── Read tool-call JSON from stdin ────────────────────────────────────────
-INPUT=$(cat)
-
-# ─── Extract tool name + command (best effort; allow on parse error) ──────
-# We use python3 to parse JSON. If python3 is missing OR the JSON is
-# malformed, we treat this as "not a release command" and exit 0.
-# Defense in depth: even if parsing fails, the secondary string match
-# on `twine upload` etc. below catches release commands.
-
-if command -v python3 >/dev/null 2>&1; then
-  TOOL_NAME=$(printf '%s' "$INPUT" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("tool_name", ""))' 2>/dev/null || echo "")
-  COMMAND=$(printf '%s' "$INPUT" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("tool_input", {}).get("command", ""))' 2>/dev/null || echo "")
-else
-  # No python3 → can't parse. Fall back: treat the whole stdin as the
-  # candidate command for substring matching. This is paranoid but
-  # ensures the hook still catches `twine upload` even without python3.
-  TOOL_NAME="Bash"
-  COMMAND="$INPUT"
-fi
-
-# Not a Bash tool call → pass through.
-if [ "$TOOL_NAME" != "Bash" ]; then
-  exit 0
-fi
 
 # ─── Detect release-relevant commands ──────────────────────────────────────
 #
@@ -73,13 +59,230 @@ fi
 # The shell hook hardcodes the list for defense-in-depth (works even
 # if YAML is missing/corrupt) and performance (fires on every bash
 # call, so no YAML parsing per-call).
+# tests/test_pre_release_block_hook.py asserts the two lists agree.
+#
+# Matching is token-based, not substring-based:
+#
+#   1. Heredoc bodies are dropped, so `git commit -m "$(cat <<'EOF' …)"`
+#      is judged on `git commit -m …`, not on the commit message.
+#   2. Comments are dropped, quote-aware and the way bash does it — a
+#      `#` only starts one where a word starts, so `a#b` stays a word.
+#      (shlex's own comment handling would eat the rest of the line.)
+#   3. What's left is split into shell tokens, so a quoted string is ONE
+#      token — `"…blocked twine upload…"` can never look like the two
+#      adjacent tokens `twine` `upload`.
+#   4. Release patterns are matched as adjacent token runs within a
+#      single command segment (split on ; && || |), and we recurse into
+#      `sh -c "…"` so a nested shell can't launder a real publish.
+#
+# Unparseable input (unbalanced quotes, no python3) falls back to the old
+# substring match: paranoid, occasionally wrong, but never lets a release
+# through on a technicality.
+#
+# The detector is held in a variable rather than a sibling file so the
+# hook stays a single self-contained script. It is read via `read -d ''`
+# and NOT `$(cat <<'PYEOF' …)`: bash 3.2 (what macOS ships) tracks quotes
+# while scanning for the closing paren of a command substitution, so a
+# heredoc body containing an odd number of `'` — which the regex below
+# does — is a parse error there. A plain heredoc is taken verbatim.
+# `read` hits EOF without its NUL delimiter and returns 1; that is the
+# normal path, hence `|| true`.
+IFS= read -r -d '' _PY_DETECT <<'PYEOF' || true
+import json
+import os
+import re
+import shlex
+import sys
 
-is_release_command() {
+_SHELLS = {"sh", "bash", "zsh", "dash", "ksh"}
+
+# Openers we recognise: <<EOF, <<-EOF, <<'EOF', <<"EOF". Deliberately not
+# <<< (here-string): that has no body to strip.
+_HEREDOC = re.compile(
+    r"""<<-?[ \t]*(?:'([^']*)'|"([^"]*)"|([A-Za-z_][A-Za-z0-9_-]*))"""
+)
+
+_SEPARATORS = {";", "&&", "||", "|", "&", "(", ")", "{", "}"}
+
+
+def strip_heredocs(cmd):
+    """Drop heredoc bodies, keeping the lines that carry real commands.
+
+    An opener with no matching terminator is left alone rather than
+    swallowing the rest of the command — over-stripping would hide a
+    genuine release, which is the failure we can least afford.
+    """
+    lines = cmd.split("\n")
+    kept = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        kept.append(line)
+        i += 1
+        for match in _HEREDOC.finditer(line):
+            delim = match.group(1) or match.group(2) or match.group(3)
+            if not delim:
+                continue
+            j = i
+            while j < len(lines) and lines[j].strip() != delim:
+                j += 1
+            if j < len(lines):
+                i = j + 1  # skip body + terminator
+    return "\n".join(kept)
+
+
+def strip_comments(cmd):
+    """Drop shell comments, quote-aware.
+
+    We cannot leave this to shlex: it ends a token at ANY unquoted `#`
+    and discards the rest of the LINE, so `echo a#b && twine upload`
+    lexes to ['echo', 'a'] and the release vanishes. bash only starts a
+    comment where a word starts, so `a#b` is a literal word. We follow
+    bash and set `commenters = ""` on the lexer.
+
+    Runs AFTER strip_heredocs so apostrophes in heredoc prose ("doesn't")
+    can't leave this scanner stuck in a bogus quote state.
+    """
+    out = []
+    quote = None
+    i = 0
+    n = len(cmd)
+    while i < n:
+        ch = cmd[i]
+        if quote:
+            out.append(ch)
+            # In double quotes a backslash escapes the next character;
+            # in single quotes nothing does.
+            if ch == "\\" and quote == '"' and i + 1 < n:
+                out.append(cmd[i + 1])
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+            i += 1
+        elif ch == "\\" and i + 1 < n:
+            out.append(ch)
+            out.append(cmd[i + 1])
+            i += 2
+        elif ch in "'\"":
+            quote = ch
+            out.append(ch)
+            i += 1
+        elif ch == "#" and (not out or out[-1] in " \t\n;&|()"):
+            # A comment. Skip to the newline but keep it, so line
+            # structure (and any heredoc terminator) survives.
+            nl = cmd.find("\n", i)
+            if nl == -1:
+                break
+            i = nl
+        else:
+            out.append(ch)
+            i += 1
+    return "".join(out)
+
+
+def tokenize(cmd):
+    """Shell-ish tokens. Raises ValueError on unbalanced quotes."""
+    lexer = shlex.shlex(cmd, posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
+    lexer.commenters = ""  # handled by strip_comments, which matches bash
+    return list(lexer)
+
+
+def segments(tokens):
+    """Split a token list into individual commands on shell separators."""
+    current = []
+    for token in tokens:
+        if token in _SEPARATORS:
+            if current:
+                yield current
+            current = []
+        else:
+            current.append(token)
+    if current:
+        yield current
+
+
+def has_run(tokens, run):
+    n = len(run)
+    return any(tuple(tokens[i:i + n]) == run for i in range(len(tokens) - n + 1))
+
+
+def segment_is_release(tokens):
+    # `twine upload` also covers `python -m twine upload`,
+    # `uv run twine upload`, `poetry run twine upload`, …
+    if has_run(tokens, ("twine", "upload")):
+        return True
+    if has_run(tokens, ("pipx", "publish")):
+        return True
+    if has_run(tokens, ("pip", "publish")):
+        return True
+    if (
+        has_run(tokens, ("gh", "release", "edit"))
+        or has_run(tokens, ("gh", "release", "create"))
+    ) and "--draft=false" in tokens:
+        return True
+    if "make" in tokens and "release-publish" in tokens:
+        return True
+    return False
+
+
+def substring_fallback(cmd):
+    """Last resort when the command can't be tokenized."""
+    pairs = [
+        ("twine upload", None),
+        ("pipx publish", None),
+        ("pip publish", None),
+        ("make release-publish", None),
+        ("gh release edit", "--draft=false"),
+        ("gh release create", "--draft=false"),
+    ]
+    return any(a in cmd and (b is None or b in cmd) for a, b in pairs)
+
+
+def is_release(cmd, depth=0):
+    if depth > 3:
+        return False
+    try:
+        tokens = tokenize(strip_comments(strip_heredocs(cmd)))
+    except ValueError:
+        return substring_fallback(cmd)
+    for seg in segments(tokens):
+        if segment_is_release(seg):
+            return True
+        # `bash -c "twine upload dist/*"` — the payload is a quoted token,
+        # so judge it as a command in its own right.
+        if os.path.basename(seg[0]) in _SHELLS:
+            for arg in seg[1:]:
+                if not arg.startswith("-") and is_release(arg, depth + 1):
+                    return True
+    return False
+
+
+try:
+    payload = json.load(sys.stdin)
+    command = payload.get("tool_input", {}).get("command", "") or ""
+    if payload.get("tool_name", "") != "Bash":
+        verdict = "ALLOW"
+        command = ""
+    else:
+        verdict = "RELEASE" if is_release(command) else "ALLOW"
+except Exception:
+    # Malformed JSON / unreadable stdin. Say so; bash falls back to
+    # matching the raw payload rather than assuming innocence.
+    verdict, command = "ERROR", ""
+
+sys.stdout.write(verdict + "\n" + command)
+PYEOF
+
+# Bash-level fallback, used only when python3 is unavailable or the
+# detector itself failed. Substring-based — the very thing that produced
+# false positives — but a missing python3 is rare and a missed release is
+# worse than a spurious block on that path.
+is_release_command_fallback() {
   local cmd="$1"
   case "$cmd" in
     *"twine upload"*)                       return 0 ;;
-    *"python -m twine upload"*)             return 0 ;;
-    *"python3 -m twine upload"*)            return 0 ;;
     *"gh release edit"*"--draft=false"*)    return 0 ;;
     *"gh release create"*"--draft=false"*)  return 0 ;;
     *"pipx publish"*)                       return 0 ;;
@@ -89,9 +292,40 @@ is_release_command() {
   esac
 }
 
-if ! is_release_command "$COMMAND"; then
-  exit 0
+# ─── Read tool-call JSON from stdin ────────────────────────────────────────
+INPUT=$(cat)
+
+# One python3 process per Bash call: it parses the JSON *and* decides.
+# Output is "<verdict>\n<command>", so the raw command survives for the
+# error messages and the audit log.
+if command -v python3 >/dev/null 2>&1; then
+  DETECT=$(printf '%s' "$INPUT" | python3 -c "$_PY_DETECT" 2>/dev/null || printf 'ERROR\n')
+else
+  DETECT="ERROR"
 fi
+
+VERDICT="${DETECT%%$'\n'*}"
+case "$DETECT" in
+  *$'\n'*) COMMAND="${DETECT#*$'\n'}" ;;
+  *)       COMMAND="" ;;
+esac
+
+case "$VERDICT" in
+  ALLOW)
+    exit 0
+    ;;
+  RELEASE)
+    : # fall through to the evidence check
+    ;;
+  *)
+    # Couldn't parse or couldn't decide. Match the raw payload — it
+    # contains the command text even when the JSON is malformed.
+    if ! is_release_command_fallback "$INPUT"; then
+      exit 0
+    fi
+    COMMAND="$INPUT"
+    ;;
+esac
 
 # ─── It IS a release command. From here on, fail closed. ───────────────────
 

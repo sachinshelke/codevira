@@ -29,9 +29,7 @@ Run as part of G2 in the release gauntlet (``make test-e2e``). NEVER ship red.
 
 from __future__ import annotations
 
-import json
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -84,7 +82,6 @@ def _clean_v350_env(monkeypatch):
         "CODEVIRA_DECISION_LOCK_MODE",
         "CODEVIRA_DECISION_LOCK_CONTENT_AWARE",
         "CODEVIRA_DECISION_DETAIL",
-        "CODEVIRA_LEARNED_WEIGHTS",
         "CODEVIRA_SYNONYM_WIDENING",
     ):
         monkeypatch.delenv(env, raising=False)
@@ -268,84 +265,6 @@ class TestSummaryFirstAndExpand:
 # ─────────────────────────────────────────────────────────────────────
 
 
-def _claude_session_log(path: Path) -> None:
-    """A minimal Claude Code transcript with one tool failure + one user
-    correction — i.e. an 'interesting' session the scanner should surface."""
-    records = [
-        {"type": "user", "message": {"content": "please edit foo"}},
-        {
-            "type": "assistant",
-            "message": {
-                "content": [
-                    {"type": "tool_use", "id": "t1", "name": "Bash", "input": {}}
-                ]
-            },
-        },
-        {
-            "type": "user",
-            "message": {
-                "content": [
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": "t1",
-                        "is_error": True,
-                        "content": "Exit code 1: failed near AKIAIOSFODNN7EXAMPLE",
-                    }
-                ]
-            },
-        },
-        {"type": "user", "message": {"content": "no, that's wrong — revert it"}},
-    ]
-    path.write_text("\n".join(json.dumps(r) for r in records), encoding="utf-8")
-
-
-class TestSessionIngestReadOnly:
-    def test_scan_surfaces_interesting_digest_without_mutating_logs(
-        self, project, tmp_path
-    ):
-        from mcp_server.ingest import scan
-
-        # Claude Code stores each project's sessions under a dir named after the
-        # project path with slashes replaced by dashes.
-        cc_root = tmp_path / "claude"
-        proj_dir = cc_root / str(project).replace("/", "-")
-        proj_dir.mkdir(parents=True)
-        log = proj_dir / "s.jsonl"
-        _claude_session_log(log)
-
-        def snapshot():
-            return {
-                str(p): (p.stat().st_mtime_ns, p.stat().st_size)
-                for p in cc_root.rglob("*")
-                if p.is_file()
-            }
-
-        before = snapshot()
-        # Restrict to the claude_code parser so the scan can't reach the
-        # developer's real ~/.codex / ~/.gemini logs (other parsers would
-        # otherwise run against their default roots).
-        digests = scan.scan_sessions(
-            project,
-            roots={"claude_code": cc_root},
-            sources=["claude_code"],
-            since_days=3650,
-        )
-        after = snapshot()
-
-        assert before == after, "transcript scan must be READ-ONLY (D00010W)"
-        assert digests, "the failure+correction session should be surfaced"
-        d = digests[0]
-        assert d.source == "claude_code" and d.is_interesting
-        assert d.n_failures >= 1 and d.n_corrections >= 1
-        # Secrets in retained excerpts are scrubbed at parse time.
-        assert all("AKIAIOSFODNN7EXAMPLE" not in f.error_excerpt for f in d.failures)
-
-
-# ─────────────────────────────────────────────────────────────────────
-# E3 — read-side relevance eval (D00010Y)
-# ─────────────────────────────────────────────────────────────────────
-
-
 class TestRelevanceEval:
     def _seed(self):
         _record(
@@ -380,49 +299,6 @@ class TestRelevanceEval:
         self._seed()
         # Non-gating by design: a quality signal, always exit 0 without --gate.
         assert cmd_eval(k=5, max_cases=50, trend=False) == 0
-
-
-# ─────────────────────────────────────────────────────────────────────
-# P13 — learned hot-path weights, opt-in (D00010Z)
-# ─────────────────────────────────────────────────────────────────────
-
-
-class TestLearnedWeights:
-    def test_opt_in_round_trip(self, project, monkeypatch):
-        from mcp_server.engine.policies import relevance_inject
-        from mcp_server.storage import learned_weights
-
-        learned = {"tag": 9.0, "file": 8.0, "fts": 7.0}
-        assert learned_weights.save(learned), "atomic persist must succeed"
-
-        # Default (no env): the hot path ignores the learned file.
-        monkeypatch.delenv("CODEVIRA_LEARNED_WEIGHTS", raising=False)
-        assert relevance_inject._learned_weights_enabled() is False
-        assert relevance_inject._effective_weights() != (9.0, 8.0, 7.0)
-
-        # Opt in: the learned vector replaces the shipped defaults.
-        monkeypatch.setenv("CODEVIRA_LEARNED_WEIGHTS", "1")
-        assert relevance_inject._effective_weights() == (9.0, 8.0, 7.0)
-
-    def test_corrupt_file_falls_back_to_defaults(self, project, monkeypatch):
-        from mcp_server.engine.policies import relevance_inject
-        from mcp_server.storage import learned_weights
-
-        learned_weights.path().write_text("{ not json", encoding="utf-8")
-        monkeypatch.setenv("CODEVIRA_LEARNED_WEIGHTS", "1")
-        # A malformed file can never make the read surface worse than it ships.
-        assert relevance_inject._effective_weights() != (0.0, 0.0, 0.0)
-
-    def test_tune_cli_never_gates(self, project):
-        from mcp_server.cli_eval import cmd_tune_weights
-
-        _record("use bcrypt over argon2", file_path="auth.py", tags=["auth"])
-        assert cmd_tune_weights(k=5, max_cases=50) == 0
-
-
-# ─────────────────────────────────────────────────────────────────────
-# E4 — managed files beyond AGENTS.md, same canonical block (D000110)
-# ─────────────────────────────────────────────────────────────────────
 
 
 class TestManagedFilesCrossTool:
@@ -468,45 +344,6 @@ class TestManagedFilesCrossTool:
         assert not (project / "CLAUDE.md").exists(), "extra files stay opt-in"
 
 
-# ─────────────────────────────────────────────────────────────────────
-# P16 — get_signature multi-language surface
-# ─────────────────────────────────────────────────────────────────────
-
-
-class TestGetSignatureMultiLang:
-    def test_supported_types_documented(self, project):
-        from mcp_server.tools.code_reader import get_signature
-
-        # The file must EXIST (else the not-found check short-circuits before
-        # the extension check we want to exercise).
-        mystery = project / "mystery.unknownext"
-        mystery.write_text("noop\n", encoding="utf-8")
-        res = get_signature(str(mystery))
-        assert res["found"] is False
-        for ext in (".ts", ".tsx", ".js", ".jsx"):
-            assert ext in res["error"], f"{ext} must be a documented supported type"
-
-    def test_typescript_file_parses_without_crash(self, project):
-        from mcp_server.tools.code_reader import get_signature
-
-        ts = project / "greet.ts"
-        ts.write_text(
-            "export function greet(name: string): string {\n"
-            "  return `hi ${name}`;\n}\n",
-            encoding="utf-8",
-        )
-        res = get_signature(str(ts))
-        assert isinstance(res, dict) and "found" in res
-        if res["found"]:  # real grammar present (release env); mocked CI → False
-            assert res.get("language") in ("typescript", "tsx", "javascript")
-
-
-# ─────────────────────────────────────────────────────────────────────
-# P17 — one shared git outcome classifier (D000112)
-# ─────────────────────────────────────────────────────────────────────
-
-
-@pytest.mark.skipif(shutil.which("git") is None, reason="git not available")
 class TestOutcomeClassifierUnified:
     """``classify_outcome`` is the single brain both outcome surfaces (SQLite
     confidence + JSONL digest/replay/skills) delegate to — if its kept/modified
@@ -643,8 +480,10 @@ class TestReleaseCoherence:
 
         # Synonym widening OFF by default → query unchanged.
         assert fts5_index._sanitize_fts_query("database auth") == '"database" OR "auth"'
-        # Learned weights OFF by default.
-        assert relevance_inject._learned_weights_enabled() is False
+        # 4.0: the learned-weights flag was removed with the tuner that
+        # produced it — the shipped weights are now the only weights.
+        assert not hasattr(relevance_inject, "_learned_weights_enabled")
+        assert relevance_inject._effective_weights() == (0.4, 0.4, 0.2)
         # Content-aware lock ON by default (the v3.5.0 behavior change).
         assert DecisionLock()._config()["content_aware"] is True
 
@@ -654,7 +493,7 @@ class TestReleaseCoherence:
         out = expand(ids=["D-does-not-exist"])
         assert out["count"] == 0 and out["not_found"] == ["D-does-not-exist"]
 
-    @pytest.mark.parametrize("cmd", ["eval", "tune-weights"])
+    @pytest.mark.parametrize("cmd", ["eval"])
     def test_new_cli_subcommands_exist(self, cmd):
         # Run the BRANCH's CLI (not a possibly-stale installed `codevira`).
         result = subprocess.run(
@@ -667,14 +506,3 @@ class TestReleaseCoherence:
         assert (
             result.returncode == 0
         ), f"`codevira {cmd} --help` failed: {result.stderr[:400]}"
-
-    def test_reflect_documents_from_sessions(self):
-        result = subprocess.run(
-            [sys.executable, "-m", "mcp_server.cli", "reflect", "--help"],
-            cwd=str(_REPO_ROOT),
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        assert result.returncode == 0
-        assert "--from-sessions" in (result.stdout + result.stderr)

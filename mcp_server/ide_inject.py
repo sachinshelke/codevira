@@ -1,7 +1,7 @@
 """
 ide_inject.py — Auto-detect installed AI tools and inject MCP configuration.
 
-Detects Claude Code, Claude Desktop, Cursor, Windsurf, and Google Antigravity,
+Detects Claude Code, Claude Desktop, Cursor, and Google Antigravity,
 then writes the correct MCP server config to each tool's settings file.
 Non-destructive merge: only touches the 'codevira' entry, preserves everything else.
 
@@ -39,7 +39,7 @@ def detect_installed_ides(project_root: Path) -> list[str]:
     their meaning.
 
     Tier 1 (have specific MCP-config path support): claude,
-    claude_desktop, cursor, windsurf, antigravity.
+    claude_desktop, cursor, antigravity.
 
     Tier 2 (AGENTS.md-style integration, no MCP-config injection):
     codex, copilot.
@@ -82,16 +82,6 @@ def detect_installed_ides(project_root: Path) -> list[str]:
         shutil.which("cursor") is not None or (cursor_dir / "mcp.json").is_file()
     ):
         found.append("cursor")
-
-    # Windsurf: require the actual mcp_config.json to exist (not just
-    # the parent directory). Windsurf writes this file the first time
-    # the app runs.
-    windsurf_paths = (
-        Path.home() / ".windsurf" / "mcp_config.json",
-        Path.home() / ".codeium" / "windsurf" / "mcp_config.json",
-    )
-    if any(p.is_file() for p in windsurf_paths):
-        found.append("windsurf")
 
     # Google Antigravity 2.0: the MCP config lives in the shared
     # ~/.gemini/config/ dir and/or the per-app ~/.gemini/antigravity/ dir
@@ -418,6 +408,36 @@ def _merge_mcp_config(existing: dict, server_name: str, server_config: dict) -> 
     return result
 
 
+def _iter_mcp_server_maps(data: dict):
+    """Yield every ``mcpServers`` dict inside an IDE config ``data``.
+
+    Claude Code's ``~/.claude.json`` records MCP servers in TWO places:
+
+      * the top-level ``mcpServers`` (user scope), and
+      * ``projects[<path>].mcpServers`` (project scope) — one map per tracked
+        project, where ``codevira setup`` writes the per-project
+        ``codevira-<slug>`` entry pinned to ``--project-dir``.
+
+    Every other IDE config (Cursor, Windsurf, Antigravity, ``.mcp.json``) is a
+    flat file with only the top-level map and no ``projects`` key, so this
+    yields just that one for them — making it the SINGLE source of truth for
+    "where codevira MCP entries can live", safe for all callers.
+
+    Yields the live dict objects: mutating a yielded map mutates ``data`` in
+    place (callers delete keys through it, then persist ``data``).
+    """
+    top = data.get("mcpServers")
+    if isinstance(top, dict):
+        yield top
+    projects = data.get("projects")
+    if isinstance(projects, dict):
+        for pdata in projects.values():
+            if isinstance(pdata, dict):
+                servers = pdata.get("mcpServers")
+                if isinstance(servers, dict):
+                    yield servers
+
+
 def remove_codevira_from_config(
     config_path: Path, key_prefix: str = "codevira"
 ) -> bool:
@@ -425,6 +445,9 @@ def remove_codevira_from_config(
 
     Deletes keys from mcpServers that match `key_prefix` exactly or start
     with `key_prefix-` (for Antigravity per-project entries like codevira-udap).
+    Sweeps BOTH the top-level ``mcpServers`` and every
+    ``projects[<path>].mcpServers`` (Claude Code's per-project scope) — else
+    uninstall leaves dangling per-project entries behind.
 
     Returns True if any keys were removed, False if nothing to do.
     """
@@ -432,21 +455,17 @@ def remove_codevira_from_config(
         return False
 
     data = _read_json_safe(config_path)
-    servers = data.get("mcpServers", {})
-    if not servers:
-        return False
+    removed = False
+    for servers in _iter_mcp_server_maps(data):
+        for k in [
+            k for k in servers if k == key_prefix or k.startswith(f"{key_prefix}-")
+        ]:
+            del servers[k]
+            removed = True
 
-    keys_to_remove = [
-        k for k in servers if k == key_prefix or k.startswith(f"{key_prefix}-")
-    ]
-    if not keys_to_remove:
-        return False
-
-    for k in keys_to_remove:
-        del servers[k]
-
-    _write_json_safe(config_path, data)
-    return True
+    if removed:
+        _write_json_safe(config_path, data)
+    return removed
 
 
 #: The codevira PreToolUse hook entry Antigravity's hooks.json needs. The
@@ -540,8 +559,14 @@ def remove_codevira_project_from_config(
     key), this is project-scoped: the bare global ``codevira`` entry and every
     other project's ``codevira-<name>`` entry are left untouched. This is what
     ``codevira untrack <project>`` uses to prune a single project's entries
-    (chiefly the per-project Antigravity entries fix B now writes) without
-    disturbing the rest.
+    (the per-project Antigravity entries fix B writes, AND the Claude Code
+    ``projects[<path>].mcpServers`` entry setup writes) without disturbing the
+    rest.
+
+    Scans BOTH the top-level ``mcpServers`` and every ``projects[<path>].
+    mcpServers`` map (via :func:`_iter_mcp_server_maps`) — an earlier revision
+    saw only the top level, so untrack left the nested Claude Code project-scope
+    entry dangling in ``~/.claude.json`` after the project's data dir was gone.
 
     Returns the list of removed server keys (computed even in ``dry_run``,
     but nothing is written then).
@@ -549,9 +574,6 @@ def remove_codevira_project_from_config(
     if not config_path.exists():
         return []
     data = _read_json_safe(config_path)
-    servers = data.get("mcpServers", {})
-    if not servers:
-        return []
 
     def _norm(p: str | Path) -> str:
         try:
@@ -561,32 +583,45 @@ def remove_codevira_project_from_config(
 
     target = _norm(project_root)
     removed: list[str] = []
-    for key in list(servers):
-        if not (key == "codevira" or key.startswith("codevira-")):
-            continue
-        args = servers[key].get("args", []) or []
-        if "--project-dir" not in args:
-            continue  # bare global entry — not project-scoped, leave it
-        idx = args.index("--project-dir")
-        if idx + 1 >= len(args):
-            continue
-        bound = args[idx + 1]
-        if _norm(bound) == target or str(bound) == str(project_root):
-            removed.append(key)
+    # (server_map, key) pairs staged for deletion. Deferring the deletes lets a
+    # dry_run compute the exact same result without mutating any map.
+    to_delete: list[tuple[dict, str]] = []
+    for servers in _iter_mcp_server_maps(data):
+        for key in list(servers):
+            if not (key == "codevira" or key.startswith("codevira-")):
+                continue
+            entry = servers[key]
+            if not isinstance(entry, dict):
+                continue
+            args = entry.get("args", []) or []
+            if "--project-dir" not in args:
+                continue  # bare global entry — not project-scoped, leave it
+            idx = args.index("--project-dir")
+            if idx + 1 >= len(args):
+                continue
+            bound = args[idx + 1]
+            if _norm(bound) == target or str(bound) == str(project_root):
+                to_delete.append((servers, key))
+                removed.append(key)
 
-    if removed and not dry_run:
-        for key in removed:
+    if to_delete and not dry_run:
+        for servers, key in to_delete:
             del servers[key]
         _write_json_safe(config_path, data)
     return removed
 
 
 def _has_codevira_entry(config_path: Path) -> bool:
-    """True if `config_path` has a `codevira` (or `codevira-*`) mcpServers key."""
+    """True if `config_path` has a `codevira` (or `codevira-*`) mcpServers key.
+
+    Delegates to :func:`has_codevira_server` so the prefix rule has exactly
+    one implementation. Three copies of it had drifted apart and one of the
+    stale ones caused the wrong-project-binding guard to report clean on a
+    real conflict.
+    """
     if not config_path.exists():
         return False
-    servers = _read_json_safe(config_path).get("mcpServers", {})
-    return any(k == "codevira" or k.startswith("codevira-") for k in servers)
+    return has_codevira_server(_read_json_safe(config_path).get("mcpServers"))
 
 
 def heal_stale_registration(
@@ -711,7 +746,7 @@ def _build_server_config(
 
     If cmd_path is the Python interpreter (fallback), use `-m mcp_server --project-dir`.
     If cmd_path is the codevira binary:
-      - use_cwd=True:  {"command": ..., "args": [], "cwd": ...}   (Claude / Cursor / Windsurf)
+      - use_cwd=True:  {"command": ..., "args": [], "cwd": ...}   (Claude / Cursor)
       - use_cwd=False: {"command": ..., "args": ["--project-dir", ...]}  (tools that ignore cwd)
     """
     is_python_fallback = cmd_path == python_exe
@@ -748,6 +783,35 @@ def _build_global_server_config(cmd_path: str, python_exe: str) -> dict:
     return {"command": cmd_path, "args": []}
 
 
+def has_codevira_server(servers: object) -> bool:
+    """True when this ``mcpServers`` mapping holds ANY codevira entry.
+
+    4.0 bug fix. These call sites tested ``"codevira" in servers`` — an exact
+    key match. ``register-all`` names entries after the project
+    (``codevira-agent-mcp``, ``codevira-udap``, …) so one MCP exists per
+    project, which means the exact match found NOTHING.
+
+    The consequence was not cosmetic: ``check_claude_binding_conflict``
+    fires only when a bare global entry coexists with scoped ones, so with
+    ``scoped`` empty it reported "no conflicting registrations" while the
+    exact conflict was present. The detector was blind to the entries the
+    fixer creates — which is why wrong-project binding survived the v3.7.1
+    work that was supposed to end it. Observed live: a session in
+    ``agent-mcp`` wrote its decisions into ``Agentic/LH``.
+
+    Mirrors the prefix rule ``_remove_codevira_entries`` already used a few
+    hundred lines above; the two had simply drifted apart.
+    """
+    if not isinstance(servers, dict):
+        return False
+    return any(k == _CODEVIRA_KEY or k.startswith(f"{_CODEVIRA_KEY}-") for k in servers)
+
+
+#: Server-key prefix. A bare ``codevira`` is the user-scope entry; anything
+#: suffixed (``codevira-<project>``) is a per-project one.
+_CODEVIRA_KEY = "codevira"
+
+
 def claude_scoped_entries() -> list[str]:
     """Return project paths that have their OWN codevira entry in ~/.claude.json.
 
@@ -762,8 +826,7 @@ def claude_scoped_entries() -> list[str]:
     for proj, pdata in (data.get("projects") or {}).items():
         if not isinstance(pdata, dict):
             continue
-        servers = pdata.get("mcpServers")
-        if isinstance(servers, dict) and "codevira" in servers:
+        if has_codevira_server(pdata.get("mcpServers")):
             out.append(proj)
     return out
 
@@ -791,7 +854,7 @@ def project_has_scoped_claude_entry(project_root: Path) -> bool:
         if not isinstance(pdata, dict):
             continue
         servers = pdata.get("mcpServers")
-        if not (isinstance(servers, dict) and "codevira" in servers):
+        if not has_codevira_server(servers):
             continue
         try:
             if str(Path(proj).resolve()) == root:
@@ -802,7 +865,7 @@ def project_has_scoped_claude_entry(project_root: Path) -> bool:
 
     mcp_json = _read_json_safe(_claude_config_path(Path(project_root)))
     servers = mcp_json.get("mcpServers")
-    return isinstance(servers, dict) and "codevira" in servers
+    return has_codevira_server(servers)
 
 
 def bare_global_claude_entry() -> dict | None:
@@ -898,7 +961,18 @@ def _inject_claude_desktop(
         "CODEVIRA_IDE": "claude_desktop",
     }
 
-    merged = _merge_mcp_config(existing, "codevira", server_config)
+    # 4.0 (D000131): Claude Desktop is NOT project-aware — it reads ONE global
+    # config with no cwd. A bare "codevira" key means the SECOND project's setup
+    # overwrites the first, so Desktop points every project at whichever was set
+    # up last (the wrong-project memory bleed). Mint a named per-project entry,
+    # exactly like _inject_antigravity does. Reuse register_all.slug so this key
+    # is byte-identical to what `register-all` / `doctor --fix` write (no dup
+    # keys). Lazy import: register_all imports ide_inject, so a top-level import
+    # would be circular.
+    from mcp_server.register_all import slug
+
+    server_name = slug(str(project_root))
+    merged = _merge_mcp_config(existing, server_name, server_config)
     _write_json_safe(config_path, merged)
     return str(config_path)
 
@@ -914,23 +988,6 @@ def _inject_cursor(project_root: Path, cmd_path: str, python_exe: str) -> str | 
     server_config["env"] = {
         **(server_config.get("env") or {}),
         "CODEVIRA_IDE": "cursor",
-    }
-    merged = _merge_mcp_config(existing, "codevira", server_config)
-    _write_json_safe(config_path, merged)
-    return str(config_path)
-
-
-def _inject_windsurf(project_root: Path, cmd_path: str, python_exe: str) -> str | None:
-    """Inject MCP config into Windsurf per-project settings."""
-    config_path = _windsurf_config_path(project_root)
-    existing = _read_json_safe(config_path)
-    server_config = _build_server_config(
-        cmd_path, python_exe, project_root, use_cwd=True
-    )
-    # v3.1.0 M1: origin.ide stamp.
-    server_config["env"] = {
-        **(server_config.get("env") or {}),
-        "CODEVIRA_IDE": "windsurf",
     }
     merged = _merge_mcp_config(existing, "codevira", server_config)
     _write_json_safe(config_path, merged)
@@ -1080,6 +1137,67 @@ def inject_global_claude_code(
     return str(config_path)
 
 
+def inject_scoped_claude_code(
+    project_root: Path, cmd_path: str, python_exe: str
+) -> str | None:
+    """Register codevira for Claude Code as a PER-PROJECT, ``--project-dir``-pinned
+    entry under ``~/.claude.json`` ``projects[<root>].mcpServers`` — and remove any
+    bare / user-scope ``codevira`` entry.
+
+    This is what makes ``codevira setup`` bind to the right project. The older
+    :func:`inject_global_claude_code` wrote a BARE ``codevira`` entry (via
+    ``claude mcp add --scope user``, args ``[]``) that resolves the project
+    ambiently from cwd — the wrong-project bug D000126 ("a session in agent-mcp
+    wrote its decisions into Agentic/LH"). A bare entry also OUT-RANKS scoped
+    ones, so a single ``setup`` silently re-breaks a machine ``register-all``
+    had fixed.
+
+    Per-project + ``--project-dir`` is already how the Antigravity and Claude
+    Desktop paths register (D00012C / v3.7.1 fix B); this brings Claude Code in
+    line and REUSES ``register_all``'s entry builder so the two cannot drift.
+    """
+    from mcp_server.register_all import _named_entry, slug
+
+    config_path = _claude_global_config_path()
+
+    # Best-effort: drop a user-scope bare entry a prior `setup` added via
+    # `claude mcp add --scope user codevira`. The file-level strip below is the
+    # backstop when the CLI isn't available.
+    cli = _claude_cli_path()
+    if cli is not None:
+        try:
+            import subprocess
+
+            subprocess.run(
+                [cli, "mcp", "remove", "--scope", "user", "codevira"],
+                capture_output=True,
+                timeout=10,
+            )
+        except Exception:  # noqa: BLE001 — never block registration on cleanup
+            pass
+
+    data = _read_json_safe(config_path)
+
+    # 1. Strip any bare / user-scope codevira from the top-level map — it
+    #    out-ranks the scoped entry and re-introduces the wrong-project bug.
+    top = data.get("mcpServers")
+    if isinstance(top, dict):
+        for k in [k for k in top if k == "codevira" or k.startswith("codevira-")]:
+            top.pop(k, None)
+
+    # 2. Write the pinned per-project entry (replacing any stale codevira* for
+    #    this project). One MCP per project, hard-bound to its --project-dir.
+    root = str(project_root)
+    proj = data.setdefault("projects", {}).setdefault(root, {})
+    servers = proj.setdefault("mcpServers", {})
+    for k in [k for k in servers if k == "codevira" or k.startswith("codevira-")]:
+        servers.pop(k, None)
+    servers[slug(root)] = _named_entry(cmd_path, python_exe, root, "claude_code")
+
+    _write_json_safe(config_path, data)
+    return str(config_path)
+
+
 def _claude_cli_add_codevira(
     cli: str,
     cmd_path: str,
@@ -1225,21 +1343,6 @@ def inject_global_cursor(cmd_path: str, python_exe: str) -> str | None:
     return str(config_path)
 
 
-def inject_global_windsurf(cmd_path: str, python_exe: str) -> str | None:
-    """Inject global codevira config into Windsurf."""
-    config_path = _windsurf_global_config_path()
-    existing = _read_json_safe(config_path)
-    server_config = _build_global_server_config(cmd_path, python_exe)
-    # v3.1.0 M1: origin.ide stamp.
-    server_config["env"] = {
-        **(server_config.get("env") or {}),
-        "CODEVIRA_IDE": "windsurf",
-    }
-    merged = _merge_mcp_config(existing, "codevira", server_config)
-    _write_json_safe(config_path, merged)
-    return str(config_path)
-
-
 def inject_global_antigravity(cmd_path: str, python_exe: str) -> str | None:
     """Inject global codevira config into Google Antigravity.
 
@@ -1305,7 +1408,7 @@ def inject_global_antigravity(cmd_path: str, python_exe: str) -> str | None:
 def inject_claude_http_url(url: str) -> str | None:
     """Inject HTTP URL config into Claude Code global settings.
 
-    Only for Claude Code CLI — Cursor/Windsurf do not support URL format.
+    Only for Claude Code CLI — Cursor does not support URL format.
     Claude Desktop does not support URL format either (stdio only).
 
     Args:
@@ -1354,17 +1457,15 @@ def inject_ide_config(
             if global_mode:
                 # Global mode: register once, works for every project
                 if ide == "claude":
-                    path = inject_global_claude_code(cmd_path, python_exe, project_root)
+                    # Per-project + --project-dir (D000126 fix): a bare global
+                    # entry out-ranks scoped ones and mis-binds the session.
+                    path = inject_scoped_claude_code(project_root, cmd_path, python_exe)
                     if path:
-                        results["Claude Code (global)"] = path
+                        results["Claude Code (per-project)"] = path
                 elif ide == "cursor":
                     path = inject_global_cursor(cmd_path, python_exe)
                     if path:
                         results["Cursor (global)"] = path
-                elif ide == "windsurf":
-                    path = inject_global_windsurf(cmd_path, python_exe)
-                    if path:
-                        results["Windsurf (global)"] = path
                 elif ide == "claude_desktop":
                     # Claude Desktop can't do project-agnostic config (no cwd,
                     # no workspace roots, no url). v3.7.0: rather than skip it
@@ -1403,10 +1504,6 @@ def inject_ide_config(
                     path = _inject_cursor(project_root, cmd_path, python_exe)
                     if path:
                         results["Cursor"] = path
-                elif ide == "windsurf":
-                    path = _inject_windsurf(project_root, cmd_path, python_exe)
-                    if path:
-                        results["Windsurf"] = path
                 elif ide == "antigravity":
                     path = _inject_antigravity(
                         project_root, cmd_path, python_exe, project_name

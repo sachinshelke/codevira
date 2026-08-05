@@ -6,3 +6,20 @@ recursive-include agents *.md
 recursive-include rules *.md
 recursive-include docs *.md
 recursive-include graph *.yaml
+
+# Ship the WHOLE test tree or none of it. Left to itself, setuptools
+# inherits distutils' legacy default of `test*.py` in the test dir —
+# non-recursive, and no match for `conftest.py`. That shipped 96 of 167
+# test files: the flat tests/ directory only, without the conftest that
+# sets CODEVIRA_HOME and PYTHONPATH, and without e2e/ (the G2 gate),
+# integration/ (G1.5), engine/ or storage/.
+#
+# A packager building from that sdist gets a suite that is not merely
+# incomplete but harmful: no CODEVIRA_HOME means it writes into their
+# real ~/.codevira/, and no PYTHONPATH means subprocess tests import
+# site-packages instead of the tree being tested. Both are bugs this
+# release fixed for us and would have re-inflicted on them.
+recursive-include tests *.py
+recursive-include tests/e2e/fixtures *
+global-exclude __pycache__/*
+global-exclude *.py[cod]

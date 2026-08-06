@@ -9,6 +9,34 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [4.0.1] — 2026-08-06
+
+Patch release — two `doctor` / project-inventory fixes. No change to memory,
+bindings, or any product behavior beyond diagnostics.
+
+### Fixed — `codevira doctor` recommended the *uninstaller* to tidy stale dirs
+
+`doctor` printed *"N stale dir(s) — empty leftovers; `codevira clean` tidies
+them"*, but `clean` is the deprecated full **uninstaller** — following the hint
+would wipe `~/.codevira/`, every IDE config and the launchd service. The hint
+now names `codevira prune` / `prune --ghosts`. It also counted *every* stale
+dir while `prune` only removes those ≤ 10 KB, so the number disagreed with what
+`prune` would actually remove (8 vs 0 on a real machine). Both now read one
+shared `empty_stale_dirs()` predicate, so the count and the recommended command
+always match. *(Regression test: `TestStaleHintPointsAtPrune`.)*
+
+### Fixed — fix-history-only data dirs shown as removable leftovers
+
+A data dir written by a fix-history scan holds only `graph`/`fixes.db` — no
+`metadata.json` or `git_remote`, the two keys the inventory used to join a disk
+dir to its `global.db` row. So a registered project with such a dir split into a
+phantom *tracked* row plus a false *stale* row, and `doctor` / `projects`
+surfaced real fix-history as an empty leftover. A third join key (dir name ==
+sanitized project path) now resolves these to their registration — classified
+`tracked`, never removable. On the maintainer's machine: stale **8 → 1**,
+entries **21 → 14**, nothing newly removable. *(Regression test:
+`TestSlugJoinFallback`.)*
+
 ## [4.0.0] — 2026-08-05
 
 Promotes 4.0.0b1 to final — same feature set as the beta (tenant isolation,

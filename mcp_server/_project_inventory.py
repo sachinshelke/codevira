@@ -102,8 +102,9 @@ def enumerate_projects() -> list[ProjectEntry]:
     Always safe — never raises; missing files / corrupt DBs degrade to empty.
     """
     from mcp_server.paths import (
-        get_global_home,
+        _sanitize_path_key,
         get_global_db_path,
+        get_global_home,
         is_invalid_project_root,
     )
 
@@ -114,18 +115,32 @@ def enumerate_projects() -> list[ProjectEntry]:
     # ---- Load registered rows ----------------------------------------
     registered_by_path: dict[str, dict] = {}
     registered_by_remote: dict[str, dict] = {}
+    registered_by_slug: dict[str, dict] = {}
     if db_path.is_file():
         try:
             conn = sqlite3.connect(str(db_path))
             conn.row_factory = sqlite3.Row
             for r in conn.execute(
-                "SELECT path, name, language, git_remote, last_synced_at FROM projects"
+                "SELECT path, name, language, git_remote, last_synced_at "
+                "FROM projects"
             ).fetchall():
                 row = dict(r)
                 registered_by_path[row["path"]] = row
                 rem = row.get("git_remote")
                 if rem:
                     registered_by_remote[rem] = row
+                # Slug fallback (2026-08): a data dir written by a code path
+                # that only touched graph/fixes.db (fix-history scan) has no
+                # metadata.json / git_remote to join on — but its directory
+                # NAME is _sanitize_path_key(project_path). Matching on that
+                # lets such a dir resolve to its registration (tracked)
+                # instead of splitting into a phantom tracked row + a false
+                # 'stale' leftover. See D00013I follow-up.
+                try:
+                    registered_by_slug[_sanitize_path_key(row["path"])] = row
+                except Exception:
+                    # best-effort; a bad path just misses the slug fallback
+                    pass
             conn.close()
         except sqlite3.DatabaseError:
             pass
@@ -138,7 +153,9 @@ def enumerate_projects() -> list[ProjectEntry]:
         for child in sorted(projects_dir.iterdir()):
             if not child.is_dir():
                 continue
-            entry = _inspect_disk(child, registered_by_path, registered_by_remote)
+            entry = _inspect_disk(
+                child, registered_by_path, registered_by_remote, registered_by_slug
+            )
             entries.append(entry)
             if entry.in_global_db and entry.canonical_path:
                 matched_db_paths.add(entry.canonical_path)
@@ -181,6 +198,7 @@ def _inspect_disk(
     slug_dir: Path,
     by_path: dict[str, dict],
     by_remote: dict[str, dict],
+    by_slug: dict[str, dict] | None = None,
 ) -> ProjectEntry:
     """Build a ProjectEntry from a ~/.codevira/projects/<slug> directory."""
     from mcp_server.paths import is_invalid_project_root
@@ -215,6 +233,15 @@ def _inspect_disk(
     elif git_remote and git_remote in by_remote:
         db_row = by_remote[git_remote]
         canonical_path = db_row["path"]
+    elif by_slug and slug_dir.name in by_slug:
+        # Third fallback: a metadata-less dir (e.g. only graph/fixes.db from
+        # a fix-history scan) whose NAME is _sanitize_path_key(project_path).
+        # Recover its registration from the slug so it resolves to tracked
+        # (or orphan, if the root is gone) instead of a false 'stale'
+        # leftover — and so it doesn't also appear as a phantom db-only row.
+        db_row = by_slug[slug_dir.name]
+        canonical_path = db_row["path"]
+        git_remote = db_row.get("git_remote")
     in_global_db = db_row is not None
 
     name = (db_row or {}).get("name")

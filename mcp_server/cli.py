@@ -2926,23 +2926,19 @@ def _cmd_clean_ghosts(dry_run: bool = False, yes: bool = False) -> None:
     exists, is small (<10 KB), and contains no decisions / nodes.
     """
     import shutil
-    from mcp_server._project_inventory import enumerate_projects
+    from mcp_server._project_inventory import empty_stale_dirs, enumerate_projects
 
-    ghosts = [e for e in enumerate_projects() if e.status == "ghost" and e.slug]
+    # One snapshot, shared by both classifications, so ghosts and empty-stale
+    # can't drift on a mid-scan change.
+    entries = enumerate_projects()
+    ghosts = [e for e in entries if e.status == "ghost" and e.slug]
 
     # 2026-05-18 v2.1.2 Item 14: pick up empty-dir 'stale' entries too.
-    empty_stale: list = []
-    for e in enumerate_projects():
-        if e.status != "stale" or not e.slug or not e.has_data_dir:
-            continue
-        # Heuristic: truly empty = directory is small (<10 KB) AND
-        # contains no real graph data (zero decisions OR no graph.db).
-        try:
-            if e.size_bytes > 10 * 1024:
-                continue
-        except Exception:
-            continue
-        empty_stale.append(e)
+    # empty_stale_dirs() is the single source of truth for "which stale dirs
+    # are removable" — doctor's ghost_projects check counts the same set, so
+    # its "N stale dir(s) — `codevira prune` tidies them" hint always matches
+    # what we remove here.
+    empty_stale = empty_stale_dirs(entries)
 
     all_candidates = ghosts + empty_stale
     if not all_candidates:

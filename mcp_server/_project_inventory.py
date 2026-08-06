@@ -24,6 +24,7 @@ Definitions
 
 A row can carry multiple flags simultaneously (e.g. tracked + has-data-dir).
 """
+
 from __future__ import annotations
 
 import json
@@ -35,27 +36,28 @@ from pathlib import Path
 @dataclass(frozen=True)
 class ProjectEntry:
     """One row of the unified inventory."""
+
     # Identity
-    slug: str | None              # ~/.codevira/projects/<slug> if present, else None
-    canonical_path: str | None    # original_path from metadata.json OR projects.path
+    slug: str | None  # ~/.codevira/projects/<slug> if present, else None
+    canonical_path: str | None  # original_path from metadata.json OR projects.path
     name: str | None
     git_remote: str | None
-    last_synced_at: str | None    # ISO timestamp from global.db, if registered
+    last_synced_at: str | None  # ISO timestamp from global.db, if registered
 
     # Disk presence
-    has_data_dir: bool            # ~/.codevira/projects/<slug>/ exists
+    has_data_dir: bool  # ~/.codevira/projects/<slug>/ exists
     has_config: bool
     has_metadata: bool
-    has_graph: bool               # graph/graph.db file present
-    has_codeindex: bool           # codeindex/ has at least one file
-    has_roadmap: bool             # roadmap.yaml present (Bug 21 side-effect signal)
+    has_graph: bool  # graph/graph.db file present
+    has_codeindex: bool  # codeindex/ has at least one file
+    has_roadmap: bool  # roadmap.yaml present (Bug 21 side-effect signal)
     size_bytes: int
 
     # Registration presence
     in_global_db: bool
 
     # Validity of canonical_path right now
-    canonical_path_valid: bool    # exists + not a refused root
+    canonical_path_valid: bool  # exists + not a refused root
 
     @property
     def status(self) -> str:
@@ -99,7 +101,11 @@ def enumerate_projects() -> list[ProjectEntry]:
 
     Always safe — never raises; missing files / corrupt DBs degrade to empty.
     """
-    from mcp_server.paths import get_global_home, get_global_db_path, is_invalid_project_root
+    from mcp_server.paths import (
+        get_global_home,
+        get_global_db_path,
+        is_invalid_project_root,
+    )
 
     home = get_global_home()
     projects_dir = home / "projects"
@@ -113,8 +119,7 @@ def enumerate_projects() -> list[ProjectEntry]:
             conn = sqlite3.connect(str(db_path))
             conn.row_factory = sqlite3.Row
             for r in conn.execute(
-                "SELECT path, name, language, git_remote, last_synced_at "
-                "FROM projects"
+                "SELECT path, name, language, git_remote, last_synced_at FROM projects"
             ).fetchall():
                 row = dict(r)
                 registered_by_path[row["path"]] = row
@@ -144,35 +149,30 @@ def enumerate_projects() -> list[ProjectEntry]:
         if path in matched_db_paths:
             continue
         # Was this row matched via git_remote already?
-        if any(
-            e.canonical_path == path
-            for e in entries
-            if e.canonical_path
-        ):
+        if any(e.canonical_path == path for e in entries if e.canonical_path):
             continue
         try:
-            valid = (
-                Path(path).is_dir()
-                and is_invalid_project_root(Path(path)) is None
-            )
+            valid = Path(path).is_dir() and is_invalid_project_root(Path(path)) is None
         except Exception:
             valid = False
-        entries.append(ProjectEntry(
-            slug=None,
-            canonical_path=path,
-            name=row.get("name"),
-            git_remote=row.get("git_remote"),
-            last_synced_at=row.get("last_synced_at"),
-            has_data_dir=False,
-            has_config=False,
-            has_metadata=False,
-            has_graph=False,
-            has_codeindex=False,
-            has_roadmap=False,
-            size_bytes=0,
-            in_global_db=True,
-            canonical_path_valid=valid,
-        ))
+        entries.append(
+            ProjectEntry(
+                slug=None,
+                canonical_path=path,
+                name=row.get("name"),
+                git_remote=row.get("git_remote"),
+                last_synced_at=row.get("last_synced_at"),
+                has_data_dir=False,
+                has_config=False,
+                has_metadata=False,
+                has_graph=False,
+                has_codeindex=False,
+                has_roadmap=False,
+                size_bytes=0,
+                in_global_db=True,
+                canonical_path_valid=valid,
+            )
+        )
 
     return entries
 
@@ -224,9 +224,7 @@ def _inspect_disk(
     if canonical_path:
         try:
             p = Path(canonical_path)
-            canonical_path_valid = (
-                p.is_dir() and is_invalid_project_root(p) is None
-            )
+            canonical_path_valid = p.is_dir() and is_invalid_project_root(p) is None
         except Exception:
             canonical_path_valid = False
 
@@ -274,3 +272,39 @@ def summarize(entries: list[ProjectEntry]) -> dict:
         counts[e.status] = counts.get(e.status, 0) + 1
     counts["total"] = sum(counts.values())
     return counts
+
+
+# ``codevira prune`` (ghost mode) sweeps a *stale* dir only when it's this
+# small. A bigger stale dir has real bytes on disk — e.g. a fix-history
+# ``graph/fixes.db`` shell (has_graph is False because it's fixes.db, not
+# graph.db, so it classifies 'stale') — that prune will NOT silently delete.
+EMPTY_STALE_MAX_BYTES = 10 * 1024
+
+
+def empty_stale_dirs(entries: list[ProjectEntry]) -> list[ProjectEntry]:
+    """Stale dirs that ``codevira prune`` will actually remove.
+
+    The single source of truth for "which stale leftovers are removable",
+    shared by ``prune`` (``_cmd_clean_ghosts``) and doctor's
+    ``ghost_projects`` check. prune treats a stale dir as a removable "empty
+    leftover" only when it has a slug, a data dir on disk, and is under
+    :data:`EMPTY_STALE_MAX_BYTES`.
+
+    Doctor derives its stale-leftover count from this same helper so the two
+    can never disagree. Pre-fix (v4.0.0) doctor counted *every* stale dir —
+    including multi-KB fix-history shells prune skips — and told the user to
+    run a command (``codevira clean``) that removed none of them and, worse,
+    was the deprecated full uninstaller.
+    """
+    out: list[ProjectEntry] = []
+    for e in entries:
+        if e.status != "stale" or not e.slug or not e.has_data_dir:
+            continue
+        try:
+            if e.size_bytes > EMPTY_STALE_MAX_BYTES:
+                continue
+        except (TypeError, ValueError):
+            # Unknown/garbage size → be conservative, don't offer to remove it.
+            continue
+        out.append(e)
+    return out

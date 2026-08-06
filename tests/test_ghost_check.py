@@ -28,7 +28,11 @@ import sqlite3
 import pytest
 
 from mcp_server._ghost_check import check_ghost_projects
-from mcp_server._project_inventory import enumerate_projects, summarize
+from mcp_server._project_inventory import (
+    empty_stale_dirs,
+    enumerate_projects,
+    summarize,
+)
 from mcp_server.doctor import _PASS, _WARN, _CHECKS
 
 
@@ -196,3 +200,117 @@ class TestCheckGhostProjectsWiredIntoDoctor:
         """If anyone unregisters check_ghost_projects, fail loudly."""
         names = [c.__name__ for c in _CHECKS]
         assert "check_ghost_projects" in names
+
+
+class TestStaleHintPointsAtPrune:
+    """Regression (v4.0.x): the doctor stale-leftover hint must name the tidy
+    command ``prune``, not the deprecated full-uninstall ``clean`` (D00012X),
+    and its stale count must equal what ``codevira prune`` actually removes.
+
+    The v4.0.0 bug: on a real machine ``codevira doctor`` printed
+    "8 stale dir(s) — empty leftovers; `codevira clean` tidies them" while
+    ``codevira prune --dry-run`` reported "No ghost projects or empty data
+    dirs" — because each of those 8 dirs held a >10 KB ``graph/fixes.db``
+    fix-history shell that prune deliberately skips. Following the hint would
+    have run the uninstaller and removed nothing it advertised.
+    """
+
+    def test_stale_hint_names_prune_not_clean(self, tmp_path, monkeypatch):
+        """Removable (≤10 KB) stale dirs are surfaced pointing at ``prune``."""
+        home = tmp_path / ".codevira"
+        pdir = home / "projects"
+        pdir.mkdir(parents=True)
+        for i in range(3):
+            (pdir / f"stale-{i}").mkdir()  # bare empty dir → removable stale
+        _patch_home(monkeypatch, home)
+
+        result = check_ghost_projects()
+        assert result.state == _PASS
+        assert "3 stale" in result.message
+        assert "codevira prune" in result.message
+        assert "codevira clean" not in result.message
+
+    def test_ghost_fix_command_names_prune_not_clean(self, tmp_path, monkeypatch):
+        """The ghost WARN's fix_command must also point at ``prune``."""
+        home = tmp_path / ".codevira"
+        pdir = home / "projects"
+        pdir.mkdir(parents=True)
+        g = pdir / "ghost-proj"
+        g.mkdir()
+        (g / "metadata.json").write_text("{}")  # real state, unregistered
+        _patch_home(monkeypatch, home)
+
+        result = check_ghost_projects()
+        assert result.state == _WARN
+        assert result.fix_command
+        assert "prune" in result.fix_command
+        assert "clean" not in result.fix_command
+
+    def test_fix_history_shell_is_not_counted_as_removable_stale(
+        self, tmp_path, monkeypatch
+    ):
+        """THE REPRO: a >10 KB stale dir (fix-history shell) is NOT counted.
+
+        Doctor must not advertise a tidy that removes nothing — a stale dir
+        prune skips must not appear in doctor's stale count.
+        """
+        home = tmp_path / ".codevira"
+        pdir = home / "projects"
+        pdir.mkdir(parents=True)
+        # One removable empty stale dir (≤10 KB, bare).
+        (pdir / "empty-stale").mkdir()
+        # One NON-removable stale dir: graph/fixes.db only (no graph.db), and
+        # deliberately >10 KB so prune's size guard skips it. This is exactly
+        # the ~/.codevira/projects/ shape that produced the 4.0.0 mismatch.
+        fixhist = pdir / "fixhist-stale"
+        (fixhist / "graph").mkdir(parents=True)
+        (fixhist / "graph" / "fixes.db").write_bytes(b"\x00" * (11 * 1024))
+        _patch_home(monkeypatch, home)
+
+        entries = enumerate_projects()
+        # Sanity: the inventory sees BOTH as 'stale' ...
+        assert summarize(entries)["stale"] == 2
+        # ... but only the empty one is prune-removable.
+        assert len(empty_stale_dirs(entries)) == 1
+
+        result = check_ghost_projects()
+        assert result.state == _PASS
+        # Doctor surfaces ONLY the 1 removable dir, never the raw stale=2.
+        assert "1 stale" in result.message
+        assert "2 stale" not in result.message
+
+    def test_doctor_stale_count_equals_what_prune_would_remove(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """End-to-end: doctor's surfaced stale count == what ``prune`` removes.
+
+        Builds the exact reconciled repro — only non-removable fix-history
+        shells present — then asserts doctor reports zero stale AND prune's
+        dry-run confirms there is nothing to remove.
+        """
+        from mcp_server.cli import _cmd_clean_ghosts
+
+        home = tmp_path / ".codevira"
+        pdir = home / "projects"
+        pdir.mkdir(parents=True)
+        for i in range(3):
+            fixhist = pdir / f"fixhist-{i}"
+            (fixhist / "graph").mkdir(parents=True)
+            (fixhist / "graph" / "fixes.db").write_bytes(b"\x00" * (16 * 1024))
+        _patch_home(monkeypatch, home)
+
+        entries = enumerate_projects()
+        # Raw inventory says 3 stale; the removable set is empty.
+        assert summarize(entries)["stale"] == 3
+        removable = len(empty_stale_dirs(entries))
+        assert removable == 0
+
+        # Doctor: no stale mention at all (nothing prune can tidy).
+        result = check_ghost_projects()
+        assert result.state == _PASS
+        assert "stale dir(s)" not in result.message
+
+        # prune (ghost mode) dry-run agrees: nothing to remove.
+        _cmd_clean_ghosts(dry_run=True)
+        prune_out = capsys.readouterr().out
+        assert "No ghost projects or empty data dirs" in prune_out

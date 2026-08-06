@@ -15,9 +15,9 @@ legacy ghosts from pre-rc.4 installs need to be surfaced + cleaned. This
 check is the user-facing signal.
 
 Classification is delegated to :mod:`mcp_server._project_inventory` — the
-single source of truth shared with ``codevira projects`` / ``clean`` — so
+single source of truth shared with ``codevira projects`` / ``prune`` — so
 doctor and those commands can never disagree on what counts as a ghost
-(vs. a harmless *stale* empty dir).
+(vs. a harmless *stale* empty dir), nor on which stale dirs are removable.
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ def check_ghost_projects() -> "CheckResult":
 
     This check delegates classification to
     :func:`mcp_server._project_inventory.enumerate_projects`, the single source
-    of truth that ``codevira projects`` / ``status --global`` / ``clean`` all
+    of truth that ``codevira projects`` / ``status --global`` / ``prune`` all
     read from. Pre-fix this module rolled its own cruder definition (any dir
     missing config *or* metadata = ghost), which counted stale dirs as ghosts
     and made doctor disagree with ``codevira projects`` (doctor said "29
@@ -57,10 +57,14 @@ def check_ghost_projects() -> "CheckResult":
     # Local import to avoid the circular dependency: doctor.py imports this
     # module to register the check, so this module can't import from doctor
     # at module load time.
-    from mcp_server.doctor import CheckResult, _PASS, _WARN
+    from mcp_server.doctor import _PASS, _WARN, CheckResult
 
     try:
-        from mcp_server._project_inventory import enumerate_projects, summarize
+        from mcp_server._project_inventory import (
+            empty_stale_dirs,
+            enumerate_projects,
+            summarize,
+        )
 
         entries = enumerate_projects()
     except Exception as e:  # noqa: BLE001
@@ -72,16 +76,20 @@ def check_ghost_projects() -> "CheckResult":
 
     counts = summarize(entries)
     ghosts = [e for e in entries if e.status == "ghost"]
-    stale = counts.get("stale", 0)
+    # Count ONLY the stale dirs `codevira prune` can actually remove — the
+    # same removable set prune uses — so doctor never advertises a tidy that
+    # removes nothing (v4.0.0 bug: doctor counted every stale dir, including
+    # multi-KB fix-history shells prune skips). See empty_stale_dirs().
+    stale = len(empty_stale_dirs(entries))
 
     if not ghosts:
         msg = f"{counts.get('tracked', 0)} tracked project(s) — no ghost dirs"
         if stale:
-            # Mirror `codevira projects`: stale dirs are harmless leftovers,
+            # Mirror `codevira prune`: these are removable empty leftovers,
             # surfaced so the count isn't a surprise, but NOT a warning.
             msg += (
                 f" ({stale} stale dir(s) — empty leftovers; "
-                f"`codevira clean` tidies them)"
+                f"`codevira prune` tidies them)"
             )
         return CheckResult("ghost_projects", _PASS, msg)
 
@@ -95,5 +103,5 @@ def check_ghost_projects() -> "CheckResult":
         _WARN,
         f"{len(ghosts)} project dir(s) are ghosts (incomplete bookkeeping): {sample}",
         fix_command="codevira projects --ghosts-only   "
-        "# list them, then `codevira clean` to remove",
+        "# list them, then `codevira prune --ghosts` to remove",
     )

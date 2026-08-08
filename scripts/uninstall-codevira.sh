@@ -88,16 +88,16 @@ else
   ok "[dry-run] would back up to $BACKUP_DIR"
 fi
 
-# ----- step 1: try codevira's own clean first ---------------------------
+# ----- step 1: try codevira's own uninstaller first ---------------------
 
-note "step 1 — codevira clean (best-effort; binary may not exist)"
+note "step 1 — codevira uninstall (best-effort; binary may not exist)"
 
 if command -v codevira >/dev/null 2>&1; then
-  if confirm "Run \`codevira clean -y\` first?"; then
-    run "codevira clean -y --all 2>&1 | tail -20" || warn "codevira clean failed, continuing"
-    ok "codevira clean attempted"
+  if confirm "Run \`codevira uninstall -y\` first?"; then
+    run "codevira uninstall -y 2>&1 | tail -20" || warn "codevira uninstall failed, continuing"
+    ok "codevira uninstall attempted"
   else
-    skip "codevira clean skipped"
+    skip "codevira uninstall skipped"
   fi
 else
   skip "codevira binary not on PATH; nothing to invoke"

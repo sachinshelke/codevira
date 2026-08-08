@@ -128,8 +128,8 @@ HELP_OUT="$("$TMP/venv/bin/codevira" --help 2>&1)"
 # v2.2.0+ (2026-05-22 surface-cut audit): the daily-driver CLI surface
 # is 15 commands. Assert each one is registered. The deleted commands
 # (heal, budget, agents, hooks, register, configure, report, calibrate,
-# insights) MUST NOT be present — regression-guarded below.
-for cmd in init index status serve setup doctor projects replay clean reset \
+# insights, clean) MUST NOT be present — regression-guarded below.
+for cmd in init index status serve setup doctor projects replay prune reset \
            export sync observe-git uninstall engine; do
     if echo "$HELP_OUT" | grep -q "$cmd"; then
         echo "✓ $cmd present in top-level --help"
@@ -152,19 +152,19 @@ if [ -z "$SUBPARSER_LINE" ]; then
     echo "✗ FAIL: could not locate the {a,b,c,...} subparser list in --help"
     exit 1
 fi
-for deleted in heal budget agents hooks register configure report calibrate insights; do
+for deleted in heal budget agents hooks register configure report calibrate insights clean; do
     if echo "$SUBPARSER_LINE" | grep -qE "[{,]${deleted}[,}]"; then
         echo "✗ FAIL: '$deleted' CLI command is back — regression of 2026-05-22 surface cut"
         echo "  subparsers: $SUBPARSER_LINE"
         exit 1
     fi
 done
-echo "✓ 9 audit-deleted CLI commands stay deleted"
+echo "✓ 10 audit-deleted CLI commands stay deleted (incl. clean — D00013K)"
 
 # ─── Step 5: per-command --help works (no exception) ───────────────
 echo
 echo "═══ Step 5: per-command --help ═══"
-for cmd in init index status serve setup doctor projects replay clean reset \
+for cmd in init index status serve setup doctor projects replay prune reset \
            export sync observe-git uninstall; do
     if "$TMP/venv/bin/codevira" "$cmd" --help > /tmp/cold_install_cmdhelp.log 2>&1; then
         echo "✓ codevira $cmd --help"

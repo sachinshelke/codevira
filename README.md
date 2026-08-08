@@ -130,6 +130,19 @@ one tool is visible to every tool.
 > `codevira engine install-git-hook` — because they all commit with git. Overrides, kill-switches
 > and the precise boundary: [Enforcement engine](#enforcement-engine) (expand).
 
+<details>
+<summary><strong>The whole path, in one diagram</strong> — record → violate → intercept → engine → refuse</summary>
+
+<br>
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/sachinshelke/codevira/main/website/assets/enforcement-flow.svg"
+       alt="Enforcement flow: record_decision appends to decisions.jsonl; weeks later an agent edits a covered file; the edit is intercepted at Claude Code PreToolUse or at git pre-commit; one dispatch() runs 7 prioritised policies; the refusal carries the original reasoning. Fails open, with kill switches."
+       width="100%">
+</p>
+
+</details>
+
 ---
 
 ## What you get
@@ -197,6 +210,12 @@ A local MCP server. Decisions live in `<repo>/.codevira/*.jsonl` — plain text,
 diffable, and git-tracked once you opt in with `init --shared`. A slim `AGENTS.md` is generated
 from them for every IDE to read, and Claude Code lifecycle hooks — plus the opt-in git
 `pre-commit` hook — enforce the ones you locked.
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/sachinshelke/codevira/main/website/assets/architecture.svg"
+       alt="Codevira architecture: AI tools connect over stdio MCP to one codevira process per project; canonical decision memory lives in the repo under .codevira/, a per-machine cache in .codevira-cache/, and cross-project state in ~/.codevira/"
+       width="100%">
+</p>
 
 <details>
 <summary><strong>Full file layout and hook flow</strong></summary>

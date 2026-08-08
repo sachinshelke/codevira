@@ -11,8 +11,26 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [4.0.1] — 2026-08-06
 
-Patch release — two `doctor` / project-inventory fixes. No change to memory,
-bindings, or any product behavior beyond diagnostics.
+Removes the deprecated `codevira clean` command (a footgun — see below) and
+lands two `doctor` / project-inventory fixes. Memory, decision data and MCP
+bindings are unchanged.
+
+### Removed — `codevira clean` (breaking)
+
+`clean` read as tidy-up but was a full **uninstall** — it wiped `~/.codevira/`
+(project data dirs, `global.db`, snapshots, `device_id`), stripped codevira from
+every IDE config, and removed the launchd service. It cost a real installation
+when an agent ran `yes | codevira clean` believing it pruned the registry
+(D00012X — "the name is the trap"). Its two jobs are now cleanly split:
+
+- **`codevira prune`** — tidy stale / ghost / orphan data dirs (safe; never
+  touches decisions, IDE configs, or hooks).
+- **`codevira uninstall`** — remove everything.
+
+`codevira clean` now errors with `invalid choice: 'clean'`; any script calling
+it must switch to `prune` (tidy) or `uninstall` (remove). The internal
+full-uninstall code path is guarded so it can never run again. *(Regression
+test: `test_clean_command_removed`.)*
 
 ### Fixed — `codevira doctor` recommended the *uninstaller* to tidy stale dirs
 

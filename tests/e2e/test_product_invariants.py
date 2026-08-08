@@ -204,18 +204,24 @@ class TestP4DefensiveParsing:
 class TestP7Reversible:
     """Every install has an uninstall."""
 
-    def test_clean_command_exists(self, codevira_bin: str) -> None:
-        """`codevira clean` must be a real command."""
+    def test_clean_command_removed(self, codevira_bin: str) -> None:
+        """`codevira clean` was REMOVED in 4.0.1 (D00012X: the name read as
+        tidy-up but was a full uninstall and cost a real install). It must now
+        be an invalid choice — `prune` tidies, `uninstall` removes. The
+        install-has-an-uninstall invariant is covered by test_uninstall_exists."""
         result = subprocess.run(
             [codevira_bin, "clean", "--help"],
             capture_output=True,
             text=True,
             timeout=10,
         )
-        assert result.returncode == 0, (
-            f"P7 violation: `codevira clean --help` failed. "
-            f"There must be a documented uninstall path.\n"
-            f"  exit={result.returncode}\n  stderr={result.stderr}"
+        assert result.returncode != 0, (
+            "P7: `codevira clean` must be gone — it was a full-uninstall footgun. "
+            f"Got exit 0.\n  stdout={result.stdout}"
+        )
+        assert "invalid choice: 'clean'" in result.stderr, (
+            "expected argparse \"invalid choice: 'clean'\" for the removed command.\n"
+            f"  stderr={result.stderr}"
         )
 
     def test_uninstall_exists(self, codevira_bin: str) -> None:

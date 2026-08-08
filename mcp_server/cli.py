@@ -1145,64 +1145,11 @@ def main() -> None:
         "-y", "--yes", action="store_true", help="Skip confirmation prompts"
     )
 
-    clean_parser = subparsers.add_parser(
-        "clean",
-        help="DEPRECATED — this UNINSTALLS codevira. Use `prune` to tidy, "
-        "`uninstall` to remove.",
-        description=(
-            "DEPRECATED: the name is misleading and cost a real installation. "
-            "`clean` with no flags is a full UNINSTALL — it wipes ~/.codevira/ "
-            "(project data dirs, global.db, snapshots, device_id), strips "
-            "mcpServers.codevira from every IDE config, and removes the launchd "
-            "service.\n\n"
-            "  To tidy stale state:  codevira prune\n"
-            "  To uninstall:         codevira uninstall\n\n"
-            "Kept as an alias so existing scripts do not break. The destructive "
-            "path now requires you to TYPE 'uninstall' (as `reset` does), so a "
-            "piped 'y' cannot confirm it."
-        ),
-    )
-    clean_parser.add_argument(
-        "--all",
-        action="store_true",
-        help="Also clean per-project artifacts (legacy .codevira/, git hooks, per-project IDE configs)",
-    )
-    clean_parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Show what would be removed without deleting anything",
-    )
-    clean_parser.add_argument(
-        "-y",
-        "--yes",
-        action="store_true",
-        help="Skip confirmation prompt",
-    )
-    clean_parser.add_argument(
-        "--legacy",
-        action="store_true",
-        help="Only remove .codevira.migrated/ backup directories from project "
-        "repos. These directories are created when an older in-repo "
-        ".codevira/ layout is auto-migrated to centralised storage on "
-        "first run; they're kept around for one cycle as a safety net.",
-    )
-    clean_parser.add_argument(
-        "--orphans",
-        action="store_true",
-        help="Only remove project data dirs whose original_path is no longer "
-        "a valid project root — covers projects that were registered at "
-        "$HOME or system top-levels (a v1.8.0-era bug fixed in v1.8.1) "
-        "and projects whose repo directory was deleted.",
-    )
-    clean_parser.add_argument(
-        "--ghosts",
-        action="store_true",
-        help="P2-4 (rc.5): only remove dirs classified as 'ghost' by "
-        "`codevira projects` — present on disk but missing config.yaml "
-        "or metadata.json (created as side effect of MCP tool calls "
-        "without a full init). Surgical cleanup; preserves tracked "
-        "projects and their indexes.",
-    )
+    # `codevira clean` was REMOVED in 4.0.1 (D00012X: the name read as tidy-up
+    # but was a full uninstall and cost a real installation). Its jobs are split
+    # cleanly: `codevira prune` (tidy stale/ghost/orphan dirs) and
+    # `codevira uninstall` (remove everything). No `clean` subparser is
+    # registered, so `codevira clean` now errors with "invalid choice".
 
     # v3.7.1 fix C: `codevira untrack` — the surgical inverse of `codevira
     # init` for ONE project. Prunes that project's per-project IDE-config
@@ -1955,37 +1902,6 @@ def main() -> None:
                 yes=getattr(args, "yes", False),
                 **{kwarg: True},
             )
-    elif args.command == "clean":
-        # DEPRECATED. Bare `clean` is a full uninstall; the name reads as
-        # tidy-up and cost a real installation (D00012X). Kept working so
-        # scripts do not break, but it says what it is first.
-        _selective = any(
-            getattr(args, f, False) for f in ("orphans", "ghosts", "legacy")
-        )
-        if _selective:
-            print(
-                "  note: `codevira clean --orphans/--ghosts/--legacy` is now "
-                "`codevira prune`.",
-                file=sys.stderr,
-            )
-        else:
-            print(
-                "\n  ⚠  `codevira clean` is DEPRECATED and is a full UNINSTALL.\n"
-                "     It deletes ~/.codevira/ (project data dirs, global.db,\n"
-                "     snapshots, device_id), strips codevira from every IDE\n"
-                "     config, and removes the launchd service.\n\n"
-                "       To tidy stale state:  codevira prune\n"
-                "       To uninstall:         codevira uninstall\n",
-                file=sys.stderr,
-            )
-        cmd_clean(
-            clean_all=getattr(args, "all", False),
-            dry_run=getattr(args, "dry_run", False),
-            yes=getattr(args, "yes", False),
-            legacy_only=getattr(args, "legacy", False),
-            orphans_only=getattr(args, "orphans", False),
-            ghosts_only=getattr(args, "ghosts", False),
-        )
     elif args.command == "untrack":
         sys.exit(
             cmd_untrack(
@@ -2619,6 +2535,14 @@ def cmd_clean(
     if legacy_only:
         _cmd_clean_legacy_only(dry_run=dry_run, yes=yes)
         return
+
+    # Full-uninstall path retired in 4.0.1. cmd_clean is now reached only via
+    # `codevira prune`, which always passes one of ghosts/orphans/legacy above.
+    # A bare call would have wiped ~/.codevira/ — the D00012X trap that cost a
+    # real installation. Refuse it; `codevira uninstall` is the removal path.
+    raise SystemExit(
+        "The full-uninstall path was removed in 4.0.1 — use `codevira uninstall`."
+    )
 
     from mcp_server.paths import get_global_home
     from mcp_server.ide_inject import (

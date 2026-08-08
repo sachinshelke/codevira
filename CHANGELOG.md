@@ -11,9 +11,37 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [4.0.1] — 2026-08-06
 
-Removes the deprecated `codevira clean` command (a footgun — see below) and
-lands two `doctor` / project-inventory fixes. Memory, decision data and MCP
+Repairs team-shared memory (`init --shared` never actually worked), removes the
+deprecated `codevira clean` command (a footgun — see below), and lands two
+`doctor` / project-inventory fixes. Existing memory, decision data and MCP
 bindings are unchanged.
+
+### Fixed — `codevira init --shared` gitignored the memory it promised to share
+
+`--shared` is the team path: it should keep `<repo>/.codevira/` git-**tracked** so
+teammates receive the decision log. It did the opposite. A single `init --shared`
+printed, in order: *"Adding `.codevira/` to .gitignore ... done"*, then its own
+warning that this *"defeats codevira's core promise"*, then *"✓ Team mode —
+`.codevira/` memory stays committed"*, then told you to run `git add .codevira/` —
+which silently staged nothing. No teammate ever received the memory.
+
+The cause was a seam: the legacy `init` scaffold owns the `.gitignore` entry, runs
+before the scaffold that handles `--shared`, and took no arguments — so it never
+learned this was a team init and wrote the very line that broke it. It now
+receives the flag and, in shared mode, **removes** the entry (repairing one an
+earlier default `init` or a hand edit wrote) instead of adding it. The "Team mode"
+banner is now conditional and can never claim success while `.codevira/` is still
+ignored. The four `.gitignore` match forms live in one shared definition rather
+than a copy per call site.
+
+**Default (non-shared) behaviour is unchanged** — `.codevira/` stays gitignored,
+so per-machine memory and the anti-bleed guarantee are untouched.
+
+The existing tests missed this because they called the inner scaffold directly and
+bypassed the legacy one; the new regression tests drive the real
+`python -m mcp_server` entry point. *(Tests: `test_init_shared_leaves_memory_git_trackable`,
+`test_init_default_still_ignores_memory`,
+`test_init_shared_repairs_an_ignore_written_by_an_earlier_default_init`.)*
 
 ### Removed — `codevira clean` (breaking)
 

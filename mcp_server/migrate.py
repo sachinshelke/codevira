@@ -262,7 +262,7 @@ def migrate_to_centralized(project_root: Path) -> dict:
     #
     # Centralization is a MIRROR of derived/global artifacts, never a move of
     # the source of truth. With no rename there is nothing to strand, and no
-    # `.codevira.migrated/` for a later run — or `clean --legacy` — to delete.
+    # `.codevira.migrated/` for a later run — or `prune --legacy` — to delete.
     logger.info(
         "Centralized %d artifact(s) for %s → %s. The in-repo .codevira/ store "
         "stays in place: it is the source of truth for memory.",
@@ -288,7 +288,7 @@ def cleanup_legacy_dir(project_root: Path) -> bool:
 
     v3.7.1 safety guard: for a project hit by the pre-3.7.1 migration bug this
     directory is the ONLY surviving copy of the decision log, so deleting it is
-    unrecoverable. `codevira clean --legacy` describes these dirs as "harmless
+    unrecoverable. `codevira prune --legacy` describes these dirs as "harmless
     but accumulate over time" and rmtree'd them unconditionally. We now refuse
     unless every memory file it holds is already present in-repo.
     """
@@ -420,7 +420,7 @@ def _mig_v370_repair_collisions(project_root: Path) -> bool:
 #:
 #: Defining it by EXCLUSION, in one place, is deliberate. An earlier revision
 #: had a 10-name allowlist for recovery and a separate ".jsonl/.yaml top-level"
-#: rule for the deletion guard. The two disagreed, so `clean --legacy`
+#: rule for the deletion guard. The two disagreed, so `prune --legacy`
 #: permanently deleted checkpoints/, learned_weights.json and working_archived/
 #: (documented as canonical, team-shareable) — and a name in neither set could
 #: wedge the guard shut forever while telling the user to run a recovery that

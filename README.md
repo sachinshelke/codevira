@@ -459,7 +459,7 @@ degradation, and read-only-directory hostility). See
 | `codevira prune` | **v4.0** — remove orphaned project dirs, dead `global.db` rows, ghost dirs and legacy backups. Never touches decisions, IDE configs or hooks. `--dry-run` first |
 | `codevira reset` | Destructive cleanup of this project's memory (auto-exports first; requires a typed confirmation) |
 | `codevira uninstall` | Reverse every system write codevira made — `~/.codevira/` including snapshots, every IDE config entry, the launchd service. Preserves user content outside markers. Requires typing `uninstall` |
-| `codevira clean` | **Deprecated alias for `uninstall`.** Until v4.0 this table described it as a tidy-up — which is what `prune` does. That description, plus the name, destroyed a real install. Use `prune` to tidy, `uninstall` to remove |
+| `codevira clean` | **Removed in 4.0.1.** It was a full uninstall mis-named as tidy-up — the name and its old description destroyed a real install. It now errors `invalid choice`. Use `prune` to tidy, `uninstall` to remove |
 | `codevira serve` | Start the single-project MCP HTTP server (stdio is the daily mode) |
 
 Run `codevira <cmd> --help` for full flags. Uninstall with `codevira uninstall`
@@ -506,7 +506,7 @@ server start after an upgrade, with no manual steps, and your existing decisions
 stay put. If an IDE then shows the wrong project, doesn't show codevira at all,
 or memory looks missing, it's almost always a stale IDE-config entry rather than
 lost data. Two fixes cover most cases: remove a stray or temporary entry with
-`codevira untrack <path>` (or sweep dead ones with `codevira clean --ghosts`),
+`codevira untrack <path>` (or sweep dead ones with `codevira prune --ghosts`),
 then run `codevira doctor` — it names the bound project and ships the exact fix
 for each ⚠/✗. Full guides:
 [IDE config hygiene](docs/troubleshooting/config-hygiene.md) and

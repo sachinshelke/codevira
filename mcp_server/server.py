@@ -2100,7 +2100,7 @@ def main():
 
     # v1.8.1: refuse to start the MCP server when launched from $HOME or a
     # system top-level. This is the LAST-mile guard — without it, a user
-    # who upgrades from v1.8.0 WITHOUT running `clean --orphans` would still
+    # who upgrades from v1.8.0 WITHOUT running `prune --orphans` would still
     # hit the crash mode: their leftover rogue project's config.yaml drives
     # `start_background_watcher` (called below) into walking
     # ~/Library/Group Containers/... — which is where the original 41

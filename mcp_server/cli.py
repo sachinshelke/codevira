@@ -970,8 +970,8 @@ def main() -> None:
             "Inventory of ~/.codevira/projects/. Shows each project's "
             "completeness (config + metadata + global.db row), graph + "
             "index presence, and disk size. Use --ghosts-only to filter "
-            "for incomplete dirs (Bug 21 — pair with `codevira clean` to "
-            "remove them)."
+            "for incomplete dirs (Bug 21 — pair with `codevira prune --ghosts` "
+            "to remove them)."
         ),
     )
     projects_parser.add_argument(
@@ -1694,7 +1694,7 @@ def main() -> None:
     # P0-6 (rc.5): self-heal ghost dirs from CLI invocations too. Before this
     # rc, only MCP tool dispatch fired the Bug-21a repair. So a CLI-only user
     # who got a ghost dir from a stale Claude Code session could never recover
-    # via codevira commands — only via `codevira clean` (which wipes
+    # via codevira commands — only via `codevira uninstall` (which wipes
     # everything). Now every codevira invocation (except commands that have
     # their own bootstrap logic like `init`, `setup`, `clean`, `engine`) runs
     # the cheap synchronous repair first.

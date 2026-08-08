@@ -8,7 +8,7 @@ JSON output and the rendered table both expose ``status`` and ``last_synced_at``
 Subcommands:
   * ``codevira projects`` — list everything (tracked, ghost, orphan).
   * ``codevira projects --json`` — machine-readable.
-  * ``codevira projects --ghosts-only`` — pair with ``codevira clean --ghosts``.
+  * ``codevira projects --ghosts-only`` — pair with ``codevira prune --ghosts``.
 """
 
 from __future__ import annotations
@@ -356,6 +356,6 @@ def _print_table(entries: list, summary: dict, *, ghosts_only: bool = False) -> 
     console.print("  " + " · ".join(parts))
     if summary["ghost"] or summary["orphan"]:
         console.print(
-            "  → [bold]codevira clean --ghosts[/bold] removes ghost dirs; "
+            "  → [bold]codevira prune --ghosts[/bold] removes ghost dirs; "
             "[bold]--orphans[/bold] removes orphans."
         )

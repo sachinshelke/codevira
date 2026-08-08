@@ -435,7 +435,7 @@ that's leftover state from earlier installs. Clean it up:
 
 ```bash
 codevira projects --ghosts-only        # list them
-codevira clean --ghosts                # remove them (preserves tracked projects)
+codevira prune --ghosts                # remove them (preserves tracked projects)
 ```
 
 ### 4. (Optional) Restart your AI tool
@@ -618,7 +618,7 @@ codevira projects --ghosts-only      # only incomplete project dirs
 ```
 
 Shows every project codevira knows about, classified as `tracked` /
-`ghost` / `orphan` / `stale`. Pairs with `clean --ghosts` for surgical
+`ghost` / `orphan` / `stale`. Pairs with `prune --ghosts` for surgical
 cleanup.
 
 ### `cross_session_mode` per-project opt-out
@@ -681,7 +681,7 @@ auto-init flow that didn't always complete its bookkeeping).
 **Fix:**
 ```bash
 codevira projects --ghosts-only        # see what's flagged
-codevira clean --ghosts                # remove them
+codevira prune --ghosts                # remove them
 ```
 
 This preserves all your `tracked` projects and their indexes — only

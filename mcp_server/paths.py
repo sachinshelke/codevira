@@ -712,7 +712,7 @@ def _resolve_data_dir(project_root: Path) -> Path:
     # the path key changes, so the project resolves to its in-repo store and the
     # code graph/index must be rebuilt (`codevira index`). Memory is unaffected
     # because it lives in the repo and moves with it. The previous centralized
-    # dir is left orphaned on disk until `codevira clean --orphans`.
+    # dir is left orphaned on disk until `codevira prune --orphans`.
     #
     # Deliberately NOT "fixed" by preferring a remote-matched centralized store
     # here: get_data_dir() returns ONE directory, so doing that would put the

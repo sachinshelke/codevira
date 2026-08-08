@@ -149,24 +149,40 @@ def cmd_init() -> None:
     print("  Data directory ready ...                      done")
 
     # Step 3: For new centralized projects, no .gitignore entry needed.
-    # For legacy mode (in-project), add .codevira/ to .gitignore.
+    # For legacy mode (in-project), add .codevira/ to .gitignore — UNLESS this
+    # is a team init. `--shared` promises the memory stays committed so
+    # teammates share the decision log, which is impossible while `.codevira/`
+    # is ignored: `git add .codevira/` then silently adds nothing. So in shared
+    # mode we REMOVE the entry (repairing one a previous default init or a hand
+    # edit wrote) instead of writing it.
+    shared_init = getattr(cmd_init, "_shared", False)
     if not is_centralized and git_dir.exists():
         gitignore = cwd / ".gitignore"
-        entry = ".codevira/"
-        needs_add = True
-        if gitignore.exists():
-            content = gitignore.read_text()
-            if ".codevira" in content:
-                needs_add = False
-        if needs_add:
-            print("  Adding .codevira/ to .gitignore ...          ", end="", flush=True)
-            with open(gitignore, "a") as f:
-                if gitignore.exists() and gitignore.stat().st_size > 0:
-                    existing = gitignore.read_text()
-                    if not existing.endswith("\n"):
-                        f.write("\n")
-                f.write(f"\n# Codevira — auto-generated, do not commit\n{entry}\n")
-            print("done")
+        if shared_init:
+            from mcp_server.gitignore import remove_codevira_dir_entry
+
+            if remove_codevira_dir_entry(gitignore):
+                print("  Un-ignoring .codevira/ (team mode) ...       done")
+        else:
+            entry = ".codevira/"
+            needs_add = True
+            if gitignore.exists():
+                content = gitignore.read_text()
+                if ".codevira" in content:
+                    needs_add = False
+            if needs_add:
+                print(
+                    "  Adding .codevira/ to .gitignore ...          ",
+                    end="",
+                    flush=True,
+                )
+                with open(gitignore, "a") as f:
+                    if gitignore.exists() and gitignore.stat().st_size > 0:
+                        existing = gitignore.read_text()
+                        if not existing.endswith("\n"):
+                            f.write("\n")
+                    f.write(f"\n# Codevira — auto-generated, do not commit\n{entry}\n")
+                print("done")
 
     # Step 4: Zero-config auto-detection (no interactive prompts)
     print()
@@ -1745,6 +1761,10 @@ def main() -> None:
         cmd_init._no_inject = getattr(args, "no_inject", False)  # type: ignore[attr-defined]
         cmd_init._single_language = getattr(args, "single_language", False)  # type: ignore[attr-defined]
         cmd_init._per_project = getattr(args, "per_project", False)  # type: ignore[attr-defined]
+        # The legacy scaffold runs FIRST and owns the .codevira/ gitignore
+        # entry, so it — not just the v2.2 scaffold below — has to know this is
+        # a team init, or it writes the very line that breaks `--shared`.
+        cmd_init._shared = getattr(args, "shared", False)  # type: ignore[attr-defined]
         cmd_init()
         # v2.2.0: scaffold .codevira/ (in-repo storage layer).
         # v3.0.0: -y/--yes always passes through (init has always run

@@ -125,12 +125,9 @@ def cmd_init(*, yes: bool = False, dry_run: bool = False, shared: bool = False) 
     # (with optional trailing comment). Doesn't catch every edge case
     # (e.g. wildcard like `*codevira*`) but covers the common gitignore
     # pattern users land on by reflex.
-    gitignore_blocks_codevira = False
-    for raw_line in gitignore_text.splitlines():
-        line = raw_line.split("#", 1)[0].strip()
-        if line in {".codevira", ".codevira/", "/.codevira", "/.codevira/"}:
-            gitignore_blocks_codevira = True
-            break
+    from mcp_server.gitignore import blocks_codevira_dir
+
+    gitignore_blocks_codevira = blocks_codevira_dir(gitignore_text)
     agents_md_path = project / "AGENTS.md"
     agents_md_exists = agents_md_path.is_file()
 
@@ -302,9 +299,23 @@ def cmd_init(*, yes: bool = False, dry_run: bool = False, shared: bool = False) 
     # that mode we must NOT untrack, or team memory would vanish on the next
     # commit.
     if effective_shared:
+        # Re-read: `init --shared` repairs an ignore line written by an earlier
+        # default init, so the state here may differ from the pre-plan scan.
+        # Never claim team mode while `.codevira/` is still ignored — that was
+        # the shape of the original bug: a success banner over a `git add` that
+        # silently adds nothing.
+        still_ignored = gitignore_path.is_file() and blocks_codevira_dir(
+            gitignore_path.read_text(encoding="utf-8")
+        )
         print()
-        print("  ✓ Team mode (git_shared: true) — .codevira/ memory stays")
-        print("    committed so teammates on this repo share the decision log.")
+        if still_ignored:
+            print("  ✗ Team mode requested, but .codevira/ is still ignored by")
+            print("    .gitignore — teammates would receive nothing. Remove the")
+            print("    `.codevira/` line (keep `.codevira-cache/`), then re-run")
+            print("    `codevira init --shared`.")
+        else:
+            print("  ✓ Team mode (git_shared: true) — .codevira/ memory stays")
+            print("    committed so teammates on this repo share the decision log.")
     else:
         from mcp_server.paths import untrack_git_memory_files
 

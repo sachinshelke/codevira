@@ -13,6 +13,7 @@ Usage:
     files = discover_source_files(project_root)
     lang  = infer_language_from_files(files)
 """
+
 from __future__ import annotations
 
 import os
@@ -21,6 +22,7 @@ from pathlib import Path
 
 try:
     import pathspec
+
     _PATHSPEC_AVAILABLE = True
 except ImportError:
     _PATHSPEC_AVAILABLE = False
@@ -29,86 +31,205 @@ except ImportError:
 # Directories that are ALWAYS skipped regardless of .gitignore contents.
 # These are well-known noise directories that developers almost never want
 # to index: build artifacts, dependency caches, IDE state, etc.
-_SAFETY_NET_DIRS: frozenset[str] = frozenset({
-    ".git",
-    "node_modules",
-    ".venv",
-    "venv",
-    "__pycache__",
-    ".tox",
-    ".mypy_cache",
-    ".pytest_cache",
-    ".ruff_cache",
-    ".next",
-    ".nuxt",
-    ".turbo",
-    ".cache",
-    "dist",
-    "build",
-    "out",
-    ".build",
-    ".svelte-kit",
-    ".parcel-cache",
-    "coverage",
-    ".nyc_output",
-    "target",       # Rust / Maven build output
-    "vendor",       # Go / PHP vendor dirs
-    ".codevira",    # Our own data dir
-    ".codevira.migrated",
-})
+_SAFETY_NET_DIRS: frozenset[str] = frozenset(
+    {
+        ".git",
+        "node_modules",
+        ".venv",
+        "venv",
+        "__pycache__",
+        ".tox",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".next",
+        ".nuxt",
+        ".turbo",
+        ".cache",
+        "dist",
+        "build",
+        "out",
+        ".build",
+        ".svelte-kit",
+        ".parcel-cache",
+        "coverage",
+        ".nyc_output",
+        "target",  # Rust / Maven build output
+        "vendor",  # Go / PHP vendor dirs
+        ".codevira",  # Our own data dir
+        ".codevira.migrated",
+    }
+)
 
 # File name suffixes (extensions) that are never indexed.
-_SKIP_EXTENSIONS: frozenset[str] = frozenset({
-    ".pyc", ".pyo", ".pyd",
-    ".so", ".dylib", ".dll", ".exe",
-    ".o", ".a", ".lib",
-    ".jpg", ".jpeg", ".png", ".gif", ".svg", ".ico", ".webp",
-    ".mp3", ".mp4", ".wav", ".avi", ".mov",
-    ".zip", ".tar", ".gz", ".bz2", ".xz", ".7z",
-    ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
-    ".bin", ".dat", ".db", ".sqlite", ".sqlite3",
-    ".lock",    # package-lock.json, Cargo.lock, etc. — not useful for search
-})
+_SKIP_EXTENSIONS: frozenset[str] = frozenset(
+    {
+        ".pyc",
+        ".pyo",
+        ".pyd",
+        ".so",
+        ".dylib",
+        ".dll",
+        ".exe",
+        ".o",
+        ".a",
+        ".lib",
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".gif",
+        ".svg",
+        ".ico",
+        ".webp",
+        ".mp3",
+        ".mp4",
+        ".wav",
+        ".avi",
+        ".mov",
+        ".zip",
+        ".tar",
+        ".gz",
+        ".bz2",
+        ".xz",
+        ".7z",
+        ".pdf",
+        ".doc",
+        ".docx",
+        ".xls",
+        ".xlsx",
+        ".ppt",
+        ".pptx",
+        ".bin",
+        ".dat",
+        ".db",
+        ".sqlite",
+        ".sqlite3",
+        ".lock",  # package-lock.json, Cargo.lock, etc. — not useful for search
+    }
+)
 
 # Extension → language mapping for language inference
 _EXTENSION_LANGUAGE: dict[str, str] = {
     ".py": "python",
-    ".ts": "typescript", ".tsx": "typescript",
-    ".js": "javascript", ".jsx": "javascript", ".mjs": "javascript", ".cjs": "javascript",
+    ".ts": "typescript",
+    ".tsx": "typescript",
+    ".js": "javascript",
+    ".jsx": "javascript",
+    ".mjs": "javascript",
+    ".cjs": "javascript",
     ".go": "go",
     ".rs": "rust",
     ".java": "java",
-    ".kt": "kotlin", ".kts": "kotlin",
+    ".kt": "kotlin",
+    ".kts": "kotlin",
     ".cs": "csharp",
     ".rb": "ruby",
     ".php": "php",
-    ".c": "c", ".h": "c",
-    ".cpp": "cpp", ".cc": "cpp", ".cxx": "cpp", ".hpp": "cpp",
+    ".c": "c",
+    ".h": "c",
+    ".cpp": "cpp",
+    ".cc": "cpp",
+    ".cxx": "cpp",
+    ".hpp": "cpp",
     ".swift": "swift",
     ".sol": "solidity",
     ".vue": "vue",
     ".svelte": "svelte",
     ".scala": "scala",
-    ".ex": "elixir", ".exs": "elixir",
+    ".ex": "elixir",
+    ".exs": "elixir",
     ".hs": "haskell",
-    ".ml": "ocaml", ".mli": "ocaml",
-    ".clj": "clojure", ".cljs": "clojure",
+    ".ml": "ocaml",
+    ".mli": "ocaml",
+    ".clj": "clojure",
+    ".cljs": "clojure",
     ".dart": "dart",
-    ".r": "r", ".R": "r",
+    ".r": "r",
+    ".R": "r",
     ".lua": "lua",
-    ".sh": "shell", ".bash": "shell", ".zsh": "shell",
-    ".tf": "terraform", ".tfvars": "terraform",
-    ".graphql": "graphql", ".gql": "graphql",
+    ".sh": "shell",
+    ".bash": "shell",
+    ".zsh": "shell",
+    ".tf": "terraform",
+    ".tfvars": "terraform",
+    ".graphql": "graphql",
+    ".gql": "graphql",
     ".proto": "protobuf",
     ".sql": "sql",
     ".prisma": "prisma",
-    ".yaml": "yaml", ".yml": "yaml",
+    ".yaml": "yaml",
+    ".yml": "yaml",
     ".toml": "toml",
     ".json": "json",
-    ".md": "markdown", ".mdx": "markdown",
-    ".html": "html", ".htm": "html",
-    ".css": "css", ".scss": "css", ".sass": "css", ".less": "css",
+    ".md": "markdown",
+    ".mdx": "markdown",
+    ".html": "html",
+    ".htm": "html",
+    ".css": "css",
+    ".scss": "css",
+    ".sass": "css",
+    ".less": "css",
 }
+
+
+#: The literal ``.gitignore`` lines that would hide the in-repo memory store.
+#: Deliberately exact rather than a wildcard: a pattern like ``*codevira*`` is
+#: not matched here, but these four are the forms users (and codevira's own
+#: pre-4.0.2 init) actually write. ONE definition — ``init`` uses it to decide
+#: whether to write the entry, ``init --shared`` to remove it, and the
+#: opt-in scaffold to warn about it. Three copies of this set had drifted.
+CODEVIRA_DIR_IGNORE_FORMS: frozenset[str] = frozenset(
+    {".codevira", ".codevira/", "/.codevira", "/.codevira/"}
+)
+
+
+def _ignore_payload(raw_line: str) -> str:
+    """The comparable content of a ``.gitignore`` line (comment + space free)."""
+    return raw_line.split("#", 1)[0].strip()
+
+
+def blocks_codevira_dir(gitignore_text: str) -> bool:
+    """True if ``gitignore_text`` hides ``.codevira/`` (the memory store)."""
+    return any(
+        _ignore_payload(line) in CODEVIRA_DIR_IGNORE_FORMS
+        for line in gitignore_text.splitlines()
+    )
+
+
+def remove_codevira_dir_entry(gitignore_path: Path) -> bool:
+    """Drop any ``.codevira/`` ignore line from ``gitignore_path``.
+
+    Used by ``codevira init --shared``: team mode requires the memory store to
+    be git-TRACKABLE, so an ignore line written by an earlier default init (or
+    by hand) has to be repaired, not merely warned about — a warning still
+    leaves ``git add .codevira/`` silently adding nothing.
+
+    Leaves ``.codevira-cache/`` alone (rebuildable; always ignored) and drops
+    the now-orphaned codevira comment header. Returns True if anything changed.
+    """
+    if not gitignore_path.is_file():
+        return False
+    try:
+        original = gitignore_path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    if not blocks_codevira_dir(original):
+        return False
+
+    kept: list[str] = []
+    for line in original.splitlines():
+        if _ignore_payload(line) in CODEVIRA_DIR_IGNORE_FORMS:
+            # Drop the entry and the header comment codevira wrote above it.
+            if kept and kept[-1].strip().startswith("# Codevira"):
+                kept.pop()
+            continue
+        kept.append(line)
+
+    new_text = "\n".join(kept).rstrip("\n")
+    if new_text:
+        new_text += "\n"
+    gitignore_path.write_text(new_text, encoding="utf-8")
+    return True
 
 
 def load_gitignore_spec(project_root: Path) -> "pathspec.PathSpec | None":
@@ -197,7 +318,8 @@ def discover_source_files(
             allowed_extensions = set(config_overrides["file_extensions"])
         if "watched_dirs" in config_overrides:
             allowed_dirs = [
-                project_root / d for d in config_overrides["watched_dirs"]
+                project_root / d
+                for d in config_overrides["watched_dirs"]
                 if (project_root / d).exists()
             ]
 
@@ -208,15 +330,13 @@ def discover_source_files(
         root_path = Path(root)
 
         # Prune skipped directories in-place so os.walk doesn't descend
-        dirs[:] = [
-            d for d in dirs
-            if d not in skip_dirs_all
-        ]
+        dirs[:] = [d for d in dirs if d not in skip_dirs_all]
 
         # If watched_dirs override is set, skip dirs not under any allowed dir
         if allowed_dirs is not None:
             dirs[:] = [
-                d for d in dirs
+                d
+                for d in dirs
                 if any(
                     str(root_path / d).startswith(str(a)) or a == root_path / d
                     for a in allowed_dirs
@@ -241,10 +361,7 @@ def discover_source_files(
 
             # Apply watched_dirs filter
             if allowed_dirs is not None:
-                if not any(
-                    str(fpath).startswith(str(a))
-                    for a in allowed_dirs
-                ):
+                if not any(str(fpath).startswith(str(a)) for a in allowed_dirs):
                     continue
 
             # Apply file_extensions filter from config

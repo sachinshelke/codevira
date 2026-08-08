@@ -109,3 +109,94 @@ def test_doctor_committed_memory_silent_when_shared(committed_repo):
         "schema_version: 1\ngit_shared: true\n"
     )
     assert check_committed_memory().state == _PASS
+
+
+# ─── The .gitignore half of `--shared` (4.0.2) ─────────────────────────────
+#
+# The tests above call `cli_init.cmd_init(shared=True)` directly. The REAL CLI
+# runs the legacy `cli.cmd_init()` scaffold FIRST, and that is what owns the
+# `.codevira/` .gitignore entry — so a bug living there was invisible to every
+# test in this file. `init --shared` wrote `.codevira/` into .gitignore, printed
+# its own warning that this "defeats codevira's core promise", then reported
+# "✓ Team mode ... memory stays committed" and told the user to run
+# `git add .codevira/` — which silently adds nothing. Team sharing never worked.
+#
+# These go through the real `python -m mcp_server` entry point for that reason.
+
+
+def _run_cli(repo: Path, tmp_path: Path, *args: str) -> subprocess.CompletedProcess:
+    """Invoke the real CLI against `repo` with a hermetic global home."""
+    import os
+    import sys
+
+    env = {
+        **os.environ,
+        "CODEVIRA_HOME": str(tmp_path / "cli-global"),
+        "PYTHONPATH": str(Path(__file__).resolve().parents[1]),
+    }
+    return subprocess.run(
+        [sys.executable, "-m", "mcp_server", "--project-dir", str(repo), *args],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(repo),
+    )
+
+
+def _dir_is_ignored(repo: Path) -> bool:
+    """True if git would ignore the memory store (so `git add` no-ops)."""
+    return (
+        subprocess.run(
+            ["git", "-C", str(repo), "check-ignore", "-q", ".codevira/decisions.jsonl"],
+            capture_output=True,
+        ).returncode
+        == 0
+    )
+
+
+@pytest.fixture
+def bare_repo(tmp_path):
+    """An empty git repo with no codevira state yet."""
+    repo = tmp_path / "fresh"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.email", "t@t.co")
+    _git(repo, "config", "user.name", "t")
+    return repo
+
+
+def test_init_shared_leaves_memory_git_trackable(bare_repo, tmp_path):
+    """`init --shared` must NOT gitignore .codevira/ — the whole point is that
+    teammates receive the decision log. Fails before the 4.0.2 fix."""
+    r = _run_cli(bare_repo, tmp_path, "init", "-y", "--shared", "--no-inject")
+    assert r.returncode == 0, r.stderr
+    assert not _dir_is_ignored(bare_repo), (
+        "init --shared left .codevira/ ignored, so `git add .codevira/` adds "
+        "nothing and no teammate ever receives the memory.\n"
+        f".gitignore:\n{(bare_repo / '.gitignore').read_text()}"
+    )
+    # And the success banner must not claim team mode over a broken state.
+    assert "✗ Team mode requested" not in r.stdout, r.stdout
+
+
+def test_init_default_still_ignores_memory(bare_repo, tmp_path):
+    """The default (no --shared) must keep ignoring .codevira/ — that is the
+    anti-bleed behavior and the fix must not regress it."""
+    r = _run_cli(bare_repo, tmp_path, "init", "-y", "--no-inject")
+    assert r.returncode == 0, r.stderr
+    assert _dir_is_ignored(bare_repo), "default init should keep .codevira/ ignored"
+
+
+def test_init_shared_repairs_an_ignore_written_by_an_earlier_default_init(
+    bare_repo, tmp_path
+):
+    """Upgrade path: a repo that ran a plain `init` first, then `init --shared`.
+    The stale ignore line must be REMOVED, not merely warned about."""
+    _run_cli(bare_repo, tmp_path, "init", "-y", "--no-inject")
+    assert _dir_is_ignored(bare_repo), "precondition: default init ignores it"
+
+    r = _run_cli(bare_repo, tmp_path, "init", "-y", "--shared", "--no-inject")
+    assert r.returncode == 0, r.stderr
+    assert not _dir_is_ignored(bare_repo), "init --shared must repair the stale ignore"
+    # The rebuildable cache stays ignored — only the memory store is freed.
+    assert ".codevira-cache/" in (bare_repo / ".gitignore").read_text()

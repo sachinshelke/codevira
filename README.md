@@ -611,6 +611,24 @@ MemPalace and others).
 Contributions are genuinely welcome, and the backlog is open — see
 [CONTRIBUTING.md](https://github.com/sachinshelke/codevira/blob/main/CONTRIBUTING.md) for the dev setup and PR checklist.
 
+<details>
+<summary><strong>How the codebase is laid out</strong> — layers, the two persistence stacks, and where to add a tool / command / policy</summary>
+
+<br>
+
+Start here before your first PR. One caveat it makes loud: **82% of codevira's internal
+imports sit inside function bodies**, so a static import graph draws this codebase as
+disconnected leaves — the arrows below are runtime call edges. The diagram also marks the
+boundaries that *don't* hold, rather than pretending the layering is clean.
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/sachinshelke/codevira/main/website/assets/internals.svg"
+       alt="Codevira internals: process entry points, the 48 root modules grouped by role, tools/ and engine/ as siblings, two separate persistence stacks (storage/ for decisions, indexer/ for the code graph), the jsonl_store and atomic write choke points, and on-disk layout"
+       width="100%">
+</p>
+
+</details>
+
 **Good places to start:**
 
 - **Run it in an IDE you use and report what happened.** That's how the support matrix grows.

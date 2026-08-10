@@ -1,0 +1,275 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="1268" viewBox="0 0 900 1268"
+     preserveAspectRatio="xMidYMid meet" role="img"
+     aria-label="Codevira internal architecture: six bands from process entry down to disk, and the three boundaries that leak."
+     font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',Helvetica,Arial,sans-serif">
+  <title>Codevira internals — modules, layers, and which boundaries actually hold</title>
+  <desc>A contributor-facing map of the Python packages. Six bands: (A) process entry — server.py for MCP stdio, cli.py, the opt-in http_server.py, and three external hook entry points under engine/wiring; (B) the 48 flat files in mcp_server root, grouped by role rather than package — CLI subcommands, install and IDE registration, bootstrap and self-heal, and server-side features; (C) tools/ and engine/ drawn as siblings rather than a stack, because tools/ never imports engine/ while engine/ imports tools/ at three sites, and server.py calls pre_call and post_call around the dispatch; (D) two separate persistence stacks — decisions go through storage/ record stores into jsonl_store.py and atomic.py, while the code graph goes through indexer.sqlite_graph with no storage wrapper at all; (E) two on-disk directories with different lifecycles, .codevira/ canonical and team-shared including graph/graph.db, and .codevira-cache/ per-machine and rebuildable; (F) cross-cutting infra led by paths.py, which 44 distinct modules import. The organising fact is that 479 of 586 internal imports are function-local, so the real structure is a graph of runtime call edges, not module-scope import edges. Three boundary leaks are called out: engine to tools, indexer to and from mcp_server, and storage to indexer.</desc>
+
+  <defs>
+    <marker id="intBlue" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="7" refX="8.5" refY="3.5" orient="auto">
+      <path d="M0 0 L9 3.5 L0 7 z" fill="#4b8fd0"/>
+    </marker>
+    <marker id="intPurple" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="7" refX="8.5" refY="3.5" orient="auto">
+      <path d="M0 0 L9 3.5 L0 7 z" fill="#8a6fd0"/>
+    </marker>
+    <marker id="intRed" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="7" refX="8.5" refY="3.5" orient="auto">
+      <path d="M0 0 L9 3.5 L0 7 z" fill="#a83a26"/>
+    </marker>
+    <marker id="intSlate" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="7" refX="8.5" refY="3.5" orient="auto">
+      <path d="M0 0 L9 3.5 L0 7 z" fill="#7b8590"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="900" height="1268" fill="#fafbfc"/>
+  <rect x="0.5" y="0.5" width="899" height="1267" fill="none" stroke="#d0d7de" stroke-width="1"/>
+
+  <text x="20" y="28" font-size="15" font-weight="600" fill="#1f2328">Codevira internals — modules, layers, and which boundaries actually hold</text>
+
+  <!-- ============ HEADLINE BANNER ============ -->
+  <g>
+    <rect x="20" y="40" width="860" height="44" rx="8" fill="#fdf3e0" stroke="#c08a2e" stroke-width="1.5"/>
+    <text x="32" y="59" font-size="10.5" font-weight="600" fill="#8a6115">READ THIS FIRST</text>
+    <text x="126" y="59" font-size="10.5" fill="#39414a">479 of 586 internal imports (82%) sit inside function bodies; 69 of 127 modules have no module-scope internal import at all.</text>
+    <text x="32" y="74" font-size="10.5" fill="#39414a">A static import graph would draw this codebase as disconnected leaves. Every arrow below is a RUNTIME call edge, not an import edge.</text>
+  </g>
+
+  <!-- ============ BAND A : PROCESS ENTRY ============ -->
+  <g>
+    <rect x="20" y="92" width="860" height="96" rx="10" fill="#f0f3f6" stroke="#d0d7de" stroke-width="1"
+          stroke-dasharray="4 3" stroke-linecap="round"/>
+    <text x="30" y="108" font-size="11" font-weight="600" letter-spacing="0.06em" fill="#59636e">A · PROCESS ENTRY</text>
+    <text x="168" y="108" font-size="10.5" fill="#59636e">every process starts in exactly one of these four</text>
+
+    <rect x="30" y="118" width="200" height="60" rx="6" fill="#e3f0fb" stroke="#4b8fd0" stroke-width="1.5"/>
+    <text x="40" y="135" font-size="10.5" font-weight="600" fill="#1f2328" font-family="ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace">mcp_server/server.py</text>
+    <text x="40" y="150" font-size="10.5" fill="#39414a">MCP stdio server · ~2.4k loc</text>
+    <text x="40" y="164" font-size="10.5" fill="#39414a">call_tool() = the one funnel</text>
+
+    <rect x="240" y="118" width="190" height="60" rx="6" fill="#e3f0fb" stroke="#4b8fd0" stroke-width="1.5"/>
+    <text x="250" y="135" font-size="10.5" font-weight="600" fill="#1f2328" font-family="ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace">mcp_server/cli.py</text>
+    <text x="250" y="150" font-size="10.5" fill="#39414a">+ __main__.py · ~3.2k loc</text>
+    <text x="250" y="164" font-size="10.5" fill="#39414a">the whole CLI surface</text>
+
+    <rect x="440" y="118" width="170" height="60" rx="6" fill="#eef1f4" stroke="#8c96a0" stroke-width="1.5"/>
+    <text x="450" y="135" font-size="10.5" font-weight="600" fill="#1f2328" font-family="ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace">http_server.py</text>
+    <text x="450" y="150" font-size="10.5" fill="#39414a">opt-in · [http] extra</text>
+    <text x="450" y="164" font-size="10.5" fill="#39414a">~0.5k loc</text>
+
+    <rect x="620" y="118" width="250" height="60" rx="6" fill="#fdf3e0" stroke="#c08a2e" stroke-width="1.5"/>
+    <text x="630" y="135" font-size="10.5" font-weight="600" fill="#1f2328" font-family="ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace">engine/wiring/*_hooks.py</text>
+    <text x="630" y="150" font-size="10.5" fill="#39414a">claude_code (390) · antigravity (235)</text>
+    <text x="630" y="164" font-size="10.5" fill="#39414a">git_hooks (321) — pre-commit path</text>
+  </g>
+
+  <!-- ============ BAND B : ROOT FILES BY ROLE ============ -->
+  <g>
+    <rect x="20" y="196" width="860" height="106" rx="10" fill="#f0f3f6" stroke="#d0d7de" stroke-width="1"
+          stroke-dasharray="4 3" stroke-linecap="round"/>
+    <text x="30" y="212" font-size="11" font-weight="600" letter-spacing="0.06em" fill="#59636e">B · mcp_server/ ROOT</text>
+    <text x="185" y="212" font-size="10.5" fill="#59636e">48 flat .py files, ~21.5k loc — there are no subpackages here, so group them by role</text>
+
+    <rect x="30" y="222" width="202" height="52" rx="6" fill="#eef1f4" stroke="#8c96a0" stroke-width="1.2"/>
+    <text x="40" y="238" font-size="10.5" font-weight="600" fill="#1f2328">R2 · CLI subcommands</text>
+    <text x="40" y="252" font-size="10.5" fill="#39414a">15 × cli_*.py · 4.2k loc</text>
+    <text x="40" y="266" font-size="10.5" fill="#59636e">cli_init · cli_repair · cli_graph</text>
+
+    <rect x="242" y="222" width="202" height="52" rx="6" fill="#eef1f4" stroke="#8c96a0" stroke-width="1.2"/>
+    <text x="252" y="238" font-size="10.5" font-weight="600" fill="#1f2328">R3 · Install &amp; IDE setup</text>
+    <text x="252" y="252" font-size="10.5" fill="#39414a">5 files · ~3.3k loc</text>
+    <text x="252" y="266" font-size="10.5" fill="#59636e">ide_inject · setup_wizard</text>
+
+    <rect x="454" y="222" width="202" height="52" rx="6" fill="#eef1f4" stroke="#8c96a0" stroke-width="1.2"/>
+    <text x="464" y="238" font-size="10.5" font-weight="600" fill="#1f2328">R4 · Bootstrap · self-heal</text>
+    <text x="464" y="252" font-size="10.5" fill="#39414a">8 files · ~3.8k loc</text>
+    <text x="464" y="266" font-size="10.5" fill="#59636e">doctor · auto_init · opt_in</text>
+
+    <rect x="666" y="222" width="202" height="52" rx="6" fill="#eef1f4" stroke="#8c96a0" stroke-width="1.2"/>
+    <text x="676" y="238" font-size="10.5" font-weight="600" fill="#1f2328">R5 · Server-side features</text>
+    <text x="676" y="252" font-size="10.5" fill="#39414a">6 files · ~1.5k loc</text>
+    <text x="676" y="266" font-size="10.5" fill="#59636e">decision_replay · prompts</text>
+
+    <text x="30" y="290" font-size="10.5" fill="#59636e">R1 entry/transports (4 files, ~6.2k) is band A · R6 cross-cutting infra (10 files, ~2.6k) is band F — the six roles partition all 48 exactly, no orphans.</text>
+  </g>
+
+  <!-- ============ BAND C : SURFACE || ENGINE ============ -->
+  <g>
+    <rect x="20" y="310" width="860" height="212" rx="10" fill="#f0f3f6" stroke="#d0d7de" stroke-width="1"
+          stroke-dasharray="4 3" stroke-linecap="round"/>
+    <text x="30" y="326" font-size="11" font-weight="600" letter-spacing="0.06em" fill="#59636e">C · REQUEST SURFACE  ‖  ENFORCEMENT ENGINE</text>
+    <text x="333" y="326" font-size="10.5" fill="#59636e">siblings, not stacked</text>
+    <text x="30" y="341" font-size="10.5" fill="#59636e">Sibling placement is inferred from server.py calling pre_call / post_call AROUND the dispatch — the import graph alone does not settle it.</text>
+
+    <rect x="30" y="350" width="245" height="110" rx="6" fill="#e3f0fb" stroke="#4b8fd0" stroke-width="1.5"/>
+    <text x="40" y="367" font-size="10.5" font-weight="600" fill="#1f2328" font-family="ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace">mcp_server/tools/</text>
+    <text x="40" y="382" font-size="10.5" fill="#39414a">10 files · ~4.4k loc</text>
+    <text x="40" y="396" font-size="10.5" fill="#39414a">the MCP request surface</text>
+    <text x="40" y="410" font-size="10.5" fill="#59636e">graph · search · learning · skills</text>
+    <text x="40" y="424" font-size="10.5" fill="#59636e">roadmap · working · playbook · provenance</text>
+    <text x="40" y="444" font-size="10.5" fill="#39414a">never imports engine/ — 0 hits</text>
+
+    <rect x="350" y="350" width="245" height="110" rx="6" fill="#fdf3e0" stroke="#c08a2e" stroke-width="1.5"/>
+    <text x="360" y="367" font-size="10.5" font-weight="600" fill="#1f2328" font-family="ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace">mcp_server/engine/</text>
+    <text x="360" y="382" font-size="10.5" fill="#39414a">9 files · ~2.0k loc</text>
+    <text x="360" y="396" font-size="10.5" fill="#59636e">signals · runner · policy · events</text>
+    <text x="360" y="416" font-size="10.5" font-weight="600" fill="#1f2328" font-family="ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace">engine/wiring/mcp_dispatch.py</text>
+    <text x="360" y="430" font-size="10.5" fill="#39414a">+ _diff_envelope.py — the</text>
+    <text x="360" y="444" font-size="10.5" fill="#39414a">adapters server.py calls</text>
+
+    <rect x="615" y="350" width="255" height="110" rx="6" fill="#fdf3e0" stroke="#c08a2e" stroke-width="1.5"/>
+    <text x="625" y="367" font-size="10.5" font-weight="600" fill="#1f2328" font-family="ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace">engine/policies/</text>
+    <text x="625" y="382" font-size="10.5" fill="#39414a">10 files · ~2.9k loc</text>
+    <text x="625" y="396" font-size="10.5" fill="#39414a">7 registered by default, from one</text>
+    <text x="625" y="410" font-size="10.5" fill="#39414a">tuple in engine/__init__.py:</text>
+    <text x="625" y="424" font-size="10.5" fill="#59636e">BlastRadiusVeto · DecisionLock ·</text>
+    <text x="625" y="438" font-size="10.5" fill="#59636e">AntiRegression · RelevanceInject ·</text>
+    <text x="625" y="452" font-size="10.5" fill="#59636e">TokenBudgetPersist · +2 more</text>
+
+    <path d="M346 402 L281 402" fill="none" stroke="#a83a26" stroke-width="1.8" marker-end="url(#intRed)"/>
+    <rect x="300" y="384" width="26" height="14" rx="3" fill="#f0f3f6"/>
+    <text x="305" y="394" font-size="10.5" font-weight="600" fill="#a83a26">L1</text>
+
+    <rect x="30" y="466" width="840" height="48" rx="6" fill="#fafbfc" stroke="#8c96a0" stroke-width="1"/>
+    <text x="40" y="481" font-size="10.5" font-weight="600" fill="#1f2328">server.py call_tool() — one funnel for all 37 tools, fixed order:</text>
+    <text x="40" y="495" font-size="10.5" fill="#39414a">bind client roots → opt-in gate → auto_init → register_default_policies() → pre_call → 38-arm if/elif → post_call → one json.dumps</text>
+    <text x="40" y="508" font-size="10.5" fill="#59636e">Every pre-dispatch step is wrapped in `except Exception: pass` — the engine can never block dispatch by failing.</text>
+  </g>
+
+  <!-- ============ BAND D : TWO PERSISTENCE STACKS ============ -->
+  <g>
+    <rect x="20" y="528" width="860" height="206" rx="10" fill="#f0f3f6" stroke="#d0d7de" stroke-width="1"
+          stroke-dasharray="4 3" stroke-linecap="round"/>
+    <text x="30" y="544" font-size="11" font-weight="600" letter-spacing="0.06em" fill="#59636e">D · TWO PERSISTENCE STACKS</text>
+    <text x="222" y="544" font-size="10.5" fill="#59636e">a single &#8220;storage&#8221; box would be the tidy lie</text>
+    <text x="30" y="559" font-size="10.5" fill="#59636e">The decisions half is layered. The code-graph half has no storage wrapper at all — tools/ imports SQLiteGraph from indexer/ directly.</text>
+
+    <rect x="30" y="568" width="410" height="52" rx="6" fill="#e3f0fb" stroke="#4b8fd0" stroke-width="1.5"/>
+    <text x="40" y="584" font-size="10.5" font-weight="600" fill="#1f2328" font-family="ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace">mcp_server/storage/ — 24 files · ~8.0k loc</text>
+    <text x="40" y="598" font-size="10.5" fill="#39414a">5 record stores (*_store.py): decisions · sessions · skills · working · activity</text>
+    <text x="40" y="612" font-size="10.5" fill="#59636e">+ outcomes_writer.py — a 6th JSONL writer that skips the naming convention</text>
+
+    <path d="M150 622 L150 636" fill="none" stroke="#4b8fd0" stroke-width="1.8" marker-end="url(#intBlue)"/>
+
+    <rect x="30" y="640" width="410" height="34" rx="6" fill="#e3f0fb" stroke="#4b8fd0" stroke-width="1.5"/>
+    <text x="40" y="656" font-size="10.5" font-weight="600" fill="#1f2328">★ jsonl_store.py — 817 loc — append choke point</text>
+    <text x="40" y="669" font-size="10.5" fill="#59636e">its only internal import is storage/atomic.py</text>
+
+    <path d="M150 676 L150 690" fill="none" stroke="#4b8fd0" stroke-width="1.8" marker-end="url(#intBlue)"/>
+
+    <rect x="30" y="694" width="410" height="34" rx="6" fill="#e3f0fb" stroke="#4b8fd0" stroke-width="1.5"/>
+    <text x="40" y="710" font-size="10.5" font-weight="600" fill="#1f2328">★ atomic.py — 268 loc — file-write choke point</text>
+    <text x="40" y="723" font-size="10.5" fill="#59636e">19 files bypass jsonl_store and call it directly — see note 2</text>
+
+    <rect x="460" y="568" width="410" height="52" rx="6" fill="#efe9fb" stroke="#8a6fd0" stroke-width="1.5"/>
+    <text x="470" y="584" font-size="10.5" font-weight="600" fill="#1f2328" font-family="ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace">indexer/ — 12 files · ~6.1k loc</text>
+    <text x="470" y="598" font-size="10.5" fill="#39414a">sqlite_graph · index_codebase · chunker · graph_generator</text>
+    <text x="470" y="612" font-size="10.5" fill="#59636e">fix_history · global_db · outcome_classifier</text>
+
+    <path d="M660 622 L660 636" fill="none" stroke="#8a6fd0" stroke-width="1.8" marker-end="url(#intPurple)"/>
+
+    <rect x="460" y="640" width="410" height="34" rx="6" fill="#fbeae6" stroke="#a83a26" stroke-width="1.5"
+          stroke-dasharray="5 3" stroke-linecap="round"/>
+    <text x="470" y="656" font-size="10.5" font-weight="600" fill="#a83a26">NO storage-layer wrapper on this side</text>
+    <text x="470" y="669" font-size="10.5" fill="#39414a">tools/{graph, search, learning} import SQLiteGraph at module scope</text>
+
+    <path d="M660 676 L660 690" fill="none" stroke="#8a6fd0" stroke-width="1.8" marker-end="url(#intPurple)"/>
+
+    <rect x="460" y="694" width="410" height="34" rx="6" fill="#efe9fb" stroke="#8a6fd0" stroke-width="1.5"/>
+    <text x="470" y="710" font-size="10.5" font-weight="600" fill="#1f2328">indexer.sqlite_graph.SQLiteGraph</text>
+    <text x="470" y="723" font-size="10.5" fill="#59636e">engine/signals.py reads BOTH stacks directly</text>
+  </g>
+
+  <!-- ============ BAND D -> BAND E connectors ============ -->
+  <path d="M150 738 L150 776" fill="none" stroke="#7b8590" stroke-width="1.5" marker-end="url(#intSlate)"/>
+  <path d="M300 738 L300 748 L620 748 L620 776" fill="none" stroke="#7b8590" stroke-width="1.5" marker-end="url(#intSlate)"/>
+  <path d="M660 738 L660 762 L380 762 L380 776" fill="none" stroke="#8a6fd0" stroke-width="1.5" marker-end="url(#intPurple)"/>
+
+  <!-- ============ BAND E : ON DISK ============ -->
+  <g>
+    <rect x="20" y="780" width="860" height="96" rx="10" fill="#f0f3f6" stroke="#d0d7de" stroke-width="1"
+          stroke-dasharray="4 3" stroke-linecap="round"/>
+    <text x="30" y="796" font-size="11" font-weight="600" letter-spacing="0.06em" fill="#59636e">E · ON DISK</text>
+    <text x="112" y="796" font-size="10.5" fill="#59636e">two directories, different lifecycles — .codevira/ is meant to be committed; this repo gitignores its own (dogfood)</text>
+
+    <rect x="30" y="806" width="410" height="60" rx="6" fill="#e3f0fb" stroke="#4b8fd0" stroke-width="1.5"/>
+    <text x="40" y="823" font-size="10.5" font-weight="600" fill="#1f2328" font-family="ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace">.codevira/</text>
+    <text x="112" y="823" font-size="10.5" fill="#39414a">canonical · team-shared</text>
+    <text x="40" y="838" font-size="10.5" fill="#39414a">decisions.jsonl · sessions.jsonl · skills.jsonl · digest.jsonl</text>
+    <text x="40" y="852" font-size="10.5" fill="#39414a">outcomes.jsonl · manifest.yaml · roadmap.yaml ·</text>
+    <text x="290" y="852" font-size="10.5" font-weight="600" fill="#1f2328">graph/graph.db</text>
+
+    <rect x="460" y="806" width="410" height="60" rx="6" fill="#eef1f4" stroke="#8c96a0" stroke-width="1.5"/>
+    <text x="470" y="823" font-size="10.5" font-weight="600" fill="#1f2328" font-family="ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace">.codevira-cache/</text>
+    <text x="582" y="823" font-size="10.5" fill="#39414a">per-machine · rebuildable · gitignored</text>
+    <text x="470" y="838" font-size="10.5" fill="#39414a">working.jsonl · activity.jsonl · fts5.sqlite</text>
+    <text x="470" y="852" font-size="10.5" fill="#39414a">enforcement.jsonl · enforcer_outcomes.jsonl · prompts.jsonl</text>
+  </g>
+
+  <!-- ============ BAND F : CROSS-CUTTING INFRA ============ -->
+  <g>
+    <rect x="20" y="884" width="860" height="80" rx="10" fill="#f0f3f6" stroke="#d0d7de" stroke-width="1"
+          stroke-dasharray="4 3" stroke-linecap="round"/>
+    <text x="30" y="900" font-size="11" font-weight="600" letter-spacing="0.06em" fill="#59636e">F · CROSS-CUTTING INFRA</text>
+    <text x="203" y="900" font-size="10.5" fill="#59636e">reached from every band above — drawn last because it belongs to none of them</text>
+
+    <rect x="30" y="910" width="410" height="46" rx="6" fill="#eef1f4" stroke="#8c96a0" stroke-width="1.5"/>
+    <text x="40" y="926" font-size="10.5" font-weight="600" fill="#1f2328">★ mcp_server/paths.py — 794 loc — the hub</text>
+    <text x="40" y="940" font-size="10.5" fill="#39414a">44 distinct modules import it, 5 of them in indexer/.</text>
+    <text x="40" y="952" font-size="10.5" fill="#59636e">storage/paths.py is a second, thinner module that delegates here.</text>
+
+    <rect x="460" y="910" width="410" height="46" rx="6" fill="#eef1f4" stroke="#8c96a0" stroke-width="1.5"/>
+    <text x="470" y="926" font-size="10.5" font-weight="600" fill="#1f2328">9 more root infra files · ~1.8k loc</text>
+    <text x="470" y="940" font-size="10.5" fill="#39414a">crash_logger · gitignore · egress · tenant · log_retention</text>
+    <text x="470" y="952" font-size="10.5" fill="#59636e">plus mcp_server/retrieval/ — 2 files · 171 loc</text>
+  </g>
+
+  <!-- ============ THE LEAKS ============ -->
+  <g>
+    <rect x="20" y="972" width="860" height="118" rx="10" fill="#fbeae6" stroke="#a83a26" stroke-width="1.5"/>
+    <text x="30" y="989" font-size="11" font-weight="600" letter-spacing="0.06em" fill="#a83a26">THE BOUNDARIES THAT LEAK</text>
+    <text x="220" y="989" font-size="10.5" fill="#59636e">a clean layer stack would be a lie — these three edges are the ones to know before you refactor</text>
+
+    <text x="32" y="1008" font-size="10.5" font-weight="600" fill="#a83a26">L1</text>
+    <text x="50" y="1008" font-size="10.5" fill="#39414a">engine/ → tools/ · 3 sites (signals.py ×2, policies/post_edit_refresh.py) — the only edge that inverts the sibling relation.</text>
+    <text x="50" y="1021" font-size="10.5" fill="#39414a">signals.impact() swallows all exceptions → {} → BlastRadiusVeto returns allow. A shape change in tools.graph.get_impact silently DISABLES the veto.</text>
+
+    <text x="32" y="1040" font-size="10.5" font-weight="600" fill="#a83a26">L2</text>
+    <text x="50" y="1040" font-size="10.5" fill="#39414a">indexer/ ↔ mcp_server/ · both directions — 29 statements down across 17 files, 24 up across 6 files.</text>
+    <text x="50" y="1053" font-size="10.5" fill="#39414a">16 of the 24 upward sit in index_codebase.py. indexer/ is not a lower layer you can read in isolation.</text>
+
+    <text x="32" y="1072" font-size="10.5" font-weight="600" fill="#a83a26">L3</text>
+    <text x="50" y="1072" font-size="10.5" fill="#39414a">storage/ → indexer/ · 1 site (outcomes_writer.py imports indexer.outcome_classifier).</text>
+    <text x="50" y="1085" font-size="10.5" fill="#39414a">storage/ never imports tools/ or engine/ (0 hits), so it is close to a sealed bottom layer — but it is not sealed.</text>
+  </g>
+
+  <!-- ============ LEGEND ============ -->
+  <g>
+    <rect x="20" y="1098" width="860" height="32" rx="10" fill="#f0f3f6" stroke="#d0d7de" stroke-width="1"
+          stroke-dasharray="4 3" stroke-linecap="round"/>
+    <g stroke-linecap="round" fill="none">
+      <path d="M30 1114 L60 1114" stroke="#4b8fd0" stroke-width="2"/>
+      <path d="M236 1114 L266 1114" stroke="#8a6fd0" stroke-width="2"/>
+      <path d="M448 1114 L478 1114" stroke="#a83a26" stroke-width="2"/>
+      <path d="M612 1114 L642 1114" stroke="#7b8590" stroke-width="1.5"/>
+    </g>
+    <g font-size="10.5" fill="#39414a">
+      <text x="66" y="1118">runtime call edge (decisions)</text>
+      <text x="272" y="1118">runtime call edge (code graph)</text>
+      <text x="484" y="1118">boundary leak (L1–L3)</text>
+      <text x="648" y="1118">file read / write</text>
+      <text x="756" y="1118">★ = choke point</text>
+    </g>
+  </g>
+
+  <!-- ============ FOOTNOTE RAIL ============ -->
+  <g font-size="10.5" fill="#59636e">
+    <text x="30" y="1146">1 · Arrows are runtime call edges. Because 82% of internal imports are function-local, a module-scope import graph would show almost none of this structure.</text>
+    <text x="30" y="1159">2 · Two choke points, not one: jsonl_store.py is the append-only-record choke point, atomic.py the universal file-write one. 19 files bypass jsonl_store and</text>
+    <text x="30" y="1172">call atomic_write_text() directly — including tools/roadmap.py and tools/skills.py (a two-layer skip) and indexer/graph_generator.py (outside mcp_server).</text>
+    <text x="30" y="1185">3 · mcp_server/__init__.py imports cli at module scope, so reading __version__ pulls in cli.py + indexer — 4 internal modules, 0.04 s. That is a cost, not a</text>
+    <text x="30" y="1198">cycle: a Tarjan run over the module-scope graph finds no multi-module SCC larger than 2. A _version.py leaf would remove it.</text>
+    <text x="30" y="1211">4 · Registry: 37 Tool() literals against 38 dispatch arms. The extra arm is the search_codebase tombstone, removed in v2.2. 36 tools are advertised by</text>
+    <text x="30" y="1224">default — refresh_graph is hidden via _ADMIN_TOOLS.</text>
+    <text x="30" y="1243">Measured from source at HEAD 9e53a4e over 127 .py files / ~47k loc. LOC are rounded on purpose — they move every commit. File counts, the import ratio</text>
+    <text x="30" y="1256">and the boundary facts are the stable part; re-run the greps in note 2 and panel L1–L3 if you want to falsify anything here.</text>
+  </g>
+</svg>

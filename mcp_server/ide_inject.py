@@ -70,7 +70,7 @@ def detect_installed_ides(project_root: Path) -> list[str]:
     # parent dir), and parse as valid JSON. A stale install can leave
     # the directory but the file alone proves the app was set up.
     desktop_cfg = _claude_desktop_config_path()
-    if desktop_cfg.is_file() and _is_valid_json(desktop_cfg):
+    if _config_file_proves_install(desktop_cfg):
         found.append("claude_desktop")
 
     # Cursor: directory + (binary OR mcp.json config file). The
@@ -87,7 +87,7 @@ def detect_installed_ides(project_root: Path) -> list[str]:
     # ~/.gemini/config/ dir and/or the per-app ~/.gemini/antigravity/ dir
     # (not the bare ~/.gemini/, which any Gemini-CLI install creates).
     # Detect either specific config file.
-    if any(p.is_file() and _is_valid_json(p) for p in _antigravity_config_candidates()):
+    if any(_config_file_proves_install(p) for p in _antigravity_config_candidates()):
         found.append("antigravity")
 
     # ---- Tier 2 (nudge-file integration only) ----
@@ -125,6 +125,10 @@ def _is_valid_json(path: Path) -> bool:
     Best-effort: any read error or parse error returns False (we
     treat "we can't tell" as "not installed" rather than risk
     writing config for an absent IDE).
+
+    NOTE: an EMPTY file is not valid JSON, so this returns False for one.
+    Detection must not gate on this predicate alone — see
+    :func:`_config_file_proves_install`.
     """
     try:
         import json
@@ -133,6 +137,42 @@ def _is_valid_json(path: Path) -> bool:
         return True
     except Exception:  # noqa: BLE001
         return False
+
+
+def _config_file_proves_install(path: Path) -> bool:
+    """True if a config FILE at ``path`` proves its IDE is installed.
+
+    Detection asks "did this app set itself up here?", and an app that created
+    its own config file has already answered yes — **even while that file is
+    still empty**. Antigravity ships a 0-byte
+    ``~/.gemini/config/mcp_config.json`` until the first server is added, and
+    gating detection on parseable JSON made an installed IDE invisible: plain
+    ``codevira setup`` listed Claude Code / Claude Desktop / Codex and skipped
+    Antigravity with no warning, so the only way in was the non-obvious
+    ``setup --ide antigravity --force`` (4.0.1).
+
+    A file whose contents are non-empty but UNPARSEABLE stays undetected: that
+    is indistinguishable from some unrelated file sitting at the same path, and
+    the deliberate v3.0.0 contract is to refuse rather than write config for an
+    app that may be absent. That case is logged instead of passing silently.
+    """
+    if not path.is_file():
+        return False
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        logger.warning("Could not read IDE config %s: %s", path, exc)
+        return False
+    if not text.strip():
+        return True  # created-but-empty: the app is here, it just has no servers yet
+    if _is_valid_json(path):
+        return True
+    logger.warning(
+        "IDE config %s exists but is not valid JSON — not treating that IDE as "
+        "installed. Repair the file, or force setup with `--ide <name> --force`.",
+        path,
+    )
+    return False
 
 
 def _gh_copilot_extension_present() -> bool:

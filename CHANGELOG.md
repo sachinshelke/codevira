@@ -16,6 +16,28 @@ deprecated `codevira clean` command (a footgun — see below), and lands two
 `doctor` / project-inventory fixes. Existing memory, decision data and MCP
 bindings are unchanged.
 
+### Fixed — an installed IDE with an empty config file was invisible to `setup`
+
+`codevira setup` detected an IDE only if its config file **parsed as JSON** — and an
+empty file does not. Antigravity ships a 0-byte
+`~/.gemini/config/mcp_config.json` until the first server is added, so on a real
+machine plain `codevira setup` reported *"Detected: Claude Code, Claude Desktop,
+OpenAI Codex"* and **silently skipped an installed Antigravity**. Nothing said why;
+the only way in was the non-obvious `setup --ide antigravity --force`.
+
+An app that created its own config file has already proven it is installed, even
+while that file is empty. Detection now treats a present-but-empty config as
+*installed, not yet configured*. Claude Desktop shared the same predicate and is
+fixed with it.
+
+The deliberate v3.0.0 refusal for a config whose contents are **non-empty but
+unparseable** is unchanged — that is indistinguishable from an unrelated file at
+the same path — but it no longer passes silently: it now logs what it found, the
+path, and the `--force` escape hatch. *(Tests:
+`test_antigravity_detected_via_EMPTY_config`,
+`test_claude_desktop_detected_via_EMPTY_config`,
+`test_empty_is_detected_but_corrupt_is_still_refused`.)*
+
 ### Fixed — `codevira init --shared` gitignored the memory it promised to share
 
 `--shared` is the team path: it should keep `<repo>/.codevira/` git-**tracked** so

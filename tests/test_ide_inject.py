@@ -832,6 +832,66 @@ class TestDetectInstalledIdes:
         )
         assert "claude_desktop" not in detect_installed_ides(tmp_path)
 
+    # ── 4.0.1: an EMPTY config file means installed-but-unconfigured ──────
+    #
+    # Antigravity ships a 0-byte ~/.gemini/config/mcp_config.json until the
+    # first server is added. Gating detection on parseable JSON made a real,
+    # installed IDE invisible: plain `codevira setup` listed Claude Code /
+    # Claude Desktop / Codex and skipped Antigravity with NO warning, so the
+    # only way in was the non-obvious `setup --ide antigravity --force`.
+    # An app that created its own config file has proven it is here.
+
+    def test_antigravity_detected_via_EMPTY_config(self, tmp_path, monkeypatch):
+        """The reported bug: 0-byte mcp_config.json == installed."""
+        fakehome = tmp_path / "fakehome"
+        fakehome.mkdir()
+        cfg = fakehome / ".gemini" / "config" / "mcp_config.json"
+        cfg.parent.mkdir(parents=True)
+        cfg.write_text("")  # exactly what Antigravity leaves on disk
+        monkeypatch.setattr(Path, "home", lambda: fakehome)
+        monkeypatch.setattr("shutil.which", lambda name: None)
+        monkeypatch.setattr(
+            ide_inject,
+            "_claude_desktop_config_path",
+            lambda: fakehome / "nonexistent" / "config.json",
+        )
+        assert "antigravity" in detect_installed_ides(tmp_path)
+
+    def test_claude_desktop_detected_via_EMPTY_config(self, tmp_path, monkeypatch):
+        """Same rule for Claude Desktop — it shared the predicate."""
+        fakehome = tmp_path / "fakehome"
+        fakehome.mkdir()
+        desktop_config = (
+            fakehome / "Library" / "Application Support" / "Claude" / "config.json"
+        )
+        desktop_config.parent.mkdir(parents=True)
+        desktop_config.write_text("   \n")  # whitespace-only counts as empty
+        monkeypatch.setattr(Path, "home", lambda: fakehome)
+        monkeypatch.setattr("shutil.which", lambda name: None)
+        monkeypatch.setattr(
+            ide_inject, "_claude_desktop_config_path", lambda: desktop_config
+        )
+        assert "claude_desktop" in detect_installed_ides(tmp_path)
+
+    def test_empty_is_detected_but_corrupt_is_still_refused(self, tmp_path):
+        """The boundary, pinned: empty proves install, garbage does not.
+
+        The v3.0.0 refusal for non-empty unparseable content is deliberate —
+        that is indistinguishable from an unrelated file at the same path — and
+        the 4.0.1 change must not widen it."""
+        empty = tmp_path / "empty.json"
+        empty.write_text("")
+        corrupt = tmp_path / "corrupt.json"
+        corrupt.write_text("this is not json")
+        real = tmp_path / "real.json"
+        real.write_text('{"mcpServers": {}}')
+        missing = tmp_path / "missing.json"
+
+        assert ide_inject._config_file_proves_install(empty) is True
+        assert ide_inject._config_file_proves_install(real) is True
+        assert ide_inject._config_file_proves_install(corrupt) is False
+        assert ide_inject._config_file_proves_install(missing) is False
+
     def test_none_found_returns_empty(self, tmp_path, monkeypatch):
         fakehome = tmp_path / "fakehome"
         fakehome.mkdir()

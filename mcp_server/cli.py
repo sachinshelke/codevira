@@ -1712,15 +1712,16 @@ def main() -> None:
     # who got a ghost dir from a stale Claude Code session could never recover
     # via codevira commands — only via `codevira uninstall` (which wipes
     # everything). Now every codevira invocation (except commands that have
-    # their own bootstrap logic like `init`, `setup`, `clean`, `engine`) runs
+    # their own bootstrap logic like `init`, `setup`, `engine`) runs
     # the cheap synchronous repair first.
+    #
+    # Only live subcommands belong here: a name that argparse can no longer
+    # produce is an inert set member that reads like policy. `clean` (removed
+    # 4.0.1) and `register` / `configure` (removed v2.0) were exactly that.
     _NO_HEAL_COMMANDS = {
         "init",
         "setup",
-        "clean",
         "engine",
-        "register",
-        "configure",
         "uninstall",  # don't bootstrap state on our way to wiping it
     }
     if args.command and args.command not in _NO_HEAL_COMMANDS:

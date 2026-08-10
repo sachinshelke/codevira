@@ -13,9 +13,22 @@ import types
 
 # ---------------------------------------------------------------------------
 # Install a fake treesitter_parser module before importing graph_generator.
-# graph_generator also imports from indexer.chunker which itself imports
+# graph_generator also imports from indexer.imports, which itself imports
 # treesitter_parser, so the fake must be in place before either is loaded.
+#
+# Prefer the REAL module when it can be loaded. ``setdefault`` alone was not
+# enough: it only no-ops if something already put the real module in
+# sys.modules, and until 4.0.1 that was a side effect of tests/test_chunker.py
+# sorting ahead of this file. Renaming it to tests/test_imports.py flipped the
+# collection order, this file's stub won, and test_treesitter_parser.py then
+# failed to import ``get_symbol_source`` from a stub that never had it. Load
+# the real module explicitly instead of depending on filename ordering.
 # ---------------------------------------------------------------------------
+try:
+    import indexer.treesitter_parser  # noqa: F401 — populates sys.modules
+except Exception:
+    pass
+
 _fake_ts = types.ModuleType("indexer.treesitter_parser")
 _fake_ts.parse_file = lambda *a, **kw: None  # type: ignore[attr-defined]
 _fake_ts.get_language = lambda ext: None  # type: ignore[attr-defined]

@@ -3,13 +3,22 @@ Tests for indexer/index_codebase.py
 
 Covers:
   - _load_config(): reads config.yaml, returns project sub-dict, handles missing
-  - _check_search_deps(): True/False based on chromadb availability
+  - _check_search_deps(): constant False; must stay cheap (server.py calls it
+    on every tools/list)
   - _compute_hash(): SHA256 of file contents, deterministic
   - _get_changed_files(): compares file hashes against stored
   - _get_requested_files(): validates paths, computes hashes
-  - _chunk_to_document(): formats chunk into (doc_id, document, metadata)
   - get_indexing_status(): returns current background status dict
   - start_background_full_index(): starts daemon thread
+
+4.0.1 removed the tests for the ChromaDB / semantic-index path — TestChunkToDocument,
+TestGetChromaClientAndEmbedFn, TestGetEmbeddingFnExit, TestChromaCorruptionSignatureP6,
+TestChromaSelfHealP2, the cmd_incremental circuit-breaker test, and the chunk-indexing
+halves of TestCmdFullRebuild / TestCmdIncremental / TestCmdIncrementalLoop. Every one
+reached its subject only through `_check_search_deps()`, which has returned a hardcoded
+False since v2.2.0; the code they covered (_chunk_to_document, _get_chroma_client,
+_get_embedding_fn, _check_chroma_health, ChromaCorrupted, _looks_like_chroma_corruption)
+was unreachable and has been deleted. The graph-building assertions are all kept.
 """
 
 from __future__ import annotations
@@ -19,7 +28,6 @@ import hashlib
 import os
 import threading
 import time
-from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
@@ -32,7 +40,6 @@ from indexer.index_codebase import (
     _compute_hash,
     _get_changed_files,
     _get_requested_files,
-    _chunk_to_document,
     get_indexing_status,
     start_background_full_index,
 )
@@ -90,20 +97,6 @@ def _reset_bg_globals():
         idx_mod._bg_total_files = 0
 
 
-@dataclass
-class FakeChunk:
-    """Minimal stand-in for CodeChunk used in _chunk_to_document tests."""
-
-    file_path: str
-    chunk_type: str
-    name: str
-    source_text: str
-    start_line: int
-    end_line: int
-    docstring: str
-    layer: str
-
-
 # ---------------------------------------------------------------------------
 # _load_config
 # ---------------------------------------------------------------------------
@@ -143,27 +136,22 @@ class TestLoadConfig:
 
 
 class TestCheckSearchDeps:
-    """Return True/False based on chromadb availability."""
+    """Constant False since v2.2.0 (chromadb / sentence-transformers / torch
+    were deleted along with semantic code search).
 
-    @pytest.mark.skip(
-        reason="v2.2.0: tests deprecated feature (search_codebase / _check_search_deps / graph.db backend)"
-    )
-    def test_returns_true_when_available(self):
-        """When both chromadb and sentence_transformers can be imported."""
-        mock_chromadb = MagicMock()
-        mock_st = MagicMock()
-        with patch.dict(
-            "sys.modules",
-            {
-                "chromadb": mock_chromadb,
-                "sentence_transformers": mock_st,
-            },
-        ):
-            assert _check_search_deps() is True
+    The paired ``test_returns_true_when_available`` was dropped in 4.0.1: it
+    had been ``@pytest.mark.skip``-ed since v2.2.0 and asserted a return value
+    the function can no longer produce.
+    """
 
     def test_returns_false_when_missing(self):
         """When chromadb import raises ImportError."""
         with patch.dict("sys.modules", {"chromadb": None}):
+            assert _check_search_deps() is False
+
+    def test_returns_false_even_when_chromadb_importable(self):
+        """Constant False — availability of the module is irrelevant now."""
+        with patch.dict("sys.modules", {"chromadb": MagicMock()}):
             assert _check_search_deps() is False
 
 
@@ -410,75 +398,6 @@ class TestGetRequestedFiles:
 
 
 # ---------------------------------------------------------------------------
-# _chunk_to_document
-# ---------------------------------------------------------------------------
-
-
-class TestChunkToDocument:
-    """Format a CodeChunk into (doc_id, document, metadata)."""
-
-    def test_basic_formatting(self):
-        chunk = FakeChunk(
-            file_path="src/main.py",
-            chunk_type="function",
-            name="process",
-            source_text="def process(): pass",
-            start_line=10,
-            end_line=11,
-            docstring="Process data.",
-            layer="service",
-        )
-        doc_id, document, metadata = _chunk_to_document(chunk)
-
-        assert doc_id == "src/main.py::function::process::10"
-        assert "src/main.py" in document
-        assert "process" in document
-        assert "Process data." in document
-        assert "def process(): pass" in document
-        assert metadata["file_path"] == "src/main.py"
-        assert metadata["name"] == "process"
-        assert metadata["chunk_type"] == "function"
-        assert metadata["start_line"] == 10
-        assert metadata["end_line"] == 11
-        assert metadata["layer"] == "service"
-
-    def test_class_chunk(self):
-        chunk = FakeChunk(
-            file_path="src/models.py",
-            chunk_type="class",
-            name="User",
-            source_text="class User: ...",
-            start_line=1,
-            end_line=20,
-            docstring="User model.",
-            layer="data",
-        )
-        doc_id, document, metadata = _chunk_to_document(chunk)
-
-        assert doc_id == "src/models.py::class::User::1"
-        assert metadata["chunk_type"] == "class"
-        assert metadata["layer"] == "data"
-
-    def test_empty_docstring(self):
-        chunk = FakeChunk(
-            file_path="src/util.py",
-            chunk_type="function",
-            name="helper",
-            source_text="def helper(): ...",
-            start_line=5,
-            end_line=6,
-            docstring="",
-            layer="util",
-        )
-        doc_id, document, metadata = _chunk_to_document(chunk)
-
-        assert doc_id == "src/util.py::function::helper::5"
-        # Document still contains the name and source even without docstring
-        assert "helper" in document
-        assert "def helper(): ..." in document
-
-
-# ---------------------------------------------------------------------------
 # get_indexing_status
 # ---------------------------------------------------------------------------
 
@@ -622,13 +541,16 @@ class TestStartBackgroundFullIndex:
 
 
 class TestCmdFullRebuild:
-    def test_no_search_deps_builds_graph_only(self, project_env):
-        """When chromadb not installed, cmd_full_rebuild still builds graph."""
+    """4.0.1: the companion ``test_with_chromadb_indexes_chunks`` is gone — it
+    forced ``_check_search_deps`` True to reach a branch the real function
+    cannot take. Graph-only is the only path, so it is the only path tested.
+    """
+
+    def test_builds_graph_only(self, project_env):
+        """cmd_full_rebuild builds the graph and closes the db."""
         _project, data_dir, _db = project_env
-        mock_result = {"nodes_added": 5, "edges_added": 3}
+        mock_result = {"nodes_total": 5, "edges_added": 3}
         with patch(
-            "indexer.index_codebase._check_search_deps", return_value=False
-        ), patch(
             "indexer.graph_generator.generate_graph_sqlite", return_value=mock_result
         ) as mock_graph, patch("indexer.index_codebase.SQLiteGraph") as mock_db_cls:
             mock_db = MagicMock()
@@ -637,47 +559,10 @@ class TestCmdFullRebuild:
 
             cmd_full_rebuild()
         mock_graph.assert_called_once()
+        # full=True is what makes `index --full` a real rebuild rather than
+        # an incremental top-up reporting "0 new nodes".
+        assert mock_graph.call_args.kwargs.get("full") is True
         mock_db.close.assert_called_once()
-
-    def test_with_chromadb_indexes_chunks(self, project_env):
-        """When chromadb available, cmd_full_rebuild indexes chunks."""
-        _project, data_dir, _db = project_env
-        # Create the watched 'src' dir so abs_dir.exists() passes
-        src_dir = _project / "src"
-        src_dir.mkdir(exist_ok=True)
-        (src_dir / "main.py").write_text("def main(): pass")
-
-        mock_chunk = MagicMock()
-        mock_chunk.file_path = "src/main.py"
-        mock_chunk.chunk_type = "function"
-        mock_chunk.name = "main"
-        mock_chunk.start_line = 1
-        mock_chunk.end_line = 10
-        mock_chunk.docstring = ""
-        mock_chunk.source_text = "def main(): pass"
-        mock_chunk.layer = "api"
-
-        mock_collection = MagicMock()
-        mock_client = MagicMock()
-        mock_client.create_collection.return_value = mock_collection
-
-        # chunk_project is imported locally inside cmd_full_rebuild, so patch at source
-        with patch(
-            "indexer.index_codebase._check_search_deps", return_value=True
-        ), patch(
-            "indexer.index_codebase._get_chroma_client", return_value=mock_client
-        ), patch(
-            "indexer.index_codebase._get_embedding_fn", return_value=MagicMock()
-        ), patch("indexer.chunker.chunk_project", return_value=[mock_chunk]), patch(
-            "indexer.graph_generator.generate_graph_sqlite",
-            return_value={"nodes_added": 1},
-        ), patch("indexer.index_codebase.SQLiteGraph") as mock_db_cls:
-            mock_db = MagicMock()
-            mock_db_cls.return_value = mock_db
-            from indexer.index_codebase import cmd_full_rebuild
-
-            cmd_full_rebuild()
-        mock_collection.add.assert_called()
 
 
 # ---------------------------------------------------------------------------
@@ -696,25 +581,6 @@ class TestCmdIncremental:
             result = cmd_incremental()
         assert result == 0
 
-    def test_no_collection_falls_back_to_graph_only(self, project_env):
-        """When chromadb collection doesn't exist, cmd_incremental falls back to graph-only."""
-        _project, data_dir, db = project_env
-        mock_client = MagicMock()
-        mock_client.get_collection.side_effect = Exception("collection missing")
-        with patch(
-            "indexer.index_codebase._get_changed_files",
-            return_value=[("src/main.py", "abc123")],
-        ), patch(
-            "indexer.index_codebase._get_chroma_client", return_value=mock_client
-        ), patch(
-            "indexer.index_codebase._get_embedding_fn", return_value=MagicMock()
-        ), patch("indexer.index_codebase.SQLiteGraph", return_value=db), patch(
-            "indexer.index_codebase._check_search_deps", return_value=True
-        ), patch("indexer.graph_generator.generate_graph_sqlite", return_value={}):
-            from indexer.index_codebase import cmd_incremental
-
-            cmd_incremental()  # Should not raise — falls back to graph-only
-
     def test_explicit_files_no_match_returns_zero(self, project_env):
         _project, data_dir, db = project_env
         # file_paths given but no actual matching files exist
@@ -728,38 +594,6 @@ class TestCmdIncremental:
 
 
 # ---------------------------------------------------------------------------
-# _get_chroma_client / _get_embedding_fn
-# ---------------------------------------------------------------------------
-
-
-class TestGetChromaClientAndEmbedFn:
-    def test_get_chroma_client_returns_client(self, project_env):
-        mock_chromadb = MagicMock()
-        mock_client = MagicMock()
-        mock_chromadb.PersistentClient.return_value = mock_client
-        with patch.dict("sys.modules", {"chromadb": mock_chromadb}):
-            from indexer.index_codebase import _get_chroma_client
-
-            result = _get_chroma_client()
-        assert result is mock_client
-
-    def test_get_chroma_client_raises_import_error_if_no_chromadb(self, project_env):
-        import sys
-
-        # Simulate chromadb being unimportable by removing it from sys.modules
-        saved = sys.modules.pop("chromadb", None)
-        try:
-            with patch.dict("sys.modules", {"chromadb": None}):
-                from indexer.index_codebase import _get_chroma_client
-
-                with pytest.raises(ImportError, match="codevira"):
-                    _get_chroma_client()
-        finally:
-            if saved is not None:
-                sys.modules["chromadb"] = saved
-
-
-# ---------------------------------------------------------------------------
 # cmd_status
 # ---------------------------------------------------------------------------
 
@@ -767,158 +601,27 @@ class TestGetChromaClientAndEmbedFn:
 class TestCmdStatusIndexCb:
     def test_cmd_status_shows_panel(self, project_env, capsys):
         _project, data_dir, db = project_env
-        mock_client = MagicMock()
-        mock_collection = MagicMock()
-        mock_collection.count.return_value = 42
-        mock_client.get_collection.return_value = mock_collection
         with patch("indexer.index_codebase.SQLiteGraph", return_value=db), patch(
-            "indexer.index_codebase._get_chroma_client", return_value=mock_client
-        ), patch(
-            "indexer.index_codebase._get_embedding_fn", return_value=MagicMock()
-        ), patch("indexer.index_codebase._get_changed_files", return_value=[]):
-            from indexer.index_codebase import cmd_status
-
-            cmd_status()  # Should not raise
-
-    def test_cmd_status_no_chromadb(self, project_env):
-        _project, data_dir, db = project_env
-        with patch("indexer.index_codebase.SQLiteGraph", return_value=db), patch(
-            "indexer.index_codebase._get_chroma_client",
-            side_effect=ImportError("chromadb"),
-        ), patch("indexer.index_codebase._get_changed_files", return_value=[]):
+            "indexer.index_codebase._get_changed_files", return_value=[]
+        ):
             from indexer.index_codebase import cmd_status
 
             cmd_status()  # Should not raise
 
 
-class TestChromaCorruptionSignatureP6:
-    """2026-05-17 (post-UDAP/QuickCourier 2026-05-16 crash): the shared
-    `_looks_like_chroma_corruption` predicate (P6 single source of truth)
-    must match every documented HNSW-writer corruption signature so the
-    incremental circuit breaker and the cmd_full_rebuild probe agree on
-    what counts as 'this is corruption, halt' vs 'this is transient, retry'.
-    """
-
-    def test_hnsw_segment_writer_matches(self):
-        from indexer.index_codebase import _looks_like_chroma_corruption
-
-        # Exact strings from the 2026-05-14 and 2026-05-16 production crashes.
-        for msg in (
-            "Error in compaction: Failed to apply logs to the hnsw segment writer",
-            "Failed to resolve records for deletion: Error sending backfill request to compactor: Failed to apply logs to the hnsw segment writer",
-            "database disk image is malformed",
-        ):
-            err = RuntimeError(msg)
-            assert _looks_like_chroma_corruption(err), (
-                f"P6 regression: corruption signature {msg!r} no longer matches. "
-                f"The circuit breaker will fail to engage on this exact error."
-            )
-
-    def test_unrelated_errors_dont_match(self):
-        from indexer.index_codebase import _looks_like_chroma_corruption
-
-        for msg in (
-            "Connection refused",
-            "Permission denied",
-            "No such file or directory",
-            "ValueError: invalid input",
-        ):
-            err = RuntimeError(msg)
-            assert not _looks_like_chroma_corruption(err), (
-                f"False positive: {msg!r} matched corruption predicate. "
-                f"Circuit breaker would over-trigger on this transient error."
-            )
-
-
-class TestIncrementalCircuitBreakerP5:
-    """2026-05-17 fix (P5 bounded resources): the 2026-05-16 UDAP/QuickCourier
-    crash log shows two identical HNSW-writer crashes within 15ms — without
-    a circuit breaker, the watcher would have continued through every
-    remaining file and produced N crashes for one root cause (the original
-    41-crash UDAP pattern from 2026-05-14).
-
-    These tests verify cmd_incremental halts after N consecutive Chroma
-    corruption errors.
-    """
-
-    def test_per_file_chroma_failures_halt_after_limit(self, tmp_path, monkeypatch):
-        """If collection.delete/add raises a corruption signature for >5
-        consecutive files, the loop must abort and fall back to graph-only
-        mode (no more crash logs for that batch)."""
-        from unittest.mock import MagicMock, patch
-        import yaml as _yaml
-        from indexer.index_codebase import cmd_incremental
-
-        # Build a minimal project + data dir.
-        project = tmp_path / "proj"
-        data_dir = project / ".codevira"
-        data_dir.mkdir(parents=True)
-        (data_dir / "graph").mkdir()
-        (data_dir / "config.yaml").write_text(
-            _yaml.safe_dump(
-                {
-                    "project": {
-                        "watched_dirs": ["src"],
-                        "file_extensions": [".py"],
-                        "skip_dirs": [],
-                    }
-                }
-            )
-        )
-        src = project / "src"
-        src.mkdir()
-        # 10 files so we can observe the breaker kicking in at file 5.
-        for i in range(10):
-            (src / f"file_{i}.py").write_text(f"x = {i}\n")
-
-        monkeypatch.setattr("indexer.index_codebase._project_root", lambda: project)
-        monkeypatch.setattr("indexer.index_codebase.get_data_dir", lambda: data_dir)
-        from mcp_server import paths as _paths
-
-        _paths._data_dir_cache.clear()
-
-        # Mock Chroma client + collection: every delete raises the corruption
-        # signature. Counts how many times each method gets called.
-        fake_collection = MagicMock()
-        fake_collection.delete.side_effect = RuntimeError(
-            "Error in compaction: Failed to apply logs to the hnsw segment writer"
-        )
-        fake_client = MagicMock()
-        fake_client.list_collections.return_value = []  # healthy probe — corruption surfaces in per-file ops
-        fake_client.get_collection.return_value = fake_collection
-
-        # Force changed_items to include all 10 files (mimics first incremental).
-        from indexer.index_codebase import _compute_hash
-
-        changed = [
-            (f"src/file_{i}.py", _compute_hash(src / f"file_{i}.py")) for i in range(10)
-        ]
-
-        with patch(
-            "indexer.index_codebase._check_search_deps", return_value=True
-        ), patch(
-            "indexer.index_codebase._get_chroma_client", return_value=fake_client
-        ), patch(
-            "indexer.index_codebase._get_embedding_fn", return_value=MagicMock()
-        ), patch(
-            "indexer.index_codebase._get_changed_files", return_value=changed
-        ), patch("indexer.graph_generator.generate_graph_sqlite"):
-            cmd_incremental(quiet=True)
-
-        # Circuit-breaker invariant: collection.delete called AT MOST 5 times
-        # before halting. Without the breaker, it would have been called 10×.
-        actual_calls = fake_collection.delete.call_count
-        assert actual_calls <= 5, (
-            f"P5 regression: circuit breaker failed to engage. "
-            f"collection.delete was called {actual_calls} times — should be ≤5 "
-            f"before halting the loop and falling back to graph-only mode."
-        )
-
+class TestCheckSearchDepsIsCheap:
     """2026-05-17 Bug J/K fix (P9 graceful degradation): _check_search_deps
     must NOT import sentence_transformers (which triggers ~5s of PyTorch
     tensor init). list_tools() in server.py calls _check_search_deps on
     every MCP request — slow import here caused Claude Desktop renderer
-    timeouts and silent connection drops.
+    timeouts and silent connection drops. That call site is still live, so
+    these guards stay.
+
+    4.0.1: the class was ``TestIncrementalCircuitBreakerP5`` and also held
+    ``test_per_file_chroma_failures_halt_after_limit``, covering the
+    cmd_incremental per-file Chroma circuit breaker. The breaker sat inside
+    ``if collection is not None:`` — unreachable since v2.2.0 — and is
+    deleted, so the test is too.
     """
 
     def test_check_search_deps_is_fast(self):
@@ -974,72 +677,6 @@ class TestIncrementalCircuitBreakerP5:
                 sys.modules[k] = v
 
 
-class TestChromaSelfHealP2:
-    """2026-05-17 HNSW self-heal (P2 self-diagnose + P5 circuit-break):
-    Chroma corruption used to cascade — the 2026-05-14 UDAP install
-    produced 41 InternalError crashes because the watcher hit a corrupted
-    HNSW store and retried every file with no halt. Now _get_chroma_client
-    (probe=True) detects corruption at the boundary and raises
-    ChromaCorrupted with a clear fix_command.
-    """
-
-    def test_chroma_corrupted_raised_for_hnsw_signature(self):
-        """If the Chroma client raises an 'hnsw segment writer' error,
-        _check_chroma_health must raise ChromaCorrupted (with fix_command)."""
-        from unittest.mock import MagicMock
-        from indexer.index_codebase import _check_chroma_health, ChromaCorrupted
-
-        fake_client = MagicMock()
-        fake_client.list_collections.side_effect = RuntimeError(
-            "Failed to apply logs to the hnsw segment writer"
-        )
-        with pytest.raises(ChromaCorrupted) as exc_info:
-            _check_chroma_health(fake_client)
-        # The message must include a remediation hint (P8 helpful errors).
-        msg = str(exc_info.value)
-        assert "heal --vectors" in msg or "codeindex" in msg, (
-            f"P8 regression: ChromaCorrupted message must include fix_command. "
-            f"Got: {msg}"
-        )
-
-    def test_chroma_corrupted_raised_for_db_malformed_signature(self):
-        """Same for 'database disk image is malformed'."""
-        from unittest.mock import MagicMock
-        from indexer.index_codebase import _check_chroma_health, ChromaCorrupted
-
-        fake_client = MagicMock()
-        fake_client.list_collections.side_effect = RuntimeError(
-            "database disk image is malformed"
-        )
-        with pytest.raises(ChromaCorrupted):
-            _check_chroma_health(fake_client)
-
-    def test_chroma_healthy_passes_probe(self):
-        """Healthy Chroma client passes the probe with no exception."""
-        from unittest.mock import MagicMock
-        from indexer.index_codebase import _check_chroma_health
-
-        fake_client = MagicMock()
-        fake_client.list_collections.return_value = []
-        # No exception → probe passed.
-        _check_chroma_health(fake_client)
-
-    def test_non_corruption_errors_re_raised_unchanged(self):
-        """If chromadb raises an error that isn't a corruption signature,
-        we re-raise it unchanged (don't mask transient issues as corruption)."""
-        from unittest.mock import MagicMock
-        from indexer.index_codebase import _check_chroma_health, ChromaCorrupted
-
-        fake_client = MagicMock()
-        fake_client.list_collections.side_effect = RuntimeError(
-            "Network timeout connecting to remote service"
-        )
-        # Must NOT be wrapped as ChromaCorrupted.
-        with pytest.raises(RuntimeError) as exc_info:
-            _check_chroma_health(fake_client)
-        assert not isinstance(exc_info.value, ChromaCorrupted)
-
-
 class TestCmdIndexVerboseBugH:
     """2026-05-17 Bug H fix (P10): `--verbose` on `codevira index` must
     emit per-file decisions so users can diagnose silent 0-chunks results.
@@ -1076,22 +713,14 @@ class TestCmdStatusBugC:
         src.mkdir()
         (src / "main.py").write_text("x = 1\n")
 
-        mock_client = MagicMock()
-        mock_collection = MagicMock()
-        mock_collection.count.return_value = 0  # empty Chroma collection
-        mock_client.get_collection.return_value = mock_collection
         # Force chroma.sqlite3 to exist so the chunk-count path runs.
         index_dir = data_dir / "codeindex"
         index_dir.mkdir()
         (index_dir / "chroma.sqlite3").write_text("")
 
         with patch("indexer.index_codebase.SQLiteGraph", return_value=db), patch(
-            "indexer.index_codebase._get_chroma_client", return_value=mock_client
-        ), patch(
-            "indexer.index_codebase._get_embedding_fn", return_value=MagicMock()
-        ), patch("indexer.index_codebase._index_dir", return_value=index_dir), patch(
-            "indexer.index_codebase._get_changed_files", return_value=[]
-        ):
+            "indexer.index_codebase._index_dir", return_value=index_dir
+        ), patch("indexer.index_codebase._get_changed_files", return_value=[]):
             from indexer.index_codebase import cmd_status
 
             cmd_status()
@@ -1118,21 +747,13 @@ class TestCmdStatusBugC:
         # Don't create any .py files — the fixture's config (src/*.py)
         # will match nothing.
 
-        mock_client = MagicMock()
-        mock_collection = MagicMock()
-        mock_collection.count.return_value = 0
-        mock_client.get_collection.return_value = mock_collection
         index_dir = data_dir / "codeindex"
         index_dir.mkdir()
         (index_dir / "chroma.sqlite3").write_text("")
 
         with patch("indexer.index_codebase.SQLiteGraph", return_value=db), patch(
-            "indexer.index_codebase._get_chroma_client", return_value=mock_client
-        ), patch(
-            "indexer.index_codebase._get_embedding_fn", return_value=MagicMock()
-        ), patch("indexer.index_codebase._index_dir", return_value=index_dir), patch(
-            "indexer.index_codebase._get_changed_files", return_value=[]
-        ):
+            "indexer.index_codebase._index_dir", return_value=index_dir
+        ), patch("indexer.index_codebase._get_changed_files", return_value=[]):
             from indexer.index_codebase import cmd_status
 
             cmd_status()
@@ -1150,21 +771,13 @@ class TestCmdStatusBugC:
         Verifies my fix doesn't add false warnings on healthy projects."""
         project, data_dir, db = populated_db
 
-        mock_client = MagicMock()
-        mock_collection = MagicMock()
-        mock_collection.count.return_value = 42
-        mock_client.get_collection.return_value = mock_collection
         index_dir = data_dir / "codeindex"
         index_dir.mkdir()
         (index_dir / "chroma.sqlite3").write_text("")
 
         with patch("indexer.index_codebase.SQLiteGraph", return_value=db), patch(
-            "indexer.index_codebase._get_chroma_client", return_value=mock_client
-        ), patch(
-            "indexer.index_codebase._get_embedding_fn", return_value=MagicMock()
-        ), patch("indexer.index_codebase._index_dir", return_value=index_dir), patch(
-            "indexer.index_codebase._get_changed_files", return_value=[]
-        ):
+            "indexer.index_codebase._index_dir", return_value=index_dir
+        ), patch("indexer.index_codebase._get_changed_files", return_value=[]):
             from indexer.index_codebase import cmd_status
 
             cmd_status()
@@ -1207,15 +820,9 @@ class TestGlobalStatusRendersRealNumbers:
             "stale": 0,
             "total": 7,
         }
-        mock_client = MagicMock()
-        mock_collection = MagicMock()
-        mock_collection.count.return_value = 0
-        mock_client.get_collection.return_value = mock_collection
         with patch("indexer.index_codebase.SQLiteGraph", return_value=db), patch(
-            "indexer.index_codebase._get_chroma_client", return_value=mock_client
+            "indexer.index_codebase._get_changed_files", return_value=[]
         ), patch(
-            "indexer.index_codebase._get_embedding_fn", return_value=MagicMock()
-        ), patch("indexer.index_codebase._get_changed_files", return_value=[]), patch(
             "mcp_server._project_inventory.enumerate_projects", return_value=[]
         ), patch("mcp_server._project_inventory.summarize", return_value=inv_summary):
             from indexer.index_codebase import cmd_status
@@ -1242,15 +849,9 @@ class TestGlobalStatusRendersRealNumbers:
         """When the inventory helper raises, fall back to showing an
         error row rather than crashing the status command."""
         _project, _data_dir, db = project_env
-        mock_client = MagicMock()
-        mock_collection = MagicMock()
-        mock_collection.count.return_value = 0
-        mock_client.get_collection.return_value = mock_collection
         with patch("indexer.index_codebase.SQLiteGraph", return_value=db), patch(
-            "indexer.index_codebase._get_chroma_client", return_value=mock_client
+            "indexer.index_codebase._get_changed_files", return_value=[]
         ), patch(
-            "indexer.index_codebase._get_embedding_fn", return_value=MagicMock()
-        ), patch("indexer.index_codebase._get_changed_files", return_value=[]), patch(
             "mcp_server._project_inventory.enumerate_projects",
             side_effect=RuntimeError("inventory fail"),
         ):
@@ -1460,43 +1061,18 @@ class TestIndexerMainEntry:
 
 
 # ---------------------------------------------------------------------------
-# _get_embedding_fn exit path
-# ---------------------------------------------------------------------------
-
-
-class TestGetEmbeddingFnExit:
-    def test_import_error_when_chromadb_utils_missing(self, project_env):
-        """_get_embedding_fn raises ImportError if chromadb.utils unavailable."""
-        import sys
-
-        original_mods = {
-            "chromadb.utils": sys.modules.pop("chromadb.utils", None),
-            "chromadb.utils.embedding_functions": sys.modules.pop(
-                "chromadb.utils.embedding_functions", None
-            ),
-        }
-        try:
-            sys.modules["chromadb.utils"] = None  # type: ignore[assignment]
-            sys.modules["chromadb.utils.embedding_functions"] = None  # type: ignore[assignment]
-            from indexer.index_codebase import _get_embedding_fn
-
-            with pytest.raises(ImportError, match="codevira"):
-                _get_embedding_fn()
-        finally:
-            for k, v in original_mods.items():
-                if v is None:
-                    sys.modules.pop(k, None)
-                else:
-                    sys.modules[k] = v
-
-
-# ---------------------------------------------------------------------------
-# cmd_incremental — actual indexing loop (changed files, non-empty collection)
+# cmd_incremental — actual indexing loop (changed files)
 # ---------------------------------------------------------------------------
 
 
 class TestCmdIncrementalLoop:
-    """cmd_incremental — actual indexing loop (lines 283-323)."""
+    """cmd_incremental — the per-changed-file loop.
+
+    4.0.1: previously asserted the ChromaDB delete/add calls (and a companion
+    ``test_chunk_error_continues_to_next_file`` around ``chunk_file``). Both
+    are gone with that path; what survives — and is what the loop actually
+    does — is stamping the new hash and regenerating the graph.
+    """
 
     def test_indexes_changed_file_successfully(self, project_env):
         """cmd_incremental processes changed files and updates the hash."""
@@ -1506,64 +1082,24 @@ class TestCmdIncrementalLoop:
         src.mkdir(exist_ok=True)
         (src / "api.py").write_text("def hello(): pass")
 
-        mock_collection = MagicMock()
-        mock_client = MagicMock()
-        mock_client.get_collection.return_value = mock_collection
-
-        mock_chunk = MagicMock()
-        mock_chunk.file_path = "src/api.py"
-        mock_chunk.chunk_type = "function"
-        mock_chunk.name = "hello"
-        mock_chunk.start_line = 1
-        mock_chunk.end_line = 1
-        mock_chunk.docstring = ""
-        mock_chunk.source_text = "def hello(): pass"
-        mock_chunk.layer = "api"
-
+        # cmd_incremental closes the db before returning, so spy on the write
+        # rather than reading the hash back afterwards.
         with _mock_rich(), patch(
-            "indexer.index_codebase._check_search_deps", return_value=True
-        ), patch(
             "indexer.index_codebase._get_changed_files",
             return_value=[("src/api.py", "newhash123")],
         ), patch(
-            "indexer.index_codebase._get_chroma_client", return_value=mock_client
-        ), patch(
-            "indexer.index_codebase._get_embedding_fn", return_value=MagicMock()
-        ), patch("indexer.chunker.chunk_file", return_value=[mock_chunk]), patch(
             "indexer.graph_generator.generate_graph_sqlite", return_value={}
-        ), patch("indexer.index_codebase.SQLiteGraph", return_value=db):
+        ) as mock_graph, patch(
+            "indexer.index_codebase.SQLiteGraph", return_value=db
+        ), patch.object(
+            db, "update_file_hash", wraps=db.update_file_hash
+        ) as mock_update:
             from indexer.index_codebase import cmd_incremental
 
             result = cmd_incremental()
         assert result == 0
-        mock_collection.delete.assert_called()
-        mock_collection.add.assert_called()
-
-    def test_chunk_error_continues_to_next_file(self, project_env):
-        """When chunk_file raises, cmd_incremental continues to the next file."""
-        _project, data_dir, db = project_env
-
-        mock_collection = MagicMock()
-        mock_client = MagicMock()
-        mock_client.get_collection.return_value = mock_collection
-
-        with _mock_rich(), patch(
-            "indexer.index_codebase._get_changed_files",
-            return_value=[("src/api.py", "hash1"), ("src/db.py", "hash2")],
-        ), patch(
-            "indexer.index_codebase._get_chroma_client", return_value=mock_client
-        ), patch(
-            "indexer.index_codebase._get_embedding_fn", return_value=MagicMock()
-        ), patch(
-            "indexer.chunker.chunk_file", side_effect=Exception("chunk failed")
-        ), patch(
-            "indexer.graph_generator.generate_graph_sqlite", return_value={}
-        ), patch("indexer.index_codebase.SQLiteGraph", return_value=db):
-            from indexer.index_codebase import cmd_incremental
-
-            result = cmd_incremental()
-        # Returns 0 even when all files fail to chunk (indexed_any=False path)
-        assert result == 0
+        mock_update.assert_called_once_with("src/api.py", "newhash123")
+        mock_graph.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -1895,17 +1431,8 @@ class TestCmdStatusStaleFiles:
         _project, data_dir, db = project_env
         stale = [(f"src/file_{i}.py", f"hash{i}") for i in range(3)]
 
-        mock_client = MagicMock()
-        mock_collection = MagicMock()
-        mock_collection.count.return_value = 0
-        mock_client.get_collection.return_value = mock_collection
-
         with _mock_rich(), patch(
             "indexer.index_codebase.SQLiteGraph", return_value=db
-        ), patch(
-            "indexer.index_codebase._get_chroma_client", return_value=mock_client
-        ), patch(
-            "indexer.index_codebase._get_embedding_fn", return_value=MagicMock()
         ), patch("indexer.index_codebase._get_changed_files", return_value=stale):
             from indexer.index_codebase import cmd_status
 
@@ -1917,17 +1444,8 @@ class TestCmdStatusStaleFiles:
         # 15 stale files — display first 10 then "and N more"
         stale = [(f"src/file_{i}.py", f"hash{i}") for i in range(15)]
 
-        mock_client = MagicMock()
-        mock_collection = MagicMock()
-        mock_collection.count.return_value = 0
-        mock_client.get_collection.return_value = mock_collection
-
         with _mock_rich(), patch(
             "indexer.index_codebase.SQLiteGraph", return_value=db
-        ), patch(
-            "indexer.index_codebase._get_chroma_client", return_value=mock_client
-        ), patch(
-            "indexer.index_codebase._get_embedding_fn", return_value=MagicMock()
         ), patch("indexer.index_codebase._get_changed_files", return_value=stale):
             from indexer.index_codebase import cmd_status
 
@@ -1971,22 +1489,9 @@ class TestRichMockingIsReversible:
         ``<MagicMock id=...>`` where the table should be."""
         _project, _data_dir, db = project_env
 
-        mock_client = MagicMock()
-        mock_collection = MagicMock()
-        mock_collection.count.return_value = 0
-        mock_client.get_collection.return_value = mock_collection
-
         def _patches():
             return (
                 patch("indexer.index_codebase.SQLiteGraph", return_value=db),
-                patch(
-                    "indexer.index_codebase._get_chroma_client",
-                    return_value=mock_client,
-                ),
-                patch(
-                    "indexer.index_codebase._get_embedding_fn",
-                    return_value=MagicMock(),
-                ),
                 patch("indexer.index_codebase._get_changed_files", return_value=[]),
             )
 

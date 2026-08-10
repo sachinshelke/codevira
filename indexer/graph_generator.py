@@ -15,7 +15,7 @@ from indexer.treesitter_parser import (
     EXTENSION_MAP as TS_EXTENSION_MAP,
 )
 from indexer.sqlite_graph import SQLiteGraph
-from indexer.chunker import extract_imports
+from indexer.imports import extract_imports
 
 
 def _infer_layer(file_path: str) -> str:

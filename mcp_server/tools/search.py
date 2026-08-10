@@ -2,14 +2,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from mcp_server.paths import get_data_dir
-from indexer.sqlite_graph import SQLiteGraph
-
-
-def _get_db() -> SQLiteGraph:
-    db_path = get_data_dir() / "graph" / "graph.db"
-    return SQLiteGraph(db_path)
-
+# 4.0.1: removed this module's own `_get_db()` + the SQLiteGraph/get_data_dir
+# imports that fed it. Every tool in this file goes through
+# storage.decisions_store (FTS5); nothing here has touched graph.db since
+# search_codebase was cut in v2.2.0. It survived review because `_get_db` is
+# also defined in tools/graph.py and tools/learning.py, where it IS live — a
+# grep for the name always found callers, just never this copy's.
 
 # v2.2.0: removed _chroma_cache, _get_chroma_client, prewarm_embedding_model,
 # search_codebase, _structural_fallback. Decision search lives in

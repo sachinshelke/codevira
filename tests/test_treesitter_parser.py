@@ -262,7 +262,7 @@ class TestAliasImportEdgeEndToEnd:
     get_impact reported blast_radius:0 for a heavily-imported file."""
 
     def test_aliased_imports_produce_edges(self, tmp_path):
-        from indexer.chunker import extract_imports, _load_tsconfig
+        from indexer.imports import extract_imports, _load_tsconfig
 
         (tmp_path / "src").mkdir(parents=True)
         (tmp_path / "src" / "objective-spec.ts").write_text(

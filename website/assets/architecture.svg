@@ -1,303 +1,354 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="900" height="1058" viewBox="0 0 900 1058"
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="1356" viewBox="0 0 900 1356"
      preserveAspectRatio="xMidYMid meet" role="img"
-     aria-label="Codevira architecture: entry points, the codevira binary, the two in-repo stores, and the global home"
-     font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',Helvetica,Arial,sans-serif">
+     aria-label="Codevira architecture: entry points, the codevira binary, the two in-repo stores, and the global home">
   <title>Codevira architecture — where things run and where data lives</title>
-  <desc>Four entry points (Claude Code, Claude Desktop, Cursor, Antigravity) speak stdio MCP to a single codevira binary; Codex and Copilot get no server and read AGENTS.md only; git commit invokes the engine. The binary wears three daily hats — MCP server, engine (7 policies, 5 event types), and CLI/indexer — plus an opt-in HTTP server (codevira serve, from the [http] extra). It reads and writes two fixed in-repo stores — .codevira/ canonical JSONL memory and .codevira-cache/ per-machine cache — plus a global home at ~/.codevira/. A get_data_dir() switch decides per project whether the graph and roadmap live in-repo or centralized.</desc>
+  <desc>A tall light sheet in four grouped bands. Band one, ENTRY POINTS, holds five cards: Claude Code, Claude Desktop, Cursor drawn with a dashed blue border because its entry is not --project-dir pinned, Antigravity, and a greyed-out Codex and Copilot card that gets no server at all. A separate GIT card sits to its right. Blue lines carry stdio MCP down into band two; a single amber bus gathers the hook invocations. Band two, ONE BINARY, is anchored by a blue-to-violet gradient card for the MCP server, beside the engine card (7 policies, 5 event types) and a CLI and indexer card, with a note that codevira serve is a separate opt-in process. Slate lines then fan down into band three. On the left, IN THE REPO stacks the .codevira canonical memory card, its per-machine or shared caveat, the .codevira-cache card and the generated AGENTS.md and .gitattributes card. On the right, GLOBAL HOME lists global.db, device_id and update_check.json, and projects slash slug. Between them a dashed violet hexagon, get_data_dir(), points left to in-repo and right to centralized. A legend names the four arrow kinds and a footnote rail carries the caveats.</desc>
 
   <defs>
+    <linearGradient id="focal" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0064d6"/>
+      <stop offset="1" stop-color="#5a5fe0"/>
+    </linearGradient>
+    <filter id="sh" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3.5" flood-color="#1b1f27" flood-opacity="0.07"/>
+    </filter>
+    <filter id="shbig" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="4" stdDeviation="9" flood-color="#2b2f7a" flood-opacity="0.20"/>
+    </filter>
     <marker id="ahBlue" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="7" refX="8.5" refY="3.5" orient="auto">
-      <path d="M0 0 L9 3.5 L0 7 z" fill="#4b8fd0"/>
+      <path d="M0 0 L9 3.5 L0 7 z" fill="#0064d6"/>
     </marker>
-    <marker id="ahAmber" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto">
-      <path d="M0.5 0.5 L8 3.5 L0.5 6.5" fill="none" stroke="#b07d22" stroke-width="1.6"
-            stroke-linecap="round" stroke-linejoin="round"/>
+    <marker id="ahAmber" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="7" refX="8.5" refY="3.5" orient="auto">
+      <path d="M0 0 L9 3.5 L0 7 z" fill="#b5801f"/>
     </marker>
     <marker id="ahSlate" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="7" refX="8.5" refY="3.5" orient="auto">
-      <path d="M0 0 L9 3.5 L0 7 z" fill="#7b8590"/>
+      <path d="M0 0 L9 3.5 L0 7 z" fill="#6b7683"/>
     </marker>
     <marker id="ahSlateBack" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="7" refX="0.5" refY="3.5" orient="auto">
-      <path d="M9 0 L0 3.5 L9 7 z" fill="#7b8590"/>
+      <path d="M9 0 L0 3.5 L9 7 z" fill="#6b7683"/>
     </marker>
-    <marker id="ahPurple" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="7" refX="8.5" refY="3.5" orient="auto">
-      <path d="M0 0 L9 3.5 L0 7 z" fill="#8a6fd0"/>
+    <marker id="ahViolet" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="7" refX="8.5" refY="3.5" orient="auto">
+      <path d="M0 0 L9 3.5 L0 7 z" fill="#5a5fe0"/>
     </marker>
+    <style>
+      text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;fill:#1b1f27}
+      .h1{font-size:20px;font-weight:700;letter-spacing:-0.2px}
+      .eyebrow{font-size:11.5px;font-weight:700;letter-spacing:0.06em;fill:#5b6472}
+      .cap{font-size:11px;fill:#5b6472}
+      .ct{font-size:13px;font-weight:700}
+      .cs{font-size:11px;fill:#5b6472}
+      .m{font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;font-size:11px}
+      .lbl{font-size:11px;font-weight:500;fill:#39414a}
+      .fn{font-size:10.5px;fill:#5b6472}
+      .ico{fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+    </style>
   </defs>
 
-  <rect x="0" y="0" width="900" height="1058" fill="#fafbfc"/>
-  <rect x="0.5" y="0.5" width="899" height="1057" fill="none" stroke="#d0d7de" stroke-width="1"/>
+  <!-- ================= GROUND ================= -->
+  <rect x="0" y="0" width="900" height="1356" fill="#f3f5f9"/>
 
-  <text x="20" y="28" font-size="15" font-weight="600" fill="#1f2328">Codevira architecture — where things run, and where data lives</text>
+  <text class="h1" x="24" y="44">Codevira architecture — where things run, and where data lives</text>
 
-  <!-- ============ GROUP A : ENTRY POINTS ============ -->
+  <!-- ================= BAND A : ENTRY POINTS ================= -->
+  <rect x="24" y="76" width="694" height="132" rx="14" fill="#ecf0f6" stroke="#dfe4ec" stroke-width="1"/>
+  <text class="eyebrow" x="40" y="100">ENTRY POINTS</text>
+  <text class="cap" x="142" y="100">setup configures exactly these four MCP clients. Windsurf and Gemini-CLI are not targets.</text>
+
+  <!-- A1 Claude Code -->
+  <rect x="38" y="108" width="106" height="86" rx="11" fill="#ffffff" stroke="#dfe4ec" stroke-width="1" filter="url(#sh)"/>
+  <g class="ico" stroke="#0064d6" transform="translate(48,116)">
+    <path d="M2 3.5 L6.5 7.75 L2 12"/>
+    <path d="M8.5 12.5 H15"/>
+  </g>
+  <text class="ct" x="48" y="152">Claude Code</text>
+  <text class="cs" x="48" y="170">MCP + 5 hooks</text>
+
+  <!-- A2 Claude Desktop -->
+  <rect x="154" y="108" width="126" height="86" rx="11" fill="#ffffff" stroke="#dfe4ec" stroke-width="1" filter="url(#sh)"/>
+  <g class="ico" stroke="#0064d6" transform="translate(164,116)">
+    <rect x="1.5" y="2" width="14" height="9.5" rx="2"/>
+    <path d="M5.5 14.5 H11.5"/>
+    <path d="M8.5 11.5 V14.5"/>
+  </g>
+  <text class="ct" x="164" y="152">Claude Desktop</text>
+  <text class="cs" x="164" y="170">MCP only</text>
+
+  <!-- A3 Cursor : dashed border = the non-uniform case -->
+  <rect x="290" y="108" width="164" height="86" rx="11" fill="#ffffff" stroke="#0064d6" stroke-width="1.6"
+        stroke-dasharray="6 4" stroke-linecap="round"/>
+  <g class="ico" stroke="#0064d6" transform="translate(300,116)">
+    <path d="M3 2 L14 9.5 L8.8 10.2 L6.5 15 Z"/>
+  </g>
+  <text class="ct" x="300" y="152">Cursor</text>
+  <text class="cs" x="300" y="170">MCP only — entry is NOT</text>
+  <text class="cs" x="300" y="185">--project-dir pinned</text>
+
+  <!-- A4 Antigravity -->
+  <rect x="464" y="108" width="100" height="86" rx="11" fill="#ffffff" stroke="#dfe4ec" stroke-width="1" filter="url(#sh)"/>
+  <g class="ico" stroke="#0064d6" transform="translate(474,116)">
+    <circle cx="8.5" cy="8.5" r="6.6"/>
+    <path d="M8.5 12.4 V5"/>
+    <path d="M5.4 8 L8.5 4.9 L11.6 8"/>
+  </g>
+  <text class="ct" x="474" y="152">Antigravity</text>
+  <text class="cs" x="474" y="170">MCP + 1 hook</text>
+  <text class="cs" x="474" y="185">(PreToolUse)</text>
+
+  <!-- A5 Codex / Copilot : greyed — NOT clients -->
+  <rect x="574" y="108" width="130" height="86" rx="11" fill="#e5e9f0" stroke="#d1d8e2" stroke-width="1"/>
+  <g class="ico" stroke="#77818e" transform="translate(584,116)">
+    <path d="M2 1.5 H10 L14 5.5 V15.5 H2 Z"/>
+    <path d="M10 1.5 V5.5 H14"/>
+    <path d="M5 9.5 H11"/>
+    <path d="M5 12.5 H11"/>
+  </g>
+  <text class="ct" x="584" y="152" style="fill:#4a545f">Codex · Copilot</text>
+  <text class="cs" x="584" y="170">no MCP, no hooks</text>
+  <text class="cs" x="584" y="185">AGENTS.md only</text>
+
+  <!-- ================= GIT ================= -->
+  <rect x="730" y="76" width="146" height="132" rx="14" fill="#ecf0f6" stroke="#dfe4ec" stroke-width="1"/>
+  <text class="eyebrow" x="744" y="100">GIT</text>
+  <rect x="744" y="108" width="118" height="86" rx="11" fill="#ffffff" stroke="#dfe4ec" stroke-width="1" filter="url(#sh)"/>
+  <g class="ico" stroke="#b5801f" transform="translate(754,116)">
+    <circle cx="8.5" cy="8.5" r="3.6"/>
+    <path d="M8.5 1 V4.9"/>
+    <path d="M8.5 12.1 V16"/>
+  </g>
+  <text class="ct" x="754" y="152">git commit</text>
+  <text class="cs" x="754" y="170">any editor</text>
+
+  <!-- ================= BAND B : ONE BINARY ================= -->
+  <rect x="24" y="290" width="852" height="256" rx="14" fill="#ecf0f6" stroke="#dfe4ec" stroke-width="1"/>
+  <text class="eyebrow" x="40" y="316">ONE BINARY</text>
+
+  <!-- ================= A -> B WIRING ================= -->
+
+  <!-- hook invocation (amber): legs -> one bus -> engine -->
+  <g fill="none" stroke="#b5801f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M52 194 V268"/>
+    <path d="M538 194 V268"/>
+    <path d="M840 194 V268"/>
+    <path d="M52 268 H840"/>
+    <path d="M690 268 V320" marker-end="url(#ahAmber)"/>
+  </g>
+
+  <!-- wire-jump casings so the blue lanes pass cleanly over the amber bus -->
+  <g stroke="#f3f5f9" stroke-width="7" stroke-linecap="butt">
+    <path d="M136 259 V277"/>
+    <path d="M217 259 V277"/>
+    <path d="M372 259 V277"/>
+    <path d="M478 259 V277"/>
+  </g>
+
+  <!-- MCP protocol (blue); Cursor's lane is dashed = its entry is not project-dir pinned -->
+  <g fill="none" stroke="#0064d6" stroke-width="2" stroke-linecap="round">
+    <path d="M136 194 V320" marker-end="url(#ahBlue)"/>
+    <path d="M217 194 V320" marker-end="url(#ahBlue)"/>
+    <path d="M372 194 V320" stroke-dasharray="6 4" marker-end="url(#ahBlue)"/>
+    <path d="M478 194 V320" marker-end="url(#ahBlue)"/>
+  </g>
+
+  <!-- edge label pills -->
   <g>
-    <rect x="20" y="44" width="730" height="104" rx="10" fill="#f0f3f6" stroke="#d0d7de" stroke-width="1"
-          stroke-dasharray="4 3" stroke-linecap="round"/>
-    <text x="30" y="64" font-size="11.5" font-weight="600" letter-spacing="0.06em" fill="#59636e">ENTRY POINTS</text>
-    <text x="146" y="64" font-size="11.5" fill="#59636e">setup configures exactly these four MCP clients. Windsurf and Gemini-CLI are not targets.</text>
+    <rect x="150" y="207" width="184" height="18" rx="9" fill="#ffffff" stroke="#cfdcf0" stroke-width="1"/>
+    <text class="lbl" x="242" y="220" text-anchor="middle" style="fill:#0b4a80">stdio MCP · --project-dir &lt;repo&gt;</text>
 
-    <!-- A1 Claude Code -->
-    <rect x="30" y="76" width="112" height="60" rx="6" fill="#e3f0fb" stroke="#4b8fd0" stroke-width="1.5"/>
-    <text x="39" y="96" font-size="12.5" font-weight="600" fill="#0b4a80">Claude Code</text>
-    <text x="39" y="115" font-size="11.5" fill="#0b4a80">MCP + 5 hooks</text>
+    <rect x="226" y="232" width="245" height="18" rx="9" fill="#ffffff" stroke="#cfdcf0" stroke-width="1"/>
+    <text class="lbl" x="348" y="245" text-anchor="middle" style="fill:#0b4a80">stdio, unpinned — binds via cwd / MCP roots</text>
 
-    <!-- A2 Claude Desktop -->
-    <rect x="152" y="76" width="126" height="60" rx="6" fill="#e3f0fb" stroke="#4b8fd0" stroke-width="1.5"/>
-    <text x="161" y="96" font-size="12.5" font-weight="600" fill="#0b4a80">Claude Desktop</text>
-    <text x="161" y="115" font-size="11.5" fill="#0b4a80">MCP only</text>
+    <rect x="60" y="259" width="62" height="18" rx="9" fill="#ffffff" stroke="#ecd7ac" stroke-width="1"/>
+    <text class="lbl" x="91" y="272" text-anchor="middle" style="fill:#8a5800">5 hooks</text>
 
-    <!-- A3 Cursor (dashed = the non-uniform case) -->
-    <rect x="288" y="76" width="174" height="60" rx="6" fill="#e3f0fb" stroke="#4b8fd0" stroke-width="1.5"
-          stroke-dasharray="5 3" stroke-linecap="round"/>
-    <text x="297" y="96" font-size="12.5" font-weight="600" fill="#0b4a80">Cursor</text>
-    <text x="297" y="114" font-size="11.5" fill="#0b4a80">MCP only — entry is NOT</text>
-    <text x="297" y="130" font-size="11.5" fill="#0b4a80">--project-dir pinned</text>
+    <rect x="556" y="259" width="113" height="18" rx="9" fill="#ffffff" stroke="#ecd7ac" stroke-width="1"/>
+    <text class="lbl" x="612" y="272" text-anchor="middle" style="fill:#8a5800">1 hook: PreToolUse</text>
 
-    <!-- A4 Antigravity -->
-    <rect x="472" y="76" width="116" height="60" rx="6" fill="#e3f0fb" stroke="#4b8fd0" stroke-width="1.5"/>
-    <text x="481" y="96" font-size="12.5" font-weight="600" fill="#0b4a80">Antigravity</text>
-    <text x="481" y="114" font-size="11.5" fill="#0b4a80">MCP + 1 hook</text>
-    <text x="481" y="130" font-size="11.5" fill="#0b4a80">(PreToolUse)</text>
-
-    <!-- A5 Codex / Copilot : NOT clients -->
-    <rect x="598" y="76" width="142" height="60" rx="6" fill="#e8ecf0" stroke="#8c96a0" stroke-width="1.5"/>
-    <text x="607" y="96" font-size="12.5" font-weight="600" fill="#39414a">Codex · Copilot</text>
-    <text x="607" y="114" font-size="11.5" fill="#39414a">no MCP, no hooks</text>
-    <text x="607" y="130" font-size="11.5" fill="#39414a">AGENTS.md only</text>
-
+    <rect x="752" y="259" width="70" height="18" rx="9" fill="#ffffff" stroke="#ecd7ac" stroke-width="1"/>
+    <text class="lbl" x="787" y="272" text-anchor="middle" style="fill:#8a5800">pre-commit</text>
   </g>
 
-  <!-- ============ A6 : git ============ -->
-  <g>
-    <rect x="758" y="44" width="126" height="104" rx="10" fill="#f0f3f6" stroke="#d0d7de" stroke-width="1"
-          stroke-dasharray="4 3" stroke-linecap="round"/>
-    <text x="768" y="64" font-size="11.5" font-weight="600" letter-spacing="0.06em" fill="#59636e">GIT</text>
-    <rect x="766" y="76" width="110" height="60" rx="6" fill="#fbeed6" stroke="#c08a2e" stroke-width="1.5"/>
-    <text x="775" y="96" font-size="12.5" font-weight="600" fill="#7a4d06">git commit</text>
-    <text x="775" y="115" font-size="11.5" fill="#7a4d06">any editor</text>
+  <!-- B1 MCP server — the focal element -->
+  <rect x="40" y="326" width="460" height="104" rx="13" fill="url(#focal)" filter="url(#shbig)"/>
+  <g class="ico" stroke="#ffffff" stroke-width="2" transform="translate(58,341)">
+    <rect x="1" y="1.5" width="16" height="6" rx="2"/>
+    <rect x="1" y="10.5" width="16" height="6" rx="2"/>
+    <path d="M4.5 4.5 H5.5"/>
+    <path d="M4.5 13.5 H5.5"/>
+  </g>
+  <text class="ct" x="86" y="356" style="fill:#ffffff">MCP server (stdio)</text>
+  <text class="m" x="58" y="380" style="fill:#ffffff">codevira --project-dir &lt;repo&gt;</text>
+  <text class="m" x="58" y="399" style="fill:#ffffff">36 tools advertised (37 defined)</text>
+  <text class="m" x="58" y="418" style="fill:#ffffff">one server process per project</text>
+
+  <!-- B2 engine -->
+  <rect x="516" y="326" width="344" height="104" rx="13" fill="#ffffff" stroke="#dfe4ec" stroke-width="1" filter="url(#sh)"/>
+  <g class="ico" stroke="#b5801f" transform="translate(534,341)">
+    <path d="M9 1.4 L15.6 4.2 V9.2 C15.6 13.4 12.6 16.2 9 17.3 C5.4 16.2 2.4 13.4 2.4 9.2 V4.2 Z"/>
+    <path d="M6.2 9.3 L8.4 11.6 L12.2 7"/>
+  </g>
+  <text class="ct" x="562" y="356">engine</text>
+  <text class="m" x="534" y="380" style="fill:#39414a">codevira engine handle &lt;Event&gt;</text>
+  <text class="m" x="534" y="399" style="fill:#39414a">codevira engine pre-commit</text>
+  <text class="m" x="534" y="418" style="fill:#39414a">7 policies · 5 event types · 1 dispatch()</text>
+
+  <!-- B3 CLI + indexer -->
+  <rect x="40" y="446" width="340" height="84" rx="13" fill="#ffffff" stroke="#dfe4ec" stroke-width="1" filter="url(#sh)"/>
+  <g class="ico" stroke="#6b7683" transform="translate(58,461)">
+    <rect x="1.4" y="2" width="15.2" height="13" rx="2.4"/>
+    <path d="M5 6.4 L7.8 8.5 L5 10.6"/>
+    <path d="M9.8 10.8 H13.2"/>
+  </g>
+  <text class="ct" x="86" y="476">CLI + indexer</text>
+  <text class="m" x="58" y="500" style="fill:#39414a">init · setup · index</text>
+  <text class="m" x="58" y="519" style="fill:#39414a">doctor · register-all</text>
+
+  <!-- B4 serve note -->
+  <rect x="404" y="452" width="3" height="56" rx="1.5" fill="#a9b3c2"/>
+  <text class="cap" x="418" y="478"><tspan class="m">codevira serve</tspan> (HTTP/Starlette): a separate opt-in</text>
+  <text class="cap" x="418" y="496">process, not the daily path.</text>
+  <text class="m" x="860" y="522" text-anchor="end" style="fill:#5b6472">codevira · one pipx venv · ~/.local/bin/codevira</text>
+
+  <!-- ================= B -> C/D WIRING : file read / write ================= -->
+  <g fill="none" stroke="#6b7683" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M88 546 V646" marker-start="url(#ahSlateBack)" marker-end="url(#ahSlate)"/>
+    <path d="M620 546 V596 H270 V646" marker-end="url(#ahSlate)"/>
+  </g>
+  <path d="M340 588 V604" stroke="#f3f5f9" stroke-width="7" stroke-linecap="butt"/>
+  <g fill="none" stroke="#6b7683" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M340 546 V646" marker-end="url(#ahSlate)"/>
+    <path d="M700 546 V620 H368 V646" marker-end="url(#ahSlate)"/>
+    <path d="M840 546 V646" marker-end="url(#ahSlate)"/>
   </g>
 
-  <!-- ============ GROUP B : ONE BINARY ============ -->
-  <g>
-    <rect x="20" y="208" width="864" height="162" rx="10" fill="#f0f3f6" stroke="#d0d7de" stroke-width="1"/>
-    <text x="30" y="228" font-size="11.5" font-weight="600" letter-spacing="0.06em" fill="#59636e">ONE BINARY</text>
-    <text x="874" y="228" font-size="11.5" text-anchor="end" fill="#59636e"
-          font-family="ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace">codevira · one pipx venv · ~/.local/bin/codevira</text>
+  <text class="lbl" x="100" y="566">read + append</text>
+  <text class="lbl" x="100" y="582">file_lock &#8594; fsync &#8594; os.replace</text>
+  <text class="lbl" x="352" y="570">working memory</text>
+  <text class="lbl" x="400" y="587">reads locked decisions</text>
+  <text class="lbl" x="420" y="611">appends enforcement.jsonl</text>
+  <text class="lbl" x="828" y="596" text-anchor="end">registers project</text>
 
-    <!-- B1 MCP server (primary box) -->
-    <rect x="30" y="240" width="300" height="82" rx="6" fill="#e3f0fb" stroke="#4b8fd0" stroke-width="2"/>
-    <text x="39" y="260" font-size="12.5" font-weight="600" fill="#0b4a80">MCP server (stdio)</text>
-    <g font-size="11.5" fill="#0b4a80" font-family="ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace">
-      <text x="39" y="280">codevira --project-dir &lt;repo&gt;</text>
-      <text x="39" y="297">36 tools advertised (37 defined)</text>
-      <text x="39" y="314">one server process per project</text>
-    </g>
+  <!-- ================= BAND C : IN THE REPO ================= -->
+  <rect x="24" y="650" width="372" height="472" rx="14" fill="#ecf0f6" stroke="#dfe4ec" stroke-width="1"/>
+  <text class="eyebrow" x="40" y="674">IN THE REPO &#160;&#160;<tspan class="m" style="font-weight:400;letter-spacing:0">&lt;project&gt;/</tspan></text>
 
-    <!-- B2 engine -->
-    <rect x="340" y="240" width="308" height="82" rx="6" fill="#fbeed6" stroke="#c08a2e" stroke-width="2"/>
-    <text x="349" y="260" font-size="12.5" font-weight="600" fill="#7a4d06">engine</text>
-    <g font-size="11.5" fill="#7a4d06" font-family="ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace">
-      <text x="349" y="280">codevira engine handle &lt;Event&gt;</text>
-      <text x="349" y="297">codevira engine pre-commit</text>
-      <text x="349" y="314">7 policies · 5 event types · 1 dispatch()</text>
-    </g>
-
-    <!-- B3 CLI + indexer -->
-    <rect x="658" y="240" width="216" height="82" rx="6" fill="#e8ecf0" stroke="#8c96a0" stroke-width="1.5"/>
-    <text x="667" y="260" font-size="12.5" font-weight="600" fill="#39414a">CLI + indexer</text>
-    <g font-size="11.5" fill="#39414a" font-family="ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace">
-      <text x="667" y="280">init · setup · index</text>
-      <text x="667" y="297">doctor · register-all</text>
-    </g>
-
-    <g font-size="11.5" fill="#59636e">
-      <text x="470" y="342">codevira serve (HTTP/Starlette): a separate opt-in</text>
-      <text x="470" y="359">process, not the daily path.</text>
-    </g>
+  <!-- C1 .codevira/ — canonical memory -->
+  <rect x="40" y="686" width="340" height="170" rx="13" fill="#ffffff" stroke="#dfe4ec" stroke-width="1" filter="url(#sh)"/>
+  <g class="ico" stroke="#0064d6" transform="translate(58,700)">
+    <ellipse cx="9" cy="3.6" rx="7.2" ry="2.6"/>
+    <path d="M1.8 3.6 V13.4 C1.8 14.9 5 16 9 16 C13 16 16.2 14.9 16.2 13.4 V3.6"/>
+    <path d="M1.8 8.5 C1.8 10 5 11.1 9 11.1 C13 11.1 16.2 10 16.2 8.5"/>
   </g>
+  <text class="ct" x="86" y="714">.codevira/ — canonical memory</text>
+  <text class="m" x="58" y="738" style="fill:#0b4a80">decisions.jsonl · digest.jsonl</text>
+  <text class="m" x="58" y="756" style="fill:#0b4a80">outcomes.jsonl · sessions.jsonl</text>
+  <text class="m" x="58" y="774" style="fill:#0b4a80">skills.jsonl · manifest.yaml · config.yaml</text>
 
-  <!-- ============ GROUP C : IN THE REPO ============ -->
-  <g>
-    <rect x="20" y="470" width="372" height="442" rx="10" fill="#f0f3f6" stroke="#d0d7de" stroke-width="1"
-          stroke-dasharray="4 3" stroke-linecap="round"/>
-    <text x="30" y="490" font-size="11.5" font-weight="600" letter-spacing="0.06em" fill="#59636e">IN THE REPO &#160;&#160;&lt;project&gt;/</text>
+  <rect x="58" y="786" width="166" height="20" rx="10" fill="#fff3de" stroke="#edcf9a" stroke-width="1"/>
+  <text x="70" y="800" font-size="10.5" font-weight="700" letter-spacing="0.04em" style="fill:#8a5800">GIT-TRACKED? DEPENDS</text>
 
-    <!-- C1 canonical memory -->
-    <rect x="30" y="502" width="338" height="112" rx="6" fill="#e3f0fb" stroke="#4b8fd0" stroke-width="1.5"/>
-    <text x="39" y="523" font-size="12.5" font-weight="600" fill="#0b4a80">.codevira/ — canonical memory</text>
-    <g font-size="11.5" fill="#0b4a80" font-family="ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace">
-      <text x="39" y="543">decisions.jsonl · digest.jsonl</text>
-      <text x="39" y="560">outcomes.jsonl · sessions.jsonl</text>
-      <text x="39" y="577">skills.jsonl · manifest.yaml · config.yaml</text>
-    </g>
-    <rect x="39" y="586" width="176" height="18" rx="9" fill="#fbeed6" stroke="#c08a2e" stroke-width="1"/>
-    <text x="48" y="599" font-size="10.5" font-weight="600" letter-spacing="0.04em" fill="#7a4d06">GIT-TRACKED? DEPENDS</text>
+  <rect x="58" y="816" width="3" height="36" rx="1.5" fill="#d9a640"/>
+  <text x="70" y="830" font-size="10.5" style="fill:#8a5800">gitignored by default (memory stays per-machine).</text>
+  <text x="70" y="846" font-size="10.5" style="fill:#8a5800">codevira init --shared keeps it git-tracked for teams.</text>
 
-    <!-- conditional callout -->
-    <rect x="30" y="626" width="3" height="40" rx="1.5" fill="#c08a2e"/>
-    <text x="41" y="640" font-size="11.5" fill="#7a4d06">gitignored by default (memory stays per-machine).</text>
-    <text x="41" y="657" font-size="11.5" fill="#7a4d06">codevira init --shared keeps it git-tracked for teams.</text>
-
-    <!-- C2 per-machine cache -->
-    <rect x="30" y="678" width="338" height="128" rx="6" fill="#e8ecf0" stroke="#8c96a0" stroke-width="1.5"/>
-    <text x="39" y="699" font-size="12.5" font-weight="600" fill="#39414a">.codevira-cache/ — per-machine</text>
-    <g font-size="11.5" fill="#39414a" font-family="ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace">
-      <text x="39" y="719">always gitignored · never worktree-redirects</text>
-      <text x="39" y="736">fts5.sqlite  &#8592; the ONLY rebuildable file</text>
-      <text x="39" y="753">working.jsonl · activity.jsonl</text>
-      <text x="39" y="770">enforcement.jsonl · enforcer_outcomes.jsonl</text>
-      <text x="39" y="787">active_sessions.jsonl</text>
-    </g>
-
-    <!-- C3 generated files -->
-    <rect x="30" y="818" width="338" height="78" rx="6" fill="#e8ecf0" stroke="#8c96a0" stroke-width="1.5"/>
-    <text x="39" y="839" font-size="12.5" font-weight="600" fill="#39414a">AGENTS.md  ·  .gitattributes</text>
-    <g font-size="11.5" fill="#39414a" font-family="ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace">
-      <text x="39" y="859">generated (marker-fenced)</text>
-      <text x="39" y="876">.codevira/decisions.jsonl merge=codevira-jsonl</text>
-    </g>
+  <!-- C2 .codevira-cache/ — per-machine -->
+  <rect x="40" y="872" width="340" height="140" rx="13" fill="#ffffff" stroke="#dfe4ec" stroke-width="1" filter="url(#sh)"/>
+  <g class="ico" stroke="#6b7683" transform="translate(58,886)">
+    <path d="M1.6 5.4 L9 1.8 L16.4 5.4 V12.4 L9 16 L1.6 12.4 Z"/>
+    <path d="M1.6 5.4 L9 9 L16.4 5.4"/>
+    <path d="M9 9 V16"/>
   </g>
+  <text class="ct" x="86" y="900">.codevira-cache/ — per-machine</text>
+  <text class="m" x="58" y="924" style="fill:#39414a">always gitignored · never worktree-redirects</text>
+  <text class="m" x="58" y="942" style="fill:#39414a">fts5.sqlite  &#8592; the ONLY rebuildable file</text>
+  <text class="m" x="58" y="960" style="fill:#39414a">working.jsonl · activity.jsonl</text>
+  <text class="m" x="58" y="978" style="fill:#39414a">enforcement.jsonl · enforcer_outcomes.jsonl</text>
+  <text class="m" x="58" y="996" style="fill:#39414a">active_sessions.jsonl</text>
 
-  <!-- ============ GROUP D : GLOBAL HOME ============ -->
-  <g>
-    <rect x="533" y="470" width="351" height="346" rx="10" fill="#f0f3f6" stroke="#d0d7de" stroke-width="1"
-          stroke-dasharray="4 3" stroke-linecap="round"/>
-    <text x="543" y="490" font-size="11.5" font-weight="600" letter-spacing="0.02em" fill="#59636e">GLOBAL HOME &#160;~/.codevira/ &#160;($CODEVIRA_HOME)</text>
-
-    <rect x="543" y="502" width="331" height="86" rx="6" fill="#ece6f9" stroke="#8a6fd0" stroke-width="1.5"/>
-    <text x="552" y="523" font-size="12.5" font-weight="600" fill="#4c2d8f">global.db</text>
-    <g font-size="11.5" fill="#4c2d8f" font-family="ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace">
-      <text x="552" y="543">projects · global_preferences · global_rules</text>
-      <text x="552" y="561" font-weight="700">holds NO decisions</text>
-    </g>
-
-    <rect x="543" y="606" width="331" height="86" rx="6" fill="#ece6f9" stroke="#8a6fd0" stroke-width="1.5"/>
-    <text x="552" y="627" font-size="12.5" font-weight="600" fill="#4c2d8f">device_id · update_check.json</text>
-    <g font-size="11.5" fill="#4c2d8f" font-family="ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace">
-      <text x="552" y="647">logs/crashes.log · snapshots/&lt;slug&gt;/</text>
-      <text x="552" y="665">run/&lt;pid&gt;.json</text>
-    </g>
-
-    <rect x="543" y="710" width="331" height="86" rx="6" fill="#ece6f9" stroke="#8a6fd0" stroke-width="1.5"/>
-    <text x="552" y="731" font-size="12.5" font-weight="600" fill="#4c2d8f">projects/&lt;slug&gt;/</text>
-    <g font-size="11.5" fill="#4c2d8f" font-family="ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace">
-      <text x="552" y="751">config.yaml · metadata.json · roadmap.yaml</text>
-      <text x="552" y="769">graph/graph.db · graph/fixes.db · codeindex/</text>
-    </g>
+  <!-- C3 generated files -->
+  <rect x="40" y="1028" width="340" height="80" rx="13" fill="#ffffff" stroke="#dfe4ec" stroke-width="1" filter="url(#sh)"/>
+  <g class="ico" stroke="#6b7683" transform="translate(58,1042)">
+    <path d="M2.6 1.6 H10.4 L15.4 6.6 V16.4 H2.6 Z"/>
+    <path d="M10.4 1.6 V6.6 H15.4"/>
+    <path d="M5.6 10.6 H12.4"/>
+    <path d="M5.6 13.4 H12.4"/>
   </g>
+  <text class="ct" x="86" y="1056">AGENTS.md  ·  .gitattributes</text>
+  <text class="m" x="58" y="1080" style="fill:#39414a">generated (marker-fenced)</text>
+  <text class="m" x="58" y="1098" style="fill:#39414a">.codevira/decisions.jsonl merge=codevira-jsonl</text>
 
-  <!-- ============ E1 : the get_data_dir() switch ============ -->
-  <g>
-    <path d="M398 620 L410 586 L515 586 L527 620 L515 654 L410 654 Z"
-          fill="#ece6f9" stroke="#8a6fd0" stroke-width="2" stroke-dasharray="5 3" stroke-linejoin="round"/>
-    <text x="462" y="616" font-size="11.5" text-anchor="middle" fill="#4c2d8f" font-weight="600"
-          font-family="ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace">get_data_dir()</text>
-    <text x="462" y="634" font-size="10.5" text-anchor="middle" fill="#4c2d8f">resolved per project</text>
+  <!-- ================= BAND D : GLOBAL HOME ================= -->
+  <rect x="516" y="650" width="360" height="360" rx="14" fill="#ecf0f6" stroke="#dfe4ec" stroke-width="1"/>
+  <text class="eyebrow" x="532" y="674">GLOBAL HOME &#160;<tspan class="m" style="font-weight:400;letter-spacing:0">~/.codevira/</tspan> &#160;<tspan class="m" style="font-weight:400;letter-spacing:0">($CODEVIRA_HOME)</tspan></text>
 
-    <path d="M396 620 L346 620" fill="none" stroke="#8a6fd0" stroke-width="1.5" stroke-dasharray="6 4"
-          stroke-linecap="round" marker-end="url(#ahPurple)"/>
-    <path d="M529 626 L539 646" fill="none" stroke="#8a6fd0" stroke-width="1.5" stroke-dasharray="6 4"
-          stroke-linecap="round" marker-end="url(#ahPurple)"/>
-
-    <g font-size="11.5" fill="#4c2d8f">
-      <text x="400" y="682">&#8592; this repo:</text>
-      <text x="400" y="698">in-repo</text>
-      <text x="400" y="722">&#8594; fresh init:</text>
-      <text x="400" y="738">centralized</text>
-    </g>
+  <rect x="532" y="686" width="328" height="92" rx="13" fill="#ffffff" stroke="#dfe4ec" stroke-width="1" filter="url(#sh)"/>
+  <g class="ico" stroke="#5a5fe0" transform="translate(550,700)">
+    <ellipse cx="9" cy="3.6" rx="7.2" ry="2.6"/>
+    <path d="M1.8 3.6 V13.4 C1.8 14.9 5 16 9 16 C13 16 16.2 14.9 16.2 13.4 V3.6"/>
+    <path d="M1.8 8.5 C1.8 10 5 11.1 9 11.1 C13 11.1 16.2 10 16.2 8.5"/>
   </g>
+  <text class="ct" x="578" y="714">global.db</text>
+  <text class="m" x="550" y="738" style="fill:#4c2d8f">projects · global_preferences · global_rules</text>
+  <text class="m" x="550" y="756" style="fill:#4c2d8f;font-weight:700">holds NO decisions</text>
 
-  <!-- ============ ARROWS ============ -->
-  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
-    <!-- Class 1: MCP protocol (blue) -->
-    <g stroke="#4b8fd0" stroke-width="2">
-      <path d="M86 136 L86 166 L528 166 L528 136"/>
-      <path d="M215 136 L215 166"/>
-      <path d="M200 166 L200 205" marker-end="url(#ahBlue)"/>
-      <path d="M450 136 L450 205" stroke-dasharray="6 4" marker-end="url(#ahBlue)"/>
-    </g>
-
-    <!-- Class 2: hook invocation (amber) -->
-    <g stroke="#c08a2e" stroke-width="2">
-      <path d="M112 136 L112 182"/>
-      <path d="M550 136 L550 182"/>
-      <path d="M821 136 L821 182"/>
-      <path d="M821 182 L112 182"/>
-      <path d="M430 182 L430 205" marker-end="url(#ahAmber)"/>
-    </g>
-
-    <!-- Class 3: file read / write (slate) -->
-    <g stroke="#7b8590" stroke-width="1.5">
-      <path d="M230 372 L230 498" marker-start="url(#ahSlateBack)" marker-end="url(#ahSlate)"/>
-      <path d="M350 372 L350 498" marker-end="url(#ahSlate)"/>
-      <path d="M300 372 L300 392 L378 392 L378 740 L370 740" marker-end="url(#ahSlate)"/>
-      <path d="M430 372 L430 384 L388 384 L388 780 L370 780" marker-end="url(#ahSlate)"/>
-      <path d="M845 372 L845 464" marker-end="url(#ahSlate)"/>
-      <path d="M668 136 L668 160 L892 160 L892 924 L200 924 L200 898"
-            stroke-dasharray="5 4" marker-end="url(#ahSlate)"/>
-    </g>
+  <rect x="532" y="794" width="328" height="92" rx="13" fill="#ffffff" stroke="#dfe4ec" stroke-width="1" filter="url(#sh)"/>
+  <g class="ico" stroke="#5a5fe0" transform="translate(550,808)">
+    <rect x="4.4" y="4.4" width="9.2" height="9.2" rx="2"/>
+    <path d="M7.4 1.4 V4.4"/><path d="M10.6 1.4 V4.4"/>
+    <path d="M7.4 13.6 V16.6"/><path d="M10.6 13.6 V16.6"/>
+    <path d="M1.4 7.4 H4.4"/><path d="M1.4 10.6 H4.4"/>
+    <path d="M13.6 7.4 H16.6"/><path d="M13.6 10.6 H16.6"/>
   </g>
+  <text class="ct" x="578" y="822">device_id · update_check.json</text>
+  <text class="m" x="550" y="846" style="fill:#4c2d8f">logs/crashes.log · snapshots/&lt;slug&gt;/</text>
+  <text class="m" x="550" y="864" style="fill:#4c2d8f">run/&lt;pid&gt;.json</text>
 
-  <!-- ============ EDGE LABELS (halo under text) ============ -->
-  <g font-size="11.5" font-weight="500">
-    <rect x="236" y="149" width="202" height="17" rx="3" fill="#fafbfc"/>
-    <text x="242" y="162" fill="#0b4a80">stdio MCP · --project-dir &lt;repo&gt;</text>
-
-    <rect x="466" y="188" width="270" height="17" rx="3" fill="#fafbfc"/>
-    <text x="472" y="201" fill="#0b4a80">stdio, unpinned — binds via cwd / MCP roots</text>
-
-    <rect x="116" y="145" width="56" height="17" rx="3" fill="#fafbfc"/>
-    <text x="122" y="158" fill="#7a4d06">5 hooks</text>
-
-    <rect x="556" y="145" width="120" height="17" rx="3" fill="#fafbfc"/>
-    <text x="562" y="158" fill="#7a4d06">1 hook: PreToolUse</text>
-
-    <rect x="736" y="145" width="74" height="17" rx="3" fill="#fafbfc"/>
-    <text x="742" y="158" fill="#7a4d06">pre-commit</text>
-
-    <rect x="36" y="374" width="182" height="34" rx="3" fill="#fafbfc"/>
-    <text x="42" y="388" fill="#39414a">read + append</text>
-    <text x="42" y="404" fill="#39414a">file_lock &#8594; fsync &#8594; os.replace</text>
-
-    <rect x="238" y="374" width="108" height="17" rx="3" fill="#fafbfc"/>
-    <text x="244" y="387" fill="#39414a">working memory</text>
-
-    <rect x="240" y="396" width="136" height="17" rx="3" fill="#fafbfc"/>
-    <text x="246" y="409" fill="#39414a">reads locked decisions</text>
-
-    <rect x="396" y="374" width="164" height="17" rx="3" fill="#fafbfc"/>
-    <text x="402" y="387" fill="#39414a">appends enforcement.jsonl</text>
-
-    <rect x="742" y="374" width="104" height="17" rx="3" fill="#fafbfc"/>
-    <text x="748" y="387" fill="#39414a">registers project</text>
-
-    <rect x="80" y="916" width="116" height="17" rx="3" fill="#fafbfc"/>
-    <text x="86" y="929" fill="#39414a">reads AGENTS.md</text>
+  <rect x="532" y="902" width="328" height="92" rx="13" fill="#ffffff" stroke="#dfe4ec" stroke-width="1" filter="url(#sh)"/>
+  <g class="ico" stroke="#5a5fe0" transform="translate(550,916)">
+    <path d="M1.6 14.4 V3.6 A1.6 1.6 0 0 1 3.2 2 H7.2 L9.2 4.6 H14.8 A1.6 1.6 0 0 1 16.4 6.2 V14.4 A1.6 1.6 0 0 1 14.8 16 H3.2 A1.6 1.6 0 0 1 1.6 14.4 Z"/>
   </g>
+  <text class="ct" x="578" y="930">projects/&lt;slug&gt;/</text>
+  <text class="m" x="550" y="954" style="fill:#4c2d8f">config.yaml · metadata.json · roadmap.yaml</text>
+  <text class="m" x="550" y="972" style="fill:#4c2d8f">graph/graph.db · graph/fixes.db · codeindex/</text>
 
-  <!-- ============ LEGEND ============ -->
-  <g>
-    <rect x="20" y="940" width="864" height="38" rx="10" fill="#f0f3f6" stroke="#d0d7de" stroke-width="1"
-          stroke-dasharray="4 3" stroke-linecap="round"/>
-    <g stroke-linecap="round" fill="none">
-      <path d="M30 959 L60 959" stroke="#4b8fd0" stroke-width="2"/>
-      <path d="M262 959 L292 959" stroke="#c08a2e" stroke-width="2"/>
-      <path d="M520 959 L550 959" stroke="#7b8590" stroke-width="1.5"/>
-      <path d="M672 959 L702 959" stroke="#8a6fd0" stroke-width="1.5" stroke-dasharray="6 4"/>
-    </g>
-    <g font-size="11.5" fill="#39414a">
-      <text x="66" y="963">MCP protocol (stdio JSON-RPC)</text>
-      <text x="298" y="963">hook invocation (&#8594; codevira engine)</text>
-      <text x="556" y="963">file read / write</text>
-      <text x="708" y="963">resolved by get_data_dir()</text>
-    </g>
-  </g>
+  <!-- ================= get_data_dir() switch ================= -->
+  <path d="M398 900 L408 860 L504 860 L514 900 L504 940 L408 940 Z"
+        fill="#f1eefc" stroke="#5a5fe0" stroke-width="1.8" stroke-dasharray="6 4" stroke-linejoin="round"/>
+  <text class="m" x="456" y="896" text-anchor="middle" style="fill:#4c2d8f;font-weight:700">get_data_dir()</text>
+  <text x="456" y="914" font-size="10.5" text-anchor="middle" style="fill:#4c2d8f">resolved per project</text>
 
-  <!-- ============ FOOTNOTE RAIL ============ -->
-  <g font-size="10.5" fill="#59636e">
-    <text x="30" y="998">Dashed blue = the Cursor exception: its entry is bare (args: []), unpinned, and is not written by register-all.</text>
-    <text x="30" y="1013">Codex/Copilot get no server — their whole integration is the generated AGENTS.md. codevira serve requires the [http] extra.</text>
-    <text x="30" y="1028">.codevira/ redirects to the main worktree; .codevira-cache/ does not. git pre-commit enforcement is file-level — it sets no proposed_diff.</text>
-    <text x="30" y="1043">Claude Code's 5 hooks: SessionStart · UserPromptSubmit · PreToolUse · PostToolUse · Stop.</text>
+  <path d="M396 900 H382" fill="none" stroke="#5a5fe0" stroke-width="1.5" stroke-dasharray="6 4"
+        stroke-linecap="round" marker-end="url(#ahViolet)"/>
+  <path d="M516 906 L530 928" fill="none" stroke="#5a5fe0" stroke-width="1.5" stroke-dasharray="6 4"
+        stroke-linecap="round" marker-end="url(#ahViolet)"/>
+
+  <text class="lbl" x="402" y="962" style="fill:#4c2d8f">&#8592; this repo:</text>
+  <text class="lbl" x="402" y="978" style="fill:#4c2d8f">in-repo</text>
+  <text class="lbl" x="402" y="1000" style="fill:#4c2d8f">&#8594; fresh init:</text>
+  <text class="lbl" x="402" y="1016" style="fill:#4c2d8f">centralized</text>
+
+  <!-- Codex/Copilot -> AGENTS.md (dashed slate, routed round the right margin) -->
+  <path d="M640 194 V262 H884 V1150 H210 V1114" fill="none" stroke="#6b7683" stroke-width="1.4"
+        stroke-dasharray="5 4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ahSlate)"/>
+  <text class="lbl" x="222" y="1144">reads AGENTS.md</text>
+
+  <!-- ================= LEGEND ================= -->
+  <text class="eyebrow" x="24" y="1176">ARROW KINDS</text>
+  <rect x="24" y="1186" width="852" height="44" rx="12" fill="#ecf0f6" stroke="#dfe4ec" stroke-width="1"/>
+  <g fill="none" stroke-linecap="round">
+    <path d="M44 1209 H72" stroke="#0064d6" stroke-width="2"/>
+    <path d="M262 1209 H290" stroke="#b5801f" stroke-width="2"/>
+    <path d="M513 1209 H541" stroke="#6b7683" stroke-width="1.6"/>
+    <path d="M665 1209 H693" stroke="#5a5fe0" stroke-width="1.5" stroke-dasharray="6 4"/>
   </g>
+  <text class="lbl" x="80" y="1213">MCP protocol (stdio JSON-RPC)</text>
+  <text class="lbl" x="298" y="1213">hook invocation (&#8594; codevira engine)</text>
+  <text class="lbl" x="549" y="1213">file read / write</text>
+  <text class="lbl" x="701" y="1213">resolved by get_data_dir()</text>
+
+  <!-- ================= FOOTNOTE RAIL ================= -->
+  <text class="eyebrow" x="24" y="1262">NOTES</text>
+  <text class="fn" x="24" y="1282">Dashed blue = the Cursor exception: its entry is bare (args: []), unpinned, and is not written by register-all.</text>
+  <text class="fn" x="24" y="1298">Codex/Copilot get no server — their whole integration is the generated AGENTS.md. codevira serve requires the [http] extra.</text>
+  <text class="fn" x="24" y="1314">.codevira/ redirects to the main worktree; .codevira-cache/ does not. git pre-commit enforcement is file-level — it sets no proposed_diff.</text>
+  <text class="fn" x="24" y="1330">Claude Code's 5 hooks: SessionStart · UserPromptSubmit · PreToolUse · PostToolUse · Stop.</text>
 </svg>

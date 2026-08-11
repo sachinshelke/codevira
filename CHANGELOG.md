@@ -16,6 +16,34 @@ deprecated `codevira clean` command (a footgun — see below), and lands two
 `doctor` / project-inventory fixes. Existing memory, decision data and MCP
 bindings are unchanged.
 
+### Fixed — the code graph had no import edges unless your code lived in `src/`
+
+`get_impact` returned nothing. Not "no callers found" — *structurally* nothing,
+for any project not laid out as `src/`. On codevira's own repo the graph held
+**1,197 nodes and 0 edges**, and had done since at least 1 August.
+
+Import resolution decides "is this import project-local?" by checking whether it
+starts with a known project package, and that set came from `watched_dirs` in
+`config.yaml` — with a hardcoded `["src"]` fallback when the key is absent. It is
+absent in the common case: the legacy `init` scaffold writes `watched_dirs` into
+`<data_dir>/config.yaml`, the v2.2 scaffold writes `<project>/.codevira/config.yaml`
+**without** it, and creating that second file is precisely what flips
+`get_data_dir()` to the in-repo path — so the config that wins is the one missing
+the key. Every import then failed the gate, no edge was ever written, and
+`get_impact` — the tool `CLAUDE.md` instructs every agent to call before editing —
+answered "blast radius 0" for everything.
+
+The package set is now the configured `watched_dirs` **unioned with** the
+directories that actually look importable on disk. A union, not a replacement: it
+can only add correct edges, so no existing project's graph can shrink on upgrade.
+`node_modules`, `.venv`, `build` and friends are excluded, and resolution still
+requires the target file to exist, so `import os` does not become an edge.
+
+Measured on this repo after the fix: **793 import edges**, and
+`get_impact("mcp_server/paths.py")` reports a blast radius of 186 where it
+previously reported 0. **Run `codevira index --full` once after upgrading** to
+rebuild the edges. *(Tests: `TestProjectPackagesFromDisk`.)*
+
 ### Fixed — an installed IDE with an empty config file was invisible to `setup`
 
 `codevira setup` detected an IDE only if its config file **parsed as JSON** — and an

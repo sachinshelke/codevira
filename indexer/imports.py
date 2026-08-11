@@ -314,6 +314,67 @@ def _resolve_ts_import(
     return None
 
 
+#: Directory names that are never a project's own import roots.
+_NON_PACKAGE_DIRS = frozenset(
+    {
+        "node_modules",
+        "venv",
+        ".venv",
+        "env",
+        "build",
+        "dist",
+        "target",
+        "vendor",
+        "site-packages",
+        "__pycache__",
+        "htmlcov",
+        "docs",
+        "tests",
+    }
+)
+
+
+@functools.lru_cache(maxsize=32)
+def _project_packages(project_root: Path) -> frozenset[str]:
+    """Top-level names an intra-project import can legitimately start with.
+
+    The configured ``watched_dirs`` UNION the directories that actually look
+    importable on disk. The union is deliberate: it can only add correct
+    edges, never drop one an existing project already gets, so upgrading
+    cannot shrink anybody's graph.
+
+    Why the disk half is needed at all: ``watched_dirs`` is written by the
+    legacy ``init`` scaffold into ``<data_dir>/config.yaml``, while the v2.2
+    scaffold writes ``<project>/.codevira/config.yaml`` WITHOUT it — and
+    creating that second file is exactly what flips ``get_data_dir()`` to the
+    in-repo path, so the config that survives is the one missing the key.
+    ``_get_project_config()`` then fell back to a hardcoded ``["src"]``, and
+    every project not laid out as ``src/`` resolved zero imports: 1,197 nodes
+    and 0 edges on codevira's own repo, which silently emptied ``get_impact``.
+    """
+    names: set[str] = set()
+    try:
+        configured, _ = _get_project_config()
+        names |= {str(d).strip("/. ") for d in configured if str(d).strip("/. ")}
+    except Exception:  # noqa: BLE001 — config is advisory here, disk is truth
+        pass
+
+    try:
+        for entry in project_root.iterdir():
+            if not entry.is_dir():
+                continue
+            name = entry.name
+            if name.startswith(".") or name in _NON_PACKAGE_DIRS:
+                continue
+            # Importable if it is a package, or simply holds source files.
+            if (entry / "__init__.py").exists() or any(entry.glob("*.py")):
+                names.add(name)
+    except (OSError, PermissionError):
+        pass
+
+    return frozenset(names)
+
+
 def _extract_imports_python(file_path: str, project_root: str) -> list[str]:
     """
     Parse a Python file's import statements and return relative paths of
@@ -331,8 +392,7 @@ def _extract_imports_python(file_path: str, project_root: str) -> list[str]:
         return []
 
     project_root_path = Path(project_root)
-    target_dirs, _ = _get_project_config()
-    project_packages = set(target_dirs)
+    project_packages = _project_packages(project_root_path)
 
     results: list[str] = []
 

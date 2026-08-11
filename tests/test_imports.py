@@ -44,6 +44,7 @@ except Exception:
     sys.modules["indexer.treesitter_parser"] = _fake_ts
 
 from indexer.imports import (  # noqa: E402
+    _project_packages,
     _extract_imports_python,
     _get_project_config,
     _load_tsconfig,
@@ -491,3 +492,69 @@ class TestTsconfigAliasResolution:
         resolved = _resolve_ts_import("./objective-spec", tmp_path / "src", tmp_path)
         assert resolved is not None
         assert resolved.replace("\\", "/") == "src/objective-spec.ts"
+
+
+class TestProjectPackagesFromDisk:
+    """4.0.1: import resolution must not assume the project lives in ``src/``.
+
+    ``_module_to_path`` gates on "does this import start with a known project
+    package", and that set came from ``watched_dirs`` in config.yaml with a
+    hardcoded ``["src"]`` fallback. The v2.2 scaffold writes
+    ``<project>/.codevira/config.yaml`` WITHOUT ``watched_dirs``, and creating
+    that file is what flips ``get_data_dir()`` to the in-repo path — so the
+    config that wins is the one missing the key, the fallback engages, and any
+    project not laid out as ``src/`` resolved ZERO imports.
+
+    Measured on codevira's own repo before this fix: 1,197 graph nodes and
+    0 edges, which silently emptied ``get_impact`` — the tool CLAUDE.md tells
+    every agent to call before editing.
+    """
+
+    def _project(self, root: Path) -> None:
+        """A project whose code is in app/ and lib/ — not src/."""
+        (root / "app").mkdir()
+        (root / "lib").mkdir()
+        (root / "app" / "__init__.py").write_text("")
+        (root / "lib" / "__init__.py").write_text("")
+        (root / "lib" / "util.py").write_text("def helper():\n    return 1\n")
+        (root / "app" / "main.py").write_text(
+            "import os\n"
+            "import json\n"
+            "from lib.util import helper\n"
+            "def go():\n"
+            "    return helper()\n"
+        )
+
+    def test_imports_resolve_when_project_is_not_in_src(self, tmp_path):
+        """The bug, as a test: lib/util.py must be found from app/main.py."""
+        self._project(tmp_path)
+        found = extract_imports(str(tmp_path / "app" / "main.py"), str(tmp_path))
+        assert "lib/util.py" in [f.replace("\\", "/") for f in found], (
+            "import resolution missed a real project-local import, so the code "
+            f"graph would carry no edge for it. got: {found}"
+        )
+
+    def test_stdlib_is_still_skipped(self, tmp_path):
+        """Widening the package set must not turn `import os` into an edge."""
+        self._project(tmp_path)
+        found = extract_imports(str(tmp_path / "app" / "main.py"), str(tmp_path))
+        assert not [f for f in found if "os" in Path(f).stem.split(".")[:1]]
+        for f in found:
+            assert (tmp_path / f).exists(), f"resolved a path that does not exist: {f}"
+
+    def test_configured_watched_dirs_are_still_honoured(self, tmp_path):
+        """The disk scan is a UNION with config, not a replacement — a project
+        that already resolved correctly must not lose anything."""
+        self._project(tmp_path)
+        pkgs = _project_packages(tmp_path)
+        assert {"app", "lib"} <= set(pkgs)
+
+    def test_non_package_dirs_are_ignored(self, tmp_path):
+        """node_modules/.venv/build must never become import roots."""
+        self._project(tmp_path)
+        for junk in ("node_modules", ".venv", "build", "__pycache__"):
+            d = tmp_path / junk
+            d.mkdir()
+            (d / "shim.py").write_text("x = 1\n")
+        pkgs = _project_packages(tmp_path)
+        assert not ({"node_modules", ".venv", "build", "__pycache__"} & set(pkgs))

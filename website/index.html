@@ -269,6 +269,18 @@
   .card code,.lede code{font-family:var(--mono);font-size:.86em;color:var(--blue);
       background:rgba(10,132,255,.10);border-radius:6px;padding:1.5px 7px}
 
+  /* at a glance — the overview diagram carries its own light ground (#f3f5f9),
+     so the frame uses that same ground rather than .glass: in light mode the
+     padding blends into the artwork, and in dark mode the whole thing reads as
+     one deliberate light inset panel instead of a bright rectangle floating on
+     a dark card. Colours are left true — no brightness filter on the brand orange. */
+  .glance{margin:44px auto 0;max-width:1000px;padding:16px;border-radius:22px;
+      background:#f3f5f9;border:1px solid var(--glass-line);box-shadow:var(--shadow);
+      transition:border-color .35s ease,box-shadow .35s ease}
+  .glance img{display:block;width:100%;max-width:100%;height:auto}
+  [data-theme="dark"] .glance{border-color:rgba(255,255,255,.14);box-shadow:var(--shadow-lg)}
+  @media(max-width:640px){.glance{padding:10px;border-radius:16px}}
+
   /* story */
   .story{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:20px;margin-top:44px}
   .story .chapter{padding:30px}
@@ -465,6 +477,18 @@
 
 <div class="wrap">
 
+  <!-- AT A GLANCE -->
+  <section id="overview" class="center">
+    <div class="kicker reveal">At a glance</div>
+    <h2 class="reveal">The whole system, one picture</h2>
+    <p class="lede reveal">Every AI tool on your machine reads and writes one memory that lives in your
+    repo — and the decisions you lock escalate from remembered, to surfaced, to refused.</p>
+    <figure class="glance reveal">
+      <img src="assets/overview.svg" width="1160" height="780" decoding="async"
+           alt="Diagram: codevira sits at the centre of your toolchain. Claude Code, Claude Desktop, Cursor and Antigravity connect over the MCP server, while OpenAI Codex and GitHub Copilot read the generated AGENTS.md — all of them recording decisions into and recalling context from one in-repo memory at .codevira/*.jsonl. Six capabilities orbit that memory: Decision Memory (why it won, what you rejected), Enforcement Engine (7 policies, 5 lifecycle events), Code Graph (blast radius: who calls this), Cross-Tool Sync (one log, every MCP client), Session Context (~500-token brief, one call) and Anti-Regression (blocks re-breaking a fixed bug). A strip along the bottom shows how far a decision goes: remember, surface, warn, block.">
+    </figure>
+  </section>
+
   <!-- STORY -->
   <section id="story">
     <div class="kicker reveal">The story</div>
@@ -660,11 +684,12 @@
       <div class="ide glass reveal"><span class="chip"><img src="assets/claude.svg" alt="Claude Code"></span>Claude Code<small>MCP + hooks</small></div>
       <div class="ide glass reveal"><span class="chip"><img src="assets/cursor.png" alt="Cursor"></span>Cursor<small>MCP + AGENTS.md</small></div>
       <div class="ide glass reveal"><span class="chip"><img src="assets/copilot.svg" alt="GitHub Copilot"></span>Copilot<small>AGENTS.md</small></div>
-      <div class="ide glass reveal"><span class="chip"><img src="assets/gemini.svg" alt="Gemini CLI"></span>Gemini CLI<small>MCP + AGENTS.md</small></div>
-      <div class="ide glass reveal"><span class="chip"><img src="assets/codex.png" alt="OpenAI Codex"></span>Codex<small>MCP + AGENTS.md</small></div>
+      <div class="ide glass reveal"><span class="chip"><img src="assets/gemini.svg" alt="Gemini CLI"></span>Gemini CLI<small>GEMINI.md (opt-in)</small></div>
+      <div class="ide glass reveal"><span class="chip"><img src="assets/codex.png" alt="OpenAI Codex"></span>Codex<small>AGENTS.md</small></div>
       <div class="ide glass reveal"><span class="chip"><img src="assets/antigravity.png" alt="Antigravity"></span>Antigravity<small>MCP + AGENTS.md</small></div>
       <div class="ide glass reveal"><span class="chip"><img src="assets/mcp.svg" alt="Model Context Protocol"></span>Any MCP client<small>standard protocol</small></div>
     </div>
+    <p class="tabnote reveal" style="text-align:center"><code style="font-family:var(--mono)">codevira setup</code> writes MCP server entries for <strong>Claude Code, Claude Desktop, Cursor and Antigravity</strong>. <strong>Codex</strong> and <strong>Copilot</strong> get the memory the way they already read it — the generated <code style="font-family:var(--mono)">AGENTS.md</code>, no MCP config needed. <strong>Gemini CLI</strong> isn't a setup target; point it at the memory by opting a project's <code style="font-family:var(--mono)">GEMINI.md</code> in via <code style="font-family:var(--mono)">.codevira/config.yaml</code>.</p>
   </section>
 
   <!-- COMPARISON -->

@@ -1,0 +1,273 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1160" height="780" viewBox="0 0 1160 780" role="img" aria-label="codevira orbit blueprint: a central in-repo memory that every AI coding tool reads and writes, six capabilities orbiting it, and a four-step escalation from remember to surface to warn to block.">
+  <title>codevira — one memory, every AI tool, decisions that stick</title>
+  <desc>A single landscape view. On the left, a panel lists the AI tools that connect: Claude Code, Claude Desktop, Cursor and Antigravity over the MCP server, and OpenAI Codex and GitHub Copilot which read the generated AGENTS.md file. Two arrows run from that panel into a glowing blue-to-violet ring at the centre: one labelled "records decisions", one labelled "recalls context". Inside the ring is the codevira logo mark — an orange shield holding a network of linked nodes, with an arrow breaking out of the top-right — above the codevira wordmark and the in-repo path .codevira/*.jsonl. Six capability cards orbit the ring on thin spokes: Decision Memory (why it won, what you rejected), Enforcement Engine (7 policies, 5 lifecycle events), Code Graph (blast radius: who calls this), Cross-Tool Sync (one log, every MCP client), Session Context (about 500-token brief, one call) and Anti-Regression (blocks re-breaking a fixed bug). Along the bottom, four connected chips intensify in colour left to right: REMEMBER, SURFACE, WARN, BLOCK.</desc>
+
+  <defs>
+    <linearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0064d6"/>
+      <stop offset="0.5" stop-color="#3560de"/>
+      <stop offset="1" stop-color="#5a5fe0"/>
+    </linearGradient>
+    <linearGradient id="orange" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ff6a00"/>
+      <stop offset="1" stop-color="#ffa726"/>
+    </linearGradient>
+    <radialGradient id="glowGrad" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#5a5fe0" stop-opacity="0.20"/>
+      <stop offset="0.45" stop-color="#0064d6" stop-opacity="0.10"/>
+      <stop offset="1" stop-color="#0064d6" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="soft" x="-25%" y="-25%" width="150%" height="150%">
+      <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#1b1f27" flood-opacity="0.08"/>
+    </filter>
+    <filter id="softLg" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="4" stdDeviation="10" flood-color="#1b1f27" flood-opacity="0.10"/>
+    </filter>
+    <marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto">
+      <path d="M 0.5 1 L 9 5 L 0.5 9 Z" fill="#8d9ab0"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1160" height="780" fill="#f3f5f9"/>
+
+  <!-- ============ HEADER ============ -->
+  <text x="36" y="28" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" font-weight="700" letter-spacing="2.6" fill="#0064d6">CODEVIRA — PERSISTENT PROJECT MEMORY</text>
+  <text x="36" y="62" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="28" font-weight="700" fill="#1b1f27">One memory. Every AI tool. Decisions that stick.</text>
+  <text x="36" y="88" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="15" fill="#5b6472">A local-first MCP server. One shared decision log — and the ones you lock are refused.</text>
+
+  <g filter="url(#soft)">
+    <rect x="779" y="40" width="109" height="32" rx="16" fill="#eef4fd" stroke="#cfe0f7"/>
+    <rect x="904" y="40" width="88" height="32" rx="16" fill="#ffffff" stroke="#dde3ec"/>
+    <rect x="1008" y="40" width="116" height="32" rx="16" fill="#ffffff" stroke="#dde3ec"/>
+  </g>
+  <text x="833" y="61" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#0064d6">local-first</text>
+  <text x="948" y="61" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" fill="#5b6472">no cloud</text>
+  <text x="1066" y="61" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" fill="#5b6472">36 MCP tools</text>
+
+  <!-- ============ HUB GLOW (behind everything in the orbit) ============ -->
+  <circle cx="498" cy="358" r="222" fill="url(#glowGrad)"/>
+
+  <!-- ============ SPOKES ============ -->
+  <g stroke="#b6c1d4" stroke-width="1.5" fill="none">
+    <line x1="471.1" y1="238.8" x2="460.2" y2="184"/>
+    <line x1="597.8" y1="287.8" x2="714.0" y2="206"/>
+    <line x1="618.4" y1="338.1" x2="834" y2="302.5"/>
+    <line x1="617.7" y1="381.4" x2="834" y2="423.7"/>
+    <line x1="597.4" y1="428.7" x2="714.6" y2="512"/>
+    <line x1="472.8" y1="477.4" x2="460.0" y2="538"/>
+  </g>
+
+  <!-- ============ TOOLS -> HUB CONNECTORS ============ -->
+  <g fill="none" stroke="#8d9ab0" stroke-width="1.8" stroke-linecap="round" marker-end="url(#ah)">
+    <path d="M 226 300 C 286 300, 302 324, 368 338"/>
+    <path d="M 374 380 C 308 396, 292 418, 240 418"/>
+  </g>
+  <text x="300" y="286" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#5b6472">records decisions</text>
+  <text x="300" y="444" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#5b6472">recalls context</text>
+
+  <!-- ============ HUB ============ -->
+  <circle cx="498" cy="358" r="134" fill="none" stroke="#5a5fe0" stroke-opacity="0.20" stroke-width="1.5"/>
+  <circle cx="498" cy="358" r="113" fill="none" stroke="url(#ringGrad)" stroke-width="20"/>
+  <circle cx="498" cy="358" r="101" fill="#ffffff" filter="url(#softLg)"/>
+
+  <!-- logo mark: orange shield, node network, breakout arrow (44x44 centred on 498,297) -->
+  <g transform="translate(470.7,269.96) scale(1.3)">
+    <path d="M4 9 L20 4 L36 9 V21 C36 29.5 27.6 35.1 20 37.6 C12.4 35.1 4 29.5 4 21 Z"
+          fill="none" stroke="url(#orange)" stroke-width="2.4" stroke-linejoin="round"/>
+    <g stroke="url(#orange)" stroke-width="1" stroke-linecap="round" opacity="0.75">
+      <path d="M12 15.5 L20 12"/>
+      <path d="M12 15.5 L19.5 20.5"/>
+      <path d="M12 15.5 L11 23"/>
+      <path d="M20 12 L19.5 20.5"/>
+      <path d="M19.5 20.5 L11 23"/>
+      <path d="M19.5 20.5 L20 29.5"/>
+      <path d="M11 23 L20 29.5"/>
+      <path d="M27 25 L20 29.5"/>
+      <path d="M30 21 L27 25"/>
+      <path d="M30 21 L20 29.5"/>
+    </g>
+    <g fill="url(#orange)">
+      <circle cx="12" cy="15.5" r="1.6"/>
+      <circle cx="20" cy="12" r="1.6"/>
+      <circle cx="19.5" cy="20.5" r="1.6"/>
+      <circle cx="11" cy="23" r="1.6"/>
+      <circle cx="30" cy="21" r="1.6"/>
+      <circle cx="27" cy="25" r="1.6"/>
+      <circle cx="20" cy="29.5" r="1.6"/>
+    </g>
+    <g stroke="#ffffff" fill="#ffffff" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21.5 22.5 L33.3 9.4" stroke-width="5.5"/>
+      <path d="M38 4 L35.9 11.4 L30.7 6.6 Z" stroke-width="4.4"/>
+    </g>
+    <path d="M21.5 22.5 L33.3 9.4" fill="none" stroke="url(#orange)" stroke-width="2.6" stroke-linecap="round"/>
+    <path d="M38 4 L35.9 11.4 L30.7 6.6 Z" fill="url(#orange)" stroke="url(#orange)" stroke-width="1.4" stroke-linejoin="round"/>
+  </g>
+  <text x="498" y="356" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="30" font-weight="700" letter-spacing="-0.4" fill="#1b1f27">codevira</text>
+  <line x1="450" y1="372" x2="546" y2="372" stroke="#e3e7ee" stroke-width="1.5"/>
+  <text x="498" y="394" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" fill="#5b6472">one in-repo memory</text>
+  <text x="498" y="416" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" fill="#0064d6">.codevira/*.jsonl</text>
+
+  <!-- node dots where spokes meet the ring -->
+  <g fill="#ffffff" stroke="#5a5fe0" stroke-width="2.5">
+    <circle cx="471.1" cy="238.8" r="4.5"/>
+    <circle cx="597.8" cy="287.8" r="4.5"/>
+    <circle cx="618.4" cy="338.1" r="4.5"/>
+    <circle cx="617.7" cy="381.4" r="4.5"/>
+    <circle cx="597.4" cy="428.7" r="4.5"/>
+    <circle cx="472.8" cy="477.4" r="4.5"/>
+  </g>
+  <g fill="#ffffff" stroke="#0064d6" stroke-width="2.5">
+    <circle cx="377" cy="337" r="4.5"/>
+    <circle cx="377" cy="380" r="4.5"/>
+  </g>
+
+  <!-- ============ TOOLS PANEL ============ -->
+  <rect x="36" y="178" width="186" height="350" rx="16" fill="#ffffff" stroke="#e3e7ee" filter="url(#soft)"/>
+  <text x="56" y="206" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" font-weight="700" letter-spacing="1.3" fill="#1b1f27">YOUR AI TOOLS</text>
+  <line x1="36" y1="220" x2="222" y2="220" stroke="#eef1f6" stroke-width="1.5"/>
+
+  <text x="56" y="246" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" font-weight="700" letter-spacing="0.8" fill="#0064d6">VIA MCP SERVER</text>
+
+  <g stroke="#0064d6" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <g transform="translate(52,261)">
+      <path d="M 4 6 L 8.5 10 L 4 14"/>
+      <path d="M 10.5 14.5 H 16"/>
+    </g>
+    <g transform="translate(52,297)">
+      <rect x="2.5" y="4" width="15" height="10.5" rx="2"/>
+      <path d="M 7 17.5 H 13"/>
+      <path d="M 10 14.5 V 17.5"/>
+    </g>
+    <g transform="translate(52,333)">
+      <path d="M 5 3.5 L 15.5 11 L 10.6 11.7 L 8.4 16.4 Z"/>
+    </g>
+    <g transform="translate(52,369)">
+      <circle cx="10" cy="10" r="7.2"/>
+      <path d="M 10 14 V 6.4"/>
+      <path d="M 6.8 9.4 L 10 6.2 L 13.2 9.4"/>
+    </g>
+  </g>
+  <g font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14.5" fill="#1b1f27">
+    <text x="78" y="276">Claude Code</text>
+    <text x="78" y="312">Claude Desktop</text>
+    <text x="78" y="348">Cursor</text>
+    <text x="78" y="384">Antigravity</text>
+  </g>
+
+  <line x1="36" y1="404" x2="222" y2="404" stroke="#eef1f6" stroke-width="1.5"/>
+  <text x="56" y="428" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" font-weight="700" letter-spacing="0.8" fill="#5b6472">READS <tspan font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14">AGENTS.md</tspan></text>
+
+  <g stroke="#5b6472" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <g transform="translate(52,443)">
+      <path d="M 7 6 L 3.2 10 L 7 14"/>
+      <path d="M 13 6 L 16.8 10 L 13 14"/>
+    </g>
+    <g transform="translate(52,479)">
+      <path d="M 3 12 C 3 8.5, 6 6.5, 10 6.5 C 14 6.5, 17 8.5, 17 12 C 17 15, 14 16.5, 10 16.5 C 6 16.5, 3 15, 3 12 Z"/>
+      <path d="M 10 6.5 V 3.8"/>
+      <circle cx="7.4" cy="11.6" r="1.3" fill="#5b6472" stroke="none"/>
+      <circle cx="12.6" cy="11.6" r="1.3" fill="#5b6472" stroke="none"/>
+    </g>
+  </g>
+  <g font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14.5" fill="#1b1f27">
+    <text x="78" y="458">OpenAI Codex</text>
+    <text x="78" y="494">GitHub Copilot</text>
+  </g>
+
+  <!-- ============ CAPABILITY CARDS ============ -->
+
+  <!-- 1. Decision Memory -->
+  <rect x="328" y="108" width="248" height="76" rx="14" fill="#ffffff" stroke="#e3e7ee" filter="url(#soft)"/>
+  <g transform="translate(346,121)" stroke="#0064d6" stroke-width="2" fill="none" stroke-linecap="round">
+    <path d="M 5 20 V 14"/>
+    <path d="M 5 14 C 5 9, 8 6.4, 10.4 5.6"/>
+    <path d="M 5 14 C 5 11, 12 12.2, 15.4 13.4"/>
+    <circle cx="12.6" cy="4.9" r="2.7" fill="#0064d6"/>
+    <circle cx="18" cy="14.2" r="2.7"/>
+  </g>
+  <text x="380" y="139" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="15.5" font-weight="700" fill="#1b1f27">Decision Memory</text>
+  <text x="346" y="166" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" fill="#5b6472">why it won, what you rejected</text>
+
+  <!-- 2. Enforcement Engine -->
+  <rect x="644" y="130" width="248" height="76" rx="14" fill="#ffffff" stroke="#e3e7ee" filter="url(#soft)"/>
+  <g transform="translate(662,143)" stroke="#5a5fe0" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="4" y="10" width="14" height="9.2" rx="2.5"/>
+    <path d="M 7.5 10 V 7.6 A 3.5 3.5 0 0 1 14.5 7.6 V 10"/>
+    <circle cx="11" cy="14.6" r="1.5" fill="#5a5fe0" stroke="none"/>
+  </g>
+  <text x="696" y="161" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="15.5" font-weight="700" fill="#1b1f27">Enforcement Engine</text>
+  <text x="662" y="188" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" fill="#5b6472">7 policies, 5 lifecycle events</text>
+
+  <!-- 3. Code Graph -->
+  <rect x="834" y="244" width="248" height="76" rx="14" fill="#ffffff" stroke="#e3e7ee" filter="url(#soft)"/>
+  <g transform="translate(852,257)" stroke="#0064d6" stroke-width="2" fill="none" stroke-linecap="round">
+    <path d="M 6.6 7.2 L 14.6 8.6"/>
+    <path d="M 5.6 8.4 L 8.2 15.6"/>
+    <path d="M 15.6 10.2 L 10.6 16.2"/>
+    <circle cx="4.8" cy="6" r="2.6"/>
+    <circle cx="17" cy="8.4" r="2.6"/>
+    <circle cx="9.2" cy="18" r="2.6"/>
+  </g>
+  <text x="886" y="275" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="15.5" font-weight="700" fill="#1b1f27">Code Graph</text>
+  <text x="852" y="302" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" fill="#5b6472">blast radius: who calls this</text>
+
+  <!-- 4. Cross-Tool Sync -->
+  <rect x="834" y="410" width="248" height="76" rx="14" fill="#ffffff" stroke="#e3e7ee" filter="url(#soft)"/>
+  <g transform="translate(852,423)" stroke="#5a5fe0" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M 4 12.2 A 7.4 7.4 0 0 1 16.4 6.6"/>
+    <polyline points="12.6,5.2 16.8,6.6 15.4,10.8"/>
+    <path d="M 18 9.8 A 7.4 7.4 0 0 1 5.6 15.4"/>
+    <polyline points="9.4,16.8 5.2,15.4 6.6,11.2"/>
+  </g>
+  <text x="886" y="441" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="15.5" font-weight="700" fill="#1b1f27">Cross-Tool Sync</text>
+  <text x="852" y="468" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" fill="#5b6472">one log, every MCP client</text>
+
+  <!-- 5. Session Context -->
+  <rect x="644" y="512" width="248" height="76" rx="14" fill="#ffffff" stroke="#e3e7ee" filter="url(#soft)"/>
+  <g transform="translate(662,525)" stroke="#0064d6" stroke-width="2" fill="none" stroke-linecap="round">
+    <rect x="4" y="3.4" width="14" height="15.2" rx="2.6"/>
+    <path d="M 7.6 8 H 14.4"/>
+    <path d="M 7.6 11.4 H 14.4"/>
+    <path d="M 7.6 14.8 H 11.6"/>
+  </g>
+  <text x="696" y="543" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="15.5" font-weight="700" fill="#1b1f27">Session Context</text>
+  <text x="662" y="570" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" fill="#5b6472">~500-token brief, one call</text>
+
+  <!-- 6. Anti-Regression -->
+  <rect x="328" y="538" width="248" height="76" rx="14" fill="#ffffff" stroke="#e3e7ee" filter="url(#soft)"/>
+  <g transform="translate(346,551)" stroke="#5a5fe0" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M 11 2.8 L 18 5.7 V 11 C 18 15.4, 14.8 18.4, 11 19.6 C 7.2 18.4, 4 15.4, 4 11 V 5.7 Z"/>
+    <path d="M 8 11.2 L 10.4 13.6 L 14.4 8.8"/>
+  </g>
+  <text x="380" y="569" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="15.5" font-weight="700" fill="#1b1f27">Anti-Regression</text>
+  <text x="346" y="596" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" fill="#5b6472">blocks re-breaking a fixed bug</text>
+
+  <!-- ============ ESCALATION STRIP ============ -->
+  <text x="36" y="630" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" font-weight="700" letter-spacing="1.6" fill="#1b1f27">HOW FAR A DECISION GOES</text>
+
+  <rect x="36" y="646" width="248" height="72" rx="14" fill="#eef4fd" stroke="#cfe0f7" filter="url(#soft)"/>
+  <text x="60" y="676" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="15" font-weight="700" letter-spacing="1.2" fill="#0064d6">REMEMBER</text>
+  <text x="60" y="700" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" fill="#5b6472">the decision and the reasoning</text>
+
+  <polyline points="294,675 302,682 294,689" fill="none" stroke="#5a5fe0" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <rect x="316" y="646" width="248" height="72" rx="14" fill="#e4ecfb" stroke="#bcd3f4" filter="url(#soft)"/>
+  <text x="340" y="676" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="15" font-weight="700" letter-spacing="1.2" fill="#3f4fd8">SURFACE</text>
+  <text x="340" y="700" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" fill="#5b6472">injected into every prompt</text>
+
+  <polyline points="574,675 582,682 574,689" fill="none" stroke="#b9781a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <rect x="596" y="646" width="248" height="72" rx="14" fill="#fff6e8" stroke="#ffd79a" filter="url(#soft)"/>
+  <text x="620" y="676" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="15" font-weight="700" letter-spacing="1.2" fill="#8a5a08">WARN</text>
+  <text x="620" y="700" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" fill="#5b6472">an orthogonal edit is flagged</text>
+
+  <polyline points="854,675 862,682 854,689" fill="none" stroke="#b81f1f" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <rect x="876" y="646" width="248" height="72" rx="14" fill="#fdf0f0" stroke="#f2bcbc" filter="url(#soft)"/>
+  <text x="900" y="676" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="15" font-weight="700" letter-spacing="1.2" fill="#b81f1f">BLOCK</text>
+  <text x="900" y="700" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" fill="#5b6472">refused at edit and at commit</text>
+
+  <!-- ============ FOOTER ============ -->
+  <text x="36" y="746" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" fill="#5b6472">local-first · no account · keyword search, no vectors or embeddings · warm calls in milliseconds · nothing leaves your machine</text>
+  <text x="36" y="768" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" fill="#5b6472">Canonical memory in <tspan font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">.codevira/*.jsonl</tspan> · per-machine cache in <tspan font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">.codevira-cache/</tspan> · the generated <tspan font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">AGENTS.md</tspan> is what non-MCP tools read</text>
+</svg>

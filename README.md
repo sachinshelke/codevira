@@ -62,6 +62,19 @@ codevira setup                     # wire it into the AI tools on this machine
 <a href="https://github.com/sachinshelke/codevira/blob/main/docs/demo/index.html">offline HTML player</a> (no network, after cloning)
 </p>
 
+<details open>
+<summary><strong>The whole thing on one page</strong> — solution blueprint</summary>
+
+<br>
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/sachinshelke/codevira/main/website/assets/blueprint.svg"
+       alt="Codevira solution blueprint: persistent memory and decision enforcement for AI coding agents. Four levels — remember, surface, warn, block. Capabilities include decision memory, cross-tool sync, session context, code graph, enforcement engine, anti-regression, skill library and working memory. Works with Claude Code, Claude Desktop, Cursor and Antigravity over MCP, and with Codex and Copilot via AGENTS.md."
+       width="100%">
+</p>
+
+</details>
+
 ---
 
 ## Why Codevira

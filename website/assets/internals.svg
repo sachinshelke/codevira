@@ -1,240 +1,243 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="900" height="1767" viewBox="0 0 900 1767" preserveAspectRatio="xMidYMid meet" role="img"
-     aria-label="Blueprint sheet of the codevira internal architecture: six bands from process entry down to disk, drawn as runtime call edges, with the three layer boundaries that leak marked L1 to L3."
-     font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',Helvetica,Arial,sans-serif">
-<title>Codevira internals — blueprint sheet: modules, layers, and which boundaries actually hold</title>
-<desc>A contributor-facing drafting sheet of the Python packages, drawn dark so it stays legible on both GitHub themes. Six bands: (A) process entry — server.py for MCP stdio, cli.py, the opt-in http_server.py, and three external hook entry points under engine/wiring; (B) the 48 flat files in mcp_server root, grouped by role rather than package — CLI subcommands, install and IDE registration, bootstrap and self-heal, and server-side features; (C) tools/ and engine/ drawn as siblings rather than a stack, because tools/ never imports engine/ while engine/ imports tools/ at three sites, and server.py calls pre_call and post_call around the dispatch; (D) two separate persistence stacks — decisions go through storage/ record stores into jsonl_store.py and atomic.py, while the code graph goes through indexer.sqlite_graph with no storage wrapper at all; (E) two on-disk directories with different lifecycles, .codevira/ canonical and team-shared including graph/graph.db, and .codevira-cache/ per-machine and rebuildable; (F) cross-cutting infra led by paths.py, which 44 distinct modules import. The organising fact is that 479 of 586 internal imports are function-local, so the real structure is a graph of runtime call edges, not module-scope import edges. Three boundary leaks are called out: engine to tools, indexer to and from mcp_server, and storage to indexer. A drafting title block at the foot of the sheet carries the project name, drawing title, sheet number and revision 4.0.1.</desc>
+     aria-label="Sheet of the codevira internal architecture: six bands from process entry down to disk, drawn as runtime call edges, with the three layer boundaries that leak marked L1 to L3.">
+<title>Codevira internals — modules, layers, and which boundaries actually hold</title>
+<desc>A contributor-facing light sheet of the Python packages, in the same palette as the other codevira diagrams. Six bands: (A) process entry — server.py for MCP stdio, cli.py, the opt-in http_server.py, and three external hook entry points under engine/wiring; (B) the 48 flat files in mcp_server root, grouped by role rather than package — CLI subcommands, install and IDE registration, bootstrap and self-heal, and server-side features; (C) tools/ and engine/ drawn as siblings rather than a stack, because tools/ never imports engine/ while engine/ imports tools/ at three sites, and server.py calls pre_call and post_call around the dispatch; (D) two separate persistence stacks — decisions go through storage/ record stores into jsonl_store.py and atomic.py, while the code graph goes through indexer.sqlite_graph with no storage wrapper at all; (E) two on-disk directories with different lifecycles, .codevira/ canonical and team-shared including graph/graph.db, and .codevira-cache/ per-machine and rebuildable; (F) cross-cutting infra led by paths.py, which 44 distinct modules import. The organising fact is that 479 of 586 internal imports are function-local, so the real structure is a graph of runtime call edges, not module-scope import edges. Card kind is carried by the coloured rule across each card top: blue for the request and decisions side, violet for the code graph, amber for the enforcement engine, slate for supporting files. Three boundary leaks are called out in a red panel: engine to tools, indexer to and from mcp_server, and storage to indexer. A footer strip carries the project name, drawing title, sheet number and revision 4.0.1.</desc>
 <defs>
-<pattern id="gMinor" width="8" height="8" patternUnits="userSpaceOnUse"><path d="M8 0 H0 V8" fill="none" stroke="#4cc9f0" stroke-width="0.5" opacity="0.055"/></pattern>
-<pattern id="gMajor" width="40" height="40" patternUnits="userSpaceOnUse"><rect width="40" height="40" fill="url(#gMinor)"/><path d="M40 0 H0 V40" fill="none" stroke="#4cc9f0" stroke-width="0.8" opacity="0.13"/></pattern>
-<radialGradient id="vig" cx="50%" cy="30%" r="78%"><stop offset="0%" stop-color="#12314f" stop-opacity="0.55"/><stop offset="100%" stop-color="#050d18" stop-opacity="0.55"/></radialGradient>
-<marker id="aCyan" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="7" refX="8.5" refY="3.5" orient="auto"><path d="M0 0 L9 3.5 L0 7 z" fill="#63c4ec"/></marker>
-<marker id="aViolet" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="7" refX="8.5" refY="3.5" orient="auto"><path d="M0 0 L9 3.5 L0 7 z" fill="#a992ef"/></marker>
-<marker id="aRed" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="7" refX="8.5" refY="3.5" orient="auto"><path d="M0 0 L9 3.5 L0 7 z" fill="#f0705e"/></marker>
-<marker id="aSlate" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="7" refX="8.5" refY="3.5" orient="auto"><path d="M0 0 L9 3.5 L0 7 z" fill="#7f9db4"/></marker>
+<filter id="sh" x="-40%" y="-40%" width="180%" height="180%">
+  <feDropShadow dx="0" dy="2" stdDeviation="3.5" flood-color="#1b1f27" flood-opacity="0.07"/>
+</filter>
+<marker id="aBlue" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="7" refX="8.5" refY="3.5" orient="auto"><path d="M0 0 L9 3.5 L0 7 z" fill="#0064d6"/></marker>
+<marker id="aViolet" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="7" refX="8.5" refY="3.5" orient="auto"><path d="M0 0 L9 3.5 L0 7 z" fill="#5a5fe0"/></marker>
+<marker id="aRed" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="7" refX="8.5" refY="3.5" orient="auto"><path d="M0 0 L9 3.5 L0 7 z" fill="#cc2d2d"/></marker>
+<marker id="aSlate" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="7" refX="8.5" refY="3.5" orient="auto"><path d="M0 0 L9 3.5 L0 7 z" fill="#6b7683"/></marker>
+<style>
+  text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;fill:#1b1f27}
+  .h1{font-size:18px;font-weight:700;letter-spacing:-0.2px}
+  .eyebrow{font-size:10.5px;font-weight:700;letter-spacing:0.08em;fill:#0b4a80}
+  .ct{font-size:11.5px;font-weight:600}
+  .m{font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;font-size:11.5px;font-weight:600}
+  .body{font-size:10.5px;fill:#39414a}
+  .mut{font-size:10.5px;fill:#5b6472}
+  .ink{fill:#1b1f27}
+  .acc{fill:#0064d6}
+  .red{fill:#a51f1f}
+  .amb{fill:#8a5800}
+  .tag{font-size:10.5px;font-weight:700;letter-spacing:0.08em}
+  .fl{font-size:10.5px;font-weight:600;letter-spacing:0.14em;fill:#5b6472}
+  .rule{stroke-width:2.4;stroke-linecap:round;fill:none}
+</style>
 </defs>
-<rect x="0" y="0" width="900" height="1767" fill="#0a1628"/>
-<rect x="0" y="0" width="900" height="1767" fill="url(#vig)"/>
-<rect x="0" y="0" width="900" height="1767" fill="url(#gMajor)"/>
-<rect x="8" y="8" width="884" height="1751" fill="none" stroke="#4cc9f0" stroke-width="1" stroke-opacity="0.42"/>
-<rect x="13.5" y="13.5" width="873" height="1740" fill="none" stroke="#4cc9f0" stroke-width="0.8" stroke-opacity="0.20"/>
-<g stroke="#4cc9f0" stroke-opacity="0.55" fill="none" stroke-width="0.9"><circle cx="8" cy="8" r="5.5"/><path d="M-1 8 H17 M8 -1 V17"/></g>
-<g stroke="#4cc9f0" stroke-opacity="0.55" fill="none" stroke-width="0.9"><circle cx="892" cy="8" r="5.5"/><path d="M883 8 H901 M892 -1 V17"/></g>
-<g stroke="#4cc9f0" stroke-opacity="0.55" fill="none" stroke-width="0.9"><circle cx="8" cy="1759" r="5.5"/><path d="M-1 1759 H17 M8 1750 V1768"/></g>
-<g stroke="#4cc9f0" stroke-opacity="0.55" fill="none" stroke-width="0.9"><circle cx="892" cy="1759" r="5.5"/><path d="M883 1759 H901 M892 1750 V1768"/></g>
-<path d="M450 2 V14" stroke="#4cc9f0" stroke-opacity="0.4" stroke-width="0.9"/>
-<path d="M450 1753 V1765" stroke="#4cc9f0" stroke-opacity="0.4" stroke-width="0.9"/>
-<path d="M2 883.5 H14" stroke="#4cc9f0" stroke-opacity="0.4" stroke-width="0.9"/>
-<path d="M886 883.5 H898" stroke="#4cc9f0" stroke-opacity="0.4" stroke-width="0.9"/>
-<text x="28" y="46" font-size="16" font-weight="600" fill="#eaf4fd">Codevira internals &#8212; modules, layers, and which boundaries actually hold</text>
-<rect x="24" y="62" width="852" height="60" rx="12" fill="#4a3510" fill-opacity="0.55" stroke="#c99a3f" stroke-width="1.2" stroke-opacity="1"/>
-<rect x="36" y="74" width="125.7" height="21" rx="5" fill="#624615" stroke="#c99a3f" stroke-width="1"/>
-<text x="47" y="89" font-size="10.5" font-weight="700" letter-spacing="0.08em" fill="#f4c876">READ THIS FIRST</text>
-<text x="173.7" y="89" font-size="10.5" fill="#eaf4fd">479 of 586 internal imports (82%) sit inside function bodies; 69 of 127 modules have no module-scope internal import at all.</text>
-<text x="36" y="109" font-size="10.5" fill="#c6dcef">A static import graph would draw this codebase as disconnected leaves. Every arrow below is a RUNTIME call edge, not an import edge.</text>
-<rect x="24" y="134" width="852" height="110" rx="12" fill="#1a3752" fill-opacity="0.7" stroke="#3f7ea8" stroke-width="1" stroke-opacity="0.6" stroke-dasharray="5 4" stroke-linecap="round"/>
-<rect x="36" y="137" width="142.98" height="22" rx="5" fill="#0f3d5b" stroke="#3f7ea8" stroke-width="1" stroke-opacity="0.75"/>
-<text x="47" y="152" font-size="10.5" font-weight="700" letter-spacing="0.08em" fill="#8adcf7">A &#183; PROCESS ENTRY</text>
-<text x="190.98" y="152" font-size="10.5" fill="#9cbad4">every process starts in exactly one of these four</text>
-<rect x="36" y="164" width="200.95" height="66" rx="8" fill="#11426a" fill-opacity="1" stroke="#4aa3dd" stroke-width="1.2" stroke-opacity="1"/>
-<path d="M48 164.6 H74" stroke="#8adcf7" stroke-width="2.4" stroke-linecap="round" fill="none" opacity="0.95"/>
-<text x="48" y="185" font-size="11.5" font-weight="600" font-family="ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace" fill="#eaf4fd">mcp_server/server.py</text>
-<text x="48" y="202" font-size="10.5" fill="#c6dcef">MCP stdio server &#183; ~2.4k loc</text>
-<text x="48" y="217" font-size="10.5" fill="#c6dcef">call_tool() = the one funnel</text>
-<rect x="248.95" y="164" width="187.55" height="66" rx="8" fill="#11426a" fill-opacity="1" stroke="#4aa3dd" stroke-width="1.2" stroke-opacity="1"/>
-<path d="M260.95 164.6 H286.95" stroke="#8adcf7" stroke-width="2.4" stroke-linecap="round" fill="none" opacity="0.95"/>
-<text x="260.95" y="185" font-size="11.5" font-weight="600" font-family="ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace" fill="#eaf4fd">mcp_server/cli.py</text>
-<text x="260.95" y="202" font-size="10.5" fill="#c6dcef">+ __main__.py &#183; ~3.2k loc</text>
-<text x="260.95" y="217" font-size="10.5" fill="#c6dcef">the whole CLI surface</text>
-<rect x="448.5" y="164" width="155.85" height="66" rx="8" fill="#204164" fill-opacity="1" stroke="#7f9db4" stroke-width="1.2" stroke-opacity="1"/>
-<path d="M460.5 164.6 H486.5" stroke="#a9c9de" stroke-width="2.4" stroke-linecap="round" fill="none" opacity="0.95"/>
-<text x="460.5" y="185" font-size="11.5" font-weight="600" font-family="ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace" fill="#eaf4fd">http_server.py</text>
-<text x="460.5" y="202" font-size="10.5" fill="#c6dcef">opt-in &#183; [http] extra</text>
-<text x="460.5" y="217" font-size="10.5" fill="#c6dcef">~0.5k loc</text>
-<rect x="616.35" y="164" width="247.65" height="66" rx="8" fill="#3f331a" fill-opacity="1" stroke="#d8a441" stroke-width="1.2" stroke-opacity="1"/>
-<path d="M628.35 164.6 H654.35" stroke="#f8d68f" stroke-width="2.4" stroke-linecap="round" fill="none" opacity="0.95"/>
-<text x="628.35" y="185" font-size="11.5" font-weight="600" font-family="ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace" fill="#eaf4fd">engine/wiring/*_hooks.py</text>
-<text x="628.35" y="202" font-size="10.5" fill="#c6dcef">claude_code (390) &#183; antigravity (235)</text>
-<text x="628.35" y="217" font-size="10.5" fill="#c6dcef">git_hooks (321) &#8212; pre-commit path</text>
-<rect x="24" y="256" width="852" height="128" rx="12" fill="#1a3752" fill-opacity="0.7" stroke="#3f7ea8" stroke-width="1" stroke-opacity="0.6" stroke-dasharray="5 4" stroke-linecap="round"/>
-<rect x="36" y="259" width="154" height="22" rx="5" fill="#0f3d5b" stroke="#3f7ea8" stroke-width="1" stroke-opacity="0.75"/>
-<text x="47" y="274" font-size="10.5" font-weight="700" letter-spacing="0.08em" fill="#8adcf7">B &#183; mcp_server/ ROOT</text>
-<text x="202" y="274" font-size="10.5" fill="#9cbad4">48 flat .py files, ~21.5k loc &#8212; there are no subpackages here, so group them by role</text>
-<rect x="36" y="286" width="203.475" height="66" rx="8" fill="#204164" fill-opacity="1" stroke="#5f89ab" stroke-width="1.2" stroke-opacity="1"/>
-<path d="M48 286.6 H74" stroke="#9dc6e0" stroke-width="2.4" stroke-linecap="round" fill="none" opacity="0.95"/>
-<text x="48" y="307" font-size="11.5" font-weight="600" fill="#eaf4fd">R2 &#183; CLI subcommands</text>
-<text x="48" y="324" font-size="10.5" fill="#c6dcef">15 &#215; cli_*.py &#183; 4.2k loc</text>
-<text x="48" y="339" font-size="10.5" fill="#9cbad4">cli_init &#183; cli_repair &#183; cli_graph</text>
-<rect x="251.475" y="286" width="187.575" height="66" rx="8" fill="#204164" fill-opacity="1" stroke="#5f89ab" stroke-width="1.2" stroke-opacity="1"/>
-<path d="M263.475 286.6 H289.475" stroke="#9dc6e0" stroke-width="2.4" stroke-linecap="round" fill="none" opacity="0.95"/>
-<text x="263.475" y="307" font-size="11.5" font-weight="600" fill="#eaf4fd">R3 &#183; Install &amp; IDE setup</text>
-<text x="263.475" y="324" font-size="10.5" fill="#c6dcef">5 files &#183; ~3.3k loc</text>
-<text x="263.475" y="339" font-size="10.5" fill="#9cbad4">ide_inject &#183; setup_wizard</text>
-<rect x="451.05" y="286" width="200.375" height="66" rx="8" fill="#204164" fill-opacity="1" stroke="#5f89ab" stroke-width="1.2" stroke-opacity="1"/>
-<path d="M463.05 286.6 H489.05" stroke="#9dc6e0" stroke-width="2.4" stroke-linecap="round" fill="none" opacity="0.95"/>
-<text x="463.05" y="307" font-size="11.5" font-weight="600" fill="#eaf4fd">R4 &#183; Bootstrap &#183; self-heal</text>
-<text x="463.05" y="324" font-size="10.5" fill="#c6dcef">8 files &#183; ~3.8k loc</text>
-<text x="463.05" y="339" font-size="10.5" fill="#9cbad4">doctor &#183; auto_init &#183; opt_in</text>
-<rect x="663.425" y="286" width="200.575" height="66" rx="8" fill="#204164" fill-opacity="1" stroke="#5f89ab" stroke-width="1.2" stroke-opacity="1"/>
-<path d="M675.425 286.6 H701.425" stroke="#9dc6e0" stroke-width="2.4" stroke-linecap="round" fill="none" opacity="0.95"/>
-<text x="675.425" y="307" font-size="11.5" font-weight="600" fill="#eaf4fd">R5 &#183; Server-side features</text>
-<text x="675.425" y="324" font-size="10.5" fill="#c6dcef">6 files &#183; ~1.5k loc</text>
-<text x="675.425" y="339" font-size="10.5" fill="#9cbad4">decision_replay &#183; prompts</text>
-<text x="36" y="370" font-size="10.5" fill="#9cbad4">R1 entry/transports (4 files, ~6.2k) is band A &#183; R6 cross-cutting infra (10 files, ~2.6k) is band F &#8212; the six roles partition all 48 exactly, no orphans.</text>
-<rect x="24" y="396" width="852" height="268" rx="12" fill="#1a3752" fill-opacity="0.7" stroke="#3f7ea8" stroke-width="1" stroke-opacity="0.6" stroke-dasharray="5 4" stroke-linecap="round"/>
-<rect x="36" y="399" width="313.78" height="22" rx="5" fill="#0f3d5b" stroke="#3f7ea8" stroke-width="1" stroke-opacity="0.75"/>
-<text x="47" y="414" font-size="10.5" font-weight="700" letter-spacing="0.08em" fill="#8adcf7">C &#183; REQUEST SURFACE  &#8214;  ENFORCEMENT ENGINE</text>
-<text x="361.78" y="414" font-size="10.5" fill="#9cbad4">siblings, not stacked</text>
-<text x="36" y="434" font-size="10.5" fill="#9cbad4">Sibling placement is inferred from server.py calling pre_call / post_call AROUND the dispatch &#8212; the import graph alone does not settle it.</text>
-<rect x="36" y="446" width="266" height="125" rx="8" fill="#11426a" fill-opacity="1" stroke="#4aa3dd" stroke-width="1.2" stroke-opacity="1"/>
-<path d="M48 446.6 H74" stroke="#8adcf7" stroke-width="2.4" stroke-linecap="round" fill="none" opacity="0.95"/>
-<text x="48" y="467" font-size="11.5" font-weight="600" font-family="ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace" fill="#eaf4fd">mcp_server/tools/</text>
-<text x="48" y="484" font-size="10.5" fill="#c6dcef">10 files &#183; ~4.4k loc</text>
-<text x="48" y="499" font-size="10.5" fill="#c6dcef">the MCP request surface</text>
-<text x="48" y="514" font-size="10.5" fill="#9cbad4">graph &#183; search &#183; learning &#183; skills</text>
-<text x="48" y="529" font-size="10.5" fill="#9cbad4">roadmap &#183; working &#183; playbook &#183; provenance</text>
-<path d="M48 540 H290" stroke="#4aa3dd" stroke-opacity="0.5" stroke-width="1"/>
-<text x="48" y="556" font-size="10.5" font-weight="600" fill="#8adcf7">never imports engine/ &#8212; 0 hits</text>
-<rect x="378" y="446" width="251" height="125" rx="8" fill="#3f331a" fill-opacity="1" stroke="#d8a441" stroke-width="1.2" stroke-opacity="1"/>
-<path d="M390 446.6 H416" stroke="#f8d68f" stroke-width="2.4" stroke-linecap="round" fill="none" opacity="0.95"/>
-<text x="390" y="467" font-size="11.5" font-weight="600" font-family="ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace" fill="#eaf4fd">mcp_server/engine/</text>
-<text x="390" y="484" font-size="10.5" fill="#c6dcef">9 files &#183; ~2.0k loc</text>
-<text x="390" y="499" font-size="10.5" fill="#9cbad4">signals &#183; runner &#183; policy &#183; events</text>
-<path d="M390 510 H617" stroke="#d8a441" stroke-opacity="0.5" stroke-width="1"/>
-<text x="390" y="526" font-size="11.5" font-weight="600" font-family="ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace" fill="#eaf4fd">engine/wiring/mcp_dispatch.py</text>
-<text x="390" y="542" font-size="10.5" fill="#c6dcef">+ _diff_envelope.py &#8212; the</text>
-<text x="390" y="557" font-size="10.5" fill="#c6dcef">adapters server.py calls</text>
-<rect x="645" y="446" width="219" height="125" rx="8" fill="#3f331a" fill-opacity="1" stroke="#d8a441" stroke-width="1.2" stroke-opacity="1"/>
-<path d="M657 446.6 H683" stroke="#f8d68f" stroke-width="2.4" stroke-linecap="round" fill="none" opacity="0.95"/>
-<text x="657" y="467" font-size="11.5" font-weight="600" font-family="ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace" fill="#eaf4fd">engine/policies/</text>
-<text x="657" y="484" font-size="10.5" fill="#c6dcef">10 files &#183; ~2.9k loc</text>
-<text x="657" y="499" font-size="10.5" fill="#c6dcef">7 registered by default, from one</text>
-<text x="657" y="514" font-size="10.5" fill="#c6dcef">tuple in engine/__init__.py:</text>
-<text x="657" y="529" font-size="10.5" fill="#9cbad4">BlastRadiusVeto &#183; DecisionLock &#183;</text>
-<text x="657" y="544" font-size="10.5" fill="#9cbad4">AntiRegression &#183; RelevanceInject &#183;</text>
-<text x="657" y="559" font-size="10.5" fill="#9cbad4">TokenBudgetPersist &#183; +2 more</text>
-<path d="M372 508 H307" fill="none" stroke="#f0705e" stroke-width="1.9" stroke-linecap="round" marker-end="url(#aRed)"/>
-<rect x="325" y="488" width="30" height="16" rx="4" fill="#512221" stroke="#f0705e" stroke-width="1"/>
-<text x="334.7" y="500" font-size="10.5" font-weight="700" fill="#ff9f92">L1</text>
-<rect x="36" y="583" width="828" height="67" rx="8" fill="#112c46" fill-opacity="1" stroke="#5f89ab" stroke-width="1" stroke-opacity="1"/>
-<path d="M48 583.6 H74" stroke="#8adcf7" stroke-width="2.4" stroke-linecap="round" fill="none" opacity="0.95"/>
-<text x="48" y="604" font-size="11.5" font-weight="600" fill="#eaf4fd">server.py call_tool() &#8212; one funnel for all 37 tools, fixed order:</text>
-<text x="48" y="622" font-size="10.5" fill="#c6dcef">bind client roots &#8594; opt-in gate &#8594; auto_init &#8594; register_default_policies() &#8594; pre_call &#8594; 38-arm if/elif &#8594; post_call &#8594; one json.dumps</text>
-<text x="48" y="638" font-size="10.5" fill="#9cbad4">Every pre-dispatch step is wrapped in `except Exception: pass` &#8212; the engine can never block dispatch by failing.</text>
-<rect x="24" y="676" width="852" height="303" rx="12" fill="#1a3752" fill-opacity="0.7" stroke="#3f7ea8" stroke-width="1" stroke-opacity="0.6" stroke-dasharray="5 4" stroke-linecap="round"/>
-<rect x="36" y="679" width="208.64" height="22" rx="5" fill="#0f3d5b" stroke="#3f7ea8" stroke-width="1" stroke-opacity="0.75"/>
-<text x="47" y="694" font-size="10.5" font-weight="700" letter-spacing="0.08em" fill="#8adcf7">D &#183; TWO PERSISTENCE STACKS</text>
-<text x="256.64" y="694" font-size="10.5" fill="#9cbad4">a single &#8220;storage&#8221; box would be the tidy lie</text>
-<text x="36" y="714" font-size="10.5" fill="#9cbad4">The decisions half is layered. The code-graph half has no storage wrapper at all &#8212; tools/ imports SQLiteGraph from indexer/ directly.</text>
-<rect x="36" y="726" width="406" height="99" rx="8" fill="#11426a" fill-opacity="1" stroke="#4aa3dd" stroke-width="1.2" stroke-opacity="1"/>
-<path d="M48 726.6 H74" stroke="#8adcf7" stroke-width="2.4" stroke-linecap="round" fill="none" opacity="0.95"/>
-<text x="48" y="747" font-size="11.5" font-weight="600" font-family="ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace" fill="#eaf4fd">mcp_server/storage/ &#8212; 24 files &#183; ~8.0k loc</text>
-<text x="48" y="765" font-size="10.5" fill="#c6dcef"><tspan x="48">5 record stores (*_store.py): decisions &#183; sessions &#183;</tspan><tspan x="48" dy="15"> skills &#183; working &#183; activity</tspan></text>
-<text x="48" y="797" font-size="10.5" fill="#9cbad4"><tspan x="48">+ outcomes_writer.py &#8212; a 6th JSONL writer</tspan><tspan x="48" dy="15"> that skips the naming convention</tspan></text>
-<path d="M96 825 V842" fill="none" stroke="#63c4ec" stroke-width="1.7" stroke-linecap="round" marker-end="url(#aCyan)"/>
-<rect x="36" y="847" width="406" height="48" rx="8" fill="#11426a" fill-opacity="1" stroke="#4aa3dd" stroke-width="1.2" stroke-opacity="1"/>
-<text x="48" y="867" font-size="11.5" font-weight="600" fill="#eaf4fd">&#9733; jsonl_store.py &#8212; 817 loc &#8212; append choke point</text>
-<text x="48" y="884" font-size="10.5" fill="#9cbad4">its only internal import is storage/atomic.py</text>
-<path d="M96 895 V912" fill="none" stroke="#63c4ec" stroke-width="1.7" stroke-linecap="round" marker-end="url(#aCyan)"/>
-<rect x="36" y="917" width="406" height="48" rx="8" fill="#11426a" fill-opacity="1" stroke="#4aa3dd" stroke-width="1.2" stroke-opacity="1"/>
-<text x="48" y="937" font-size="11.5" font-weight="600" fill="#eaf4fd">&#9733; atomic.py &#8212; 268 loc &#8212; file-write choke point</text>
-<text x="48" y="954" font-size="10.5" fill="#9cbad4">19 files bypass jsonl_store and call it directly &#8212; see note 2</text>
-<rect x="458" y="726" width="406" height="99" rx="8" fill="#2c2764" fill-opacity="1" stroke="#9b83e2" stroke-width="1.2" stroke-opacity="1"/>
-<path d="M470 726.6 H496" stroke="#cbb6fa" stroke-width="2.4" stroke-linecap="round" fill="none" opacity="0.95"/>
-<text x="470" y="747" font-size="11.5" font-weight="600" font-family="ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace" fill="#eaf4fd">indexer/ &#8212; 12 files &#183; ~5.4k loc</text>
-<text x="470" y="765" font-size="10.5" fill="#c6dcef">sqlite_graph &#183; index_codebase &#183; imports &#183; graph_generator</text>
-<text x="470" y="780" font-size="10.5" fill="#9cbad4">fix_history &#183; global_db &#183; outcome_classifier</text>
-<path d="M518 825 V842" fill="none" stroke="#a992ef" stroke-width="1.7" stroke-linecap="round" marker-end="url(#aViolet)"/>
-<rect x="458" y="847" width="406" height="48" rx="8" fill="#4c2425" fill-opacity="1" stroke="#f0705e" stroke-width="1.4" stroke-opacity="1" stroke-dasharray="5 3" stroke-linecap="round"/>
-<text x="470" y="867" font-size="11.5" font-weight="700" fill="#ff9f92">NO storage-layer wrapper on this side</text>
-<text x="470" y="884" font-size="10.5" fill="#c6dcef">tools/{graph, search, learning} import SQLiteGraph at module scope</text>
-<path d="M518 895 V912" fill="none" stroke="#a992ef" stroke-width="1.7" stroke-linecap="round" marker-end="url(#aViolet)"/>
-<rect x="458" y="917" width="406" height="48" rx="8" fill="#2c2764" fill-opacity="1" stroke="#9b83e2" stroke-width="1.2" stroke-opacity="1"/>
-<text x="470" y="937" font-size="11.5" font-weight="600" fill="#eaf4fd">indexer.sqlite_graph.SQLiteGraph</text>
-<text x="470" y="954" font-size="10.5" fill="#9cbad4">engine/signals.py reads BOTH stacks directly</text>
-<path d="M96 965 V1013" fill="none" stroke="#7f9db4" stroke-width="1.5" stroke-linecap="round" marker-end="url(#aSlate)"/>
-<path d="M276 965 V983 H678 V1013" fill="none" stroke="#7f9db4" stroke-width="1.5" stroke-linecap="round" marker-end="url(#aSlate)"/>
-<path d="M518 965 V995 H336 V1013" fill="none" stroke="#a992ef" stroke-width="1.5" stroke-linecap="round" marker-end="url(#aViolet)"/>
-<rect x="24" y="1019" width="852" height="110" rx="12" fill="#1a3752" fill-opacity="0.7" stroke="#3f7ea8" stroke-width="1" stroke-opacity="0.6" stroke-dasharray="5 4" stroke-linecap="round"/>
-<rect x="36" y="1022" width="91.84" height="22" rx="5" fill="#0f3d5b" stroke="#3f7ea8" stroke-width="1" stroke-opacity="0.75"/>
-<text x="47" y="1037" font-size="10.5" font-weight="700" letter-spacing="0.08em" fill="#8adcf7">E &#183; ON DISK</text>
-<text x="139.84" y="1037" font-size="10.5" fill="#9cbad4">two directories, different lifecycles &#8212; .codevira/ is meant to be committed; this repo gitignores its own (dogfood)</text>
-<rect x="36" y="1049" width="406" height="66" rx="8" fill="#11426a" fill-opacity="1" stroke="#4aa3dd" stroke-width="1.2" stroke-opacity="1"/>
-<path d="M48 1049.6 H74" stroke="#8adcf7" stroke-width="2.4" stroke-linecap="round" fill="none" opacity="0.95"/>
-<text x="48" y="1070" font-size="11.5" font-weight="600" font-family="ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace" fill="#eaf4fd">.codevira/</text>
-<text x="130" y="1070" font-size="10.5" fill="#9cbad4">canonical &#183; team-shared</text>
-<text x="48" y="1087" font-size="10.5" fill="#c6dcef">decisions.jsonl &#183; sessions.jsonl &#183; skills.jsonl &#183; digest.jsonl</text>
-<text x="48" y="1102" font-size="10.5" fill="#c6dcef">outcomes.jsonl &#183; manifest.yaml &#183; roadmap.yaml &#183;</text>
-<text x="300" y="1102" font-size="10.5" font-weight="700" fill="#8adcf7">graph/graph.db</text>
-<rect x="458" y="1049" width="406" height="66" rx="8" fill="#204164" fill-opacity="1" stroke="#7f9db4" stroke-width="1.2" stroke-opacity="1"/>
-<path d="M470 1049.6 H496" stroke="#a9c9de" stroke-width="2.4" stroke-linecap="round" fill="none" opacity="0.95"/>
-<text x="470" y="1070" font-size="11.5" font-weight="600" font-family="ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace" fill="#eaf4fd">.codevira-cache/</text>
-<text x="592" y="1070" font-size="10.5" fill="#9cbad4">per-machine &#183; rebuildable &#183; gitignored</text>
-<text x="470" y="1087" font-size="10.5" fill="#c6dcef">working.jsonl &#183; activity.jsonl &#183; fts5.sqlite</text>
-<text x="470" y="1102" font-size="10.5" fill="#c6dcef">enforcement.jsonl &#183; enforcer_outcomes.jsonl &#183; prompts.jsonl</text>
-<rect x="24" y="1141" width="852" height="110" rx="12" fill="#1a3752" fill-opacity="0.7" stroke="#3f7ea8" stroke-width="1" stroke-opacity="0.6" stroke-dasharray="5 4" stroke-linecap="round"/>
-<rect x="36" y="1144" width="183.82" height="22" rx="5" fill="#0f3d5b" stroke="#3f7ea8" stroke-width="1" stroke-opacity="0.75"/>
-<text x="47" y="1159" font-size="10.5" font-weight="700" letter-spacing="0.08em" fill="#8adcf7">F &#183; CROSS-CUTTING INFRA</text>
-<text x="231.82" y="1159" font-size="10.5" fill="#9cbad4">reached from every band above &#8212; drawn last because it belongs to none of them</text>
-<rect x="36" y="1171" width="406" height="66" rx="8" fill="#204164" fill-opacity="1" stroke="#5f89ab" stroke-width="1.2" stroke-opacity="1"/>
-<path d="M48 1171.6 H74" stroke="#8adcf7" stroke-width="2.4" stroke-linecap="round" fill="none" opacity="0.95"/>
-<text x="48" y="1192" font-size="11.5" font-weight="600" fill="#eaf4fd">&#9733; mcp_server/paths.py &#8212; 794 loc &#8212; the hub</text>
-<text x="48" y="1209" font-size="10.5" fill="#c6dcef">44 distinct modules import it, 5 of them in indexer/.</text>
-<text x="48" y="1224" font-size="10.5" fill="#9cbad4">storage/paths.py is a second, thinner module that delegates here.</text>
-<rect x="458" y="1171" width="406" height="66" rx="8" fill="#204164" fill-opacity="1" stroke="#5f89ab" stroke-width="1.2" stroke-opacity="1"/>
-<path d="M470 1171.6 H496" stroke="#9dc6e0" stroke-width="2.4" stroke-linecap="round" fill="none" opacity="0.95"/>
-<text x="470" y="1192" font-size="11.5" font-weight="600" fill="#eaf4fd">9 more root infra files &#183; ~1.8k loc</text>
-<text x="470" y="1209" font-size="10.5" fill="#c6dcef">crash_logger &#183; gitignore &#183; egress &#183; tenant &#183; log_retention</text>
-<text x="470" y="1224" font-size="10.5" fill="#9cbad4">plus mcp_server/retrieval/ &#8212; 2 files &#183; 171 loc</text>
-<rect x="24" y="1263" width="852" height="150" rx="12" fill="#4a1a18" fill-opacity="0.62" stroke="#f0705e" stroke-width="1.4" stroke-opacity="1"/>
-<rect x="36" y="1266" width="199.76" height="22" rx="5" fill="#632421" stroke="#f0705e" stroke-width="1"/>
-<text x="47" y="1281" font-size="10.5" font-weight="700" letter-spacing="0.08em" fill="#ff9f92">THE BOUNDARIES THAT LEAK</text>
-<text x="247.76" y="1281" font-size="10.5" fill="#9cbad4">a clean layer stack would be a lie &#8212; these three edges are the ones to know before you refactor</text>
-<rect x="36" y="1295" width="26" height="16" rx="4" fill="#662421" stroke="#f0705e" stroke-width="1"/>
-<text x="42.6" y="1307" font-size="10.5" font-weight="700" fill="#ff9f92">L1</text>
-<text x="68" y="1307" font-size="10.5" fill="#eaf4fd">engine/ &#8594; tools/ &#183; 3 sites (signals.py &#215;2, policies/post_edit_refresh.py) &#8212; the only edge that inverts the sibling relation.</text>
-<text x="68" y="1322" font-size="10.5" fill="#c6dcef">signals.impact() swallows all exceptions &#8594; {} &#8594; BlastRadiusVeto returns allow. A shape change in tools.graph.get_impact silently DISABLES the veto.</text>
-<rect x="36" y="1333" width="26" height="16" rx="4" fill="#662421" stroke="#f0705e" stroke-width="1"/>
-<text x="42.6" y="1345" font-size="10.5" font-weight="700" fill="#ff9f92">L2</text>
-<text x="68" y="1345" font-size="10.5" fill="#eaf4fd">indexer/ &#8596; mcp_server/ &#183; both directions &#8212; 29 statements down across 17 files, 24 up across 6 files.</text>
-<text x="68" y="1360" font-size="10.5" fill="#c6dcef">16 of the 24 upward sit in index_codebase.py. indexer/ is not a lower layer you can read in isolation.</text>
-<rect x="36" y="1371" width="26" height="16" rx="4" fill="#662421" stroke="#f0705e" stroke-width="1"/>
-<text x="42.6" y="1383" font-size="10.5" font-weight="700" fill="#ff9f92">L3</text>
-<text x="68" y="1383" font-size="10.5" fill="#eaf4fd">storage/ &#8594; indexer/ &#183; 1 site (outcomes_writer.py imports indexer.outcome_classifier).</text>
-<text x="68" y="1398" font-size="10.5" fill="#c6dcef">storage/ never imports tools/ or engine/ (0 hits), so it is close to a sealed bottom layer &#8212; but it is not sealed.</text>
-<rect x="24" y="1425" width="852" height="38" rx="10" fill="#112c46" fill-opacity="0.9" stroke="#3f7ea8" stroke-width="1" stroke-opacity="0.55" stroke-dasharray="5 4" stroke-linecap="round"/>
-<path d="M36 1445 H66" stroke="#63c4ec" stroke-width="2.2" stroke-linecap="round"/>
-<text x="74" y="1449" font-size="10.5" fill="#c6dcef">runtime call edge (decisions)</text>
-<path d="M241.175 1445 H271.175" stroke="#a992ef" stroke-width="2.2" stroke-linecap="round"/>
-<text x="279.175" y="1449" font-size="10.5" fill="#c6dcef">runtime call edge (code graph)</text>
-<path d="M455.85 1445 H485.85" stroke="#f0705e" stroke-width="2.2" stroke-linecap="round"/>
-<text x="493.85" y="1449" font-size="10.5" fill="#c6dcef">boundary leak (L1&#8211;L3)</text>
-<path d="M627.125 1445 H657.125" stroke="#7f9db4" stroke-width="2.2" stroke-linecap="round"/>
-<text x="665.125" y="1449" font-size="10.5" fill="#c6dcef">file read / write</text>
-<text x="761.6" y="1449" font-size="10.5" fill="#8adcf7">&#9733; = choke point</text>
-<rect x="24" y="1475" width="852" height="174" rx="10" fill="#112c46" fill-opacity="0.75" stroke="#3f7ea8" stroke-width="1" stroke-opacity="0.45" stroke-dasharray="5 4" stroke-linecap="round"/>
-<path d="M29 1489 V1635" stroke="#4cc9f0" stroke-width="2" stroke-opacity="0.75" stroke-linecap="round"/>
-<text x="38" y="1497" font-size="10.5" fill="#9cbad4">1 &#183; Arrows are runtime call edges. Because 82% of internal imports are function-local, a module-scope import graph would show almost none of this structure.</text>
-<text x="38" y="1516" font-size="10.5" fill="#9cbad4">2 &#183; Two choke points, not one: jsonl_store.py is the append-only-record choke point, atomic.py the universal file-write one. 19 files bypass jsonl_store and</text>
-<text x="38" y="1530" font-size="10.5" fill="#9cbad4">call atomic_write_text() directly &#8212; including tools/roadmap.py and tools/skills.py (a two-layer skip) and indexer/graph_generator.py (outside mcp_server).</text>
-<text x="38" y="1549" font-size="10.5" fill="#9cbad4">3 &#183; mcp_server/__init__.py imports cli at module scope, so reading __version__ pulls in cli.py + indexer &#8212; 4 internal modules, 0.04 s. That is a cost, not a</text>
-<text x="38" y="1563" font-size="10.5" fill="#9cbad4">cycle: a Tarjan run over the module-scope graph finds no multi-module SCC larger than 2. A _version.py leaf would remove it.</text>
-<text x="38" y="1582" font-size="10.5" fill="#9cbad4">4 &#183; Registry: 37 Tool() literals against 38 dispatch arms. The extra arm is the search_codebase tombstone, removed in v2.2. 36 tools are advertised by</text>
-<text x="38" y="1596" font-size="10.5" fill="#9cbad4">default &#8212; refresh_graph is hidden via _ADMIN_TOOLS.</text>
-<text x="38" y="1619" font-size="10.5" fill="#9cbad4">Measured from source at HEAD 9e53a4e over 127 .py files / ~47k loc. LOC are rounded on purpose &#8212; they move every commit. File counts, the import ratio</text>
-<text x="38" y="1633" font-size="10.5" fill="#9cbad4">and the boundary facts are the stable part; re-run the greps in note 2 and panel L1&#8211;L3 if you want to falsify anything here.</text>
-<rect x="24" y="1661" width="852" height="80" rx="10" fill="#142f49" fill-opacity="0.78" stroke="#3f7ea8" stroke-width="1.2" stroke-opacity="1"/>
-<path d="M24 1711 H876" stroke="#3f7ea8" stroke-width="1" stroke-opacity="0.45"/>
-<path d="M320 1661 V320" stroke="1711" stroke-width="1" stroke-opacity="0.45"/>
-<path d="M640 1661 V640" stroke="1711" stroke-width="1" stroke-opacity="0.45"/>
-<path d="M762 1661 V762" stroke="1711" stroke-width="1" stroke-opacity="0.45"/>
-<text x="38" y="1680" font-size="10.5" font-weight="600" letter-spacing="0.14em" fill="#9cbad4">PROJECT</text>
-<text x="38" y="1702" font-size="16" font-weight="700" letter-spacing="0.2em" fill="#8adcf7">CODEVIRA</text>
-<text x="334" y="1680" font-size="10.5" font-weight="600" letter-spacing="0.14em" fill="#9cbad4">DRAWING</text>
-<text x="334" y="1702" font-size="11.5" font-weight="600" fill="#eaf4fd">INTERNAL ARCHITECTURE &#8212; MODULE &amp; LAYER MAP</text>
-<text x="654" y="1680" font-size="10.5" font-weight="600" letter-spacing="0.14em" fill="#9cbad4">SHEET</text>
-<text x="654" y="1702" font-size="11.5" font-weight="600" fill="#eaf4fd">1 OF 1</text>
-<text x="776" y="1680" font-size="10.5" font-weight="600" letter-spacing="0.14em" fill="#9cbad4">REV</text>
-<text x="776" y="1702" font-size="11.5" font-weight="700" fill="#f4c876">4.0.1</text>
-<text x="38" y="1730" font-size="10.5" font-weight="600" letter-spacing="0.14em" fill="#9cbad4">SCOPE</text>
-<text x="102" y="1730" font-size="10.5" fill="#c6dcef">Local-first MCP server. Runtime call edges across bands A&#8211;F; boundary leaks flagged L1&#8211;L3.</text>
+<rect x="0" y="0" width="900" height="1767" fill="#f3f5f9"/>
+<text class="h1" x="24" y="46">Codevira internals &#8212; modules, layers, and which boundaries actually hold</text>
+<rect x="24" y="62" width="852" height="60" rx="12" fill="#fff8ec" stroke="#ffb340" stroke-width="1.2"/>
+<rect x="36" y="74" width="125.7" height="21" rx="5" fill="#fdeccb" stroke="#e0b767" stroke-width="1"/>
+<text x="47" y="89" class="tag amb">READ THIS FIRST</text>
+<text x="173.7" y="89" font-size="10.5" class="ink">479 of 586 internal imports (82%) sit inside function bodies; 69 of 127 modules have no module-scope internal import at all.</text>
+<text x="36" y="109" class="body">A static import graph would draw this codebase as disconnected leaves. Every arrow below is a RUNTIME call edge, not an import edge.</text>
+<rect x="24" y="134" width="852" height="110" rx="14" fill="#ecf0f6" stroke="#dfe4ec" stroke-width="1"/>
+<rect x="36" y="137" width="142.98" height="22" rx="5" fill="#e2e8f2" stroke="#cfd7e4" stroke-width="1"/>
+<text x="47" y="152" class="eyebrow">A &#183; PROCESS ENTRY</text>
+<text x="190.98" y="152" class="mut">every process starts in exactly one of these four</text>
+<rect x="36" y="164" width="200.95" height="66" rx="8" fill="#ffffff" stroke="#dfe4ec" stroke-width="1" filter="url(#sh)"/>
+<path d="M48 164.6 H74" class="rule" stroke="#0064d6"/>
+<text x="48" y="185" class="m">mcp_server/server.py</text>
+<text x="48" y="202" class="body">MCP stdio server &#183; ~2.4k loc</text>
+<text x="48" y="217" class="body">call_tool() = the one funnel</text>
+<rect x="248.95" y="164" width="187.55" height="66" rx="8" fill="#ffffff" stroke="#dfe4ec" stroke-width="1" filter="url(#sh)"/>
+<path d="M260.95 164.6 H286.95" class="rule" stroke="#0064d6"/>
+<text x="260.95" y="185" class="m">mcp_server/cli.py</text>
+<text x="260.95" y="202" class="body">+ __main__.py &#183; ~3.2k loc</text>
+<text x="260.95" y="217" class="body">the whole CLI surface</text>
+<rect x="448.5" y="164" width="155.85" height="66" rx="8" fill="#ffffff" stroke="#dfe4ec" stroke-width="1" filter="url(#sh)"/>
+<path d="M460.5 164.6 H486.5" class="rule" stroke="#6b7683"/>
+<text x="460.5" y="185" class="m">http_server.py</text>
+<text x="460.5" y="202" class="body">opt-in &#183; [http] extra</text>
+<text x="460.5" y="217" class="body">~0.5k loc</text>
+<rect x="616.35" y="164" width="247.65" height="66" rx="8" fill="#ffffff" stroke="#ecd7ac" stroke-width="1" filter="url(#sh)"/>
+<path d="M628.35 164.6 H654.35" class="rule" stroke="#b5801f"/>
+<text x="628.35" y="185" class="m">engine/wiring/*_hooks.py</text>
+<text x="628.35" y="202" class="body">claude_code (390) &#183; antigravity (235)</text>
+<text x="628.35" y="217" class="body">git_hooks (321) &#8212; pre-commit path</text>
+<rect x="24" y="256" width="852" height="128" rx="14" fill="#ecf0f6" stroke="#dfe4ec" stroke-width="1"/>
+<rect x="36" y="259" width="154" height="22" rx="5" fill="#e2e8f2" stroke="#cfd7e4" stroke-width="1"/>
+<text x="47" y="274" class="eyebrow">B &#183; mcp_server/ ROOT</text>
+<text x="202" y="274" class="mut">48 flat .py files, ~21.5k loc &#8212; there are no subpackages here, so group them by role</text>
+<rect x="36" y="286" width="203.475" height="66" rx="8" fill="#ffffff" stroke="#dfe4ec" stroke-width="1" filter="url(#sh)"/>
+<path d="M48 286.6 H74" class="rule" stroke="#6b7683"/>
+<text x="48" y="307" class="ct">R2 &#183; CLI subcommands</text>
+<text x="48" y="324" class="body">15 &#215; cli_*.py &#183; 4.2k loc</text>
+<text x="48" y="339" class="mut">cli_init &#183; cli_repair &#183; cli_graph</text>
+<rect x="251.475" y="286" width="187.575" height="66" rx="8" fill="#ffffff" stroke="#dfe4ec" stroke-width="1" filter="url(#sh)"/>
+<path d="M263.475 286.6 H289.475" class="rule" stroke="#6b7683"/>
+<text x="263.475" y="307" class="ct">R3 &#183; Install &amp; IDE setup</text>
+<text x="263.475" y="324" class="body">5 files &#183; ~3.3k loc</text>
+<text x="263.475" y="339" class="mut">ide_inject &#183; setup_wizard</text>
+<rect x="451.05" y="286" width="200.375" height="66" rx="8" fill="#ffffff" stroke="#dfe4ec" stroke-width="1" filter="url(#sh)"/>
+<path d="M463.05 286.6 H489.05" class="rule" stroke="#6b7683"/>
+<text x="463.05" y="307" class="ct">R4 &#183; Bootstrap &#183; self-heal</text>
+<text x="463.05" y="324" class="body">8 files &#183; ~3.8k loc</text>
+<text x="463.05" y="339" class="mut">doctor &#183; auto_init &#183; opt_in</text>
+<rect x="663.425" y="286" width="200.575" height="66" rx="8" fill="#ffffff" stroke="#dfe4ec" stroke-width="1" filter="url(#sh)"/>
+<path d="M675.425 286.6 H701.425" class="rule" stroke="#6b7683"/>
+<text x="675.425" y="307" class="ct">R5 &#183; Server-side features</text>
+<text x="675.425" y="324" class="body">6 files &#183; ~1.5k loc</text>
+<text x="675.425" y="339" class="mut">decision_replay &#183; prompts</text>
+<text x="36" y="370" class="mut">R1 entry/transports (4 files, ~6.2k) is band A &#183; R6 cross-cutting infra (10 files, ~2.6k) is band F &#8212; the six roles partition all 48 exactly, no orphans.</text>
+<rect x="24" y="396" width="852" height="268" rx="14" fill="#ecf0f6" stroke="#dfe4ec" stroke-width="1"/>
+<rect x="36" y="399" width="313.78" height="22" rx="5" fill="#e2e8f2" stroke="#cfd7e4" stroke-width="1"/>
+<text x="47" y="414" class="eyebrow">C &#183; REQUEST SURFACE  &#8214;  ENFORCEMENT ENGINE</text>
+<text x="361.78" y="414" class="mut">siblings, not stacked</text>
+<text x="36" y="434" class="mut">Sibling placement is inferred from server.py calling pre_call / post_call AROUND the dispatch &#8212; the import graph alone does not settle it.</text>
+<rect x="36" y="446" width="266" height="125" rx="8" fill="#ffffff" stroke="#dfe4ec" stroke-width="1" filter="url(#sh)"/>
+<path d="M48 446.6 H74" class="rule" stroke="#0064d6"/>
+<text x="48" y="467" class="m">mcp_server/tools/</text>
+<text x="48" y="484" class="body">10 files &#183; ~4.4k loc</text>
+<text x="48" y="499" class="body">the MCP request surface</text>
+<text x="48" y="514" class="mut">graph &#183; search &#183; learning &#183; skills</text>
+<text x="48" y="529" class="mut">roadmap &#183; working &#183; playbook &#183; provenance</text>
+<path d="M48 540 H290" stroke="#dfe4ec" stroke-width="1"/>
+<text x="48" y="556" font-size="10.5" font-weight="600" class="acc">never imports engine/ &#8212; 0 hits</text>
+<rect x="378" y="446" width="251" height="125" rx="8" fill="#ffffff" stroke="#ecd7ac" stroke-width="1" filter="url(#sh)"/>
+<path d="M390 446.6 H416" class="rule" stroke="#b5801f"/>
+<text x="390" y="467" class="m">mcp_server/engine/</text>
+<text x="390" y="484" class="body">9 files &#183; ~2.0k loc</text>
+<text x="390" y="499" class="mut">signals &#183; runner &#183; policy &#183; events</text>
+<path d="M390 510 H617" stroke="#ecd7ac" stroke-width="1"/>
+<text x="390" y="526" class="m">engine/wiring/mcp_dispatch.py</text>
+<text x="390" y="542" class="body">+ _diff_envelope.py &#8212; the</text>
+<text x="390" y="557" class="body">adapters server.py calls</text>
+<rect x="645" y="446" width="219" height="125" rx="8" fill="#ffffff" stroke="#ecd7ac" stroke-width="1" filter="url(#sh)"/>
+<path d="M657 446.6 H683" class="rule" stroke="#b5801f"/>
+<text x="657" y="467" class="m">engine/policies/</text>
+<text x="657" y="484" class="body">10 files &#183; ~2.9k loc</text>
+<text x="657" y="499" class="body">7 registered by default, from one</text>
+<text x="657" y="514" class="body">tuple in engine/__init__.py:</text>
+<text x="657" y="529" class="mut">BlastRadiusVeto &#183; DecisionLock &#183;</text>
+<text x="657" y="544" class="mut">AntiRegression &#183; RelevanceInject &#183;</text>
+<text x="657" y="559" class="mut">TokenBudgetPersist &#183; +2 more</text>
+<path d="M372 508 H307" fill="none" stroke="#cc2d2d" stroke-width="1.9" stroke-linecap="round" marker-end="url(#aRed)"/>
+<rect x="325" y="488" width="30" height="16" rx="4" fill="#fde8e4" stroke="#cc2d2d" stroke-width="1"/>
+<text x="334.7" y="500" font-size="10.5" font-weight="700" class="red">L1</text>
+<rect x="36" y="583" width="828" height="67" rx="8" fill="#ffffff" stroke="#dfe4ec" stroke-width="1" filter="url(#sh)"/>
+<path d="M48 583.6 H74" class="rule" stroke="#0064d6"/>
+<text x="48" y="604" class="ct">server.py call_tool() &#8212; one funnel for all 37 tools, fixed order:</text>
+<text x="48" y="622" class="body">bind client roots &#8594; opt-in gate &#8594; auto_init &#8594; register_default_policies() &#8594; pre_call &#8594; 38-arm if/elif &#8594; post_call &#8594; one json.dumps</text>
+<text x="48" y="638" class="mut">Every pre-dispatch step is wrapped in `except Exception: pass` &#8212; the engine can never block dispatch by failing.</text>
+<rect x="24" y="676" width="852" height="303" rx="14" fill="#ecf0f6" stroke="#dfe4ec" stroke-width="1"/>
+<rect x="36" y="679" width="208.64" height="22" rx="5" fill="#e2e8f2" stroke="#cfd7e4" stroke-width="1"/>
+<text x="47" y="694" class="eyebrow">D &#183; TWO PERSISTENCE STACKS</text>
+<text x="256.64" y="694" class="mut">a single &#8220;storage&#8221; box would be the tidy lie</text>
+<text x="36" y="714" class="mut">The decisions half is layered. The code-graph half has no storage wrapper at all &#8212; tools/ imports SQLiteGraph from indexer/ directly.</text>
+<rect x="36" y="726" width="406" height="99" rx="8" fill="#ffffff" stroke="#dfe4ec" stroke-width="1" filter="url(#sh)"/>
+<path d="M48 726.6 H74" class="rule" stroke="#0064d6"/>
+<text x="48" y="747" class="m">mcp_server/storage/ &#8212; 24 files &#183; ~8.0k loc</text>
+<text x="48" y="765" class="body"><tspan x="48">5 record stores (*_store.py): decisions &#183; sessions &#183;</tspan><tspan x="48" dy="15"> skills &#183; working &#183; activity</tspan></text>
+<text x="48" y="797" class="mut"><tspan x="48">+ outcomes_writer.py &#8212; a 6th JSONL writer</tspan><tspan x="48" dy="15"> that skips the naming convention</tspan></text>
+<path d="M96 825 V842" fill="none" stroke="#0064d6" stroke-width="1.7" stroke-linecap="round" marker-end="url(#aBlue)"/>
+<rect x="36" y="847" width="406" height="48" rx="8" fill="#ffffff" stroke="#dfe4ec" stroke-width="1" filter="url(#sh)"/>
+<text x="48" y="867" class="ct">&#9733; jsonl_store.py &#8212; 817 loc &#8212; append choke point</text>
+<text x="48" y="884" class="mut">its only internal import is storage/atomic.py</text>
+<path d="M96 895 V912" fill="none" stroke="#0064d6" stroke-width="1.7" stroke-linecap="round" marker-end="url(#aBlue)"/>
+<rect x="36" y="917" width="406" height="48" rx="8" fill="#ffffff" stroke="#dfe4ec" stroke-width="1" filter="url(#sh)"/>
+<text x="48" y="937" class="ct">&#9733; atomic.py &#8212; 268 loc &#8212; file-write choke point</text>
+<text x="48" y="954" class="mut">19 files bypass jsonl_store and call it directly &#8212; see note 2</text>
+<rect x="458" y="726" width="406" height="99" rx="8" fill="#ffffff" stroke="#d9d6f2" stroke-width="1" filter="url(#sh)"/>
+<path d="M470 726.6 H496" class="rule" stroke="#5a5fe0"/>
+<text x="470" y="747" class="m">indexer/ &#8212; 12 files &#183; ~5.4k loc</text>
+<text x="470" y="765" class="body">sqlite_graph &#183; index_codebase &#183; imports &#183; graph_generator</text>
+<text x="470" y="780" class="mut">fix_history &#183; global_db &#183; outcome_classifier</text>
+<path d="M518 825 V842" fill="none" stroke="#5a5fe0" stroke-width="1.7" stroke-linecap="round" marker-end="url(#aViolet)"/>
+<rect x="458" y="847" width="406" height="48" rx="8" fill="#fff4f2" stroke="#cc2d2d" stroke-width="1.4" stroke-dasharray="5 3" stroke-linecap="round"/>
+<text x="470" y="867" font-size="11.5" font-weight="700" class="red">NO storage-layer wrapper on this side</text>
+<text x="470" y="884" class="body">tools/{graph, search, learning} import SQLiteGraph at module scope</text>
+<path d="M518 895 V912" fill="none" stroke="#5a5fe0" stroke-width="1.7" stroke-linecap="round" marker-end="url(#aViolet)"/>
+<rect x="458" y="917" width="406" height="48" rx="8" fill="#ffffff" stroke="#d9d6f2" stroke-width="1" filter="url(#sh)"/>
+<text x="470" y="937" class="ct">indexer.sqlite_graph.SQLiteGraph</text>
+<text x="470" y="954" class="mut">engine/signals.py reads BOTH stacks directly</text>
+<path d="M96 965 V1013" fill="none" stroke="#6b7683" stroke-width="1.5" stroke-linecap="round" marker-end="url(#aSlate)"/>
+<path d="M276 965 V983 H678 V1013" fill="none" stroke="#6b7683" stroke-width="1.5" stroke-linecap="round" marker-end="url(#aSlate)"/>
+<path d="M518 965 V995 H336 V1013" fill="none" stroke="#5a5fe0" stroke-width="1.5" stroke-linecap="round" marker-end="url(#aViolet)"/>
+<rect x="24" y="1019" width="852" height="110" rx="14" fill="#ecf0f6" stroke="#dfe4ec" stroke-width="1"/>
+<rect x="36" y="1022" width="91.84" height="22" rx="5" fill="#e2e8f2" stroke="#cfd7e4" stroke-width="1"/>
+<text x="47" y="1037" class="eyebrow">E &#183; ON DISK</text>
+<text x="139.84" y="1037" class="mut">two directories, different lifecycles &#8212; .codevira/ is meant to be committed; this repo gitignores its own (dogfood)</text>
+<rect x="36" y="1049" width="406" height="66" rx="8" fill="#ffffff" stroke="#dfe4ec" stroke-width="1" filter="url(#sh)"/>
+<path d="M48 1049.6 H74" class="rule" stroke="#0064d6"/>
+<text x="48" y="1070" class="m">.codevira/</text>
+<text x="130" y="1070" class="mut">canonical &#183; team-shared</text>
+<text x="48" y="1087" class="body">decisions.jsonl &#183; sessions.jsonl &#183; skills.jsonl &#183; digest.jsonl</text>
+<text x="48" y="1102" class="body">outcomes.jsonl &#183; manifest.yaml &#183; roadmap.yaml &#183;</text>
+<text x="300" y="1102" font-size="10.5" font-weight="700" class="acc">graph/graph.db</text>
+<rect x="458" y="1049" width="406" height="66" rx="8" fill="#ffffff" stroke="#dfe4ec" stroke-width="1" filter="url(#sh)"/>
+<path d="M470 1049.6 H496" class="rule" stroke="#6b7683"/>
+<text x="470" y="1070" class="m">.codevira-cache/</text>
+<text x="592" y="1070" class="mut">per-machine &#183; rebuildable &#183; gitignored</text>
+<text x="470" y="1087" class="body">working.jsonl &#183; activity.jsonl &#183; fts5.sqlite</text>
+<text x="470" y="1102" class="body">enforcement.jsonl &#183; enforcer_outcomes.jsonl &#183; prompts.jsonl</text>
+<rect x="24" y="1141" width="852" height="110" rx="14" fill="#ecf0f6" stroke="#dfe4ec" stroke-width="1"/>
+<rect x="36" y="1144" width="183.82" height="22" rx="5" fill="#e2e8f2" stroke="#cfd7e4" stroke-width="1"/>
+<text x="47" y="1159" class="eyebrow">F &#183; CROSS-CUTTING INFRA</text>
+<text x="231.82" y="1159" class="mut">reached from every band above &#8212; drawn last because it belongs to none of them</text>
+<rect x="36" y="1171" width="406" height="66" rx="8" fill="#ffffff" stroke="#dfe4ec" stroke-width="1" filter="url(#sh)"/>
+<path d="M48 1171.6 H74" class="rule" stroke="#0064d6"/>
+<text x="48" y="1192" class="ct">&#9733; mcp_server/paths.py &#8212; 794 loc &#8212; the hub</text>
+<text x="48" y="1209" class="body">44 distinct modules import it, 5 of them in indexer/.</text>
+<text x="48" y="1224" class="mut">storage/paths.py is a second, thinner module that delegates here.</text>
+<rect x="458" y="1171" width="406" height="66" rx="8" fill="#ffffff" stroke="#dfe4ec" stroke-width="1" filter="url(#sh)"/>
+<path d="M470 1171.6 H496" class="rule" stroke="#6b7683"/>
+<text x="470" y="1192" class="ct">9 more root infra files &#183; ~1.8k loc</text>
+<text x="470" y="1209" class="body">crash_logger &#183; gitignore &#183; egress &#183; tenant &#183; log_retention</text>
+<text x="470" y="1224" class="mut">plus mcp_server/retrieval/ &#8212; 2 files &#183; 171 loc</text>
+<rect x="24" y="1263" width="852" height="150" rx="14" fill="#fdf3f1" stroke="#e9bab1" stroke-width="1.2"/>
+<rect x="36" y="1266" width="199.76" height="22" rx="5" fill="#fde8e4" stroke="#e2a79c" stroke-width="1"/>
+<text x="47" y="1281" class="tag red">THE BOUNDARIES THAT LEAK</text>
+<text x="247.76" y="1281" class="mut">a clean layer stack would be a lie &#8212; these three edges are the ones to know before you refactor</text>
+<rect x="36" y="1295" width="26" height="16" rx="4" fill="#fde8e4" stroke="#cc2d2d" stroke-width="1"/>
+<text x="42.6" y="1307" font-size="10.5" font-weight="700" class="red">L1</text>
+<text x="68" y="1307" font-size="10.5" class="ink">engine/ &#8594; tools/ &#183; 3 sites (signals.py &#215;2, policies/post_edit_refresh.py) &#8212; the only edge that inverts the sibling relation.</text>
+<text x="68" y="1322" class="body">signals.impact() swallows all exceptions &#8594; {} &#8594; BlastRadiusVeto returns allow. A shape change in tools.graph.get_impact silently DISABLES the veto.</text>
+<rect x="36" y="1333" width="26" height="16" rx="4" fill="#fde8e4" stroke="#cc2d2d" stroke-width="1"/>
+<text x="42.6" y="1345" font-size="10.5" font-weight="700" class="red">L2</text>
+<text x="68" y="1345" font-size="10.5" class="ink">indexer/ &#8596; mcp_server/ &#183; both directions &#8212; 29 statements down across 17 files, 24 up across 6 files.</text>
+<text x="68" y="1360" class="body">16 of the 24 upward sit in index_codebase.py. indexer/ is not a lower layer you can read in isolation.</text>
+<rect x="36" y="1371" width="26" height="16" rx="4" fill="#fde8e4" stroke="#cc2d2d" stroke-width="1"/>
+<text x="42.6" y="1383" font-size="10.5" font-weight="700" class="red">L3</text>
+<text x="68" y="1383" font-size="10.5" class="ink">storage/ &#8594; indexer/ &#183; 1 site (outcomes_writer.py imports indexer.outcome_classifier).</text>
+<text x="68" y="1398" class="body">storage/ never imports tools/ or engine/ (0 hits), so it is close to a sealed bottom layer &#8212; but it is not sealed.</text>
+<rect x="24" y="1425" width="852" height="38" rx="12" fill="#ecf0f6" stroke="#dfe4ec" stroke-width="1"/>
+<path d="M36 1445 H66" stroke="#0064d6" stroke-width="2.2" stroke-linecap="round"/>
+<text x="74" y="1449" class="mut">runtime call edge (decisions)</text>
+<path d="M241.175 1445 H271.175" stroke="#5a5fe0" stroke-width="2.2" stroke-linecap="round"/>
+<text x="279.175" y="1449" class="mut">runtime call edge (code graph)</text>
+<path d="M455.85 1445 H485.85" stroke="#cc2d2d" stroke-width="2.2" stroke-linecap="round"/>
+<text x="493.85" y="1449" class="mut">boundary leak (L1&#8211;L3)</text>
+<path d="M627.125 1445 H657.125" stroke="#6b7683" stroke-width="2.2" stroke-linecap="round"/>
+<text x="665.125" y="1449" class="mut">file read / write</text>
+<text x="761.6" y="1449" font-size="10.5" font-weight="600" class="acc">&#9733; = choke point</text>
+<rect x="24" y="1475" width="852" height="174" rx="12" fill="#ecf0f6" stroke="#dfe4ec" stroke-width="1"/>
+<path d="M29 1489 V1635" stroke="#0064d6" stroke-width="2" stroke-linecap="round"/>
+<text x="38" y="1497" class="mut">1 &#183; Arrows are runtime call edges. Because 82% of internal imports are function-local, a module-scope import graph would show almost none of this structure.</text>
+<text x="38" y="1516" class="mut">2 &#183; Two choke points, not one: jsonl_store.py is the append-only-record choke point, atomic.py the universal file-write one. 19 files bypass jsonl_store and</text>
+<text x="38" y="1530" class="mut">call atomic_write_text() directly &#8212; including tools/roadmap.py and tools/skills.py (a two-layer skip) and indexer/graph_generator.py (outside mcp_server).</text>
+<text x="38" y="1549" class="mut">3 &#183; mcp_server/__init__.py imports cli at module scope, so reading __version__ pulls in cli.py + indexer &#8212; 4 internal modules, 0.04 s. That is a cost, not a</text>
+<text x="38" y="1563" class="mut">cycle: a Tarjan run over the module-scope graph finds no multi-module SCC larger than 2. A _version.py leaf would remove it.</text>
+<text x="38" y="1582" class="mut">4 &#183; Registry: 37 Tool() literals against 38 dispatch arms. The extra arm is the search_codebase tombstone, removed in v2.2. 36 tools are advertised by</text>
+<text x="38" y="1596" class="mut">default &#8212; refresh_graph is hidden via _ADMIN_TOOLS.</text>
+<text x="38" y="1619" class="mut">Measured from source at HEAD 9e53a4e over 127 .py files / ~47k loc. LOC are rounded on purpose &#8212; they move every commit. File counts, the import ratio</text>
+<text x="38" y="1633" class="mut">and the boundary facts are the stable part; re-run the greps in note 2 and panel L1&#8211;L3 if you want to falsify anything here.</text>
+<rect x="24" y="1661" width="852" height="80" rx="12" fill="#ffffff" stroke="#dfe4ec" stroke-width="1" filter="url(#sh)"/>
+<path d="M24 1711 H876" stroke="#dfe4ec" stroke-width="1"/>
+<path d="M320 1661 V1711" stroke="#dfe4ec" stroke-width="1"/>
+<path d="M640 1661 V1711" stroke="#dfe4ec" stroke-width="1"/>
+<path d="M762 1661 V1711" stroke="#dfe4ec" stroke-width="1"/>
+<text x="38" y="1680" class="fl">PROJECT</text>
+<text x="38" y="1702" font-size="16" font-weight="700" letter-spacing="0.2em" class="acc">CODEVIRA</text>
+<text x="334" y="1680" class="fl">DRAWING</text>
+<text x="334" y="1702" class="ct">INTERNAL ARCHITECTURE &#8212; MODULE &amp; LAYER MAP</text>
+<text x="654" y="1680" class="fl">SHEET</text>
+<text x="654" y="1702" class="ct">1 OF 1</text>
+<text x="776" y="1680" class="fl">REV</text>
+<text x="776" y="1702" font-size="11.5" font-weight="700" class="amb">4.0.1</text>
+<text x="38" y="1730" class="fl">SCOPE</text>
+<text x="102" y="1730" class="body">Local-first MCP server. Runtime call edges across bands A&#8211;F; boundary leaks flagged L1&#8211;L3.</text>
 </svg>

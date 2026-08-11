@@ -68,7 +68,7 @@ codevira setup                     # wire it into the AI tools on this machine
 <br>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/sachinshelke/codevira/main/website/assets/blueprint.svg"
+  <img src="https://raw.githubusercontent.com/sachinshelke/codevira/main/website/assets/blueprint.png"
        alt="Codevira solution blueprint: persistent memory and decision enforcement for AI coding agents. Four levels — remember, surface, warn, block. Capabilities include decision memory, cross-tool sync, session context, code graph, enforcement engine, anti-regression, skill library and working memory. Works with Claude Code, Claude Desktop, Cursor and Antigravity over MCP, and with Codex and Copilot via AGENTS.md."
        width="100%">
 </p>
@@ -149,7 +149,7 @@ one tool is visible to every tool.
 <br>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/sachinshelke/codevira/main/website/assets/enforcement-flow.svg"
+  <img src="https://raw.githubusercontent.com/sachinshelke/codevira/main/website/assets/enforcement-flow.png"
        alt="Enforcement flow: record_decision appends to decisions.jsonl; weeks later an agent edits a covered file; the edit is intercepted at Claude Code PreToolUse or at git pre-commit; one dispatch() runs 7 prioritised policies; the refusal carries the original reasoning. Fails open, with kill switches."
        width="100%">
 </p>
@@ -225,7 +225,7 @@ from them for every IDE to read, and Claude Code lifecycle hooks — plus the op
 `pre-commit` hook — enforce the ones you locked.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/sachinshelke/codevira/main/website/assets/architecture.svg"
+  <img src="https://raw.githubusercontent.com/sachinshelke/codevira/main/website/assets/architecture.png"
        alt="Codevira architecture: AI tools connect over stdio MCP to one codevira process per project; canonical decision memory lives in the repo under .codevira/, a per-machine cache in .codevira-cache/, and cross-project state in ~/.codevira/"
        width="100%">
 </p>
@@ -635,7 +635,7 @@ disconnected leaves — the arrows below are runtime call edges. The diagram als
 boundaries that *don't* hold, rather than pretending the layering is clean.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/sachinshelke/codevira/main/website/assets/internals.svg"
+  <img src="https://raw.githubusercontent.com/sachinshelke/codevira/main/website/assets/internals.png"
        alt="Codevira internals: process entry points, the 48 root modules grouped by role, tools/ and engine/ as siblings, two separate persistence stacks (storage/ for decisions, indexer/ for the code graph), the jsonl_store and atomic write choke points, and on-disk layout"
        width="100%">
 </p>

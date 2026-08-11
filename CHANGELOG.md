@@ -41,8 +41,18 @@ requires the target file to exist, so `import os` does not become an edge.
 
 Measured on this repo after the fix: **793 import edges**, and
 `get_impact("mcp_server/paths.py")` reports a blast radius of 186 where it
-previously reported 0. **Run `codevira index --full` once after upgrading** to
-rebuild the edges. *(Tests: `TestProjectPackagesFromDisk`.)*
+previously reported 0.
+
+**No action needed on upgrade.** A graph already on disk stays edgeless until
+something rebuilds it, and a fix that depends on reading a release note is a fix
+most people never get — so a startup migration (`v401_rebuild_import_edges`)
+rebuilds it for you, in the background, the first time the server starts. It is
+deliberately narrow: it fires only when a graph has nodes but *no* import edges —
+exactly the broken shape — so a healthy graph, an empty one, and a genuinely
+edgeless single-file repo all no-op and pay nothing. It runs on a daemon thread
+and is failure-isolated, so it can never delay or break startup. `codevira index
+--full` still forces it by hand. *(Tests: `TestProjectPackagesFromDisk`,
+`TestV401RebuildImportEdges`.)*
 
 ### Fixed — an installed IDE with an empty config file was invisible to `setup`
 

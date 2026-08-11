@@ -534,6 +534,61 @@ def _mig_v370_merge_driver(project_root: Path) -> bool:
     return True
 
 
+def _mig_v401_rebuild_import_edges(project_root: Path) -> bool:
+    """Rebuild the code graph once, for projects whose import edges are missing.
+
+    Before 4.0.1, import resolution gated every import on a package set that
+    fell back to a hardcoded ``["src"]``, so any project not laid out that way
+    built ZERO import edges — ``get_impact`` answered "blast radius 0" for every
+    file (D00013N). The resolver is fixed, but a graph already on disk stays
+    edgeless until something rebuilds it, and telling users to run
+    ``codevira index --full`` themselves would leave the fix unapplied for
+    everyone who never reads a release note.
+
+    SELF-GUARDING, deliberately narrow: it only fires when the graph has nodes
+    but no ``imports`` edges — exactly the broken shape. A healthy graph, an
+    empty graph, and a genuinely edgeless project (a single-file repo) all
+    no-op, so this never costs a rebuild it doesn't owe. Runs on a daemon
+    thread, so startup is never blocked by it.
+    """
+    import sqlite3
+
+    from mcp_server.paths import get_data_dir
+
+    try:
+        db_path = get_data_dir() / "graph" / "graph.db"
+        if not db_path.is_file():
+            return False  # nothing indexed yet; auto_init handles first index
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        try:
+            nodes = conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
+            imports = conn.execute(
+                "SELECT COUNT(*) FROM edges WHERE kind = 'imports'"
+            ).fetchone()[0]
+        finally:
+            conn.close()
+    except sqlite3.Error as e:
+        logger.debug("v401 import-edge check skipped (%s)", e)
+        return False
+
+    if nodes == 0 or imports > 0:
+        return False  # empty or already healthy — nothing owed
+
+    logger.info(
+        "v4.0.1: graph has %d nodes but no import edges — rebuilding in the "
+        "background so get_impact works (was D00013N)",
+        nodes,
+    )
+    try:
+        from indexer.index_codebase import start_background_full_index
+
+        start_background_full_index()
+    except Exception as e:  # noqa: BLE001 — never block startup on a reindex
+        logger.warning("v401 background reindex could not start: %s", e)
+        return False
+    return True
+
+
 def _mig_v370_dedupe_registration(project_root: Path) -> bool:
     """Remove a stale per-project `codevira` IDE entry left by a pre-3.7 init —
     but ONLY when a global codevira entry already exists (non-orphaning).
@@ -665,6 +720,9 @@ _STARTUP_MIGRATIONS = (
     ("v370_repair_collisions", _mig_v370_repair_collisions),
     ("v370_merge_driver", _mig_v370_merge_driver),
     ("v370_dedupe_registration", _mig_v370_dedupe_registration),
+    # Last: a background reindex for graphs left edgeless by the pre-4.0.1
+    # import resolver. Self-guarding, so it costs nothing on a healthy graph.
+    ("v401_rebuild_import_edges", _mig_v401_rebuild_import_edges),
 )
 
 

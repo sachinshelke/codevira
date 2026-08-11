@@ -1,5 +1,63 @@
 # Migrating to Codevira
 
+## Upgrading to 4.0.1
+
+A patch release, but it removes one command and repairs the code graph. If you
+are coming from 3.x, read [Upgrading to 4.0](#upgrading-to-40) below as well —
+that is where the one true breaking change lives.
+
+### Breaking: `codevira clean` is gone
+
+`clean` read as tidy-up but was a full **uninstall**: it wiped `~/.codevira/`
+(data dirs, `global.db`, snapshots, `device_id`), stripped codevira from every
+IDE config, and removed the launchd service. It destroyed a real installation
+when someone ran `yes | codevira clean` believing it pruned the registry. Its
+two jobs are now separate commands, and `codevira clean` errors with
+`invalid choice: 'clean'`.
+
+| You used to run | Run instead |
+|---|---|
+| `codevira clean --ghosts` / `--orphans` / `--legacy` | `codevira prune --ghosts` / `--orphans` / `--legacy` |
+| `codevira clean` (to remove everything) | `codevira uninstall` |
+
+Check your scripts and any CI that calls it. `prune` never touches decisions,
+IDE configs or hooks; `uninstall` still requires typing `uninstall` to confirm.
+
+### What happens automatically (you do nothing)
+
+- **The code graph rebuilds itself once, if it needs to.** Before 4.0.1,
+  import resolution only recognised projects laid out as `src/`, so any other
+  layout built **zero import edges** and `get_impact` answered "blast radius 0"
+  for every file. Fixing the resolver does not repair a graph already on disk,
+  so a startup migration (`v401_rebuild_import_edges`) rebuilds it in the
+  background the first time the server starts. It fires **only** on the broken
+  shape — a graph with nodes but no import edges — so a healthy project pays
+  nothing, and it runs on a daemon thread, so startup is never blocked. You can
+  still force it yourself with `codevira index --full`.
+- **`codevira init --shared` now actually shares.** It previously added
+  `.codevira/` to `.gitignore` while reporting team mode, so `git add
+  .codevira/` silently staged nothing and teammates received no memory. If you
+  ran it before and wondered why, **re-run `codevira init --shared`** — it
+  repairs the stale ignore line in place. The default (non-shared) behaviour is
+  unchanged: memory stays per-machine.
+- **An installed IDE with an empty config file is detected again.** Antigravity
+  ships a 0-byte `mcp_config.json` until its first server is added; `setup`
+  required valid JSON and so skipped it silently. No action needed — just
+  re-run `codevira setup` if Antigravity was missing from your "Detected:" line.
+
+### Verifying the upgrade
+
+```bash
+codevira doctor
+codevira index --full         # optional; the startup migration does this for you
+```
+
+`get_impact` on a file with known callers should now report a non-zero blast
+radius. If it reports 0 on a file you know is imported elsewhere, the graph has
+not been rebuilt yet — run `codevira index --full` once.
+
+---
+
 ## Upgrading to 4.0
 
 **Take a snapshot first. Then `pipx install --upgrade codevira`.**

@@ -244,9 +244,12 @@ cache hits on repeat prompts → free tokens on subsequent calls.
 
 These survived the v2.2.0 surgery untouched:
 
-- **Code graph layer** (`indexer/sqlite_graph.py`, `indexer/chunker.py`,
+- **Code graph layer** (`indexer/sqlite_graph.py`, `indexer/imports.py`,
   `indexer/graph_generator.py`) — tree-sitter parsing + SQLite graph.
   `get_impact`, `query_graph`, `get_node`, etc. work exactly the same.
+  (`imports.py` was `chunker.py` until 4.0.1: the chunking half only ever fed
+  ChromaDB embeddings, so v2.2.0's removal left it unreachable. Only the import
+  extraction was ever wired to the graph.)
 - **PreToolUse enforcement** (`mcp_server/engine/policies/decision_lock.py`) —
   do_not_revert decisions still hard-block matching edits.
 - **Anti-regression, blast-radius, relevance-inject, token-budget,

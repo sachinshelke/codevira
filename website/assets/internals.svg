@@ -160,8 +160,8 @@
     <text x="40" y="723" font-size="10.5" fill="#59636e">19 files bypass jsonl_store and call it directly — see note 2</text>
 
     <rect x="460" y="568" width="410" height="52" rx="6" fill="#efe9fb" stroke="#8a6fd0" stroke-width="1.5"/>
-    <text x="470" y="584" font-size="10.5" font-weight="600" fill="#1f2328" font-family="ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace">indexer/ — 12 files · ~6.1k loc</text>
-    <text x="470" y="598" font-size="10.5" fill="#39414a">sqlite_graph · index_codebase · chunker · graph_generator</text>
+    <text x="470" y="584" font-size="10.5" font-weight="600" fill="#1f2328" font-family="ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace">indexer/ — 12 files · ~5.4k loc</text>
+    <text x="470" y="598" font-size="10.5" fill="#39414a">sqlite_graph · index_codebase · imports · graph_generator</text>
     <text x="470" y="612" font-size="10.5" fill="#59636e">fix_history · global_db · outcome_classifier</text>
 
     <path d="M660 622 L660 636" fill="none" stroke="#8a6fd0" stroke-width="1.8" marker-end="url(#intPurple)"/>

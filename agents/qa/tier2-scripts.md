@@ -150,7 +150,7 @@ export CODEVIRA_HOME=~/.codevira-test-old
 
 # 3. Run v2.0 against it; verify no crashes, no data loss
 codevira status
-codevira clean --orphans --dry-run
+codevira prune --orphans --dry-run
 
 # 4. Verify schema migrated cleanly (no errors, expected tables present)
 sqlite3 ~/.codevira-test-old/projects/proj_abc12345/graph/graph.db ".tables"

@@ -153,8 +153,8 @@ Every operation that touches user state has a documented reverse:
 
 | Operation | Reverse |
 |---|---|
-| `codevira setup` writes IDE configs | `codevira clean` removes them |
-| `codevira init` registers in global.db | `codevira clean --project <key>` |
+| `codevira setup` writes IDE configs | `codevira uninstall` removes them |
+| `codevira init` registers in global.db | `codevira untrack --project <key>` |
 | Hook installation writes to `~/.claude/hooks/` | `codevira hooks uninstall` |
 | DB migration | Rollback script in `indexer/migrations/`  |
 

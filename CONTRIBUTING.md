@@ -345,7 +345,7 @@ codevira/
 │   └── data/              # Bundled assets (agents, rules, config template)
 ├── indexer/               # Indexing and analysis
 │   ├── index_codebase.py  # Build/update index + background watcher
-│   ├── chunker.py         # AST-based code chunker
+│   ├── imports.py         # AST-based import extraction
 │   ├── treesitter_parser.py
 │   ├── sqlite_graph.py    # SQLite graph database
 │   ├── graph_generator.py # Auto-generate graph stubs + symbols

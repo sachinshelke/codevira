@@ -235,46 +235,11 @@ from them for every IDE to read, and Claude Code lifecycle hooks — plus the op
 
 <br>
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  IN THE PROJECT REPO (local by default)          (selected)     │
-│                                                                 │
-│   AGENTS.md                  ≤5 KB slim contract, auto-generated │
-│      ↑                                                          │
-│   .codevira/                                                    │
-│     decisions.jsonl          full text + metadata (append-only) │
-│     digest.jsonl             slim summary for prompt injection  │
-│     outcomes.jsonl           kept/reverted from git observation │
-│     manifest.yaml            tag→ids, file→ids index (regen)    │
-│     enforcement.yaml         which decisions hard-block         │
-│     config.yaml              project settings                   │
-│     sessions.jsonl           session events                     │
-│     roadmap.yaml             phase tracking                     │
-│     skills.jsonl             once you record a skill            │
-│                                                                 │
-│   .codevira-cache/           gitignored, rebuildable            │
-│     fts5.sqlite              FTS5 index over decisions.jsonl    │
-│     hash-cache.db            file change detection              │
-│     working.jsonl            intra-session scratchpad           │
-│   (the code graph is a per-project SQLite db under ~/.codevira/)│
-└─────────────────────────────────────────────────────────────────┘
-                              ↑ MCP / hooks ↓
-┌─────────────────────────────────────────────────────────────────┐
-│  PIPX INSTALL (~66 MB venv, ~/.local/pipx/venvs/codevira)      │
-│   codevira (CLI + MCP server)                                   │
-│      - no chromadb / sentence-transformers / torch; no model   │
-│      - server cold-start well under 1 s; warm tool calls ~2 ms  │
-└─────────────────────────────────────────────────────────────────┘
-                              ↑ stdio MCP ↓
-┌─────────────────────────────────────────────────────────────────┐
-│  IDE (Claude Code / Cursor / Antigravity / Codex /…)         │
-│                                                                 │
-│   UserPromptSubmit → codevira hook → relevance-gated inject     │
-│   Edit / Write → PreToolUse → block if do_not_revert violated   │
-│   PostToolUse → Post-Edit Graph Refresh (+ working-mem fanout)  │
-│   Stop → Token Budget / Session-Log Enforcer                    │
-└─────────────────────────────────────────────────────────────────┘
-```
+<p align="center">
+  <img src="https://raw.githubusercontent.com/sachinshelke/codevira/main/website/assets/file-layout.png"
+       alt="Codevira file layout and hook flow: three stacked layers. In the project repo, .codevira/ holds decisions.jsonl, digest.jsonl, outcomes.jsonl, manifest.yaml, enforcement.yaml, config.yaml, sessions.jsonl, roadmap.yaml and skills.jsonl; AGENTS.md is generated from it; .codevira-cache/ holds fts5.sqlite, hash-cache.db and working.jsonl and is gitignored; the code graph is a per-project SQLite db under ~/.codevira/, not in your repo. Below it, one pipx-installed codevira binary (CLI plus MCP server, ~66 MB venv, no chromadb, sentence-transformers or torch, no model, cold-start well under 1 s, warm tool calls ~2 ms), reached over MCP and hooks. Below that, your IDE and its four hook points: UserPromptSubmit into a relevance-gated inject, Edit or Write into PreToolUse which blocks if a do_not_revert decision is violated, PostToolUse into the Post-Edit Graph Refresh and working-memory fanout, and Stop into the Token Budget and Session-Log Enforcer."
+       width="100%">
+</p>
 
 `codevira init` scaffolds everything above except `roadmap.yaml` and `skills.jsonl`, which are
 written on first use. Deeper detail: [`docs/architecture.md`](https://github.com/sachinshelke/codevira/blob/main/docs/architecture.md).

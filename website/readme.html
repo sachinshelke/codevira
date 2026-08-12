@@ -1,0 +1,928 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Codevira README — persistent memory &amp; decision enforcement for AI coding agents</title>
+<meta name="description" content="The full Codevira README: what it is, how enforcement works, quick start, the 36-tool MCP surface, the 7 engine policies, 26 CLI commands, language support and FAQ. Local-first, MIT, no cloud.">
+<link rel="canonical" href="https://sachinshelke.github.io/codevira/readme.html">
+<meta name="robots" content="index, follow">
+<meta name="theme-color" content="#0b0d12">
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="assets/favicon-16x16.png">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+<link rel="manifest" href="site.webmanifest">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Codevira">
+<meta property="og:title" content="Codevira README — persistent memory &amp; decision enforcement">
+<meta property="og:description" content="The full Codevira README: enforcement, quick start, MCP tool surface, engine policies, CLI commands and FAQ. Local-first persistent memory for AI coding agents.">
+<meta property="og:url" content="https://sachinshelke.github.io/codevira/readme.html">
+<meta property="og:image" content="https://sachinshelke.github.io/codevira/assets/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Codevira README — persistent memory &amp; decision enforcement">
+<meta name="twitter:description" content="The full Codevira README, rendered for the web. Local-first, MIT, no cloud, no vectors.">
+<meta name="twitter:image" content="https://sachinshelke.github.io/codevira/assets/og-image.png">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    {"@type": "ListItem", "position": 1, "name": "Codevira", "item": "https://sachinshelke.github.io/codevira/"},
+    {"@type": "ListItem", "position": 2, "name": "README", "item": "https://sachinshelke.github.io/codevira/readme.html"}
+  ]
+}
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --blue:#0064d6; --violet:#5a5fe0; --red:#cc2d2d; --amber:#ffb340;  /* light-mode accents at WCAG AA on #f3f5f9 (was 3.34/2.73/2.54:1) */
+    --bg:#f3f5f9; --text:#1b1f27; --dim:#5b6472;
+    --glass:rgba(255,255,255,.58); --glass-strong:rgba(255,255,255,.78);
+    --glass-line:rgba(255,255,255,.85); --glass-edge:rgba(27,31,39,.08);
+    --shadow:0 8px 32px rgba(31,38,68,.10);
+    --term-bg:rgba(18,20,28,.92); --term-text:#e8eaf2;
+    --code-inline:rgba(10,132,255,.10);
+    --mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+    --sans:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+    --display:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+    /* single centered logo watermark + ripple rings */
+    --wm-size:min(70vmin,680px); --wm-logo-op:.055; --wm-ring:255,106,26; --wm-ring-op:.10;
+  }
+  [data-theme="dark"]{
+    --blue:#6db1ff; --violet:#8d9bff; --red:#ff7b7b; --amber:#ffc466;
+    --bg:#0b0d12; --text:#e9ecf4; --dim:#98a1b3;
+    --glass:rgba(26,30,42,.52); --glass-strong:rgba(30,34,48,.72);
+    --glass-line:rgba(255,255,255,.10); --glass-edge:rgba(255,255,255,.06);
+    --shadow:0 8px 32px rgba(0,0,0,.45);
+    --term-bg:rgba(10,12,18,.88); --term-text:#e8eaf2;
+    --code-inline:rgba(109,177,255,.12);
+    --wm-logo-op:.075; --wm-ring-op:.15;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{background:var(--bg);color:var(--text);font-family:var(--sans);line-height:1.65;
+       transition:background .35s ease,color .35s ease;-webkit-font-smoothing:antialiased}
+  /* single centered logo watermark + soft sonar-style ripple rings, fixed,
+     behind everything. tweak via --wm-size / --wm-logo-op / --wm-ring-op */
+  .wm-brand{position:fixed;inset:0;z-index:-1;pointer-events:none;display:grid;place-items:center}
+  .wm-emblem{display:flex;flex-direction:column;align-items:center;transform:translateY(-3%)}
+  .wm-logowrap{position:relative;display:grid;place-items:center;width:var(--wm-size);height:var(--wm-size)}
+  .wm-logowrap .wm-logo{width:100%;height:100%;object-fit:contain;opacity:var(--wm-logo-op)}
+  .wm-logowrap .wm-ring{position:absolute;width:90%;height:90%;border-radius:50%;
+       border:2px solid rgba(var(--wm-ring),.9);opacity:0;transform:scale(.6);
+       animation:wm-ripple 7.5s ease-out infinite;will-change:transform,opacity}
+  .wm-logowrap .wm-ring:nth-child(2){animation-delay:2.5s}
+  .wm-logowrap .wm-ring:nth-child(3){animation-delay:5s}
+  .wm-word{font-family:var(--display);font-weight:600;letter-spacing:.16em;
+       font-size:calc(var(--wm-size) * .125);color:rgb(var(--wm-ring));
+       opacity:var(--wm-logo-op);margin-top:calc(var(--wm-size) * -.03)}
+  @keyframes wm-ripple{
+    0%{transform:scale(.6);opacity:0}
+    14%{opacity:var(--wm-ring-op)}
+    100%{transform:scale(1.55);opacity:0}
+  }
+  @media(prefers-reduced-motion:reduce){.wm-logowrap .wm-ring{display:none}}
+  a{color:var(--blue);text-decoration:none}
+  a:hover{text-decoration:underline}
+  code{font-family:var(--mono);font-size:.86em;color:var(--blue);background:var(--code-inline);
+       padding:1.5px 6px;border-radius:6px;white-space:nowrap}
+  .glass{background:var(--glass);backdrop-filter:blur(22px) saturate(1.7);-webkit-backdrop-filter:blur(22px) saturate(1.7);
+      border:1px solid var(--glass-line);box-shadow:var(--shadow);border-radius:18px}
+
+  /* nav */
+  nav{position:sticky;top:14px;z-index:50;margin:14px auto 0;max-width:1180px;padding:0 24px}
+  nav .inner{display:flex;align-items:center;justify-content:space-between;height:60px;padding:0 12px 0 20px;
+      border-radius:99px;background:var(--glass-strong);backdrop-filter:blur(24px) saturate(1.8);
+      -webkit-backdrop-filter:blur(24px) saturate(1.8);border:1px solid var(--glass-line);box-shadow:var(--shadow)}
+  .logo{display:flex;align-items:center;gap:10px;font-weight:600;font-size:18px;color:var(--text)}
+  .logo .mark{width:30px;height:30px;border-radius:8px;object-fit:contain;display:block}
+  .version{font-family:var(--mono);font-size:11.5px;font-weight:500;color:var(--blue);border:1px solid var(--glass-edge);
+      border-radius:99px;padding:2px 9px;margin-left:2px}
+  .links{display:flex;align-items:center;gap:20px;font-size:14.5px;font-weight:500;color:var(--dim)}
+  .links a{color:var(--dim)} .links a:hover{color:var(--text);text-decoration:none}
+  #theme-toggle{cursor:pointer;border:1px solid var(--glass-edge);background:transparent;color:var(--text);
+      width:36px;height:36px;border-radius:50%;font-size:15px;display:grid;place-items:center;transition:transform .4s ease}
+  #theme-toggle:hover{transform:rotate(40deg)}
+
+  /* layout */
+  .shell{max-width:1180px;margin:30px auto 0;padding:0 24px;display:grid;grid-template-columns:228px 1fr;gap:40px;align-items:start}
+  aside{position:sticky;top:96px;font-size:14px}
+  aside .group{font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:var(--dim);
+      margin:18px 0 8px}
+  aside a{display:block;color:var(--dim);padding:5px 0;border-left:2px solid transparent;padding-left:12px;margin-left:-2px}
+  aside a:hover,aside a.active{color:var(--text);border-left-color:var(--blue);text-decoration:none}
+  main{min-width:0;padding-bottom:80px}
+  .lead{font-size:17px;color:var(--dim);max-width:680px;margin:6px 0 8px}
+  h1{font-family:var(--display);font-size:clamp(32px,5vw,46px);font-weight:600;letter-spacing:-.02em;line-height:1.1}
+  h2{font-family:var(--display);font-size:26px;font-weight:600;letter-spacing:-.015em;margin:46px 0 14px;
+      padding-top:16px;scroll-margin-top:90px}
+  h3{font-family:var(--display);font-size:17px;font-weight:600;margin:26px 0 8px}
+  p{margin:12px 0;max-width:720px}
+  ul{margin:12px 0 12px 22px;max-width:720px} li{margin:6px 0}
+  .kbd{font-family:var(--mono);font-size:.85em;background:var(--code-inline);padding:1.5px 6px;border-radius:6px;color:var(--blue)}
+
+  pre{background:var(--term-bg);color:var(--term-text);font-family:var(--mono);font-size:13.5px;line-height:1.7;
+      padding:18px 20px;border-radius:14px;overflow-x:auto;margin:14px 0;max-width:760px;box-shadow:var(--shadow)}
+  pre .c{color:#8a93a8} pre .k{color:#6db1ff} pre .s{color:#ffc466}
+
+  table{border-collapse:collapse;width:100%;max-width:760px;margin:16px 0;font-size:14px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--glass-edge);vertical-align:top}
+  th{font-family:var(--mono);font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);font-weight:500}
+  td code{white-space:nowrap}
+
+  .note{border-left:3px solid var(--blue);background:var(--code-inline);border-radius:0 12px 12px 0;
+      padding:12px 16px;margin:16px 0;max-width:760px;font-size:14.5px}
+  .pill{display:inline-block;font-family:var(--mono);font-size:10.5px;color:#fff;border-radius:99px;padding:2px 9px;
+      background:linear-gradient(135deg,var(--blue),var(--violet));margin-left:6px;vertical-align:2px}
+
+  footer{max-width:1180px;margin:40px auto 0;padding:26px 24px 50px;border-top:1px solid var(--glass-edge);
+      display:flex;justify-content:space-between;flex-wrap:wrap;gap:14px;font-size:13.5px;color:var(--dim)}
+
+  @media(max-width:860px){
+    .shell{grid-template-columns:1fr;gap:0} aside{display:none}
+    .links a:not(.home){display:none}
+  }
+
+  /* ------------------------------------------------------------------
+     README-page additions. Everything below is appended so it layers on
+     top of the shared docs.html cascade rather than fighting it.
+     ------------------------------------------------------------------ */
+
+  /* This page's sidebar carries 19 links (~894px) against docs.html's 9, so the
+     shared position:sticky box runs past the fold on a short laptop and the last
+     entries are unreachable. Give it its own scroller. The 2px padding/margin
+     pair keeps the active link's border-left inside the padding box —
+     overflow-y:auto also computes overflow-x to auto, which would clip that
+     2px indicator away. */
+  aside{max-height:calc(100vh - 120px);overflow-y:auto;padding-left:2px;margin-left:-2px}
+
+  /* fenced code blocks are <pre><code>; neutralise the inline-code rule */
+  pre code{font-family:inherit;font-size:inherit;color:inherit;background:none;
+      padding:0;border-radius:0;white-space:pre;display:block}
+  pre.wide{max-width:100%}
+
+  /* README headings: the file has a second top-level heading ("Reference") */
+  main h1{scroll-margin-top:90px}
+  main h1.section{font-size:clamp(27px,3.6vw,34px);margin:52px 0 6px;padding-top:18px}
+  main h3{scroll-margin-top:90px}
+
+  /* every wide construct scrolls inside its own box */
+  .tablewrap{overflow-x:auto;max-width:100%;margin:16px 0;-webkit-overflow-scrolling:touch}
+  .tablewrap table{margin:0;max-width:none;min-width:520px}
+  .tablewrap td code,.tablewrap th code{white-space:normal}
+  .tablewrap.center td:not(:first-child){text-align:center}
+
+  /* figures — diagrams keep their aspect ratio and never widen the page */
+  .figure{max-width:100%;margin:20px 0}
+  .figure img{display:block;max-width:100%;height:auto;margin:0 auto;border-radius:14px}
+
+  /* centred hero block (the README opens centre-aligned) */
+  .hero{text-align:center;margin:4px 0 8px}
+  .hero img.brand{display:block;margin:0 auto 14px;max-width:100%;height:auto}
+  .hero h1{margin:0 auto;max-width:900px}
+  .hero p{max-width:780px;margin-left:auto;margin-right:auto}
+  .badges{display:flex;flex-wrap:wrap;gap:7px;justify-content:center;align-items:center;margin:16px 0 6px}
+  .badges img{height:20px;width:auto;display:block}
+  .herolinks{font-size:15px;color:var(--dim);margin:10px auto 4px}
+  .herolinks .sep{opacity:.5;padding:0 6px}
+  .toolrow{display:flex;flex-wrap:wrap;gap:18px;justify-content:center;align-items:center;margin:26px 0 10px}
+  .toolrow .chip{background:#fff;border:1px solid rgba(0,0,0,.06);border-radius:14px;padding:10px 14px;
+      display:inline-grid;place-items:center;box-shadow:var(--shadow)}
+  .toolrow .chip img{height:26px;width:auto;display:block;object-fit:contain}
+  .sub{font-size:13px;color:var(--dim);max-width:780px}
+  .src-note{font-size:13.5px;color:var(--dim);text-align:center;margin:2px auto 26px;max-width:780px}
+
+  /* collapsible reference sections (the README ships <details> already) */
+  details{background:var(--glass);border:1px solid var(--glass-line);border-radius:16px;
+      box-shadow:var(--shadow);padding:0 20px;margin:18px 0;max-width:100%}
+  details > summary{cursor:pointer;padding:15px 0;font-size:15px;color:var(--text);
+      list-style:none;display:block}
+  details > summary::-webkit-details-marker{display:none}
+  details > summary::marker{content:""}
+  details > summary::before{content:"\25B8";display:inline-block;width:16px;color:var(--blue);
+      transition:transform .2s ease}
+  details[open] > summary::before{transform:rotate(90deg)}
+  details[open]{padding-bottom:16px}
+  details > summary:hover{color:var(--blue)}
+  details p,details ul{max-width:100%}
+
+  /* blockquotes reuse the house callout */
+  blockquote.note{max-width:760px}
+  blockquote.note p:first-child{margin-top:0}
+  blockquote.note p:last-child{margin-bottom:0}
+
+  hr.rule{border:0;border-top:1px solid var(--glass-edge);margin:42px 0 0;max-width:100%}
+
+</style>
+</head>
+<body>
+<div class="wm-brand" aria-hidden="true"><div class="wm-emblem"><div class="wm-logowrap"><span class="wm-ring"></span><span class="wm-ring"></span><span class="wm-ring"></span><img class="wm-logo" src="assets/logo.png" alt=""></div><span class="wm-word">codevira</span></div></div>
+<nav>
+  <div class="inner">
+    <a class="logo" href="index.html" style="text-decoration:none">
+      <img class="mark" src="assets/logo.png" alt="Codevira" width="30" height="30"> codevira
+      <span class="version">4.0.1</span>
+    </a>
+    <div class="links">
+      <a class="home" href="index.html">← Home</a>
+      <a href="https://github.com/sachinshelke/codevira">GitHub</a>
+      <a href="https://pypi.org/project/codevira/">PyPI</a>
+      <button id="theme-toggle" title="Toggle light / dark" aria-label="Toggle theme">◐</button>
+    </div>
+  </div>
+</nav>
+
+<div class="shell">
+  <aside>
+    <div class="group">Overview</div>
+    <a href="#why-codevira">Why Codevira</a>
+    <a href="#see-it-in-action-record-block-recall">See it in action</a>
+    <a href="#what-you-get">What you get</a>
+    <div class="group">Start</div>
+    <a href="#quick-start">Quick Start</a>
+    <a href="#how-it-works">How it works</a>
+    <div class="group">Trust</div>
+    <a href="#built-to-be-trusted">Built to be trusted</a>
+    <a href="#whats-solid-whats-not">What's solid, what's not</a>
+    <div class="group">Reference</div>
+    <a href="#mcp-tool-surface">MCP tool surface</a>
+    <a href="#enforcement-engine">Enforcement engine</a>
+    <a href="#cli-commands">CLI commands</a>
+    <a href="#language-support">Language support</a>
+    <a href="#concurrency--safety">Concurrency &amp; safety</a>
+    <div class="group">Help</div>
+    <a href="#upgrading--troubleshooting">Upgrading &amp; troubleshooting</a>
+    <a href="#frequently-asked">Frequently asked</a>
+    <a href="#how-codevira-compares">How Codevira compares</a>
+    <div class="group">Project</div>
+    <a href="#contributing">Contributing</a>
+    <a href="#license">License</a>
+    <a href="docs.html">Docs &amp; usage</a>
+    <a href="https://github.com/sachinshelke/codevira/blob/main/README.md">README source ↗</a>
+  </aside>
+
+  <main>
+    <div class="hero">
+      <img class="brand" src="assets/logo.png" alt="Codevira logo — persistent memory for AI coding agents" width="140" height="140">
+
+      <h1>Codevira — persistent memory and decision enforcement for AI coding agents</h1>
+
+      <p><strong>Stop re-explaining your codebase to every AI tool — and stop the next agent from undoing the fix that took you three hours.</strong></p>
+
+      <p class="badges">
+        <a href="https://pypi.org/project/codevira/"><img src="https://img.shields.io/pypi/v/codevira?color=orange" alt="PyPI version"></a>
+        <a href="https://pypi.org/project/codevira/"><img src="https://img.shields.io/pypi/pyversions/codevira?color=blue" alt="Python versions"></a>
+        <a href="https://github.com/sachinshelke/codevira/actions/workflows/ci.yml"><img src="https://github.com/sachinshelke/codevira/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
+        <a href="https://pepy.tech/project/codevira"><img src="https://static.pepy.tech/badge/codevira" alt="Downloads"></a>
+        <a href="https://github.com/sachinshelke/codevira/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License: MIT"></a>
+        <a href="https://modelcontextprotocol.io"><img src="https://img.shields.io/badge/protocol-MCP-purple" alt="Model Context Protocol"></a>
+        <a href="https://github.com/sachinshelke/codevira/blob/main/CONTRIBUTING.md"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen" alt="PRs welcome"></a>
+      </p>
+
+      <p class="herolinks">
+        <a href="#quick-start"><strong>Quick Start</strong></a><span class="sep">·</span>
+        <a href="#see-it-in-action-record-block-recall">See it in action</a><span class="sep">·</span>
+        <a href="#reference">Reference</a><span class="sep">·</span>
+        <a href="https://github.com/sachinshelke/codevira/blob/main/docs/vs-other-memory-tools.md">vs. other memory tools</a><span class="sep">·</span>
+        <a href="https://github.com/sachinshelke/codevira/blob/main/FAQ.md">FAQ</a><span class="sep">·</span>
+        <a href="index.html">Website</a>
+      </p>
+    </div>
+
+    <p class="src-note">This page is the project README, rendered as part of this site —
+    <a href="https://github.com/sachinshelke/codevira/blob/main/README.md">view the source on GitHub ↗</a></p>
+
+    <p>Codevira is a <strong>local-first MCP server</strong> (<a href="https://modelcontextprotocol.io">Model Context Protocol</a>)
+    that gives every AI coding agent on your machine <strong>one shared, in-repo memory</strong> of the decisions
+    you've made and <em>why</em>. What one tool learns, all of them know — and a decision you lock, <strong>none of
+    them can silently undo:</strong> codevira refuses the edit in Claude Code and the commit in any editor.</p>
+
+<pre><code>pipx install codevira              <span class="c"># ~66 MB pipx venv, no ML deps, no vectors</span>
+cd ~/Projects/my-project
+codevira init                      <span class="c"># opt this project in</span>
+codevira setup                     <span class="c"># wire it into the AI tools on this machine</span></code></pre>
+
+    <div class="tablewrap">
+      <table>
+        <tr><td><strong>What it is</strong></td><td>A local MCP server that stores your project's decisions <strong>together with the reasoning behind them</strong>, in your repo.</td></tr>
+        <tr><td><strong>What's different</strong></td><td>It doesn't just remember — mark a decision <code>do_not_revert</code> and it <strong>physically blocks the edit</strong> (Claude Code) and, once you install the git hook, <strong>the commit</strong> (any editor) that would undo it.</td></tr>
+        <tr><td><strong>Who it's for</strong></td><td>Anyone running two or more AI coding tools on the same repo.</td></tr>
+        <tr><td><strong>Default scope</strong></td><td>Per-machine — memory is not git-tracked. <code>codevira init --shared</code> commits <code>.codevira/</code> so teammates on the same repo share one decision log.</td></tr>
+        <tr><td><strong>Cost</strong></td><td>MIT · local-first · no cloud · no account · no vectors · nothing phones home.</td></tr>
+      </table>
+    </div>
+
+    <div class="toolrow">
+      <span class="chip"><img src="assets/claude.svg" height="26" alt="Claude Code"></span>
+      <span class="chip"><img src="assets/cursor.png" height="26" alt="Cursor"></span>
+      <span class="chip"><img src="assets/antigravity.png" height="26" alt="Google Antigravity"></span>
+      <span class="chip"><img src="assets/codex.png" height="26" alt="OpenAI Codex"></span>
+      <span class="chip"><img src="assets/copilot.svg" height="26" alt="GitHub Copilot"></span>
+      <span class="chip"><img src="assets/mcp.svg" height="26" alt="Model Context Protocol"></span>
+    </div>
+    <p class="sub" style="text-align:center">Claude Code · Claude Desktop · Cursor · Google Antigravity · OpenAI Codex · GitHub Copilot · any MCP-compatible AI tool</p>
+
+    <p style="text-align:center;max-width:780px;margin-left:auto;margin-right:auto">
+      <strong>30-second demo:</strong>
+      <a href="https://github.com/sachinshelke/codevira/blob/main/docs/demo/codevira-demo.mp4">MP4</a> ·
+      <a href="https://github.com/sachinshelke/codevira/blob/main/docs/demo/codevira-demo.webm">WebM</a> ·
+      <a href="https://github.com/sachinshelke/codevira/blob/main/docs/demo/index.html">offline HTML player</a> (no network, after cloning)
+    </p>
+
+    <details open>
+      <summary><strong>The whole thing on one page</strong> — solution blueprint</summary>
+      <div class="figure">
+        <img src="assets/blueprint.png"
+             alt="Codevira solution blueprint: persistent memory and decision enforcement for AI coding agents. Four levels — remember, surface, warn, block. Capabilities include decision memory, cross-tool sync, session context, code graph, enforcement engine, anti-regression, skill library and working memory. Works with Claude Code, Claude Desktop, Cursor and Antigravity over MCP, and with Codex and Copilot via AGENTS.md."
+             width="2400" height="1640" loading="lazy">
+      </div>
+    </details>
+
+    <hr class="rule">
+
+    <h2 id="why-codevira">Why Codevira</h2>
+
+    <p>AI agents write a large share of your code now. They're fast and capable, but each one is
+    <strong>stateless across sessions and blind to the others</strong> — so <em>you</em> quietly became the memory.</p>
+
+    <div class="tablewrap">
+      <table>
+        <tr><th>The pain</th><th>What Codevira does</th></tr>
+        <tr><td><strong>Re-explaining your codebase every session</strong> — ten minutes and thousands of tokens, then again tomorrow</td><td>Every tool opens with the project's decisions already loaded</td></tr>
+        <tr><td><strong>An agent "simplifies" a fix it never knew the reason for</strong> — three hours of debugging, undone</td><td>A locked decision is refused at the edit (Claude Code) and at the commit (any editor), with the original reasoning attached</td></tr>
+        <tr><td><strong>Cross-tool amnesia</strong> — plan in Claude Code, code in Cursor, nothing carries over</td><td>One in-repo memory every MCP client reads</td></tr>
+        <tr><td><strong>Token budget burned on re-discovery</strong> — the same dozen files re-read every session</td><td>Summary-first recall of only what's relevant</td></tr>
+      </table>
+    </div>
+
+    <p>The root cause under all four: <strong>your decisions live in your head, not anywhere the AI can be
+    held to them.</strong></p>
+
+    <blockquote class="note"><p><strong>Codevira is not a knowledge base.</strong> A knowledge base answers <em>"what is true?"</em> and hopes the
+    agent reads it. Codevira answers <em>"what did we decide, and why?"</em> — then blocks the edit that
+    would break it.</p></blockquote>
+
+    <hr class="rule">
+
+    <h2 id="see-it-in-action-record-block-recall">See it in action: record, block, recall</h2>
+
+    <p><strong>1. You (or the AI) record a decision — one MCP call, ~50 tokens.</strong></p>
+
+<pre><code>record_decision(
+  decision="Use bcrypt for password hashing",
+  context="md5 considered and rejected — rainbow-table risk. Re-examine only if NIST guidance changes.",
+  tags=["auth", "security"],
+  do_not_revert=true,
+)
+→ D000412 recorded and locked.</code></pre>
+
+    <p>It lands in <code>&lt;repo&gt;/.codevira/decisions.jsonl</code> — plain text, human-readable, and diffable (and
+    git-tracked as soon as you run <code>codevira init --shared</code>). Codevira regenerates a slim <code>AGENTS.md</code>
+    contract from it — that file is always committed.</p>
+
+    <p><strong>2. Weeks later, a fresh Claude Code session tries to swap bcrypt for md5.</strong></p>
+
+    <p>The <code>Edit</code> goes through Claude Code's <code>PreToolUse</code> hook first. Because the diff touches the
+    locked decision's subject, the hook <strong>denies the tool call</strong> and hands the agent the original
+    reasoning:</p>
+
+<pre><code>✗ Edit blocked — decision_lock (do_not_revert)
+  D000412: "Use bcrypt for password hashing"
+  context: md5 rejected — rainbow-table risk.
+  The file was not modified. Surface this to the human and re-decide deliberately.</code></pre>
+
+    <p>The regression never reaches disk. An orthogonal edit to the same file — one whose diff doesn't
+    touch the decision's subject — is <em>allowed</em> through and downgraded to a warn. Precision, not
+    paranoia.</p>
+
+    <p><strong>3. You switch to Cursor the next morning — and it already knows.</strong></p>
+
+    <p>You never re-explained anything. Cursor reads the same repo <code>AGENTS.md</code> and, over MCP, can call
+    <code>search_decisions("auth")</code> — D000412 comes back with its full context. A decision recorded in
+    one tool is visible to every tool.</p>
+
+    <blockquote class="note"><p><strong>Where the block is physical.</strong> Edit-time in Claude Code; commit-time in <em>every</em> editor via
+    <code>codevira engine install-git-hook</code> — because they all commit with git. Overrides, kill-switches
+    and the precise boundary: <a href="#enforcement-engine">Enforcement engine</a> (expand).</p></blockquote>
+
+    <details>
+      <summary><strong>The whole path, in one diagram</strong> — record → violate → intercept → engine → refuse</summary>
+      <div class="figure">
+        <img src="assets/enforcement-flow.png"
+             alt="Enforcement flow: record_decision appends to decisions.jsonl; weeks later an agent edits a covered file; the edit is intercepted at Claude Code PreToolUse or at git pre-commit; one dispatch() runs 7 prioritised policies; the refusal carries the original reasoning. Fails open, with kill switches."
+             width="1800" height="4672" loading="lazy">
+      </div>
+    </details>
+
+    <hr class="rule">
+
+    <h2 id="what-you-get">What you get</h2>
+
+    <div class="tablewrap">
+      <table>
+        <tr><th></th><th>What it means</th></tr>
+        <tr><td><strong>One memory, every AI tool</strong></td><td>A decision logged in Claude Code is visible to Cursor, Antigravity, Codex, Copilot — all read the same <code>.codevira/decisions.jsonl</code> and generated <code>AGENTS.md</code>. No per-tool re-onboarding, no cloud sync.</td></tr>
+        <tr><td><strong>Enforcement, not notes</strong></td><td><code>do_not_revert</code> refuses the edit in Claude Code and refuses the commit in any editor. An Anti-Regression guard also blocks re-introducing a previously-fixed bug. Every guard ships a warn/off kill-switch.</td></tr>
+        <tr><td><strong>One-command setup</strong></td><td><code>codevira setup</code> detects installed AI tools via strong signals (binary on PATH + valid config file) and configures only what's actually there. <code>--force</code> overrides a missed detect.</td></tr>
+        <tr><td><strong>Local-first, no ML</strong></td><td>Decision search is pure keyword/BM25 over SQLite FTS5 — no vectors, no ChromaDB, no sentence-transformers, no torch, nothing phones home. ~1–2 MB of memory per project.</td></tr>
+        <tr><td><strong>Frugal by design</strong></td><td>Tools return summaries by default; <code>get_session_context()</code> is one ~500-token call; the server cold-starts in well under a second with no ML model to load.</td></tr>
+        <tr><td><strong>Concurrent-safe</strong></td><td>Every write is a crash-safe atomic write behind a Posix <code>fcntl.flock</code>, so two IDEs on one project don't race. <a href="#concurrency--safety">Details</a> (expand)</td></tr>
+      </table>
+    </div>
+
+    <p class="sub"><strong>Latest: 4.0.1.</strong> 4.0 made enforcement <em>universal</em> — a locked decision now blocks a commit in every editor via a git <code>pre-commit</code> hook, not just an edit in Claude Code — and when it blocks, it shows the reasoning. 4.0.1 removes the deprecated <code>codevira clean</code> command plus two <code>doctor</code>/project-inventory fixes. Upgrading is automatic on the first server start. <a href="https://github.com/sachinshelke/codevira/blob/main/CHANGELOG.md">Full release notes →</a></p>
+
+    <hr class="rule">
+
+    <h2 id="quick-start">Quick Start</h2>
+
+<pre><code><span class="c"># 1. Install (production install: ~66 MB pipx venv, no ML deps)</span>
+pipx install codevira
+
+<span class="c"># 2. Opt this project in (writes .codevira/, AGENTS.md, .gitignore)</span>
+cd ~/Projects/my-project
+codevira init
+
+<span class="c"># 3. Wire codevira into every AI tool detected on this machine</span>
+codevira setup
+
+<span class="c"># 4. Install the universal commit-time backstop (enforces do_not_revert in ANY editor)</span>
+codevira engine install-git-hook</code></pre>
+
+    <p>Step 4 is what makes enforcement universal. <code>codevira init</code> installs only a <code>post-commit</code>
+    reindex hook; the <strong>enforcing</strong> <code>pre-commit</code> hook is this separate, explicit opt-in.</p>
+
+    <p>Open any IDE — codevira's MCP server is ready. <strong>Then, in your AI tool, ask:</strong>
+    <em>"Use <code>get_session_context</code> to brief me on this project."</em> You get a ~500-token structured
+    project state in one tool call instead of the AI re-reading docs.</p>
+
+    <p><strong>Verify the install:</strong></p>
+
+<pre><code>codevira doctor          <span class="c"># health checks: ✓/⚠/✗ + a fix command for each</span>
+codevira replay          <span class="c"># browse the decisions timeline</span>
+codevira sync            <span class="c"># regenerate AGENTS.md from current decisions.jsonl</span></code></pre>
+
+    <p><strong>Team sharing.</strong> By default codevira keeps decision memory <strong>per-machine</strong> (not committed), so
+    unrelated projects never bleed into each other; <code>AGENTS.md</code> and <code>.gitignore</code> are still committed.
+    To share memory with teammates on the same GitHub repo, run <code>codevira init --shared</code> — it keeps
+    <code>.codevira/</code> git-tracked, and a built-in git merge driver reconciles concurrent edits.</p>
+
+    <blockquote class="note"><p><strong>Opt-in tracking.</strong> <code>codevira init</code> is the explicit opt-in. Codevira tracks <strong>only</strong> projects
+    you've <code>init</code>-ed; a project you merely open stays inert (its tools return a "run <code>codevira init</code>"
+    hint and nothing is written), so <code>~/.codevira/projects/</code> never fills with projects you didn't
+    choose. Set <code>CODEVIRA_AUTO_ADOPT=1</code> to track every project you open instead.</p></blockquote>
+
+    <hr class="rule">
+
+    <h2 id="how-it-works">How it works</h2>
+
+    <p>A local MCP server. Decisions live in <code>&lt;repo&gt;/.codevira/*.jsonl</code> — plain text, human-readable,
+    diffable, and git-tracked once you opt in with <code>init --shared</code>. A slim <code>AGENTS.md</code> is generated
+    from them for every IDE to read, and Claude Code lifecycle hooks — plus the opt-in git
+    <code>pre-commit</code> hook — enforce the ones you locked.</p>
+
+    <div class="figure">
+      <img src="assets/architecture.png"
+           alt="Codevira architecture: AI tools connect over stdio MCP to one codevira process per project; canonical decision memory lives in the repo under .codevira/, a per-machine cache in .codevira-cache/, and cross-project state in ~/.codevira/"
+           width="1800" height="2712" loading="lazy">
+    </div>
+
+    <details>
+      <summary><strong>Full file layout and hook flow</strong></summary>
+
+<div class="figure">
+      <img src="assets/file-layout.png"
+           alt="Codevira file layout and hook flow: three stacked layers. In the project repo, .codevira/ holds decisions.jsonl, digest.jsonl, outcomes.jsonl, manifest.yaml, enforcement.yaml, config.yaml, sessions.jsonl, roadmap.yaml and skills.jsonl; AGENTS.md is generated from it; .codevira-cache/ holds fts5.sqlite, hash-cache.db and working.jsonl and is gitignored; the code graph is a per-project SQLite db under ~/.codevira/, not in your repo. Below it, one pipx-installed codevira binary (CLI plus MCP server, ~66 MB venv, no chromadb, sentence-transformers or torch, no model, cold-start well under 1 s, warm tool calls ~2 ms), reached over MCP and hooks. Below that, your IDE and its four hook points: UserPromptSubmit into a relevance-gated inject, Edit or Write into PreToolUse which blocks if a do_not_revert decision is violated, PostToolUse into the Post-Edit Graph Refresh and working-memory fanout, and Stop into the Token Budget and Session-Log Enforcer."
+           width="1800" height="1584" loading="lazy">
+    </div>
+
+      <p><code>codevira init</code> scaffolds everything above except <code>roadmap.yaml</code> and <code>skills.jsonl</code>, which are
+      written on first use. Deeper detail: <a href="https://github.com/sachinshelke/codevira/blob/main/docs/architecture.md"><code>docs/architecture.md</code></a>.</p>
+    </details>
+
+    <hr class="rule">
+
+    <h2 id="built-to-be-trusted">Built to be trusted</h2>
+
+    <p>Codevira holds a team's architectural decisions and can refuse your AI's edits. Every guarantee
+    below is checked by the build, not asserted in this file.</p>
+
+    <div class="tablewrap">
+      <table>
+        <tr><td><strong>Test suite</strong></td><td><strong>3,499 tests</strong> across 165 test files. More test code than product code (60,960 vs 46,782 lines).</td></tr>
+        <tr><td><strong>CI</strong></td><td>Every push to <code>main</code> and every pull request runs the suite on <strong>Python 3.10 / 3.11 / 3.12 / 3.13</strong>, plus a separate random-order run (collection-order blindness had hidden real state-leak bugs) and a <code>mypy</code> type-check job.</td></tr>
+        <tr><td><strong>"Local-first" is enforced, not promised</strong></td><td><a href="https://github.com/sachinshelke/codevira/blob/main/tests/test_egress_boundary.py"><code>tests/test_egress_boundary.py</code></a> walks the import graph of the shipped package with an AST scan and <strong>fails the build</strong> if any module other than <code>egress.py</code> imports a network client.</td></tr>
+        <tr><td><strong>Adversarial testing</strong></td><td><a href="https://github.com/sachinshelke/codevira/blob/main/scripts/chaos_smoke.py"><code>scripts/chaos_smoke.py</code></a> runs 8 hostile scenarios — SIGKILL during a held lock, symlink traversal, malformed MCP payloads, corrupt-JSONL degradation, read-only directories.</td></tr>
+        <tr><td><strong>No destructive MCP tools</strong></td><td>Every MCP tool carries <code>destructiveHint=false</code>. The only destructive operations (<code>reset</code>, <code>uninstall</code>) are CLI-only and require a typed confirmation — an autonomous agent cannot reach them.</td></tr>
+        <tr><td><strong>Reversible memory</strong></td><td>After a default <code>init</code>, <code>.codevira/</code> is not git-tracked — so <code>git revert</code> can't undo a bad migration or an accidental wipe. <code>codevira memory snapshot</code> + <code>codevira memory undo</code> can, and the undo is itself undoable.</td></tr>
+      </table>
+    </div>
+
+    <hr class="rule">
+
+    <h2 id="whats-solid-whats-not">What's solid, what's not</h2>
+
+    <div class="tablewrap">
+      <table>
+        <tr><th>Production-stable</th><th>Known-limited</th></tr>
+        <tr><td>Cross-IDE decision memory via in-repo JSONL</td><td>Hard <code>PreToolUse</code> enforcement at <strong>edit time</strong> is Claude Code only; other IDEs read <code>AGENTS.md</code> (advisory) and are backstopped at the commit boundary</td></tr>
+        <tr><td><code>do_not_revert</code> enforced at the Claude Code hook <strong>and</strong>, in any editor, at the commit boundary (<code>codevira engine install-git-hook</code>)</td><td>Graph tools cover Python / TS / JS / Go / Rust; other languages → the AI <code>Read</code>s the file directly</td></tr>
+        <tr><td>FTS5/BM25 decision search</td><td>Real-time multi-machine sync — by design local-first; for team sharing, run <code>codevira init --shared</code></td></tr>
+        <tr><td>Per-project + cross-machine project inventory (<code>global.db</code>)</td><td>No web UI — use the <code>codevira://decisions</code> MCP resource, or <code>codevira replay --format html</code></td></tr>
+        <tr><td>36 MCP tools advertised in <code>tools/list</code> (37 defined — <code>refresh_graph</code> is hidden) + 26 CLI commands + 7 engine policies</td><td>The HTTP server (<code>codevira serve</code>) is single-project per launch — for daily use, stick with stdio</td></tr>
+        <tr><td>Concurrent-safe storage (Posix <code>fcntl.flock</code> + Windows sentinel), thread + subprocess + chaos-tested</td><td>Windows sentinel fallback is verified in unit tests but not yet load-tested on real Windows</td></tr>
+        <tr><td>Anti-Regression on small <code>Edit</code>/<code>MultiEdit</code> hunks</td><td>Anti-Regression does not yet detect full-file <code>Write</code> reverts; accuracy depends on <code>fix:</code> commit hygiene</td></tr>
+      </table>
+    </div>
+
+    <hr class="rule">
+
+    <h1 class="section" id="reference">Reference</h1>
+
+    <p>Everything below is depth for when you need it. Each section is collapsed — open the one you came
+    for. <strong>Browser find-in-page does not search inside a closed section, so expand before Ctrl+F.</strong>
+    What's in them:</p>
+
+<pre><code>CLI      init setup doctor status projects untrack index sync repair-ids observe-git
+         replay search graph memory export import engine prune reset uninstall serve
+         working induce-skills eval register-all merge-driver
+Env      CODEVIRA_ENGINE  CODEVIRA_TOOL_PROFILE  CODEVIRA_DECISION_LOCK_MODE
+         CODEVIRA_ANTI_REGRESSION_MODE  CODEVIRA_BLAST_RADIUS_MODE  CODEVIRA_GIT_HOOK_MODE
+         CODEVIRA_DECISION_LOCK_CONTENT_AWARE  CODEVIRA_SESSION_LOG_ENFORCER_MODE
+         CODEVIRA_AUTO_ADOPT  CODEVIRA_IDE</code></pre>
+
+    <h2 id="mcp-tool-surface">MCP tool surface</h2>
+
+    <details>
+      <summary><strong>36 tools advertised (37 defined) — the lean-12 profile, every read/write tool, and what 4.0 removed</strong></summary>
+
+      <p><strong>36 tools</strong> are advertised to AI clients via <code>tools/list</code> (<strong>37 are defined</strong> — a 37th,
+      <code>refresh_graph</code>, is registered but hidden; humans invoke it via <code>codevira sync</code>). Every tool
+      carries MCP <code>ToolAnnotations</code> (<code>readOnlyHint</code> / <code>destructiveHint=false</code> / <code>idempotentHint</code>): most
+      are read-only and can run without a confirmation prompt, and <strong>no MCP tool is destructive</strong> — the
+      only destructive ops (<code>reset</code> / <code>uninstall</code>) are CLI-only, never exposed over MCP. Good to know
+      for anyone wiring codevira into an autonomous agent.</p>
+
+      <p>The <strong>lean 12</strong> (<code>CODEVIRA_TOOL_PROFILE=lean</code>) are the ones you keep — set that in the MCP
+      server's <code>env</code> block to cut <code>tools/list</code> from 36 tools to 12, roughly a two-thirds smaller
+      payload (~8.9K → ~3.5K tokens of fixed per-session cost). Hidden tools still work when called
+      explicitly.</p>
+
+<pre><code>get_session_context · get_impact · get_node · get_roadmap · search_decisions
+list_decisions · expand · record_decision · update_phase_status
+complete_phase · update_next_action · write_session_log</code></pre>
+
+      <p><strong>Reads — the memory surface</strong></p>
+
+      <div class="tablewrap">
+        <table>
+          <tr><th>Tool</th><th>Description</th></tr>
+          <tr><td><code>get_session_context</code></td><td><strong>THE "catch me up" call.</strong> ~500 tokens: current phase, next action, recent decisions, top tags, last session brief.</td></tr>
+          <tr><td><code>search_decisions(query)</code></td><td>FTS5/BM25 over <code>decisions.jsonl</code>. Top 5 truncated by default; <code>full=true</code> / <code>summary_only=true</code>. <code>all_projects=true</code> searches every registered repo, tagging each result with its project.</td></tr>
+          <tr><td><code>expand(ids=[…])</code></td><td>Fetch full records for just the ids you care about — the summary-first complement to <code>search_decisions</code> / <code>list_decisions</code>. Read-only; in the lean 12.</td></tr>
+          <tr><td><code>list_decisions</code></td><td>Paginate / filter: <code>since_date</code>, <code>file_pattern</code>, <code>protected_only</code>, <code>tags</code>, <code>include_superseded</code>.</td></tr>
+          <tr><td><code>list_tags</code></td><td>All tags with decision counts.</td></tr>
+          <tr><td><code>get_history(file_path)</code></td><td>Recent decisions touching a file.</td></tr>
+          <tr><td><code>check_conflict(decision_text)</code></td><td>Surface duplicate / contradictory decisions BEFORE you write.</td></tr>
+        </table>
+      </div>
+
+      <p><strong>Writes — capturing decisions</strong></p>
+
+      <div class="tablewrap">
+        <table>
+          <tr><th>Tool</th><th>Description</th></tr>
+          <tr><td><code>record_decision</code></td><td>Capture a decision. <code>do_not_revert=true</code> triggers Claude Code <code>PreToolUse</code> enforcement; <code>symbol="login"</code> scopes the lock to one function/class. It <strong>supersedes</strong> a strong unprotected near-duplicate instead of appending a twin.</td></tr>
+          <tr><td><code>supersede_decision(old_id, new_decision, reason)</code></td><td>Retire an old decision, link to its replacement, keep the audit trail.</td></tr>
+          <tr><td><code>mark_decision_outdated(decision_id, reason)</code></td><td>Retire a decision that's simply no longer true (no successor) so it stops surfacing. Reversible via <code>set_decision_flag</code>. <code>do_not_revert</code> needs <code>force=True</code>.</td></tr>
+          <tr><td><code>reaffirm_decision(decision_id)</code></td><td>Re-confirm a soft-expired <code>do_not_revert</code> lock.</td></tr>
+          <tr><td><code>set_decision_flag(decision_id, …)</code></td><td>Toggle <code>do_not_revert</code> / tags / <code>is_outdated</code>.</td></tr>
+          <tr><td><code>write_session_log</code></td><td>Structured session record.</td></tr>
+        </table>
+      </div>
+
+      <p><strong>Roadmap</strong> — <code>get_roadmap</code> · <code>get_phase</code> · <code>add_phase</code> · <code>update_phase_status</code> ·
+      <code>update_next_action</code> · <code>complete_phase</code> · <code>defer_phase</code> · <code>bulk_import_phases</code>.</p>
+
+      <p><strong>Code graph</strong> — <code>get_node</code> (file metadata) · <code>get_impact</code> (blast radius) · <code>query_graph</code>
+      (function-level callers/callees/tests/dependents/symbols) · <code>get_playbook</code> (curated rules for
+      <code>add_tool</code> / <code>add_service</code> / <code>add_schema</code> / <code>debug_pipeline</code> / <code>commit</code> / <code>write_test</code>). Plus the
+      hidden <code>refresh_graph</code>.</p>
+
+      <p><strong>Memory subsystems</strong></p>
+
+      <div class="tablewrap">
+        <table>
+          <tr><th>Subsystem</th><th>Tools</th><th>What it covers</th></tr>
+          <tr><td>Working memory (4)</td><td><code>working_add</code>, <code>working_get</code>, <code>working_promote</code>, <code>get_working_context</code></td><td>Intra-session scratchpad, decay-scored (<code>importance × e^(−Δt/τ=6h) + 0.5·access_count</code>), capacity-bounded. Auto-populated by the <code>PostToolUse</code> fan-out.</td></tr>
+          <tr><td>Skill library (6)</td><td><code>record_skill</code>, <code>get_skill</code>, <code>apply_skill_outcome</code>, <code>list_skills</code>, <code>supersede_skill</code>, <code>promote_skill_to_playbook</code></td><td>Reusable procedures; FTS5 composite ranking (BM25 + tag-Jaccard + recency); auto-archive at 5 consecutive failures or 90 unused days (<code>do_not_revert</code> exempt).</td></tr>
+          <tr><td>Provenance (1)</td><td><code>origin_of</code></td><td>Which IDE, which machine, when — what attributes an amendment across a two-host merge. (<code>CODEVIRA_IDE</code> is a cooperative signal, spoofable, not a security boundary.)</td></tr>
+        </table>
+      </div>
+
+      <p><strong>Workflow prompt</strong> — <code>onboard_session</code>: full project catch-up for new sessions; wraps
+      <code>get_session_context()</code>.</p>
+
+      <p><strong>Removed in 4.0</strong> (52 tools → 37 defined; 36 advertised). Cut on measured usage across 4,203
+      transcripts, not taste — the data they wrote is untouched, and <code>codevira export</code> still includes
+      everything. See <a href="https://github.com/sachinshelke/codevira/blob/main/MIGRATING.md">MIGRATING.md</a>.</p>
+
+      <div class="tablewrap">
+        <table>
+          <tr><th>Removed</th><th>Instead</th></tr>
+          <tr><td><code>consensus_check</code>, <code>consensus_status</code>, <code>consensus_propose_supersession</code>, <code>consensus_resolve</code></td><td><code>origin_of</code></td></tr>
+          <tr><td><code>reflect</code>, <code>get_reflections</code>, <code>list_reflections</code></td><td>—</td></tr>
+          <tr><td><code>spatial_nearby</code>, <code>spatial_heat</code>, <code>spatial_neighborhood</code>, <code>spatial_affordances</code></td><td><code>get_impact</code></td></tr>
+          <tr><td><code>distill_preferences</code>, <code>search_preferences</code></td><td>the <code>style</code> panel in <code>get_session_context</code></td></tr>
+          <tr><td><code>get_code</code>, <code>get_signature</code></td><td>read the file — both measured <strong>zero</strong> calls in 2.5 months</td></tr>
+        </table>
+      </div>
+    </details>
+
+    <h2 id="enforcement-engine">Enforcement engine</h2>
+
+    <details>
+      <summary><strong>The 7 default policies, how verdicts combine, and every kill-switch</strong></summary>
+
+      <p>Codevira ships <strong>7 default engine policies</strong> ("heroes"), each hooked to Claude Code lifecycle
+      events: <code>SessionStart</code>, <code>PreToolUse</code>, <code>PostToolUse</code>, <code>UserPromptSubmit</code>, <code>Stop</code>.</p>
+
+      <div class="tablewrap">
+        <table>
+          <tr><th>Policy</th><th>Event</th><th>What it does</th></tr>
+          <tr><td><strong>Decision Lock</strong></td><td>PreToolUse</td><td>Blocks an edit that touches a <code>do_not_revert</code> decision's subject. <strong>Content-aware:</strong> a provably-orthogonal edit downgrades to a warn; a token-touching edit blocks. Strict file-level locking via <code>CODEVIRA_DECISION_LOCK_CONTENT_AWARE=0</code>.</td></tr>
+          <tr><td><strong>Anti-Regression</strong></td><td>PreToolUse</td><td>Blocks edits that look like reverts of previously-fixed bugs. Fix-history is scanned from <code>fix:</code> / <code>bug:</code> / <code>hotfix:</code> / <code>fixes #N</code> commit messages and self-freshens on read when git HEAD advances. <em>Caveat: calibrated for small <code>Edit</code>/<code>MultiEdit</code> hunks; full-file <code>Write</code> reverts are deliberately exempt (future work).</em></td></tr>
+          <tr><td><strong>Blast-Radius Veto</strong></td><td>PreToolUse</td><td>Blocks a signature-<em>removing/modifying</em> edit to a high-fan-in file (purely-additive signatures pass). Shows the callers.</td></tr>
+          <tr><td><strong>Relevance Inject</strong></td><td>UserPromptSubmit</td><td>Injects ≤3 relevant decisions per prompt; 0 tokens when off-topic.</td></tr>
+          <tr><td><strong>Session-Log Enforcer</strong></td><td>SessionStart + Stop</td><td>Blocks (or, in <code>warn</code> mode, nudges) a session that shipped commits without a <code>write_session_log</code>. A second consecutive block degrades to a warn so a session that genuinely cannot log still finishes.</td></tr>
+          <tr><td><strong>Post-Edit Graph Refresh</strong></td><td>PostToolUse</td><td>Reindexes edited files in the background.</td></tr>
+          <tr><td><strong>Token Budget / telemetry</strong></td><td>Stop</td><td>Records outcome telemetry.</td></tr>
+        </table>
+      </div>
+
+      <p><strong>How verdicts combine.</strong> The three edit guards compose into a single verdict — <strong>first block wins
+      by priority</strong> (Decision Lock 100 &gt; Anti-Regression 80 &gt; Blast-Radius 50). The highest-priority
+      block's message is what you see; the rest are recorded as telemetry.</p>
+
+      <p><strong>Fail-open and opt-in.</strong> The dispatcher never raises: each policy is wrapped in try/except and
+      returns <em>allow</em> on failure. <code>CODEVIRA_ENGINE=0</code> disables all policies; each edit guard also has a
+      per-policy <code>off|warn|block</code> env override (<code>CODEVIRA_DECISION_LOCK_MODE</code>,
+      <code>CODEVIRA_ANTI_REGRESSION_MODE</code>, <code>CODEVIRA_BLAST_RADIUS_MODE</code>). Enforcement is <strong>not</strong> global
+      across all Claude Code projects — in any project you never ran <code>codevira init</code> on, the hooks stay
+      fully inert.</p>
+
+      <p><strong>The universal backstop (4.0).</strong> <code>codevira engine install-git-hook</code> installs a <code>pre-commit</code> hook
+      that runs locked decisions against staged changes through the same engine — so a <code>do_not_revert</code>
+      decision is enforced in <em>any</em> editor, because they all commit with git. <code>git commit --no-verify</code>
+      overrides a single commit; <code>CODEVIRA_GIT_HOOK_MODE=warn</code> (or <code>off</code>) changes it globally; merge
+      commits are never blocked.</p>
+
+      <p><strong>Why edit-time blocking is Claude Code only.</strong> The hard-block path is Claude Code's real
+      <code>PreToolUse</code> hook. Edits from Cursor / Codex / Copilot go straight to the filesystem — they never
+      reach codevira's <code>PreToolUse</code> engine — so those IDEs get decisions as advisory <code>AGENTS.md</code>
+      context, with the git <code>pre-commit</code> hook as the universal backstop. Verified: Claude Code returns
+      <code>permissionDecision: deny</code> (exit 2) with the decision's reasoning, rejected alternatives and
+      re-examination trigger attached; the git hook refuses the commit with the same reasoning. Other
+      IDEs are supported but verified one at a time rather than inferred.</p>
+    </details>
+
+    <h2 id="cli-commands">CLI commands</h2>
+
+    <details>
+      <summary><strong>26 commands — the daily-use table, plus what's safe vs destructive</strong></summary>
+
+      <p>26 subcommands. Two are internal (<code>merge-driver</code>, invoked by git's merge driver, and
+      <code>register-all</code>, a setup helper); three more are advanced (<code>working</code>, <code>induce-skills</code>, <code>eval</code>).
+      The daily-use ones are below — run <code>codevira &lt;cmd&gt; --help</code> for full flags:</p>
+
+      <div class="tablewrap">
+        <table>
+          <tr><th>Command</th><th>What it does</th></tr>
+          <tr><td><code>codevira init</code></td><td>Opt this project in: <code>.codevira/</code> + AGENTS.md + .gitignore + git merge driver. Add <code>--shared</code> to commit memory for team sharing (default keeps it per-machine)</td></tr>
+          <tr><td><code>codevira setup</code></td><td>Detect installed AI tools + write MCP configs + Claude Code hooks</td></tr>
+          <tr><td><code>codevira doctor</code></td><td>Health checks (read-only; ✓/⚠/✗ + a fix command each)</td></tr>
+          <tr><td><code>codevira status</code></td><td>Index health + project state</td></tr>
+          <tr><td><code>codevira projects</code></td><td>List tracked projects with staleness; <code>projects archive &lt;name&gt;</code> drops one</td></tr>
+          <tr><td><code>codevira untrack &lt;path&gt;</code></td><td>Remove one stray or temporary project entry</td></tr>
+          <tr><td><code>codevira index</code></td><td>Build / refresh the code-graph cache</td></tr>
+          <tr><td><code>codevira sync</code></td><td>Regenerate AGENTS.md + manifest + digest from <code>decisions.jsonl</code></td></tr>
+          <tr><td><code>codevira repair-ids</code></td><td>Detect/repair cross-engineer decision-id collisions (<code>--apply</code>; <code>--semantic</code> reports near-duplicates)</td></tr>
+          <tr><td><code>codevira observe-git</code></td><td>Classify past decisions as kept/modified/reverted from git history</td></tr>
+          <tr><td><code>codevira replay</code></td><td>Browse the decisions timeline (terminal / markdown / HTML)</td></tr>
+          <tr><td><code>codevira search &lt;query&gt;</code></td><td>Search decisions from the terminal (FTS5/BM25); <code>--all-projects</code>, <code>--json</code></td></tr>
+          <tr><td><code>codevira graph</code></td><td>Render an interactive, offline HTML viewer of decision memory</td></tr>
+          <tr><td><code>codevira memory</code></td><td><code>snapshot</code> / <code>undo</code> the memory store — the rollback path <code>git revert</code> can't give you</td></tr>
+          <tr><td><code>codevira export</code> / <code>import</code></td><td>Back up / restore project memory + global learning across machines</td></tr>
+          <tr><td><code>codevira engine</code></td><td><code>install-git-hook</code> installs the universal <code>pre-commit</code> backstop; <code>status</code> / <code>disable</code> / <code>enable</code></td></tr>
+          <tr><td><code>codevira prune</code></td><td>Remove orphaned project dirs, dead <code>global.db</code> rows, ghost dirs and legacy backups. Never touches decisions, IDE configs or hooks. <code>--dry-run</code> first</td></tr>
+          <tr><td><code>codevira reset</code></td><td>Destructive cleanup of this project's memory (auto-exports first; requires a typed confirmation)</td></tr>
+          <tr><td><code>codevira uninstall</code></td><td>Reverse every system write codevira made — <code>~/.codevira/</code> including snapshots, every IDE config entry, the launchd service. Preserves user content outside markers. Requires typing <code>uninstall</code></td></tr>
+          <tr><td><code>codevira clean</code></td><td><strong>Removed in 4.0.1</strong> — it was a full uninstall mis-named as tidy-up, and its old description destroyed a real install. It now errors <code>invalid choice</code>. Use <code>prune</code> to tidy, <code>uninstall</code> to remove</td></tr>
+          <tr><td><code>codevira serve</code></td><td>Start the single-project MCP HTTP server (stdio is the daily mode)</td></tr>
+        </table>
+      </div>
+
+      <p>To fully remove codevira: run the uninstall command above, then <code>pipx uninstall codevira</code>.</p>
+    </details>
+
+    <h2 id="language-support">Language support</h2>
+
+    <details>
+      <summary><strong>What's language-agnostic vs. what needs a grammar</strong></summary>
+
+      <div class="tablewrap center">
+        <table>
+          <tr><th>Feature</th><th>Python</th><th>TS/JS</th><th>Go</th><th>Rust</th><th>Others</th></tr>
+          <tr><td>Decision capture + search</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
+          <tr><td>Cross-IDE memory via AGENTS.md</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
+          <tr><td>Roadmap / sessions</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
+          <tr><td>Code graph + blast radius</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>—</td></tr>
+          <tr><td>Symbol-level <code>query_graph</code></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>—</td></tr>
+        </table>
+      </div>
+
+      <p>Decisions / <code>AGENTS.md</code> / roadmap are <strong>language-agnostic</strong> — they work for any language.
+      <strong>Code-graph and symbol tools</strong> cover exactly Python (stdlib <code>ast</code>) plus TS / TSX / JS / JSX / Go
+      / Rust (bundled tree-sitter grammars). For any other language the AI <code>Read</code>s the file directly.
+      The legacy 17-grammar <code>[all-languages]</code> pack was removed in v2.2.0 to keep the install lean.</p>
+    </details>
+
+    <h2 id="concurrency--safety">Concurrency &amp; safety</h2>
+
+    <details>
+      <summary><strong>Atomic writes, file locking, and how they're stress-tested</strong></summary>
+
+      <p>Every on-disk write goes through <code>mcp_server/storage/atomic.py</code>: a crash-safe atomic write
+      (<code>mkstemp</code> + <code>fsync</code> + <code>os.replace</code>) behind a Posix <code>fcntl.flock</code> (with an in-process
+      <code>threading.Lock</code> first, and a Windows <code>O_EXCL</code> sentinel fallback). Appends to the JSONL logs are
+      line-atomic — concurrent appenders never interleave bytes. Result: two IDEs hitting the same
+      project don't race on <code>manifest.yaml</code> / <code>roadmap.yaml</code> / <code>AGENTS.md</code>.</p>
+
+      <p>This is exercised by a 50-operation stress over a 10-thread pool, a 20-subprocess cross-process
+      stress (<code>spawn</code>), and an adversarial chaos harness (<a href="https://github.com/sachinshelke/codevira/blob/main/scripts/chaos_smoke.py"><code>scripts/chaos_smoke.py</code></a>
+      — 8 scenarios including SIGKILL during a held lock, symlink traversal, malformed MCP payloads,
+      corrupt-JSONL graceful degradation, and read-only-directory hostility). See
+      <a href="https://github.com/sachinshelke/codevira/blob/main/docs/architecture.md"><code>docs/architecture.md</code></a> § "Concurrent-write safety".</p>
+    </details>
+
+    <hr class="rule">
+
+    <h2 id="upgrading--troubleshooting">Upgrading &amp; troubleshooting</h2>
+
+    <p><strong>Upgrading is automatic</strong> — codevira migrates your memory on the first server start after an
+    upgrade, with no manual steps, and your existing decisions stay put. (After a
+    <code>pipx upgrade codevira</code>, restart your IDE so its MCP server reloads the new binary.)</p>
+
+    <p>If an IDE then shows the wrong project, doesn't show codevira at all, or memory looks missing,
+    it's almost always a stale IDE-config entry rather than lost data. Two fixes cover most cases:
+    remove a stray or temporary entry with <code>codevira untrack &lt;path&gt;</code> (or sweep dead ones with
+    <code>codevira prune --ghosts</code>), then run <code>codevira doctor</code> — it names the bound project and ships the
+    exact fix for each ⚠/✗.</p>
+
+    <p>Full guides: <a href="https://github.com/sachinshelke/codevira/blob/main/docs/troubleshooting/config-hygiene.md">IDE config hygiene</a> ·
+    <a href="https://github.com/sachinshelke/codevira/blob/main/docs/troubleshooting/antigravity.md">Antigravity</a> ·
+    <a href="https://github.com/sachinshelke/codevira/blob/main/FAQ.md">FAQ</a></p>
+
+    <hr class="rule">
+
+    <h2 id="frequently-asked">Frequently asked</h2>
+
+    <h3 id="how-do-i-give-claude-code-persistent-memory-across-sessions">How do I give Claude Code persistent memory across sessions?</h3>
+
+    <p>Install codevira and run <code>codevira init</code> in the project. Every new session starts with
+    <code>get_session_context()</code> — a ~500-token brief of the project's decisions, current phase and next
+    action — instead of you re-explaining the codebase.</p>
+
+    <h3 id="does-this-work-with-cursor-and-antigravity-or-only-claude-code">Does this work with Cursor and Antigravity, or only Claude Code?</h3>
+
+    <p>Memory works everywhere: every tool reads the same in-repo <code>.codevira/decisions.jsonl</code> and the
+    generated <code>AGENTS.md</code>. <code>codevira setup</code> writes MCP server config automatically for the tools that
+    support it (Claude Code, Claude Desktop, Cursor, Antigravity); Codex, Copilot and other agents are
+    covered by the generated <code>AGENTS.md</code>. Hard <em>edit-time</em> blocking is Claude Code only — every other
+    editor is covered at the commit boundary by <code>codevira engine install-git-hook</code>.</p>
+
+    <h3 id="how-is-this-different-from-a-hand-written-claudemd-or-agentsmd">How is this different from a hand-written <code>CLAUDE.md</code> or <code>AGENTS.md</code>?</h3>
+
+    <p>Those are static text you maintain by hand. Codevira <strong>generates</strong> <code>AGENTS.md</code> from a queryable
+    decision log, keeps the <em>reasoning</em> attached to each decision, and blocks the edit that would
+    break a locked one.</p>
+
+    <h3 id="does-it-use-vectors-or-embeddings">Does it use vectors or embeddings?</h3>
+
+    <p>No. Decision search is SQLite FTS5/BM25 keyword search — no ChromaDB, no sentence-transformers,
+    no torch. An AST scan in CI fails the build if any module but <code>egress.py</code> imports a network
+    client.</p>
+
+    <h3 id="is-my-code-or-my-memory-sent-anywhere">Is my code or my memory sent anywhere?</h3>
+
+    <p>No. Everything lives in <code>&lt;repo&gt;/.codevira/</code> and <code>~/.codevira/</code> on your machine. MIT-licensed, no
+    account, no API key, no cloud.</p>
+
+    <h3 id="what-does-it-cost-in-tokens">What does it cost in tokens?</h3>
+
+    <p>Tools return summaries by default, <code>get_session_context()</code> is one ~500-token call, and the
+    lean-12 tool profile cuts <code>tools/list</code> from 36 tools to 12 (~8.9K → ~3.5K tokens per session).</p>
+
+    <p>Longer answers: <a href="https://github.com/sachinshelke/codevira/blob/main/FAQ.md">FAQ.md</a>.</p>
+
+    <hr class="rule">
+
+    <h2 id="how-codevira-compares">How Codevira compares</h2>
+
+    <p>Most memory tools for AI agents <em>retrieve</em>. Codevira also <em>enforces</em>, and it is per-project across
+    <em>many</em> tools rather than per-session inside one. If you need cross-machine cloud memory, a
+    temporal knowledge graph at enterprise scale, or the top LongMemEval score, other tools are the
+    better pick — that comparison is written out honestly, including where codevira loses:
+    <strong><a href="https://github.com/sachinshelke/codevira/blob/main/docs/vs-other-memory-tools.md">Codevira vs other AI memory tools</a></strong> (Mem0, claude-mem, Zep,
+    MemPalace and others).</p>
+
+    <p><strong>Deeper reading:</strong> <a href="https://github.com/sachinshelke/codevira/blob/main/docs/architecture.md">Architecture</a> ·
+    <a href="https://github.com/sachinshelke/codevira/blob/main/PROTOCOL.md">Wire protocol</a> ·
+    <a href="https://github.com/sachinshelke/codevira/blob/main/DOGFOOD.md">How we dogfood it</a> ·
+    <a href="https://github.com/sachinshelke/codevira/blob/main/ROADMAP.md">Roadmap</a> ·
+    <a href="https://github.com/sachinshelke/codevira/blob/main/CHANGELOG.md">Changelog</a> ·
+    <a href="https://github.com/sachinshelke/codevira/blob/main/MIGRATING.md">Migrating to 4.0</a> ·
+    <a href="https://github.com/sachinshelke/codevira/blob/main/docs/how-i-built-persistent-memory-for-ai-agents.md">How I built persistent memory for AI coding agents</a></p>
+
+    <hr class="rule">
+
+    <h2 id="contributing">Contributing</h2>
+
+    <p>Contributions are genuinely welcome, and the backlog is open — see
+    <a href="https://github.com/sachinshelke/codevira/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a> for the dev setup and PR checklist.</p>
+
+    <details>
+      <summary><strong>How the codebase is laid out</strong> — layers, the two persistence stacks, and where to add a tool / command / policy</summary>
+
+      <p>Start here before your first PR. One caveat it makes loud: <strong>82% of codevira's internal
+      imports sit inside function bodies</strong>, so a static import graph draws this codebase as
+      disconnected leaves — the arrows below are runtime call edges. The diagram also marks the
+      boundaries that <em>don't</em> hold, rather than pretending the layering is clean.</p>
+
+      <div class="figure">
+        <img src="assets/internals.png"
+             alt="Codevira internals: process entry points, the 48 root modules grouped by role, tools/ and engine/ as siblings, two separate persistence stacks (storage/ for decisions, indexer/ for the code graph), the jsonl_store and atomic write choke points, and on-disk layout"
+             width="1800" height="3534" loading="lazy">
+      </div>
+    </details>
+
+    <p><strong>Good places to start:</strong></p>
+
+    <ul>
+      <li><strong>Run it in an IDE you use and report what happened.</strong> That's how the support matrix grows.</li>
+      <li><strong>Windows.</strong> The sentinel-lock fallback is unit-tested but never load-tested on real hardware.</li>
+      <li><strong>Docs.</strong> Anything wrong or slow to find in this README or the <a href="https://github.com/sachinshelke/codevira/blob/main/FAQ.md">FAQ</a> is a bug — file it.</li>
+    </ul>
+
+    <p>Channels:</p>
+
+    <ul>
+      <li><strong>Bug?</strong> <a href="https://github.com/sachinshelke/codevira/issues/new?template=bug_report.md">Open a bug report</a></li>
+      <li><strong>Feature or idea?</strong> <a href="https://github.com/sachinshelke/codevira/issues/new?template=feature_request.md">Open a feature request</a></li>
+      <li><strong>Security issue?</strong> Read <a href="https://github.com/sachinshelke/codevira/blob/main/SECURITY.md">SECURITY.md</a> — please don't use public issues for
+      vulnerabilities.</li>
+      <li><strong>Conduct:</strong> <a href="https://github.com/sachinshelke/codevira/blob/main/CODE_OF_CONDUCT.md">CODE_OF_CONDUCT.md</a></li>
+    </ul>
+
+    <p>If Codevira saves you tokens or sanity, a ⭐ helps other developers find it.</p>
+
+    <h2 id="license">License</h2>
+
+    <p>MIT — free to use, modify, and distribute. See <a href="https://github.com/sachinshelke/codevira/blob/main/LICENSE">LICENSE</a>.</p>
+  </main>
+</div>
+
+<footer>
+  <span>© 2026 Codevira · MIT License · <span style="font-family:var(--mono)">4.0.1</span></span>
+  <span><a href="index.html">Home</a> · <a href="https://github.com/sachinshelke/codevira">GitHub</a> · <a href="https://pypi.org/project/codevira/">PyPI</a> · <a href="https://github.com/sachinshelke/codevira/blob/main/CHANGELOG.md">Changelog</a></span>
+</footer>
+
+<script>
+/* ---------- theme (shared key with the landing page) ---------- */
+const root = document.documentElement;
+const stored = localStorage.getItem("cv-theme");
+const prefersDark = window.matchMedia("(prefers-color-scheme: dark)");
+root.setAttribute("data-theme", stored || (prefersDark.matches ? "dark" : "light"));
+prefersDark.addEventListener("change", e => { if (!localStorage.getItem("cv-theme")) root.setAttribute("data-theme", e.matches ? "dark" : "light"); });
+document.getElementById("theme-toggle").addEventListener("click", () => {
+  const next = root.getAttribute("data-theme") === "dark" ? "light" : "dark";
+  root.setAttribute("data-theme", next); localStorage.setItem("cv-theme", next);
+});
+
+/* ---------- active section highlight in the sidebar ---------- */
+const links = [...document.querySelectorAll('aside a[href^="#"]')];
+const byId = Object.fromEntries(links.map(a => [a.getAttribute("href").slice(1), a]));
+const obs = new IntersectionObserver(entries => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      links.forEach(a => a.classList.remove("active"));
+      byId[e.target.id]?.classList.add("active");
+    }
+  });
+}, { rootMargin: "-80px 0px -70% 0px" });
+document.querySelectorAll("main h2[id]").forEach(h => obs.observe(h));
+</script>
+</body>
+</html>

@@ -1,0 +1,122 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="792" viewBox="0 0 900 792" preserveAspectRatio="xMidYMid meet" role="img"
+     aria-label="Three stacked layers: the files codevira writes into your project repo, the single pipx-installed binary, and the IDE hook points that call it.">
+<title>Codevira file layout and hook flow — what lands in your repo, and where it is called from</title>
+<desc>A light sheet in three stacked bands. Band one, IN THE PROJECT REPO, holds the canonical .codevira/ card listing nine files — decisions.jsonl (full text plus metadata, append-only), digest.jsonl (slim summary for prompt injection), outcomes.jsonl (kept or reverted, from git observation), manifest.yaml (tag to ids and file to ids index, regenerated), enforcement.yaml (which decisions hard-block), config.yaml (project settings), sessions.jsonl (session events), roadmap.yaml (phase tracking) and skills.jsonl (written once you record a skill). Beside it sits the generated AGENTS.md card, a violet arrow showing it is generated from the decision log, and the gitignored .codevira-cache/ card holding fts5.sqlite, hash-cache.db and working.jsonl, with a note that the code graph is a per-project SQLite database under the global home. A two-headed connector labelled MCP and hooks joins band one to band two, PIPX INSTALL, a single blue-to-violet gradient card for the codevira CLI and MCP server: roughly 66 MB of venv, no chromadb, sentence-transformers or torch, no model, cold start well under one second and warm tool calls around two milliseconds. A second two-headed connector labelled stdio MCP joins band two to band three, YOUR IDE, which lists the four hook points — UserPromptSubmit into a relevance-gated inject, Edit or Write into PreToolUse which blocks a do_not_revert violation, PostToolUse into the post-edit graph refresh and working-memory fanout, and Stop into the token-budget and session-log enforcers. A footnote records that codevira init scaffolds everything except roadmap.yaml and skills.jsonl, which are written on first use.</desc>
+<defs>
+  <linearGradient id="focal" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#0064d6"/><stop offset="1" stop-color="#5a5fe0"/>
+  </linearGradient>
+  <filter id="sh" x="-40%" y="-40%" width="180%" height="180%">
+    <feDropShadow dx="0" dy="2" stdDeviation="3.5" flood-color="#1b1f27" flood-opacity="0.07"/>
+  </filter>
+  <filter id="shbig" x="-40%" y="-40%" width="180%" height="180%">
+    <feDropShadow dx="0" dy="4" stdDeviation="9" flood-color="#2b2f7a" flood-opacity="0.20"/>
+  </filter>
+  <marker id="aSlate" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="7" refX="8.5" refY="3.5" orient="auto">
+    <path d="M0 0 L9 3.5 L0 7 z" fill="#6b7683"/></marker>
+  <marker id="aSlateBack" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="7" refX="0.5" refY="3.5" orient="auto">
+    <path d="M9 0 L0 3.5 L9 7 z" fill="#6b7683"/></marker>
+  <marker id="aViolet" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="7" refX="8.5" refY="3.5" orient="auto">
+    <path d="M0 0 L9 3.5 L0 7 z" fill="#5a5fe0"/></marker>
+  <style>
+    text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;fill:#1b1f27}
+    .h1{font-size:18px;font-weight:700;letter-spacing:-0.2px}
+    .eyebrow{font-size:10.5px;font-weight:700;letter-spacing:0.08em;fill:#0b4a80}
+    .ct{font-size:11.5px;font-weight:600}
+    .m{font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;font-size:11.5px;font-weight:600}
+    .f{font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;font-size:10.5px;fill:#39414a}
+    .d{font-size:10.5px;fill:#5b6472}
+    .mut{font-size:10.5px;fill:#5b6472}
+    .onfocal{fill:#ffffff}
+    .rule{stroke-width:2.4;stroke-linecap:round;fill:none}
+  </style>
+</defs>
+
+<rect x="0" y="0" width="900" height="792" fill="#f3f5f9"/>
+<text class="h1" x="24" y="42">Full file layout and hook flow</text>
+<text class="mut" x="24" y="60">Three layers: what lands in your repo, the one binary that reads it, and where your IDE calls in.</text>
+
+<!-- ================= BAND 1 : IN THE PROJECT REPO ================= -->
+<rect x="24" y="76" width="852" height="314" rx="14" fill="#ecf0f6" stroke="#dfe4ec" stroke-width="1"/>
+<rect x="36" y="88" width="164" height="22" rx="5" fill="#e2e8f2" stroke="#cfd7e4" stroke-width="1"/>
+<text class="eyebrow" x="47" y="103">IN THE PROJECT REPO</text>
+<text class="mut" x="212" y="103">local by default &#8212; plain text, and the half you can commit</text>
+
+<!-- .codevira/ : canonical -->
+<rect x="36" y="120" width="486" height="256" rx="11" fill="#ffffff" stroke="#dfe4ec" stroke-width="1" filter="url(#sh)"/>
+<path d="M48 120.6 H74" class="rule" stroke="#0064d6"/>
+<text class="m" x="48" y="142">.codevira/</text>
+<text class="d" x="132" y="142">canonical &#183; append-only &#183; team-shareable</text>
+<path d="M48 152 H510" stroke="#dfe4ec" stroke-width="1"/>
+<text class="f" x="48" y="172">decisions.jsonl</text><text class="d" x="196" y="172">full text + metadata (append-only)</text>
+<text class="f" x="48" y="194">digest.jsonl</text><text class="d" x="196" y="194">slim summary for prompt injection</text>
+<text class="f" x="48" y="216">outcomes.jsonl</text><text class="d" x="196" y="216">kept/reverted, from git observation</text>
+<text class="f" x="48" y="238">manifest.yaml</text><text class="d" x="196" y="238">tag&#8594;ids, file&#8594;ids index (regenerated)</text>
+<text class="f" x="48" y="260">enforcement.yaml</text><text class="d" x="196" y="260">which decisions hard-block</text>
+<text class="f" x="48" y="282">config.yaml</text><text class="d" x="196" y="282">project settings</text>
+<text class="f" x="48" y="304">sessions.jsonl</text><text class="d" x="196" y="304">session events</text>
+<text class="f" x="48" y="326">roadmap.yaml</text><text class="d" x="196" y="326">phase tracking</text>
+<text class="f" x="48" y="348">skills.jsonl</text><text class="d" x="196" y="348">once you record a skill</text>
+<text class="mut" x="48" y="368">roadmap.yaml and skills.jsonl appear on first use; codevira init writes the rest.</text>
+
+<!-- AGENTS.md, generated from the log -->
+<rect x="546" y="120" width="318" height="62" rx="11" fill="#ffffff" stroke="#d9d6f2" stroke-width="1" filter="url(#sh)"/>
+<path d="M558 120.6 H584" class="rule" stroke="#5a5fe0"/>
+<text class="m" x="558" y="142">AGENTS.md</text>
+<text class="d" x="558" y="162">&#8804;5 KB slim contract, generated from <tspan font-family="ui-monospace,SFMono-Regular,'SF Mono',Menlo,monospace">.codevira/</tspan></text>
+<text class="d" x="558" y="176">&#8212; the file Codex and Copilot read</text>
+<path d="M522 152 H534 V151 H540" fill="none" stroke="#5a5fe0" stroke-width="1.6" stroke-linecap="round" marker-end="url(#aViolet)"/>
+
+<!-- .codevira-cache/ : rebuildable -->
+<rect x="546" y="196" width="318" height="120" rx="11" fill="#ffffff" stroke="#dfe4ec" stroke-width="1" filter="url(#sh)"/>
+<path d="M558 196.6 H584" class="rule" stroke="#6b7683"/>
+<text class="m" x="558" y="218">.codevira-cache/</text>
+<text class="d" x="558" y="236">gitignored &#183; per-machine &#183; rebuildable</text>
+<path d="M558 246 H852" stroke="#dfe4ec" stroke-width="1"/>
+<text class="f" x="558" y="266">fts5.sqlite</text><text class="d" x="664" y="266">FTS5 index over decisions</text>
+<text class="f" x="558" y="286">hash-cache.db</text><text class="d" x="664" y="286">file change detection</text>
+<text class="f" x="558" y="306">working.jsonl</text><text class="d" x="664" y="306">intra-session scratchpad</text>
+
+<rect x="546" y="328" width="318" height="48" rx="11" fill="#ecf0f6" stroke="#dfe4ec" stroke-width="1"/>
+<text class="d" x="558" y="348">The code graph is a per-project SQLite db</text>
+<text class="d" x="558" y="364">under ~/.codevira/ &#8212; not in your repo.</text>
+
+<!-- connector 1 -->
+<path d="M450 390 V434" fill="none" stroke="#6b7683" stroke-width="1.6" stroke-linecap="round"
+      marker-start="url(#aSlateBack)" marker-end="url(#aSlate)"/>
+<rect x="466" y="403" width="98" height="19" rx="5" fill="#ecf0f6" stroke="#dfe4ec" stroke-width="1"/>
+<text class="d" x="477" y="416">MCP &#183; hooks</text>
+
+<!-- ================= BAND 2 : PIPX INSTALL ================= -->
+<rect x="24" y="444" width="852" height="130" rx="14" fill="#ecf0f6" stroke="#dfe4ec" stroke-width="1"/>
+<rect x="36" y="456" width="118" height="22" rx="5" fill="#e2e8f2" stroke="#cfd7e4" stroke-width="1"/>
+<text class="eyebrow" x="47" y="471">PIPX INSTALL</text>
+<text class="mut" x="166" y="471">~/.local/pipx/venvs/codevira &#8212; one binary, no model, nothing to serve</text>
+
+<rect x="36" y="488" width="828" height="74" rx="12" fill="url(#focal)" filter="url(#shbig)"/>
+<text class="m onfocal" x="52" y="512">codevira</text>
+<text class="ct onfocal" x="124" y="512">CLI + MCP server</text>
+<text class="d onfocal" x="52" y="532" opacity="0.92">~66 MB venv &#183; no chromadb / sentence-transformers / torch &#183; no model downloaded</text>
+<text class="d onfocal" x="52" y="550" opacity="0.92">cold-start well under 1 s &#183; warm tool calls ~2 ms</text>
+
+<!-- connector 2 -->
+<path d="M450 574 V618" fill="none" stroke="#6b7683" stroke-width="1.6" stroke-linecap="round"
+      marker-start="url(#aSlateBack)" marker-end="url(#aSlate)"/>
+<rect x="466" y="587" width="90" height="19" rx="5" fill="#ecf0f6" stroke="#dfe4ec" stroke-width="1"/>
+<text class="d" x="477" y="600">stdio MCP</text>
+
+<!-- ================= BAND 3 : YOUR IDE ================= -->
+<rect x="24" y="628" width="852" height="140" rx="14" fill="#ecf0f6" stroke="#dfe4ec" stroke-width="1"/>
+<rect x="36" y="640" width="88" height="22" rx="5" fill="#e2e8f2" stroke="#cfd7e4" stroke-width="1"/>
+<text class="eyebrow" x="47" y="655">YOUR IDE</text>
+<text class="mut" x="136" y="655">Claude Code &#183; Cursor &#183; Antigravity &#183; Codex &#183; any MCP client &#8212; four hook points</text>
+
+<rect x="36" y="672" width="828" height="84" rx="11" fill="#ffffff" stroke="#dfe4ec" stroke-width="1" filter="url(#sh)"/>
+<path d="M48 672.6 H74" class="rule" stroke="#b5801f"/>
+<text class="f" x="48" y="694">UserPromptSubmit</text><text class="d" x="182" y="694">&#8594; codevira hook &#8594; relevance-gated inject</text>
+<text class="f" x="48" y="712">Edit / Write</text><text class="d" x="182" y="712">&#8594; PreToolUse &#8594; blocks if a do_not_revert decision is violated</text>
+<text class="f" x="48" y="730">PostToolUse</text><text class="d" x="182" y="730">&#8594; Post-Edit Graph Refresh (+ working-memory fanout)</text>
+<text class="f" x="48" y="748">Stop</text><text class="d" x="182" y="748">&#8594; Token Budget / Session-Log Enforcer</text>
+
+<text class="mut" x="24" y="784">Deeper detail: docs/architecture.md</text>
+</svg>

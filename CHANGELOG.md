@@ -9,7 +9,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-## [4.0.1] — 2026-08-06
+## [4.0.1] — 2026-08-12
 
 Repairs team-shared memory (`init --shared` never actually worked), removes the
 deprecated `codevira clean` command (a footgun — see below), and lands two
@@ -142,6 +142,24 @@ sanitized project path) now resolves these to their registration — classified
 `tracked`, never removable. On the maintainer's machine: stale **8 → 1**,
 entries **21 → 14**, nothing newly removable. *(Regression test:
 `TestSlugJoinFallback`.)*
+
+### Internal — the code stranded by the v2.2.0 Chroma removal is gone (`indexer.chunker` no longer importable)
+
+v2.2.0 dropped ChromaDB, sentence-transformers and torch, but left the code
+*behind* them in the tree — reachable only through a `_check_search_deps()`
+that returns a hardcoded `False`. Reachability was proven with an AST pass
+before anything was deleted, and the graph output was verified byte-identical
+on a temp project afterwards.
+
+- **`indexer/chunker.py` → `indexer/imports.py`** (772 → 468 lines). Only the
+  import extraction was ever wired to anything; a module named "chunker" that
+  no longer chunks is the same misleading-name trap as `clean`. **If you import
+  `indexer.chunker` directly you will now get an `ImportError`** — import
+  `indexer.imports` instead. There is no public API on this module; nothing in
+  the MCP tool surface or the CLI changes.
+- **`indexer/index_codebase.py`** 1,592 → 1,166 lines.
+- 2,545 lines removed across 9 files in one commit, `tests/test_chunker.py`
+  replaced by `tests/test_imports.py`.
 
 ## [4.0.0] — 2026-08-05
 

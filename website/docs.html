@@ -152,7 +152,7 @@
   <div class="inner">
     <a class="logo" href="index.html" style="text-decoration:none">
       <img class="mark" src="assets/logo.png" alt="Codevira" width="30" height="30"> codevira
-      <span class="version">4.0</span>
+      <span class="version">4.0.1</span>
     </a>
     <div class="links">
       <a class="home" href="index.html">← Home</a>
@@ -168,6 +168,7 @@
     <div class="group">Start</div>
     <a href="#install">Install</a>
     <a href="#connect">Connect your AI tools</a>
+    <a href="readme.html">README</a>
     <div class="group">Use</div>
     <a href="#commands">CLI commands</a>
     <a href="#tools">MCP tool surface</a>
@@ -344,7 +345,7 @@ codevira setup</pre>
     project, doesn't show codevira at all, or memory looks missing, it's almost always a
     stale IDE-config entry, not lost data. Two fixes cover most cases: (1) remove a stray or
     temporary codevira entry with <code>codevira untrack &lt;path&gt;</code> (or sweep dead
-    ones with <code>codevira clean --ghosts</code>); (2) run <code>codevira doctor</code>,
+    ones with <code>codevira prune --ghosts</code>); (2) run <code>codevira doctor</code>,
     which names the bound project and ships the exact fix for each ⚠ / ✗. Full guides:
     <a href="https://github.com/sachinshelke/codevira/blob/main/docs/troubleshooting/config-hygiene.md">IDE config hygiene</a>
     and <a href="https://github.com/sachinshelke/codevira/blob/main/docs/troubleshooting/antigravity.md">Antigravity</a>.</div>
@@ -355,7 +356,7 @@ codevira setup</pre>
 </div>
 
 <footer>
-  <span>© 2026 Codevira · MIT License · <span style="font-family:var(--mono)">4.0</span></span>
+  <span>© 2026 Codevira · MIT License · <span style="font-family:var(--mono)">4.0.1</span></span>
   <span><a href="index.html">Home</a> · <a href="https://github.com/sachinshelke/codevira">GitHub</a> · <a href="https://pypi.org/project/codevira/">PyPI</a> · <a href="https://github.com/sachinshelke/codevira/blob/main/CHANGELOG.md">Changelog</a></span>
 </footer>
 

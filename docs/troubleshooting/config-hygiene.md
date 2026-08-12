@@ -100,7 +100,7 @@ PY
 codevira untrack "/private/var/folders/.../T/tmp.XXXX/proj"
 
 # Sweep ghost project dirs whose source no longer exists.
-codevira clean --ghosts        # add -y to skip the prompt
+codevira prune --ghosts        # add -y to skip the prompt
 
 # Re-check the machine end to end.
 codevira doctor

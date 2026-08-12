@@ -367,6 +367,93 @@ class TestGetSessionContext:
         assert stale_txt not in surfaced, "outdated decision must not surface"
         assert reverted_txt not in surfaced, "reverted decision must not surface"
 
+    def test_session_context_hides_superseded_on_a_stale_fts_cache(
+        self, tmp_path, monkeypatch
+    ):
+        """Phase 26 done-when, search path.
+
+        The search path has two layers: ``fts5_index`` refuses to index a
+        superseded decision (fts5_index.py:166, :207), and
+        ``decisions_store.search`` re-filters at :692 for the case its own
+        comment names — "if cache is stale we re-filter".
+
+        A naive test cannot reach that re-filter: with a healthy index the
+        retired decision was never indexed, so search returns nothing and the
+        assertion passes no matter what :692 does. (Verified by mutation —
+        blanking :692 left such a test green.) So this test reproduces the
+        stale-cache condition on purpose: index the decision, THEN supersede
+        it, and hold ``staleness_check`` at False so the lazy rebuild does not
+        quietly repair the index before search reads it. Now :692 is the only
+        thing standing between a retired decision and the session brief.
+        """
+        monkeypatch.setenv("CODEVIRA_SUPERSEDE_ON_RECORD", "0")
+        _setup_project(tmp_path, monkeypatch)
+        from mcp_server.storage import decisions_store, fts5_index
+        from mcp_server.storage import paths as _paths
+
+        old_txt = "cache the session token in redis"
+        new_txt = "cache the session token in postgres"
+
+        old_id = decisions_store.record(decision=old_txt)
+        decisions_store.supersede(old_id, new_txt, "moved off redis")
+        # Re-introduce the row an older index build would still be holding.
+        # supersede() evicts it, and add_decision refuses anything carrying the
+        # superseded flags (fts5_index.py:207) — so pass the pre-supersede shape,
+        # which is exactly what a cache built before the amendment contains.
+        fts5_index.add_decision(_paths.fts5_path(), {"id": old_id, "decision": old_txt})
+
+        # Freeze the index in its pre-supersede state, exactly as the mtime
+        # epsilon in staleness_check does for a same-second write.
+        monkeypatch.setattr(fts5_index, "staleness_check", lambda *a, **k: False)
+        assert any(
+            h["decision_id"] == old_id
+            for h in fts5_index.search(_paths.fts5_path(), "redis", limit=10)
+        ), "precondition: the stale index must still hold the retired decision"
+
+        with patch(
+            "mcp_server.tools.roadmap.get_roadmap",
+            return_value={
+                "current_phase": {"next_action": "cache session token redis"}
+            },
+        ):
+            result = learning.get_session_context()
+
+        surfaced = {d.get("decision") for d in result["recent_decisions"]}
+        assert old_txt not in surfaced, (
+            "a superseded decision left behind in a stale FTS index must not "
+            "reach recent_decisions"
+        )
+
+    def test_session_context_hides_superseded_in_backfill(self, tmp_path, monkeypatch):
+        """Phase 26 done-when, list_all path: with a focus that matches
+        nothing, recent_decisions is filled by the chronological backfill
+        (learning.py:703). That path hides superseded only through
+        ``list_all``'s ``include_superseded=False`` DEFAULT — the weakest
+        link in the chain, and the one a future caller is most likely to
+        flip. Asserted here so flipping it goes red.
+        """
+        monkeypatch.setenv("CODEVIRA_SUPERSEDE_ON_RECORD", "0")
+        _setup_project(tmp_path, monkeypatch)
+        from mcp_server.storage import decisions_store
+
+        old_txt = "ship the beta behind a feature flag"
+        new_txt = "ship the beta to everyone"
+
+        old_id = decisions_store.record(decision=old_txt)
+        decisions_store.supersede(old_id, new_txt, "beta went GA")
+
+        with patch(
+            "mcp_server.tools.roadmap.get_roadmap",
+            return_value={"current_phase": {"next_action": "unrelated telemetry work"}},
+        ):
+            result = learning.get_session_context()
+
+        surfaced = {d.get("decision") for d in result["recent_decisions"]}
+        assert (
+            old_txt not in surfaced
+        ), "superseded decision must not surface via the chronological backfill"
+        assert new_txt in surfaced, "its replacement should surface in its place"
+
     def test_session_context_backfills_past_reverted_top_decisions(
         self, tmp_path, monkeypatch
     ):

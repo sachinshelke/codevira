@@ -9,6 +9,46 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added — `get_session_context` ranks by recency × outcome-confidence (Phase 26)
+
+`recent_decisions` was a binary filter: drop reverted and outdated, then take
+whatever the store returned first. That made the catch-me-up brief a function
+of **write order** — a decision recorded months ago and never confirmed could
+outrank one the git outcome-tracker watched survive last week.
+
+Survivors are now ranked. Every signal is already on the row, so this costs no
+extra I/O:
+
+| signal | weight |
+|---|---|
+| `outcome="kept"` — the tracker watched the file survive | 1.0 |
+| `outcome` unset — nothing has tested it | 0.7 |
+| `outcome="modified"` — the file changed underneath it | 0.4 |
+| `dnr_soft_expired` — a lock nobody re-confirmed | × 0.5 |
+| recency | exponential, 90-day half-life |
+
+Ranking replaces the *ordering*, not the filter: reverted and outdated
+decisions are still hidden entirely.
+
+### Added — a churn nudge on decisions whose file moved
+
+`outcome="modified"` is exactly the churn signal Phase 26 asks for — the
+tracker saw the decision's file change but not disappear. Those rows now carry
+`needs_review` and a hint to `reaffirm_decision` if the decision still holds,
+or supersede / `mark_outdated` if it does not. It needs a human verdict, not
+silent removal. The keys are absent on every other row, so the brief stays
+lean.
+
+### Fixed — the ranking clock is sampled once, not per row
+
+Caught by a tie test while building the above, and worth recording because the
+bug is invisible by inspection: the rank key read `datetime.now()` **inside**
+the sort, so rows evaluated later came out microseconds younger. The score was
+a function of evaluation order rather than of the data, and the sort quietly
+preserved whatever order it was given. `_age_days` now takes the reference
+instant, and any caller ranking a collection must pass one. Unpinning it turns
+the tie test red on 5 runs out of 5.
+
 ### Fixed — a decision and its negation were classified as duplicates
 
 `"never switch the package manager away from pnpm"` and the same sentence

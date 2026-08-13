@@ -20,6 +20,8 @@ MCP tool that exposed it is gone.
 
 from __future__ import annotations
 
+from typing import Any
+
 import logging
 import os
 from mcp_server.paths import get_data_dir
@@ -459,6 +461,36 @@ def mark_decision_outdated(
     return decisions_store.mark_outdated(decision_id, reason=reason, force=force)
 
 
+#: Half-life for the recency term in ``get_session_context``'s ranking. 90 days
+#: means a decision is worth half as much evidence a quarter after it was
+#: recorded, which matches how fast this codebase moves. Exponential rather
+#: than a cutoff so nothing vanishes on an arbitrary birthday.
+_RANK_HALF_LIFE_DAYS = 90.0
+
+
+def _age_days(ts: Any, now: Any = None) -> float | None:
+    """Age of an ISO timestamp in days, or None if it cannot be read.
+
+    ``now`` MUST be supplied by any caller that ranks a collection. Reading the
+    clock per row makes the age depend on EVALUATION ORDER — rows scored later
+    come out microseconds younger, so a sort key built on it is not a function
+    of the data and two runs can disagree. Pinning one instant for the whole
+    comparison is what makes the ranking deterministic.
+    """
+    if not ts:
+        return None
+    try:
+        from datetime import datetime, timezone
+
+        parsed = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        ref = now or datetime.now(timezone.utc)
+        return max(0.0, (ref - parsed).total_seconds() / 86400)
+    except Exception:  # noqa: BLE001 — a malformed ts must not break the brief
+        return None
+
+
 def reaffirm_decision(decision_id: str) -> dict:
     """v3.2.0: refresh a ``do_not_revert`` decision's soft-expire clock.
 
@@ -688,6 +720,56 @@ def get_session_context(since: str | None = None) -> dict:
         def _is_stale(d: dict) -> bool:
             return (d.get("outcome") == "reverted") or bool(d.get("is_outdated"))
 
+        # v4.1 (Phase 26): rank what survives the filter, rather than taking
+        # whatever the store happened to return first. Without this the brief
+        # is a function of WRITE ORDER, so a decision recorded months ago and
+        # never confirmed can outrank one the outcome-tracker watched survive
+        # last week. Every signal is already on the row, so this costs no I/O.
+        # ONE instant for the whole comparison — see _age_days. Sampling the
+        # clock inside the key function made the score depend on the order the
+        # rows happened to be evaluated in.
+        from datetime import datetime as _dt, timezone as _tz
+
+        _rank_now = _dt.now(_tz.utc)
+
+        def _rank(d: dict) -> tuple[float, str]:
+            # Outcome-confidence: how much has reality tested this decision?
+            confidence = {
+                "kept": 1.0,  # the tracker watched the file survive
+                "modified": 0.4,  # the file changed underneath it
+            }.get(str(d.get("outcome") or ""), 0.7)  # unobserved sits between
+            # A do_not_revert lock nobody has re-confirmed past the soft-expire
+            # threshold is weaker evidence than a current one. Only protected
+            # decisions carry the field at all.
+            if d.get("dnr_soft_expired"):
+                confidence *= 0.5
+            # Recency, half-life _RANK_HALF_LIFE_DAYS. Exponential rather than
+            # a cliff so nothing drops off a shelf on an arbitrary birthday.
+            age = _age_days(d.get("created_at") or d.get("ts"), _rank_now)
+            recency = 0.5 ** (age / _RANK_HALF_LIFE_DAYS) if age is not None else 0.5
+            # id is the tiebreak, so equal-scoring rows cannot be ordered by
+            # arrival. Negated score => descending on a plain ascending sort.
+            return (-(confidence * recency), str(d.get("id") or ""))
+
+        def _with_nudge(d: dict) -> dict:
+            """Flag a decision whose file churned since it was recorded.
+
+            ``outcome="modified"`` is exactly that signal: the tracker saw the
+            file change but not disappear. It needs a human verdict, not silent
+            removal — hence a nudge rather than a filter.
+            """
+            if d.get("outcome") != "modified":
+                return d
+            return {
+                **d,
+                "needs_review": True,
+                "review_hint": (
+                    "the file behind this decision has changed since it was "
+                    "recorded — reaffirm_decision if it still holds, or "
+                    "supersede/mark_outdated if it does not"
+                ),
+            }
+
         recent_decisions: list[dict] = []
         if focus:
             try:
@@ -722,8 +804,13 @@ def get_session_context(since: str | None = None) -> dict:
                     continue
                 recent_decisions.append(d)
                 seen_ids.add(did)
-                if len(recent_decisions) >= 3:
-                    break
+                # No early break: rank the whole survivor set below, then cap.
+                # Breaking at 3 here would rank only the first 3 the store
+                # returned, which is the write-order dependence being removed.
+
+        recent_decisions = [
+            _with_nudge(d) for d in sorted(recent_decisions, key=_rank)
+        ][:3]
 
         # v2.0-rc.2: Surface key_decisions from recently-completed phases.
         # Bug 5 — ``complete_phase(key_decisions=[...])`` writes to the
@@ -851,6 +938,16 @@ def get_session_context(since: str | None = None) -> dict:
                     ),
                     "file_path": d.get("file_path"),
                     "source": "session",
+                    # Only present when the decision's file churned — kept out
+                    # of the common row so the brief stays lean.
+                    **(
+                        {
+                            "needs_review": True,
+                            "review_hint": d["review_hint"],
+                        }
+                        if d.get("needs_review")
+                        else {}
+                    ),
                 }
                 for d in recent_decisions[:3]
             ],

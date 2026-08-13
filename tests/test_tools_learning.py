@@ -912,3 +912,164 @@ def _seed_communication_prefs(db_path, signals: list[str]) -> None:
             db.upsert_preference("communication", sig, None, "proj-a")
     finally:
         db.close()
+
+
+class TestRecencyAndConfidenceRanking:
+    """Phase 26's remaining clauses: rank recent_decisions by recency x
+    outcome-confidence, and nudge on a decision whose file has churned.
+
+    Until now this was a binary filter — drop reverted and outdated, then take
+    whatever the store returned first. That makes the catch-me-up brief a
+    function of write order, so a decision recorded months ago and never
+    confirmed can outrank one the git tracker watched survive last week.
+
+    Every signal used is already on the row, so ranking costs no extra I/O:
+    ``outcome`` (the git outcome-tracker's kept / modified / reverted verdict),
+    ``created_at``, and ``dnr_soft_expired``.
+    """
+
+    def _mk(self, monkeypatch, tmp_path, rows):
+        """Drive get_session_context with a fixed list_all payload."""
+        _setup_project(tmp_path, monkeypatch)
+        from mcp_server.storage import decisions_store
+
+        monkeypatch.setattr(
+            decisions_store,
+            "list_all",
+            lambda **k: {
+                "decisions": rows,
+                "count": len(rows),
+                "total": len(rows),
+                "has_more": False,
+            },
+        )
+        monkeypatch.setattr(decisions_store, "search", lambda *a, **k: [])
+        with patch(
+            "mcp_server.tools.roadmap.get_roadmap",
+            return_value={"current_phase": {"next_action": "unrelated"}},
+        ):
+            return learning.get_session_context()["recent_decisions"]
+
+    def _row(self, id_, text, days_old, outcome=None, **extra):
+        from datetime import datetime, timedelta, timezone
+
+        ts = (datetime.now(timezone.utc) - timedelta(days=days_old)).isoformat()
+        return {
+            "id": id_,
+            "decision": text,
+            "created_at": ts,
+            "outcome": outcome,
+            "do_not_revert": False,
+            "tags": [],
+            **extra,
+        }
+
+    def test_a_confirmed_decision_outranks_an_unobserved_one_of_the_same_age(
+        self, tmp_path, monkeypatch
+    ):
+        rows = [
+            self._row("D1", "unobserved", 10, outcome=None),
+            self._row("D2", "git watched this survive", 10, outcome="kept"),
+        ]
+        out = self._mk(monkeypatch, tmp_path, rows)
+        assert [d["id"] for d in out][0] == "D2", (
+            "an outcome the tracker confirmed is stronger evidence than one "
+            "nothing has ever tested"
+        )
+
+    def test_a_fresh_decision_outranks_a_stale_one_of_equal_confidence(
+        self, tmp_path, monkeypatch
+    ):
+        rows = [
+            self._row("D1", "old but kept", 400, outcome="kept"),
+            self._row("D2", "recent and kept", 2, outcome="kept"),
+        ]
+        out = self._mk(monkeypatch, tmp_path, rows)
+        assert [d["id"] for d in out][0] == "D2"
+
+    def test_a_churned_decision_is_flagged_for_review(self, tmp_path, monkeypatch):
+        """outcome=modified means the git tracker saw the decision's file change
+        underneath it. That is the churn signal the phase asks for — it needs a
+        human verdict, not silent removal."""
+        rows = [self._row("D1", "cache tokens in redis", 30, outcome="modified")]
+        out = self._mk(monkeypatch, tmp_path, rows)
+        assert out[0]["needs_review"] is True
+        assert "reaffirm" in out[0]["review_hint"].lower()
+
+    def test_an_unchurned_decision_carries_no_nudge(self, tmp_path, monkeypatch):
+        rows = [self._row("D1", "cache tokens in redis", 30, outcome="kept")]
+        out = self._mk(monkeypatch, tmp_path, rows)
+        assert "needs_review" not in out[0], "the nudge must not be noise on every row"
+
+    def test_a_soft_expired_lock_is_downranked_below_a_fresh_one(
+        self, tmp_path, monkeypatch
+    ):
+        rows = [
+            self._row(
+                "D1",
+                "overdue lock",
+                5,
+                outcome="kept",
+                do_not_revert=True,
+                dnr_soft_expired=True,
+                dnr_age_days=400,
+            ),
+            self._row(
+                "D2",
+                "current lock",
+                5,
+                outcome="kept",
+                do_not_revert=True,
+                dnr_soft_expired=False,
+                dnr_age_days=5,
+            ),
+        ]
+        out = self._mk(monkeypatch, tmp_path, rows)
+        assert [d["id"] for d in out][0] == "D2", (
+            "a lock nobody has re-confirmed in 400 days is weaker evidence "
+            "than one that is current"
+        )
+
+    def test_reverted_and_outdated_are_still_hidden_entirely(
+        self, tmp_path, monkeypatch
+    ):
+        """Ranking replaces the ordering, not the filter."""
+        rows = [
+            self._row("D1", "reverted", 1, outcome="reverted"),
+            self._row("D2", "tombstoned", 1, is_outdated=True),
+            self._row("D3", "live", 90, outcome="kept"),
+        ]
+        out = self._mk(monkeypatch, tmp_path, rows)
+        assert [d["id"] for d in out] == ["D3"]
+
+    def test_ranking_is_deterministic_under_ties(self, tmp_path, monkeypatch):
+        import itertools
+
+        # ONE timestamp shared by all three. Calling self._row three times
+        # stamps three different datetime.now() values microseconds apart, so
+        # the recency scores differ in the last float bit — the rows are not
+        # actually tied and the id tiebreak never engages. A test for tie
+        # behaviour has to produce a real tie.
+        from datetime import datetime, timedelta, timezone
+
+        ts = (datetime.now(timezone.utc) - timedelta(days=10)).isoformat()
+        base = [
+            {
+                "id": i,
+                "decision": "same",
+                "created_at": ts,
+                "outcome": "kept",
+                "do_not_revert": False,
+                "tags": [],
+            }
+            for i in ("D3", "D1", "D2")
+        ]
+        # A fresh project dir per permutation: _setup_project mkdirs, so
+        # reusing one tmp_path raises FileExistsError on the second call.
+        seen = {
+            tuple(
+                d["id"] for d in self._mk(monkeypatch, tmp_path / f"perm{i}", list(p))
+            )
+            for i, p in enumerate(itertools.permutations(base))
+        }
+        assert len(seen) == 1, f"identical rows must rank identically; got {seen}"

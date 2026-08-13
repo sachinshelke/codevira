@@ -75,15 +75,33 @@ class TestReconcileCandidate:
         assert out == {"duplicates": [], "conflicts": []}
 
     def test_deterministic_order_independent(self):
+        """Two entries with EQUAL similarity, so the ``(-similarity, id)`` sort
+        is genuinely contested.
+
+        The earlier version of this test used texts of differing similarity:
+        the ranks were already distinct, nothing ever tied, and it would have
+        passed against a sort that fell back to input order. Identical texts
+        force the tiebreak to do the work.
+        """
         corpus = [
-            {"id": "D1", "decision": "use bcrypt to hash passwords"},
-            {"id": "D2", "decision": "bcrypt password hashing everywhere"},
+            {"id": "D9", "decision": "bcrypt password hashing"},
+            {"id": "D1", "decision": "bcrypt password hashing"},
+            {"id": "D5", "decision": "bcrypt password hashing"},
         ]
-        a = reconcile.reconcile_candidate("bcrypt password hashing", corpus)
-        b = reconcile.reconcile_candidate(
-            "bcrypt password hashing", list(reversed(corpus))
-        )
-        assert [d["id"] for d in a["duplicates"]] == [d["id"] for d in b["duplicates"]]
+        import itertools
+
+        seen = {
+            tuple(
+                d["id"]
+                for d in reconcile.reconcile_candidate(
+                    "bcrypt password hashing", list(p)
+                )["duplicates"]
+            )
+            for p in itertools.permutations(corpus)
+        }
+        assert seen == {
+            ("D1", "D5", "D9")
+        }, f"every permutation must rank identically; got {seen}"
 
 
 class TestBackwardCompat:
@@ -105,3 +123,126 @@ class TestBackwardCompat:
 
         with pytest.raises(ImportError):
             from mcp_server.storage import consensus_store  # noqa: F401
+
+
+class TestPickCanonical:
+    """Phase 29's second clause: given a duplicate cluster, return ONE
+    canonical record chosen deterministically, the union of what the merged
+    records carried, and an alias map so ``[[Dxxxx]]`` references still
+    resolve after the merge.
+
+    The winner order must be TOTAL. A cluster is merged independently on every
+    machine that holds it, so any tie broken by list position makes two
+    engineers converge on different files — the same defect fixed in
+    ``id_repair`` this release. The order here deliberately mirrors that one.
+
+    The committed text is always one of the input records. An LLM may suggest
+    a merged wording, but committing synthesised text would make the result a
+    function of sampling rather than of content, and convergence would be gone.
+    """
+
+    def _rec(self, id_, text, ts, host="h0", dnr=False, tags=None):
+        return {
+            "id": id_,
+            "decision": text,
+            "ts": ts,
+            "do_not_revert": dnr,
+            "tags": tags or [],
+            "origin": {"host_hash": host},
+        }
+
+    def test_earliest_record_wins_and_the_rest_alias_to_it(self):
+        cluster = [
+            self._rec("D9", "hash passwords with bcrypt", "2026-03-01T00:00:00Z"),
+            self._rec("D2", "hash passwords with bcrypt", "2026-01-01T00:00:00Z"),
+            self._rec("D5", "hash passwords with bcrypt", "2026-02-01T00:00:00Z"),
+        ]
+        out = reconcile.pick_canonical(cluster)
+        assert out["canonical_id"] == "D2", (
+            "the oldest is the id other decisions are most likely to reference, "
+            "so keeping it minimises alias churn"
+        )
+        assert out["aliases"] == {"D9": "D2", "D5": "D2"}
+
+    def test_a_protected_decision_is_never_merged_away(self):
+        """A do_not_revert record outranks an older unprotected one. Merging a
+        lock into an unlocked record would silently drop the protection."""
+        cluster = [
+            self._rec("D1", "never change the wire format", "2026-01-01T00:00:00Z"),
+            self._rec(
+                "D7", "never change the wire format", "2026-06-01T00:00:00Z", dnr=True
+            ),
+        ]
+        out = reconcile.pick_canonical(cluster)
+        assert out["canonical_id"] == "D7"
+        assert out["protected"] is True
+        assert out["aliases"] == {"D1": "D7"}
+
+    def test_two_protected_members_disagreeing_is_flagged_not_resolved(self):
+        """Two locks with different text is a real conflict. Pick
+        deterministically so the run is reproducible, but say so — silently
+        choosing one is exactly what the governing rule forbids."""
+        cluster = [
+            self._rec(
+                "D1", "never change the wire format", "2026-01-01T00:00:00Z", dnr=True
+            ),
+            self._rec(
+                "D2", "always change the wire format", "2026-02-01T00:00:00Z", dnr=True
+            ),
+        ]
+        out = reconcile.pick_canonical(cluster)
+        assert out["ambiguous"] is True
+        assert out["canonical_id"] == "D1"
+
+    def test_tags_and_provenance_are_unioned(self):
+        cluster = [
+            self._rec(
+                "D1", "x", "2026-01-01T00:00:00Z", host="h1", tags=["auth", "db"]
+            ),
+            self._rec(
+                "D2", "x", "2026-02-01T00:00:00Z", host="h2", tags=["db", "perf"]
+            ),
+        ]
+        out = reconcile.pick_canonical(cluster)
+        assert out["tags"] == [
+            "auth",
+            "db",
+            "perf",
+        ], "sorted union, so it is order-free"
+        assert {p.get("host_hash") for p in out["provenance"]} == {"h1", "h2"}
+
+    def test_output_is_identical_across_every_permutation_INCLUDING_ties(self):
+        """The assertion the older order test could not make.
+
+        Every record here is identical but for its id, so ts, writer and
+        content hash ALL tie — the case that finds a positional tiebreak. The
+        previous test used texts of differing similarity, so the sort never
+        contested anything and would have passed against a broken order.
+        """
+        import itertools
+
+        cluster = [
+            self._rec("D3", "same text", "2026-01-01T00:00:00Z"),
+            self._rec("D1", "same text", "2026-01-01T00:00:00Z"),
+            self._rec("D2", "same text", "2026-01-01T00:00:00Z"),
+        ]
+        results = {
+            (o["canonical_id"], tuple(sorted(o["aliases"].items())))
+            for o in (
+                reconcile.pick_canonical(list(p))
+                for p in itertools.permutations(cluster)
+            )
+        }
+        assert (
+            len(results) == 1
+        ), f"all 6 permutations must agree; got {len(results)} distinct outcomes"
+
+    def test_a_single_record_needs_no_merge(self):
+        out = reconcile.pick_canonical([self._rec("D1", "x", "2026-01-01T00:00:00Z")])
+        assert out["canonical_id"] == "D1"
+        assert out["aliases"] == {}
+        assert out["ambiguous"] is False
+
+    def test_empty_cluster_is_not_an_error(self):
+        out = reconcile.pick_canonical([])
+        assert out["canonical"] is None and out["aliases"] == {}

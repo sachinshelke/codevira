@@ -9,6 +9,46 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added — `reconcile.pick_canonical()`: the deterministic merge winner (Phase 29)
+
+The reconcile core could classify a pair as duplicate / conflict / distinct,
+but nothing decided **which record survives** a duplicate cluster. That pick is
+what both the cross-engineer Tier-1 reconcile (Phase 25) and any future
+merge surface consume, so it belongs in the shared core rather than in either
+caller, where it would drift.
+
+Returns the canonical record, the union of `tags` and `origin` provenance
+across the cluster, and an **alias map** `old_id → canonical_id` so `[[Dxxxx]]`
+references still resolve after a merge.
+
+The winner order is total, and every component is a pure function of the
+record:
+
+1. **protected first** — merging a `do_not_revert` record into an unprotected
+   one would silently drop the protection, so a lock outranks a plain decision
+   regardless of age;
+2. **earliest `ts`** — the oldest id is the one other decisions are most likely
+   to reference, so keeping it minimises alias churn;
+3. **writer id**, then **content hash**, then **id** — the components that keep
+   the order strict once the first two collide.
+
+Two or more *protected* members disagreeing on text sets `ambiguous`. That is a
+real conflict, not a duplicate: the pick stays reproducible, but the caller
+must escalate rather than merge. The committed text is always one of the
+inputs — an LLM may suggest a merged wording upstream, but committing
+synthesised text would make the result a function of sampling instead of
+content, and convergence would be gone.
+
+The id tiebreak is load-bearing, not belt-and-braces. Without it, records
+differing only by id hash identically, tie on every component, and `sorted`
+falls back to input position — the same defect fixed in `id_repair` this
+release. A permutation test over the full cluster caught it here *before* it
+shipped; the older order test could not have, because its two entries had
+different similarities so nothing was ever contested. That test now uses
+identical texts. *(Tests: `TestPickCanonical` (7), rewritten
+`test_deterministic_order_independent`.)*
+
+
 ## [4.0.1] — 2026-08-12
 
 Repairs team-shared memory (`init --shared` never actually worked), removes the

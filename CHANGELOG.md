@@ -9,6 +9,42 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Fixed — a decision and its negation were classified as duplicates
+
+`"never switch the package manager away from pnpm"` and the same sentence
+without `never` differ by one token, so pure set math scores them **Jaccard
+0.83** — comfortably over the 0.60 duplicate threshold.
+
+That is the worst false positive available in this codebase. The classifier is
+shared: Tier-1 would have aliased one meaning away, and **supersede-on-write
+would have retired `"never do X"` as a duplicate of `"do X"`**. A protected
+decision is guarded there, but an unprotected one was not.
+
+A negation present on one side and absent on the other is now a **conflict by
+construction**, whatever the similarity says. It stays fully deterministic — a
+set difference against a fixed word list, no model. The guard keys on
+*disagreement*, so two decisions that both say `never` are still duplicates.
+
+### Added — Tier-1 store clustering: `reconcile.cluster_store()` (Phase 25)
+
+Tier-0 (`id_repair`) resolves records that collide on an **id**. Tier-1
+resolves records that say the same **thing** in different words — two engineers
+recording the same decision independently, each with its own id.
+
+Returns `{merges, conflicts, scanned, truncated}`. Duplicate grouping is
+transitive via union-find, so A~C and B~C land in one cluster even when A and B
+alone would not classify as duplicates — otherwise the same decision survives
+twice under two canonical ids. Ordering is total before any pairing, so two
+engineers running it over the same store get the same plan.
+
+Conflicts come back as **data, never a silent pick**: the structural tier is
+authoritative and this one is assistive. The phase specified routing
+escalations through `consensus_store`, which was removed in 4.0 — returning
+them keeps this layer free of I/O and lets the caller choose the surface.
+
+The O(n²) scan is bounded at 2,000 records and the bound is **reported**
+(`truncated`) rather than silently applied.
+
 ### Added — `reconcile.pick_canonical()`: the deterministic merge winner (Phase 29)
 
 The reconcile core could classify a pair as duplicate / conflict / distinct,

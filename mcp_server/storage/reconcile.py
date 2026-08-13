@@ -17,14 +17,50 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 # Tunable thresholds. Duplicate path stays conservative; conflict path adds the
 # asymmetric-overlap detector with its own thresholds.
 _DUP_THRESHOLD = 0.60  # symmetric Jaccard ≥ 0.60 → duplicate
 _CONFLICT_OVERLAP_THRESHOLD = 0.60  # asymmetric overlap ≥ 0.60 → conflict
 _CONFLICT_MIN_SHARED_TOKENS = 3  # floor on |A∩B| to avoid 1- or 2-token noise
+
+#: A decision and its negation differ by ONE token, so pure set math scores
+#: them a near-perfect duplicate — "never switch away from pnpm" vs "switch
+#: away from pnpm" is Jaccard 0.83, comfortably over _DUP_THRESHOLD. That is
+#: the worst false positive available here: Tier-1 would alias one meaning
+#: away, and supersede-on-write would RETIRE "never do X" as a duplicate of
+#: "do X". A negation present on one side and absent on the other is therefore
+#: a conflict by construction, whatever the similarity says. Still fully
+#: deterministic: a set difference against a fixed list, no model involved.
+_NEGATIONS = frozenset(
+    {
+        "never",
+        "not",
+        "no",
+        "none",
+        "dont",
+        "doesnt",
+        "didnt",
+        "wont",
+        "cannot",
+        "cant",
+        "avoid",
+        "stop",
+        "without",
+        "disallow",
+        "forbid",
+        "prohibit",
+        "refuse",
+        "disable",
+        "deprecated",
+        "remove",
+    }
+)
 
 KIND_DUPLICATE = "duplicate"
 KIND_CONFLICT = "conflict"
@@ -129,7 +165,16 @@ def classify(a_text: str, b_text: str, *, b_protected: bool = False) -> dict[str
     ov = _overlap_coefficient(a, b)
     shared = len(a & b)
     sim = max(jac, ov)
-    if jac >= _DUP_THRESHOLD:
+    # A negation on exactly one side flips an apparent duplicate into a
+    # conflict — see _NEGATIONS. Symmetric difference, so two texts that BOTH
+    # negate stay duplicates: the guard keys on disagreement, not on the mere
+    # presence of a negation.
+    negation_disagrees = bool((a ^ b) & _NEGATIONS)
+    if negation_disagrees and (
+        jac >= _DUP_THRESHOLD or ov >= _CONFLICT_OVERLAP_THRESHOLD
+    ):
+        kind = KIND_CONFLICT
+    elif jac >= _DUP_THRESHOLD:
         kind = KIND_DUPLICATE
     elif (
         ov >= _CONFLICT_OVERLAP_THRESHOLD
@@ -319,4 +364,125 @@ def pick_canonical(
         "provenance": provenance,
         "protected": bool(winner.get(protected_field)),
         "ambiguous": len(protected_texts) > 1,
+    }
+
+
+# ─── Tier-1: cluster a whole store (Phase 25) ─────────────────────────────
+#
+# Tier-0 (``id_repair``) resolves records that collide on an ID. Tier-1
+# resolves records that say the same THING in different words — two engineers
+# recording the same decision independently, each with its own id.
+#
+# Governing rule from the phase: the structural tier is AUTHORITATIVE, this one
+# is ASSISTIVE. It may merge provably-safe duplicates; it must never
+# auto-resolve a contradiction. Conflicts come back as data for the caller to
+# surface — never a silent pick.
+#
+# Escalation returns data rather than writing anywhere. The phase specified
+# routing conflicts through ``consensus_store``, which was removed in 4.0, and
+# a pure function that hands back what it found is the better fit regardless:
+# it keeps this layer free of I/O and lets the caller choose the surface.
+
+#: Pairwise scan is O(n^2). Bounded so a large store cannot stall a caller —
+#: and the bound is REPORTED (``truncated``), because a truncated result that
+#: looks complete is worse than a slow one.
+_DEFAULT_MAX_RECORDS = 2000
+
+
+def cluster_store(
+    records: list[dict[str, Any]],
+    *,
+    id_field: str = "id",
+    text_field: str = "decision",
+    protected_field: str = "do_not_revert",
+    max_records: int = _DEFAULT_MAX_RECORDS,
+) -> dict[str, Any]:
+    """Group a store into duplicate clusters and surfaced conflicts.
+
+    Returns ``{merges, conflicts, scanned, truncated}``. Each merge carries the
+    ``pick_canonical`` result plus the member ids; each conflict carries the
+    id pair and its similarity, and is never merged.
+
+    Deterministic and order-free: records are sorted by the same total key
+    ``pick_canonical`` uses before any pairing, and clusters are grouped by
+    union-find, so the output does not depend on the order they arrived in.
+    Two engineers running this over the same store get the same plan.
+
+    Duplicate grouping is TRANSITIVE. If A duplicates B and B duplicates C,
+    all three land in one cluster even when A and C alone would not classify
+    as duplicates — otherwise the same decision survives twice under two
+    canonical ids, which is the outcome this exists to prevent.
+    """
+    valid = [r for r in records if isinstance(r, dict)]
+    ordered = sorted(valid, key=lambda r: (str(r.get(id_field) or ""),))
+    truncated = len(ordered) > max_records
+    if truncated:
+        logger.warning(
+            "reconcile.cluster_store: %d records exceeds the %d scan cap; "
+            "clustering the first %d by id. Raise max_records to cover the rest.",
+            len(ordered),
+            max_records,
+            max_records,
+        )
+        ordered = ordered[:max_records]
+
+    parent: dict[int, int] = {i: i for i in range(len(ordered))}
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def union(a: int, b: int) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[max(ra, rb)] = min(ra, rb)
+
+    conflicts: list[dict[str, Any]] = []
+    for i in range(len(ordered)):
+        for j in range(i + 1, len(ordered)):
+            a, b = ordered[i], ordered[j]
+            c = classify(
+                str(a.get(text_field) or ""),
+                str(b.get(text_field) or ""),
+                b_protected=bool(a.get(protected_field) or b.get(protected_field)),
+            )
+            if c["kind"] == KIND_DUPLICATE:
+                union(i, j)
+            elif c["kind"] == KIND_CONFLICT:
+                conflicts.append(
+                    {
+                        "ids": sorted(
+                            [str(a.get(id_field) or ""), str(b.get(id_field) or "")]
+                        ),
+                        "similarity": round(c["similarity"], 4),
+                        "overlap": round(c["overlap"], 4),
+                    }
+                )
+
+    groups: dict[int, list[dict[str, Any]]] = {}
+    for i, rec in enumerate(ordered):
+        groups.setdefault(find(i), []).append(rec)
+
+    merges: list[dict[str, Any]] = []
+    for members in groups.values():
+        if len(members) < 2:
+            continue
+        picked = pick_canonical(
+            members,
+            id_field=id_field,
+            text_field=text_field,
+            protected_field=protected_field,
+        )
+        picked["members"] = sorted(str(m.get(id_field) or "") for m in members)
+        merges.append(picked)
+
+    merges.sort(key=lambda m: str(m["canonical_id"] or ""))
+    conflicts.sort(key=lambda c: (c["ids"][0], c["ids"][1]))
+    return {
+        "merges": merges,
+        "conflicts": conflicts,
+        "scanned": len(ordered),
+        "truncated": truncated,
     }

@@ -14,11 +14,21 @@ from indexer.sqlite_graph import SQLiteGraph
 logger = logging.getLogger(__name__)
 
 # Global lock — prevents the background watcher and the background full-index
-# from rebuilding the index simultaneously. Both operations must acquire this
-# lock before touching the on-disk index. (Named for the ChromaDB writes it
-# originally guarded; those were deleted in v2.2.0, but the watcher-vs-
-# full-index mutual exclusion it provides is still load-bearing.)
-_chroma_write_lock = threading.Lock()
+# from rebuilding the index simultaneously. BOTH operations acquire it before
+# touching graph.db.
+#
+# Until 4.0.1 only the full-index side did. The watcher's acquisition sat
+# inside a branch that had been dead since v2.2.0, so a mutex documented as
+# mutual exclusion was held by exactly one of the two parties. That matters
+# because cmd_full_rebuild(full=True) CLEARS the graph before rebuilding, so a
+# node the watcher had just added could vanish mid-rebuild, and both writers
+# can collide on SQLite's own lock. The v401 import-edge migration calls
+# start_background_full_index() at server start, which is precisely when a
+# watcher is likely to be live.
+#
+# Renamed from _chroma_write_lock: the ChromaDB writes it was named for were
+# deleted in v2.2.0 and its comment had to apologise for the name.
+_index_write_lock = threading.Lock()
 
 # Atomic counters for background indexing progress
 _bg_files_indexed: int = 0
@@ -373,6 +383,18 @@ def _print_decisions(console, result: dict, verbose: bool) -> None:
         )
 
 
+def _locked_incremental(quiet: bool) -> None:
+    """Run an incremental reindex under the index write lock.
+
+    The watcher calls this rather than ``cmd_incremental`` directly so the
+    acquisition is a module-level, testable step instead of a line buried in a
+    closure inside ``start_background_watcher``. ``cmd_incremental`` does not
+    take the lock itself, so there is no re-entrancy here.
+    """
+    with _index_write_lock:
+        cmd_incremental(quiet=quiet)
+
+
 def cmd_full_rebuild(verbose: bool = False, quiet: bool = False):
     """Full rebuild from scratch.
 
@@ -630,13 +652,11 @@ def start_background_watcher(quiet: bool = True):
                 _watcher_logger.debug(
                     "File change detected — running incremental reindex"
                 )
-                # Note: cmd_incremental does NOT acquire _chroma_write_lock.
-                # It used to be documented as doing so, but that acquisition
-                # sat inside the `if collection is not None:` block — dead
-                # since v2.2.0 and deleted in 4.0.1. Behaviour here is
-                # unchanged (the lock has not been taken on this path for
-                # several releases); the comment was simply wrong.
-                cmd_incremental(quiet=quiet)
+                # Blocks if a background full rebuild is in flight — see
+                # _index_write_lock. Blocking is deliberate: skipping would
+                # drop the file change entirely, and the debounce timer means
+                # at most one reindex can ever be queued behind the lock.
+                _locked_incremental(quiet)
                 _watcher_logger.debug("Incremental reindex complete")
                 _watcher_circuit_record_success()
             except Exception as e:
@@ -736,8 +756,9 @@ def start_background_full_index(callback=None) -> "threading.Thread":
     """Start a full index rebuild in a background daemon thread.
 
     This is used by auto_init.py to build the index without blocking tool calls.
-    The ChromaDB write lock (_chroma_write_lock) prevents concurrent writes
-    with the file watcher.
+    Holds ``_index_write_lock`` for the whole rebuild, so a watcher-driven
+    incremental cannot interleave with it. Both sides acquire it since
+    4.0.1; before that only this one did.
 
     Args:
         callback: Optional callable invoked when indexing completes.
@@ -756,7 +777,7 @@ def start_background_full_index(callback=None) -> "threading.Thread":
             _bg_total_files = 0
 
         try:
-            with _chroma_write_lock:
+            with _index_write_lock:
                 # quiet=True: this thread lives inside the MCP server process,
                 # where stdout is the JSON-RPC transport. See cmd_full_rebuild.
                 cmd_full_rebuild(quiet=True)

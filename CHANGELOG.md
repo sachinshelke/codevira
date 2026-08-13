@@ -208,6 +208,36 @@ Behaviour is otherwise unchanged: the write still never fails, and a healthy
 index still skips the rebuild. *(Regression tests:
 `TestFtsWriteFailureIsRecoverable`, one per write path.)*
 
+### Fixed — the watcher and a background full-index could rebuild the graph at once
+
+The module lock documents itself as preventing *"the background watcher and
+the background full-index from rebuilding the index simultaneously — **both**
+operations must acquire this lock before touching the on-disk index."* Only
+one ever did. `start_background_full_index` took it; the watcher's reindex
+path explicitly did not, its acquisition having sat inside a branch dead since
+v2.2.0.
+
+A mutex held by one of two parties is not a mutex. Both write the same
+`graph.db`, and `cmd_full_rebuild(full=True)` **clears the graph before
+rebuilding** — so a node the watcher had just added could vanish mid-rebuild,
+and both writers can collide on SQLite's own lock.
+
+**This release made it more reachable, not less**: the new v4.0.1 import-edge
+migration calls `start_background_full_index()` on a daemon thread at server
+start, which is exactly when a watcher is likely to be live.
+
+The watcher now acquires the lock too, via a module-level
+`_locked_incremental()` — blocking on purpose, since skipping would drop the
+file change outright, and the debounce timer means at most one reindex can
+queue behind it.
+
+Renamed `_chroma_write_lock` → `_index_write_lock`. The ChromaDB writes it was
+named for were deleted in v2.2.0; the name outlived them by four minor
+versions and its own comment had to apologise for it — the same
+misleading-name trap as `codevira clean` and `indexer/chunker.py`, both fixed
+in this release. *(Regression tests:
+`TestWatcherAndFullIndexAreMutuallyExclusive`.)*
+
 ### Fixed — `index --verbose` emitted nothing at all
 
 `codevira index --verbose` advertises *"Emit per-file decisions (matched,

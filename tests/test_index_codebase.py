@@ -432,20 +432,20 @@ class TestStartBackgroundFullIndex:
     """Start a full index rebuild in a background daemon thread."""
 
     @pytest.fixture(autouse=True)
-    def _reset_chroma_write_lock(self):
+    def _reset_index_write_lock(self):
         """``start_background_full_index`` acquires the module-level
-        ``_chroma_write_lock`` before calling ``cmd_full_rebuild``. If a
+        ``_index_write_lock`` before calling ``cmd_full_rebuild``. If a
         prior test in this session leaked the lock (held it without
         releasing), the background thread blocks indefinitely and the
         mock never gets called → ``assert_called_once`` fails after 5s
         join timeout. Force-release here so this test is robust to
         upstream pollution."""
-        if idx_mod._chroma_write_lock.locked():
+        if idx_mod._index_write_lock.locked():
             try:
-                idx_mod._chroma_write_lock.release()
+                idx_mod._index_write_lock.release()
             except RuntimeError:
                 # Lock held by another thread — replace it
-                idx_mod._chroma_write_lock = threading.Lock()
+                idx_mod._index_write_lock = threading.Lock()
         yield
 
     def test_starts_daemon_thread(self):
@@ -1878,3 +1878,53 @@ class TestStatusRichCounts:
         assert set(counts) == {"nodes", "symbols", "edges", "decisions"}
         assert all(isinstance(v, int) for v in counts.values())
         assert counts["nodes"] >= 1  # src/a.py is a file node
+
+
+class TestWatcherAndFullIndexAreMutuallyExclusive:
+    """The module lock documents itself as preventing "the background watcher
+    and the background full-index from rebuilding the index simultaneously —
+    BOTH operations must acquire this lock before touching the on-disk index".
+
+    Only one ever did. ``start_background_full_index`` takes it; the watcher's
+    reindex path explicitly did not, with a comment noting the acquisition had
+    been dead since v2.2.0. A mutex held by one of two parties is not a mutex:
+    both write the same graph.db, and ``cmd_full_rebuild(full=True)`` CLEARS
+    the graph first, so a watcher-added node could be wiped mid-rebuild or hit
+    SQLite's "database is locked".
+
+    4.0.1 makes it more reachable, not less — the new v401 import-edge
+    migration calls ``start_background_full_index()`` on a daemon thread at
+    server start, which is exactly when a watcher may be running.
+    """
+
+    def test_watcher_reindex_waits_for_the_full_index_lock(self):
+        import threading
+        import time
+
+        calls: list[str] = []
+
+        with patch.object(
+            idx_mod, "cmd_incremental", side_effect=lambda **k: calls.append("ran")
+        ):
+            idx_mod._index_write_lock.acquire()
+            try:
+                t = threading.Thread(target=idx_mod._locked_incremental, args=(True,))
+                t.start()
+                time.sleep(0.25)
+                assert calls == [], (
+                    "the watcher must not reindex while a full rebuild holds "
+                    "the lock — that is the whole point of the lock"
+                )
+            finally:
+                idx_mod._index_write_lock.release()
+            t.join(timeout=5)
+
+        assert calls == ["ran"], "and it must proceed once the lock is free"
+
+    def test_the_lock_is_not_named_after_a_dependency_removed_in_v2_2(self):
+        """`_chroma_write_lock` guarded ChromaDB writes that were deleted in
+        v2.2.0. The name outlived them by four minor versions and its own
+        comment had to apologise for itself. Same misleading-name trap as
+        `codevira clean` and `indexer/chunker.py`, both renamed this release."""
+        assert not hasattr(idx_mod, "_chroma_write_lock")
+        assert isinstance(idx_mod._index_write_lock, type(threading.Lock()))

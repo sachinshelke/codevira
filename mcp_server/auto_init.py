@@ -272,7 +272,7 @@ def _run_background_init(
             files = []
 
         # Step 8: Build semantic search index (optional — requires [search] extras)
-        # Uses start_background_full_index() which holds _chroma_write_lock to prevent
+        # Uses start_background_full_index() which holds _index_write_lock to prevent
         # race conditions with the file watcher.
         try:
             from indexer.index_codebase import start_background_full_index

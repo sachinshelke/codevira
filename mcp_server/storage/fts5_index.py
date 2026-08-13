@@ -313,6 +313,44 @@ def invalidate_staleness_cache() -> None:
     _FRESH_CACHE.clear()
 
 
+def mark_stale(index_path: Path) -> None:
+    """Force the next :func:`staleness_check` to demand a rebuild.
+
+    Clearing :data:`_FRESH_CACHE` alone is not enough. ``staleness_check``
+    compares mtimes with a 1-second epsilon for filesystems that only carry
+    second-precision timestamps, so an index whose ``source_mtime`` is within
+    a second of ``decisions.jsonl`` reports itself fresh no matter how many
+    times the verdict is re-derived.
+
+    Dropping the ``source_mtime`` row instead makes the check take its
+    "never indexed" branch and return True unconditionally. Callers use this
+    when an incremental write failed and the index is known to be missing a
+    row that the JSONL already holds — without it, that row stays invisible
+    to search until some unrelated later write happens to push the mtime gap
+    past the epsilon.
+
+    Best-effort by design: this runs on an error path that must not raise
+    (the decision is already durable in the JSONL by the time we get here).
+    """
+    _FRESH_CACHE.pop(str(index_path), None)
+    if not index_path.is_file():
+        return  # a missing index is already "stale" to staleness_check
+    try:
+        conn = _connect(index_path)
+        try:
+            _ensure_tables(conn)
+            with conn:
+                conn.execute(
+                    f"DELETE FROM {_META_TABLE} WHERE key = ?", ("source_mtime",)
+                )
+        finally:
+            conn.close()
+    except Exception as exc:  # noqa: BLE001
+        # The memo is cleared regardless, so a later write that does clear
+        # the epsilon still recovers. Nothing here is worth failing over.
+        logger.warning("fts5_index.mark_stale: could not flag index: %s", exc)
+
+
 def staleness_check(decisions_path: Path, index_path: Path) -> bool:
     """Return True if the index is older than decisions.jsonl.
 

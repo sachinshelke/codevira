@@ -143,6 +143,32 @@ sanitized project path) now resolves these to their registration — classified
 entries **21 → 14**, nothing newly removable. *(Regression test:
 `TestSlugJoinFallback`.)*
 
+### Fixed — a failed index write could make a decision permanently unsearchable
+
+`record()` appends to `decisions.jsonl` first and updates the FTS5 index
+after, deliberately: the index update is best-effort and must never fail the
+write. So a failing index write was logged and swallowed — correct as far as
+it went, because the decision itself is already durable.
+
+Recovery was the hole. `staleness_check` compares mtimes with a **1-second
+epsilon**, for filesystems that only carry second-precision timestamps. A
+decision appended within that second of the last rebuild, whose index write
+then failed, left an index that reported itself **fresh** — so no rebuild
+fired and the row never appeared. Search simply did not have it. If nothing
+else was recorded for a while, that decision stayed invisible indefinitely,
+and the only symptom was one `WARNING` in a log nobody reads.
+
+Both write paths (`record`, `record_many`) now flag the index on failure via
+the new `fts5_index.mark_stale()`, which drops the `source_mtime` row so
+`staleness_check` takes its "never indexed" branch and rebuilds
+unconditionally on the next search. Clearing the memoised freshness verdict
+alone is **not** enough — the epsilon still hides the gap — and the
+regression test fails against that weaker fix.
+
+Behaviour is otherwise unchanged: the write still never fails, and a healthy
+index still skips the rebuild. *(Regression tests:
+`TestFtsWriteFailureIsRecoverable`, one per write path.)*
+
 ### Fixed — `reaffirm_decision` advertised a response field that does not exist
 
 The MCP tool description told every agent that codevira *"surfaces a

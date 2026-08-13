@@ -409,7 +409,17 @@ def record(
     try:
         fts5_index.add_decision(paths.fts5_path(), base_record)
     except Exception as exc:  # noqa: BLE001
-        logger.warning("decisions_store.record: FTS5 update failed: %s", exc)
+        # The decision is already durable in the JSONL, so per P9 we do not
+        # fail the write. But the index is now missing a row it should have,
+        # and staleness_check's 1-second epsilon can still call it fresh --
+        # leaving this decision unsearchable until some later write happens
+        # to clear the epsilon. Flag the index so the next search rebuilds.
+        logger.warning(
+            "decisions_store.record: FTS5 update failed (%s); flagging the "
+            "index stale so the next search rebuilds it",
+            exc,
+        )
+        fts5_index.mark_stale(paths.fts5_path())
 
     try:
         # Incrementally append one digest entry so RelevanceInject can
@@ -511,11 +521,15 @@ def record_many(
         try:
             fts5_index.add_decision(paths.fts5_path(), rec)
         except Exception as exc:  # noqa: BLE001
+            # Same contract as record(): never fail the write, but make sure
+            # the missing row cannot hide behind the staleness epsilon.
             logger.warning(
-                "decisions_store.record_many: FTS5 update failed for %s: %s",
+                "decisions_store.record_many: FTS5 update failed for %s (%s); "
+                "flagging the index stale so the next search rebuilds it",
                 did,
                 exc,
             )
+            fts5_index.mark_stale(paths.fts5_path())
         try:
             digest_rec = digest.digest_record(rec)
             jsonl_store.append(paths.digest_path(), digest_rec)

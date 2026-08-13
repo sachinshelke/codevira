@@ -541,3 +541,69 @@ class TestReaffirmDecisionTool:
         result = reaffirm_decision("D999999")
         assert result["success"] is False
         assert "not found" in result["error"]
+
+
+class TestFtsWriteFailureIsRecoverable:
+    """Phase 24, second half: a failed FTS5 index write must not leave a
+    decision permanently unsearchable.
+
+    ``record()`` appends to decisions.jsonl FIRST and only then updates the
+    index, deliberately — line 403 there is explicit that the index update is
+    best-effort and must "never fail the write" (P9). The decision is durable
+    the moment the append returns, so raising afterwards would be worse than
+    the bug: the caller would believe the record failed, retry, and duplicate
+    it.
+
+    The real defect is recovery. ``staleness_check`` compares mtimes with a
+    1-second epsilon (fts5_index.py:350) for filesystems with second-precision
+    timestamps. A decision appended within that second of the last rebuild,
+    whose index write then fails, leaves an index that reports itself FRESH —
+    so no rebuild fires and the row never appears. If nothing else is recorded
+    for a while, that decision is invisible to search indefinitely.
+    """
+
+    def test_decision_is_searchable_after_a_failed_index_write(
+        self, project, monkeypatch
+    ):
+        from mcp_server.storage import fts5_index
+
+        # A first decision, indexed normally: this is what stamps a RECENT
+        # source_mtime into the index meta and arms the 1-second epsilon.
+        decisions_store.record(decision="adopt structured logging everywhere")
+        assert decisions_store.search(
+            "structured logging", limit=5
+        ), "precondition: a healthy index finds the first decision"
+
+        def _boom(*_a, **_k):
+            raise RuntimeError("disk full")
+
+        monkeypatch.setattr(fts5_index, "add_decision", _boom)
+        decisions_store.record(decision="pin the tokenizer to a fixed revision")
+        monkeypatch.undo()
+
+        # No sleep: the whole test runs well inside the epsilon, which is
+        # precisely the window the bug lives in.
+        hits = decisions_store.search("tokenizer fixed revision", limit=5)
+        assert any("tokenizer" in (h.get("decision") or "") for h in hits), (
+            "a decision whose index write failed must still be reachable via "
+            "search — the index has to know it is stale and rebuild"
+        )
+
+    def test_record_many_also_recovers(self, project, monkeypatch):
+        from mcp_server.storage import fts5_index
+
+        decisions_store.record(decision="adopt structured logging everywhere")
+        assert decisions_store.search("structured logging", limit=5)
+
+        def _boom(*_a, **_k):
+            raise RuntimeError("disk full")
+
+        monkeypatch.setattr(fts5_index, "add_decision", _boom)
+        decisions_store.record_many([{"decision": "vendor the wasm toolchain"}])
+        monkeypatch.undo()
+
+        hits = decisions_store.search("vendor wasm toolchain", limit=5)
+        assert any("wasm" in (h.get("decision") or "") for h in hits), (
+            "record_many carries the same best-effort index write and needs "
+            "the same recovery"
+        )

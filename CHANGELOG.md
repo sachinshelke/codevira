@@ -208,6 +208,35 @@ Behaviour is otherwise unchanged: the write still never fails, and a healthy
 index still skips the rebuild. *(Regression tests:
 `TestFtsWriteFailureIsRecoverable`, one per write path.)*
 
+### Fixed — `index --verbose` emitted nothing at all
+
+`codevira index --verbose` advertises *"Emit per-file decisions (matched,
+skipped + reason). Use to diagnose silent 0-chunks."* It emitted nothing. The
+prints lived inside the chunk/embed block gated on `_check_search_deps()`,
+constant-`False` since v2.2.0 — so the flag had been inert for four minor
+versions, and **this release's own dead-code removal deleted that block**,
+making it permanent.
+
+It is a *diagnostic* flag. You reach for it precisely when the index came
+back empty and you need to know why — and it told you nothing, so a
+misconfigured `watched_dirs` looked identical to a working one.
+
+Re-implemented against the graph walker, which is the only place that knows
+why a file was passed over. Each file now reports as indexed, or skipped with
+its reason: unsupported extension, parser returned no node, already in the
+graph, or unreadable.
+
+Excluded directories are **counted, not listed**. Measured on this repo,
+listing them per-file produced 31,354 lines — 30,802 of them `.venv` and
+`.git` — burying the 552 that matter. They now collapse to one line each
+(`30,151 file(s) excluded directory: .venv`), which is still the answer to
+"where did my files go" at 568 lines instead of 31k.
+
+Costs nothing when unused: the walker only records decisions when asked, and
+`quiet` still wins so a background rebuild can never write into a live stdio
+JSON-RPC stream. *(Regression tests: `TestVerboseFileDecisions` (4),
+`TestVerboseActuallyPrints` (3).)*
+
 ### Added — `do_not_revert` soft-expire is finally surfaced
 
 v3.2.0 shipped `compute_dnr_soft_expire()` and three docstrings stating the

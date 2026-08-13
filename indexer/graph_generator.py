@@ -207,7 +207,10 @@ def generate_graph_node(file_path: str, project_root: str) -> dict[str, Any]:
 
 
 def generate_graph_sqlite(
-    project_root: str, db_path: str | None = None, full: bool = False
+    project_root: str,
+    db_path: str | None = None,
+    full: bool = False,
+    collect_decisions: bool = False,
 ) -> dict[str, Any]:
     if not db_path:
         from mcp_server.paths import get_data_dir
@@ -251,6 +254,23 @@ def generate_graph_sqlite(
         }
     )
 
+    def _rel(p: Path, root: Path) -> str:
+        try:
+            return str(p.relative_to(root))
+        except ValueError:
+            return str(p)
+
+    def _note(path: str, verdict: str, reason: str) -> None:
+        """Record one per-file decision for ``index --verbose``.
+
+        Only called when the caller asked, so a normal walk over a large repo
+        pays nothing. This is the diagnostic the flag has always advertised:
+        the walker is the only place that knows WHY a file was passed over,
+        and a silent zero-node index is almost always one of these reasons.
+        """
+        if collect_decisions:
+            decisions.append({"path": path, "verdict": verdict, "reason": reason})
+
     def _walk_sources(root: Path, extensions: list[str]) -> list[str]:
         """Walk project_root safely: skip known-bad dirs, ignore OSError on walk."""
         collected: list[str] = []
@@ -260,19 +280,33 @@ def generate_graph_sqlite(
                     if not p.is_file():
                         continue
                     # Bail on any path that contains a skip dir anywhere
-                    if any(part in _SKIP_DIRS for part in p.parts):
+                    hit = next((part for part in p.parts if part in _SKIP_DIRS), None)
+                    if hit is not None:
+                        # Counted, never listed. On this repo alone that is
+                        # 30,802 files across .venv and .git — a per-file line
+                        # each would bury the ~550 that matter.
+                        if collect_decisions:
+                            excluded_dirs[hit] = excluded_dirs.get(hit, 0) + 1
                         continue
                     if p.suffix not in extensions:
+                        _note(
+                            _rel(p, root),
+                            "skipped",
+                            f"unsupported extension: {p.suffix or '(none)'}",
+                        )
                         continue
                     collected.append(str(p.relative_to(root)))
-                except (OSError, ValueError):
+                except (OSError, ValueError) as exc:
                     # Path can't be stat'd, is outside root, or symlink loop
+                    _note(_rel(p, root), "skipped", f"unreadable: {exc}")
                     continue
         except OSError:
             # rglob itself hit EINTR or permission error at some level
             pass
         return collected
 
+    decisions: list[dict[str, str]] = []
+    excluded_dirs: dict[str, int] = {}
     all_exts = list(TS_EXTENSION_MAP.keys()) + [".py"]
     file_paths = _walk_sources(Path(project_root), all_exts)
 
@@ -288,10 +322,14 @@ def generate_graph_sqlite(
         existing = db.get_node(node_id)
         if existing:
             skipped += 1
+            _note(fp, "skipped", "already in the graph (unchanged)")
             continue
 
         node_data = generate_graph_node(fp, project_root)
         if not node_data:
+            # The silent case the flag exists for: the file matched every
+            # filter and still produced no node.
+            _note(fp, "skipped", "parser returned no node")
             continue
 
         db.add_node(
@@ -310,6 +348,7 @@ def generate_graph_sqlite(
         )
         added += 1
         files_added.append(fp)
+        _note(fp, "indexed", "added as a file node")
 
     # Build the full set of project file paths (used by Phases 2 and 4)
     all_node_paths = {
@@ -441,6 +480,9 @@ def generate_graph_sqlite(
         "symbols_added": symbols_added,
         "call_edges_added": call_edges_added,
         "files_added": files_added,
+        # Both empty unless collect_decisions=True — see _note.
+        "decisions": decisions,
+        "excluded_dirs": excluded_dirs,
     }
 
 

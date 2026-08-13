@@ -565,6 +565,74 @@ class TestCmdFullRebuild:
         mock_db.close.assert_called_once()
 
 
+class TestVerboseActuallyPrints:
+    """`--verbose` reaches cmd_full_rebuild / cmd_incremental as a parameter
+    both functions accepted and ignored. Wiring the collector is only half the
+    fix — the flag is only honoured once a user can SEE the decisions."""
+
+    def _decisions(self):
+        return {
+            "nodes_total": 1,
+            "edges_added": 0,
+            "decisions": [
+                {
+                    "path": "notes.txt",
+                    "verdict": "skipped",
+                    "reason": "unsupported extension: .txt",
+                },
+                {
+                    "path": "app/main.py",
+                    "verdict": "indexed",
+                    "reason": "added as a file node",
+                },
+            ],
+        }
+
+    def test_full_rebuild_verbose_prints_each_decision(self, project_env, capsys):
+        with patch(
+            "indexer.graph_generator.generate_graph_sqlite",
+            return_value=self._decisions(),
+        ) as mock_graph, patch("indexer.index_codebase.SQLiteGraph"):
+            from indexer.index_codebase import cmd_full_rebuild
+
+            cmd_full_rebuild(verbose=True)
+
+        assert (
+            mock_graph.call_args.kwargs.get("collect_decisions") is True
+        ), "the walker only records decisions when asked"
+        out = capsys.readouterr().out
+        assert "notes.txt" in out and "unsupported extension" in out
+        assert "app/main.py" in out
+
+    def test_without_verbose_nothing_extra_is_printed(self, project_env, capsys):
+        with patch(
+            "indexer.graph_generator.generate_graph_sqlite",
+            return_value=self._decisions(),
+        ) as mock_graph, patch("indexer.index_codebase.SQLiteGraph"):
+            from indexer.index_codebase import cmd_full_rebuild
+
+            cmd_full_rebuild()
+
+        assert not mock_graph.call_args.kwargs.get("collect_decisions")
+        assert "notes.txt" not in capsys.readouterr().out
+
+    def test_quiet_wins_over_verbose_for_the_background_thread(
+        self, project_env, capsys
+    ):
+        """quiet=True exists because start_background_full_index runs this on a
+        daemon thread where stdout IS the JSON-RPC transport. A verbose print
+        there would corrupt a live stdio client, so quiet must dominate."""
+        with patch(
+            "indexer.graph_generator.generate_graph_sqlite",
+            return_value=self._decisions(),
+        ), patch("indexer.index_codebase.SQLiteGraph"):
+            from indexer.index_codebase import cmd_full_rebuild
+
+            cmd_full_rebuild(verbose=True, quiet=True)
+
+        assert capsys.readouterr().out == ""
+
+
 # ---------------------------------------------------------------------------
 # cmd_incremental
 # ---------------------------------------------------------------------------

@@ -755,3 +755,90 @@ class TestFullRebuildClearsGraph:
         second = generate_graph_sqlite(proj, db_path)
         assert second["nodes_removed"] >= 1
         assert second["nodes_total"] == first["nodes_total"] - 1
+
+
+class TestVerboseFileDecisions:
+    """`codevira index --verbose` promises "Emit per-file decisions (matched,
+    skipped + reason). Use to diagnose silent 0-chunks." It emitted nothing.
+
+    The prints it used to make lived inside the chunk/embed block gated on
+    `_check_search_deps()`, constant-False since v2.2.0 — so the flag had been
+    inert for four minor versions, and 4.0.1's dead-code removal deleted the
+    block outright, making it permanent. A user hitting a zero-node index
+    reaches for the one flag built to explain it and learns nothing.
+
+    The decision belongs in the walker, which is the only place that knows WHY
+    a file was passed over.
+    """
+
+    def _project(self, tmp_path):
+        (tmp_path / "app").mkdir()
+        (tmp_path / "app" / "main.py").write_text("def go():\n    return 1\n")
+        (tmp_path / "notes.txt").write_text("not source\n")
+        (tmp_path / "node_modules" / "pkg").mkdir(parents=True)
+        (tmp_path / "node_modules" / "pkg" / "index.py").write_text("x = 1\n")
+        return tmp_path
+
+    def _decisions(self, tmp_path):
+        from indexer.graph_generator import generate_graph_sqlite
+
+        res = generate_graph_sqlite(
+            str(self._project(tmp_path)),
+            str(tmp_path / "graph.db"),
+            full=True,
+            collect_decisions=True,
+        )
+        return {d["path"]: d for d in res["decisions"]}
+
+    def test_unsupported_extension_is_reported_with_a_reason(self, tmp_path):
+        d = self._decisions(tmp_path)
+        assert "notes.txt" in d, (
+            "the single most common cause of a zero-node index is a file the "
+            "walker does not consider source — it must say so"
+        )
+        assert d["notes.txt"]["verdict"] == "skipped"
+        assert "extension" in d["notes.txt"]["reason"]
+
+    def test_excluded_directories_are_AGGREGATED_not_listed_per_file(self, tmp_path):
+        """Per-file lines for excluded directories drown the signal.
+
+        Measured on the codevira repo itself: listing them individually
+        produced 31,354 lines, 30,802 of which were .venv and .git — 98%
+        noise around the 552 lines a user actually needs. A flag that emits
+        30k lines of "yes, .venv is excluded" is barely more useful than the
+        no-op it replaced, so those collapse to one count per directory.
+        """
+        from indexer.graph_generator import generate_graph_sqlite
+
+        res = generate_graph_sqlite(
+            str(self._project(tmp_path)),
+            str(tmp_path / "graph.db"),
+            full=True,
+            collect_decisions=True,
+        )
+        paths = {d["path"] for d in res["decisions"]}
+        assert not any(
+            "node_modules" in p for p in paths
+        ), "files inside an excluded directory must not each get a line"
+        assert res["excluded_dirs"]["node_modules"] >= 1, (
+            "but the count must still be reported — a user who wonders where "
+            "their files went needs to see that a directory swallowed them"
+        )
+
+    def test_an_indexed_file_is_reported_too(self, tmp_path):
+        d = self._decisions(tmp_path)
+        assert d["app/main.py"]["verdict"] == "indexed", (
+            "'matched' is half the diagnosis — a user needs to see what DID "
+            "get in, not only what did not"
+        )
+
+    def test_decisions_are_not_collected_unless_asked(self, tmp_path):
+        from indexer.graph_generator import generate_graph_sqlite
+
+        res = generate_graph_sqlite(
+            str(self._project(tmp_path)), str(tmp_path / "graph.db"), full=True
+        )
+        assert res.get("decisions") == [], (
+            "walking a large repo must not pay for a diagnostic nobody asked "
+            "for; the default stays empty"
+        )

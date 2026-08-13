@@ -348,18 +348,42 @@ def _get_requested_files(file_paths: list[str]) -> list[tuple[str, str]]:
     return requested
 
 
+def _print_decisions(console, result: dict, verbose: bool) -> None:
+    """Render the per-file decisions behind ``index --verbose``.
+
+    Gates on ``verbose`` itself rather than trusting the result to be empty
+    when nobody asked. The walker only fills ``decisions`` when told to, so
+    those two conditions agree today — but a helper that prints whatever it
+    is handed will leak the moment some other caller passes a populated
+    result, and that leak lands on stdout. ``console`` already carries
+    ``quiet``, which is what keeps a background rebuild out of a live stdio
+    JSON-RPC stream.
+    """
+    if not verbose:
+        return
+    for d in result.get("decisions") or []:
+        if d["verdict"] == "indexed":
+            console.print(f"  [green]+[/green] {d['path']}")
+        else:
+            console.print(f"  [dim]-[/dim] {d['path']}  [dim]{d['reason']}[/dim]")
+    excluded = result.get("excluded_dirs") or {}
+    for name, count in sorted(excluded.items(), key=lambda kv: -kv[1]):
+        console.print(
+            f"  [dim]-[/dim] {count:,} file(s)  [dim]excluded directory: {name}[/dim]"
+        )
+
+
 def cmd_full_rebuild(verbose: bool = False, quiet: bool = False):
     """Full rebuild from scratch.
 
     Args:
-        verbose: accepted, currently a no-op. It used to emit per-file
-                 decisions (matched / skipped + reason) for diagnosing silent
-                 0-chunk results (Bug H, 2026-05-17, P10) — but every one of
-                 those prints lived in the chunk/embed block below the
-                 ``_check_search_deps()`` early return, so the flag has done
-                 nothing since v2.2.0 and the block was deleted in 4.0.1. Kept
-                 in the signature because ``mcp_server/cli.py`` passes it.
-                 Re-implementing it against the graph builder is open work.
+        verbose: emit one line per file — matched, or skipped with the
+                 reason — so a silent 0-node index can be diagnosed. This
+                 originally lived in the chunk/embed block below the
+                 ``_check_search_deps()`` early return, so it did nothing from
+                 v2.2.0 until 4.0.1 re-implemented it against the graph
+                 walker, which is the only place that knows WHY a file was
+                 passed over. Suppressed by ``quiet`` (see below).
         quiet: suppress ALL console output. Required for background /
                in-process invocations — see below.
 
@@ -401,7 +425,9 @@ def cmd_full_rebuild(verbose: bool = False, quiet: bool = False):
         str(_project_root()),
         str(get_data_dir() / "graph" / "graph.db"),
         full=True,
+        collect_decisions=verbose and not quiet,
     )
+    _print_decisions(console, result, verbose)
     logger.info(
         "Full rebuild (graph-only) complete: %s nodes, %s edges.",
         result.get("nodes_total", 0),
@@ -423,10 +449,9 @@ def cmd_incremental(
         quiet: suppress all output (git hook usage).
         file_paths: list of paths to re-index (caller-scoped). If None,
                     scans the whole project for changed files.
-        verbose: accepted, currently a no-op — this function has never
-                 referenced it (the Bug H per-file logging landed only in
-                 cmd_full_rebuild). Kept in the signature because
-                 ``mcp_server/cli.py`` passes it to both commands.
+        verbose: emit one line per file — matched, or skipped with the
+                 reason. Wired in 4.0.1; this function had never referenced
+                 the parameter it accepted.
     """
     from indexer.graph_generator import generate_graph_sqlite
     from rich.console import Console
@@ -513,7 +538,12 @@ def cmd_incremental(
         indexed_any = True
 
     if indexed_any:
-        generate_graph_sqlite(str(_project_root()), str(db.db_path))
+        result = generate_graph_sqlite(
+            str(_project_root()),
+            str(db.db_path),
+            collect_decisions=verbose and not quiet,
+        )
+        _print_decisions(console, result, verbose)
 
     db.close()
     return 0

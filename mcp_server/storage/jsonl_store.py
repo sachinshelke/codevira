@@ -364,6 +364,16 @@ def _compute_next_id_locked(
     Amendment records (carrying ``_amendment_to_id``) re-use an existing id
     and are skipped. A full O(n) scan per append is acceptable here: these
     stores are bounded and ``append_with_generated_id`` already fsyncs.
+
+    4.0.1: that skip tests the field for TRUTHINESS, not ``is not None``. A
+    present-but-empty pointer borrows nothing — there is no earlier record to
+    borrow from — so the record owns its id and must count toward the max.
+    Skipping it dropped a live id out of the max and let the very next mint
+    re-issue it: the same clobbering this function was written to prevent,
+    reached through a different door. ``id_repair`` has always classified by
+    truthiness; the two now agree, which
+    ``tests/storage/test_jsonl_store.py::TestAmendmentPredicateAgreesWithIdRepair``
+    pins from both sides.
     """
     if not path.is_file() or path.stat().st_size == 0:
         return f"{prefix}{'0' * (width - 1)}1"
@@ -380,7 +390,7 @@ def _compute_next_id_locked(
                 continue
             if not isinstance(rec, dict):
                 continue
-            if rec.get("_amendment_to_id") is not None:
+            if rec.get("_amendment_to_id"):
                 continue  # amendment — id is borrowed from an earlier record
             val = rec.get(id_field)
             if not isinstance(val, str) or not val.startswith(prefix):

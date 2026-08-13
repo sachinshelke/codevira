@@ -208,6 +208,37 @@ Behaviour is otherwise unchanged: the write still never fails, and a healthy
 index still skips the rebuild. *(Regression tests:
 `TestFtsWriteFailureIsRecoverable`, one per write path.)*
 
+### Fixed — a record with an empty amendment pointer could have its id re-issued
+
+`_compute_next_id_locked` mints the next id as `max(id) + 1`, skipping
+amendment records because an amendment re-uses an id borrowed from an earlier
+record. It decided that with `_amendment_to_id is not None`. `id_repair`
+decides the same question by **truthiness**, and the two disagreed on a
+present-but-empty pointer.
+
+A record carrying `_amendment_to_id: ""` borrows nothing — there is no earlier
+record to borrow from — so it is a base that owns its id. jsonl_store skipped
+it anyway, dropping a live id out of the max, and the very next mint re-issued
+it. That is the exact failure the function's own docstring exists to prevent:
+*"`last id + 1` re-issued an id that already existed earlier in the file,
+silently clobbering that record (incl. `do_not_revert` decisions)."*
+Reproduced: with one such record holding `D000001`, the next mint returned
+`D000001`.
+
+It also created work for the layer below — two bases sharing an id is exactly
+the collision `id_repair.normalize()` then has to repair, so the writer was
+manufacturing the problem the repair pass cleans up.
+
+jsonl_store now tests truthiness, matching `id_repair`. The two modules are
+deliberately kept apart — `id_repair` imports almost nothing, and that purity
+is load-bearing for its convergence proof — so the agreement is pinned by a
+test that reads each module's classification from **behaviour** rather than
+re-implementing either rule.
+
+**Latent, not live**: no writer in the codebase emits a falsy-but-present
+pointer. One hand-edited JSONL away. *(Regression tests:
+`TestAmendmentPredicateAgreesWithIdRepair`.)*
+
 ### Fixed — Cursor and per-project Claude Code could still bind to the wrong project
 
 D000126 — *"a session in agent-mcp wrote its decisions into Agentic/LH"* — was

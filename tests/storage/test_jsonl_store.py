@@ -12,6 +12,7 @@ Covers:
 
 from __future__ import annotations
 
+import json
 import threading
 from pathlib import Path
 
@@ -580,3 +581,91 @@ class TestReadRecent:
 
     def test_missing_file_returns_empty(self, tmp_path: Path) -> None:
         assert jsonl_store.read_recent(tmp_path / "nope.jsonl", limit=10) == []
+
+
+class TestAmendmentPredicateAgreesWithIdRepair:
+    """``_compute_next_id_locked`` skips amendment records when computing
+    ``max(id) + 1``, because an amendment re-uses an id it borrowed from an
+    earlier record. It decided that with ``_amendment_to_id is not None``.
+    ``id_repair`` decides the same question by TRUTHINESS.
+
+    They disagree on a present-but-falsy value. ``{"_amendment_to_id": ""}``
+    borrows nothing — there is no earlier record to borrow from — so it is a
+    base holding a real id. jsonl_store skipped it anyway, which drops its id
+    out of the max and lets the very next mint re-issue it. That is exactly
+    the failure this function's docstring exists to prevent: "``last id + 1``
+    re-issued an id that already existed earlier in the file, silently
+    clobbering that record (incl. ``do_not_revert`` decisions)".
+
+    The two modules are kept apart on purpose — ``id_repair`` imports almost
+    nothing, and that purity is load-bearing for its convergence proof — so
+    the agreement is enforced by this test rather than by a shared import.
+    """
+
+    _FALSY = ["", None, 0, False]
+
+    def test_a_falsy_amendment_pointer_does_not_get_its_id_reissued(self, tmp_path):
+        path = tmp_path / "decisions.jsonl"
+        path.write_text(
+            json.dumps(
+                {
+                    "id": "D000001",
+                    "decision": "keep the wire format",
+                    "_amendment_to_id": "",
+                }
+            )
+            + "\n"
+        )
+        minted = jsonl_store.append_with_generated_id(path, {"decision": "next"})
+        assert minted != "D000001", (
+            "the existing record holds D000001; re-issuing it silently "
+            "clobbers that record in the merged view"
+        )
+
+    def test_a_real_amendment_pointer_is_still_skipped(self, tmp_path):
+        """The skip itself is correct and must survive — an amendment really
+        does borrow its id, so counting it would inflate the max and leave
+        gaps."""
+        path = tmp_path / "decisions.jsonl"
+        path.write_text(
+            json.dumps({"id": "D000001", "decision": "base"})
+            + "\n"
+            + json.dumps(
+                {"id": "D000001", "_amendment_to_id": "D000001", "outcome": "kept"}
+            )
+            + "\n"
+        )
+        assert (
+            jsonl_store.append_with_generated_id(path, {"decision": "x"}) == "D000002"
+        )
+
+    def test_both_modules_classify_the_same_records_identically(self, tmp_path):
+        """The property that actually matters: whatever "is an amendment"
+        means, it must mean the same thing on both sides of the store.
+
+        jsonl_store's answer is read from BEHAVIOUR, not from re-implementing
+        its predicate here — a test that recomputes the rule it is checking
+        proves only that the test agrees with itself.
+        """
+        from mcp_server.storage import id_repair
+
+        for i, val in enumerate(self._FALSY + ["D000005", "D999999"]):
+            rec = {"id": "D000005", "decision": "x", "_amendment_to_id": val}
+
+            # jsonl_store: does the record's id count toward max(id)+1?
+            # It does exactly when jsonl_store considers it a base.
+            path = tmp_path / f"store{i}.jsonl"
+            path.write_text(json.dumps(rec) + "\n")
+            minted = jsonl_store.append_with_generated_id(path, {"decision": "next"})
+            jsonl_says_base = minted == "D000006"
+
+            # id_repair: two records sharing an id collide only if BOTH are
+            # bases, so a non-empty result means it read this shape as a base.
+            pair = [dict(rec), dict(rec, decision="y")]
+            repair_says_base = bool(id_repair.find_collisions(pair))
+
+            assert jsonl_says_base == repair_says_base, (
+                f"_amendment_to_id={val!r}: jsonl_store says "
+                f"base={jsonl_says_base}, id_repair says base={repair_says_base} "
+                "— they disagree about whether this record owns its id"
+            )

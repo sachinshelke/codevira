@@ -143,6 +143,45 @@ sanitized project path) now resolves these to their registration — classified
 entries **21 → 14**, nothing newly removable. *(Regression test:
 `TestSlugJoinFallback`.)*
 
+### Fixed — the cross-engineer id repair could diverge between two machines
+
+`id_repair.normalize()` is the deterministic floor under team-shared memory:
+when two engineers each append a decision that happens to mint the same id,
+it picks a winner by a total order **every machine computes identically**, so
+both checkouts end up byte-identical. The module's own contract promised
+*"the final content hash guarantees a strict order even when ts and writer
+collide."* It did not.
+
+`_content_hash` deliberately **excludes** the amendment field — that
+exclusion is what makes `normalize` idempotent. But the winner order used
+that same hash as its last tiebreaker. Two *base* records differing only in a
+present-but-falsy `_amendment_to_id` (`""` or `None` — both falsy, so both
+are bases) hashed identically and tied on every component. `sorted` is
+stable, so the tie fell through to **input order**: two machines merging the
+same records in different orders produced different files. Exactly the
+divergence this layer exists to prevent.
+
+The order key gains a fourth component, `_tiebreak_hash`, which hashes
+everything except the id itself — putting the amendment field back and making
+the order genuinely total. Idempotency is untouched, because this hash never
+mints an id (`_mint_loser_id` still goes through `_content_hash`), and
+re-normalizing only changes the id, which it excludes.
+
+`ORDER_VERSION` is **2 → 3**, per the module's own rule that winner-selection
+changes must be surfaced rather than silently disagreed over. Only inputs
+that were previously *tied* can change winner; every other input sorts
+exactly as before.
+
+**Latent, not live** — no writer in the codebase emits a falsy-but-present
+amendment pointer, so no existing store is affected. It was one hand-edited
+JSONL or one future writer away.
+
+Found by writing the randomized property test Phase 25's done-when always
+asked for, which is now in the suite: the hand-written fixtures gave every
+record a distinct `ts`, so the tiebreaker was never exercised. Verified over
+3,000 generated collision fixtures — 0 idempotency failures, 0
+order-dependence failures. *(Regression tests: `TestOrderKeyIsTotal`.)*
+
 ### Fixed — a failed index write could make a decision permanently unsearchable
 
 `record()` appends to `decisions.jsonl` first and updates the FTS5 index

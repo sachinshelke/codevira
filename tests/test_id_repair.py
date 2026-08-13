@@ -209,3 +209,88 @@ class TestNormalize:
         ids = {r["id"] for r in out["records"]}
         assert len(ids) == 3, "all three distinct decisions must survive"
         assert "D000120" in ids  # the winner kept it
+
+
+class TestOrderKeyIsTotal:
+    """The module contract (id_repair.py:28-32) promises a TOTAL order:
+    "the final content hash guarantees a strict order even when ts and writer
+    collide". It did not.
+
+    ``_content_hash`` deliberately excludes ``amendment_field`` so that
+    re-normalizing an already-renumbered record yields the same hash — that
+    exclusion is what makes ``normalize`` idempotent. But ``_order_key`` then
+    used that same hash as its final tiebreaker. Two BASE records differing
+    only in a present-but-falsy ``_amendment_to_id`` (both base, since the
+    contract keys on TRUTHINESS) therefore tie on all three components, and
+    ``distinct.sort`` is stable — so input order decided the winner.
+
+    Two engineers merging the same two records in different orders got
+    different files. That is precisely the divergence Tier-0 exists to stop.
+    """
+
+    def test_records_differing_only_in_a_falsy_amendment_field_converge(self):
+        a = {"decision": "c", "id": "D000100", "origin": {"host_hash": "h0"}}
+        b = {
+            "_amendment_to_id": "",
+            "decision": "c",
+            "id": "D000100",
+            "origin": {"host_hash": "h0"},
+        }
+
+        forward = id_repair.normalize([dict(a), dict(b)])["records"]
+        reverse = id_repair.normalize([dict(b), dict(a)])["records"]
+
+        assert _canon(forward) == _canon(reverse), (
+            "the winner must not depend on which order the two machines "
+            "happened to merge these records in"
+        )
+
+    def test_convergence_over_shuffled_random_collision_fixtures(self):
+        """Phase 25's done-when, as written: an idempotency + convergence
+        property test over SHUFFLED RANDOM collision fixtures.
+
+        The hand-written fixtures elsewhere in this file give every record a
+        distinct ``ts``, so the sort key is never actually contested and the
+        tiebreaker is never exercised. This generator deliberately produces
+        order-key TIES — records identical but for a falsy amendment field,
+        byte-identical duplicates, and missing timestamps — which is how the
+        bug above was found.
+        """
+        import random
+
+        rng = random.Random(20260813)
+        ids = ["D000100", "D000101", "D000102"]
+        hosts = ["h0", "h1"]
+
+        for case in range(400):
+            recs = []
+            for _ in range(rng.randint(2, 6)):
+                r = {
+                    "id": rng.choice(ids),
+                    "decision": rng.choice(["c", "d", "e"]),
+                    "origin": {"host_hash": rng.choice(hosts)},
+                }
+                if rng.random() < 0.5:
+                    r["ts"] = rng.choice(
+                        ["2026-01-01T00:00:00Z", "2026-06-01T00:00:00Z"]
+                    )
+                # the shape that ties the order key: present but falsy
+                if rng.random() < 0.35:
+                    r["_amendment_to_id"] = rng.choice(["", None, "D000100"])
+                recs.append(r)
+
+            once = id_repair.normalize([dict(r) for r in recs])["records"]
+
+            # (a) idempotent
+            twice = id_repair.normalize([dict(r) for r in once])["records"]
+            assert _canon(twice) == _canon(
+                once
+            ), f"case {case}: normalize is not a fixed point"
+
+            # (b) order-independent across several shuffles
+            for shuffle in range(4):
+                mixed = [dict(r) for r in recs]
+                rng.shuffle(mixed)
+                assert _canon(id_repair.normalize(mixed)["records"]) == _canon(
+                    once
+                ), f"case {case}/shuffle {shuffle}: output depends on input order"

@@ -26,10 +26,14 @@ Contract
   an id is the collision we repair (amendments legitimately reuse a base id
   and are exempt).
 - Among colliding base records, the WINNER keeps the id, chosen by a total
-  order every machine computes identically: ``(ts, writer_id, content_hash)``
-  — the final content hash guarantees a strict order even when ts and writer
-  collide. ``writer_id`` is ``origin.device_id`` falling back to
-  ``origin.host_hash``; see ``_host`` for why the fallback matters.
+  order every machine computes identically:
+  ``(ts, writer_id, content_hash, tiebreak_hash)``. ``content_hash`` excludes
+  the amendment field (that exclusion is what makes ``normalize`` idempotent),
+  so it alone is NOT total — two base records differing only in a
+  present-but-falsy amendment pointer hash identically. ``tiebreak_hash``
+  puts that field back and closes the tie. ``writer_id`` is
+  ``origin.device_id`` falling back to ``origin.host_hash``; see ``_host``
+  for why the fallback matters.
 - Byte-identical records are the SAME decision (a cherry-pick / double-commit)
   and are DEDUPED, not renumbered.
 - LOSERS are renumbered to a content-derived id ``D<sha1(content)[:12]>`` — a
@@ -77,7 +81,9 @@ _REFERENCE_FIELDS = ("superseded_by", "supersedes")
 #: Two machines running DIFFERENT versions over the same merged store converge
 #: to different files, so callers surface this rather than silently disagreeing.
 #: 1 = v3.7.0 (ids + amendments only). 2 = 4.0 (also repoints references).
-ORDER_VERSION = 2
+#: 3 = 4.0.1 (order key made genuinely total — see ``_tiebreak_hash``; only
+#: previously-TIED inputs change winner, every other input is unaffected).
+ORDER_VERSION = 3
 
 
 def _canonical(record: dict[str, Any], *, exclude: tuple[str, ...] = ()) -> str:
@@ -96,6 +102,27 @@ def _content_hash(
     same hash, so ``normalize`` is idempotent.
     """
     canon = _canonical(record, exclude=(id_field, amendment_field))
+    return hashlib.sha1(canon.encode("utf-8")).hexdigest()
+
+
+def _tiebreak_hash(record: dict[str, Any], *, id_field: str) -> str:
+    """Final component of the winner order — everything except the id itself.
+
+    :func:`_content_hash` must EXCLUDE ``amendment_field`` to keep
+    ``normalize`` idempotent (see its docstring). The consequence is that two
+    BASE records differing only in a present-but-falsy amendment pointer —
+    ``""`` or ``None``, both falsy, so both are bases under the contract above
+    — produce the same content hash and tie on every component of the order.
+    ``sorted`` is stable, so the tie was broken by INPUT ORDER: two machines
+    merging the same records in different orders diverged.
+
+    Putting the amendment field back here restores a strict order without
+    touching idempotency, because this hash never mints an id —
+    :func:`_mint_loser_id` goes through :func:`_content_hash`. Re-normalizing
+    changes only the id, which this excludes, so the key is stable across
+    passes.
+    """
+    canon = _canonical(record, exclude=(id_field,))
     return hashlib.sha1(canon.encode("utf-8")).hexdigest()
 
 
@@ -136,13 +163,20 @@ def _uid(record: dict[str, Any]) -> str:
 
 def _order_key(
     record: dict[str, Any], *, id_field: str, amendment_field: str
-) -> tuple[str, str, str]:
-    """Total order for picking the winner. Smallest wins (earliest writer)."""
+) -> tuple[str, str, str, str]:
+    """Total order for picking the winner. Smallest wins (earliest writer).
+
+    The fourth component is load-bearing, not belt-and-braces: without it two
+    base records that differ only in a falsy amendment pointer tie on all
+    three others and the stable sort falls back to input order. See
+    :func:`_tiebreak_hash`.
+    """
     ts = str(record.get("ts") or "") or _TS_SENTINEL
     return (
         ts,
         _host(record),
         _content_hash(record, id_field=id_field, amendment_field=amendment_field),
+        _tiebreak_hash(record, id_field=id_field),
     )
 
 

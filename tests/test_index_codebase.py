@@ -1928,3 +1928,82 @@ class TestWatcherAndFullIndexAreMutuallyExclusive:
         `codevira clean` and `indexer/chunker.py`, both renamed this release."""
         assert not hasattr(idx_mod, "_chroma_write_lock")
         assert isinstance(idx_mod._index_write_lock, type(threading.Lock()))
+
+
+class TestTransientFilesAreNotCrashes:
+    """A file that vanishes between the directory walk and the hash is an
+    ORDINARY event, not a crash.
+
+    Build tooling churns constantly — Next.js `.next/standalone`, webpack
+    chunks, test fixtures. `_get_changed_files` already handles it correctly:
+    catch, skip the file, keep going. But it routed the event to
+    ``safe_log_crash``, so a normal working day wrote dozens of entries into
+    ``~/.codevira/logs/crashes.log``.
+
+    Two costs, both real. The G4 release gate is "crash log clean", which no
+    project with a build directory could ever pass — a gate that cannot pass
+    is not a gate. And a genuine crash lands in a file already holding 50
+    non-crashes, which is where real faults go to hide. Measured on this
+    machine before the fix: 51 entries, 0 of them actual crashes.
+
+    Unexpected failures still log. Only the expected one is demoted.
+    """
+
+    def _walk(self, tmp_path, monkeypatch, exc):
+        """Drive _get_changed_files with _compute_hash raising `exc`."""
+        import indexer.index_codebase as idx
+
+        project = tmp_path / "proj"
+        (project / ".codevira").mkdir(parents=True)
+        (project / "src").mkdir()
+        (project / "src" / "a.py").write_text("x = 1\n")
+        monkeypatch.setattr(idx, "_project_root", lambda: project)
+        monkeypatch.setattr(
+            idx,
+            "_load_config",
+            lambda: {
+                "watched_dirs": ["src"],
+                "file_extensions": [".py"],
+                "skip_dirs": [],
+            },
+        )
+
+        def _boom(_p):
+            raise exc
+
+        monkeypatch.setattr(idx, "_compute_hash", _boom)
+
+        logged = []
+        monkeypatch.setattr(
+            "mcp_server._safe_crash.safe_log_crash",
+            lambda e, **k: logged.append((type(e).__name__, k.get("context", ""))),
+        )
+
+        db = MagicMock()
+        db.get_file_hash.return_value = None
+        changed = idx._get_changed_files(db)
+        return changed, logged
+
+    def test_a_vanished_file_is_skipped_without_a_crash_entry(
+        self, tmp_path, monkeypatch
+    ):
+        changed, logged = self._walk(
+            tmp_path, monkeypatch, FileNotFoundError(2, "No such file or directory")
+        )
+        assert logged == [], (
+            "a file disappearing mid-walk is expected during any build; "
+            f"writing it to the crash log is what broke G4 (got {logged})"
+        )
+        assert changed == [], "and the file is simply skipped"
+
+    def test_an_unexpected_failure_still_reaches_the_crash_log(
+        self, tmp_path, monkeypatch
+    ):
+        """The demotion must be narrow. A hash failure that is NOT the file
+        going away is a real fault and must stay visible."""
+        _changed, logged = self._walk(
+            tmp_path, monkeypatch, ValueError("hasher exploded")
+        )
+        assert [k for k, _ in logged] == [
+            "ValueError"
+        ], f"unexpected errors must still be logged as crashes (got {logged})"

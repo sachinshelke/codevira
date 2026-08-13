@@ -305,7 +305,20 @@ def _get_changed_files(db: SQLiteGraph) -> list[tuple[str, str]]:
 
                     if current_hash != stored_hash:
                         changed.append((rel_path, current_hash))
+                except FileNotFoundError:
+                    # The file went away between rglob() and the hash. That is
+                    # ORDINARY on any project with a build directory — Next.js
+                    # .next/standalone, webpack chunks, temp fixtures — not a
+                    # fault. Skip it; the next scan picks it up if it returns.
+                    #
+                    # This used to go to safe_log_crash, which meant a normal
+                    # working day wrote dozens of entries into crashes.log. It
+                    # cost twice: the G4 release gate is "crash log clean", so
+                    # no project with a build dir could ever pass it, and a
+                    # real crash landed in a file already full of non-crashes.
+                    logger.debug("skipping vanished file during scan: %s", p)
                 except Exception as e:
+                    # Anything else IS unexpected — keep it visible.
                     from mcp_server._safe_crash import safe_log_crash
 
                     safe_log_crash(e, context="get_changed_files: hash check")

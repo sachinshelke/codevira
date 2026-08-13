@@ -239,6 +239,27 @@ re-implementing either rule.
 pointer. One hand-edited JSONL away. *(Regression tests:
 `TestAmendmentPredicateAgreesWithIdRepair`.)*
 
+### Fixed — routine file churn was being written to the crash log
+
+A file that vanishes between the directory walk and the hash is ordinary on
+any project with a build directory — Next.js `.next/standalone`, webpack
+chunks, temp fixtures. `_get_changed_files` already handled it correctly
+(catch, skip, continue), but routed the event to `safe_log_crash`.
+
+So a normal working day wrote dozens of entries into
+`~/.codevira/logs/crashes.log`. Two real costs: the **G4 release gate is
+"crash log clean"**, which no project with a build directory could ever pass —
+a gate that cannot pass is not a gate — and a genuine crash landed in a file
+already full of non-crashes, which is where real faults go to hide. Measured
+here before the fix: **51 entries, none of them actual crashes** (9 vanished
+build artifacts, 6 a transient mid-upgrade `tree_sitter` import, the rest
+their tracebacks).
+
+The vanished-file case now logs at debug. Everything else still goes to the
+crash log — the demotion is deliberately narrow, and a test proves an
+unexpected hash failure is still recorded. *(Regression tests:
+`TestTransientFilesAreNotCrashes`.)*
+
 ### Fixed — Cursor and per-project Claude Code could still bind to the wrong project
 
 D000126 — *"a session in agent-mcp wrote its decisions into Agentic/LH"* — was

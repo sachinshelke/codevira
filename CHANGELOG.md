@@ -208,29 +208,39 @@ Behaviour is otherwise unchanged: the write still never fails, and a healthy
 index still skips the rebuild. *(Regression tests:
 `TestFtsWriteFailureIsRecoverable`, one per write path.)*
 
-### Fixed — `reaffirm_decision` advertised a response field that does not exist
+### Added — `do_not_revert` soft-expire is finally surfaced
 
-The MCP tool description told every agent that codevira *"surfaces a
-`dnr_soft_expired` flag on search/list output"*. It does not, and never has.
-`compute_dnr_soft_expire()` computes the status on demand and has **no**
-production consumer — neither `search` nor `list_all` projects the field, so
-an agent that went looking for it found nothing and had no way to tell a
-missing feature from a bug in its own parsing. Two internal docstrings
-repeated the claim, and one of them also named the wrong keys
-(`{dnr_soft_expired, dnr_age_days}`; the helper returns
-`{soft_expired, age_days, max_age_days, effective_ts}`).
+v3.2.0 shipped `compute_dnr_soft_expire()` and three docstrings stating the
+result was *"surfaced on search/list output"*. It never was — the helper had
+**zero production consumers**, so a decision locked three years ago read
+exactly like one locked this morning, and `reaffirm_decision` existed to
+reset a clock nothing ever showed you. One of those docstrings also named
+keys the helper does not return (`dnr_age_days` vs `age_days`).
 
-All three now say what is true: the threshold is real (180 days, override via
-`CODEVIRA_DNR_SOFT_EXPIRE_DAYS`, `0` disables), the age is computed on demand,
-and nothing surfaces it — so reaffirming a still-load-bearing lock is a
-deliberate act, not a response to a prompt. Behaviour is unchanged;
-`reaffirm_decision` already reset the clock correctly.
+`search` and `list_all` (both the slim and `full=True` shapes) now carry:
 
-Guarded by an invariant rather than a fixed wording: `dnr_soft_expired` may
-appear in a tool description only if it is genuinely in the `search` /
-`list_all` output. Wiring the field up later flips both sides together and the
-test keeps passing. *(Regression test:
-`TestAdvertisedFieldsExist::test_dnr_soft_expired_is_not_advertised_unless_emitted`.)*
+| field | meaning |
+|---|---|
+| `dnr_soft_expired` | the lock is older than the threshold and due a look |
+| `dnr_age_days` | how old, so the flag is actionable rather than binary |
+
+Emitted **only on `do_not_revert` decisions**. `soft_expired` is
+definitionally false without a lock to expire, so carrying the pair on every
+row would be pure token cost on a surface that is deliberately
+summary-by-default. Absent keys mean *"not protected"*, never *"not
+computed"*.
+
+Threshold is 180 days, override with `CODEVIRA_DNR_SOFT_EXPIRE_DAYS`, `0`
+disables (the age still reports, for observability). **The lock never
+auto-flips** — the flag is advice, and `reaffirm_decision` is how you act on
+it.
+
+Guarded by an invariant rather than a fixed wording: `dnr_soft_expired` is
+advertised in a tool description **if and only if** search/list genuinely
+emit it. Both directions are proven by mutation — scrubbing the description
+while the field ships turns it red, and disabling the projection while the
+description stands turns it red too. *(Regression tests:
+`TestSoftExpireIsSurfaced` (6), `TestAdvertisedFieldsExist`.)*
 
 ### Internal — the code stranded by the v2.2.0 Chroma removal is gone (`indexer.chunker` no longer importable)
 

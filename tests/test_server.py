@@ -1089,7 +1089,13 @@ class TestAdvertisedFieldsExist:
             if "dnr_soft_expired" in (t.description or "")
         ]
 
-        if "dnr_soft_expired" not in emitted:
+        if "dnr_soft_expired" in emitted:
+            assert advertising, (
+                "search / list_all emit a 'dnr_soft_expired' field that no "
+                "tool description mentions — an agent has no way to learn a "
+                "field exists except by stumbling over it in a response."
+            )
+        else:
             assert not advertising, (
                 "tool description(s) "
                 f"{advertising} advertise a 'dnr_soft_expired' field, but "

@@ -607,3 +607,78 @@ class TestFtsWriteFailureIsRecoverable:
             "record_many carries the same best-effort index write and needs "
             "the same recovery"
         )
+
+
+class TestSoftExpireIsSurfaced:
+    """v3.2.0 shipped ``compute_dnr_soft_expire`` and three docstrings saying
+    the result was surfaced on search / list output. It was not — the helper
+    had zero production consumers, so a long-locked decision looked exactly
+    like a fresh one to every reader. 4.0.1 wires it in.
+
+    Emitted only for ``do_not_revert`` decisions: ``soft_expired`` is
+    definitionally False without a lock to expire, so emitting the pair on
+    every row would be pure token cost on a surface that is explicitly
+    summary-by-default.
+    """
+
+    _OLD = "2020-01-01T00:00:00+00:00"
+
+    def _seed_old_locked(self, decision: str) -> str:
+        from mcp_server.storage import jsonl_store
+        from mcp_server.storage import paths as _paths
+
+        rec = {
+            "id": "D000900",
+            "decision": decision,
+            "do_not_revert": True,
+            "ts": self._OLD,
+            "session_id": "seed",
+            "tags": [],
+        }
+        jsonl_store.append(_paths.decisions_path(), rec)
+        return "D000900"
+
+    def test_search_surfaces_soft_expire_on_a_stale_lock(self, project) -> None:
+        self._seed_old_locked("never rewrite the wire protocol")
+        hits = decisions_store.search("wire protocol", limit=5)
+        assert hits, "precondition: the seeded decision is searchable"
+        hit = hits[0]
+        assert hit["dnr_soft_expired"] is True
+        assert hit["dnr_age_days"] > 180
+
+    def test_list_all_surfaces_soft_expire_on_a_stale_lock(self, project) -> None:
+        self._seed_old_locked("never rewrite the wire protocol")
+        rows = decisions_store.list_all(limit=5)["decisions"]
+        row = next(r for r in rows if r["id"] == "D000900")
+        assert row["dnr_soft_expired"] is True
+        assert row["dnr_age_days"] > 180
+
+    def test_list_all_full_shape_surfaces_it_too(self, project) -> None:
+        self._seed_old_locked("never rewrite the wire protocol")
+        rows = decisions_store.list_all(limit=5, full=True)["decisions"]
+        row = next(r for r in rows if r["id"] == "D000900")
+        assert (
+            row["dnr_soft_expired"] is True
+        ), "full=True must not be a downgrade — it returns MORE, not less"
+
+    def test_a_fresh_lock_is_flagged_not_expired(self, project) -> None:
+        decisions_store.record(decision="pin the wire protocol", do_not_revert=True)
+        hit = decisions_store.search("wire protocol", limit=5)[0]
+        assert hit["dnr_soft_expired"] is False
+        assert hit["dnr_age_days"] == 0
+
+    def test_unprotected_decisions_carry_no_soft_expire_keys(self, project) -> None:
+        decisions_store.record(decision="pin the wire protocol", do_not_revert=False)
+        hit = decisions_store.search("wire protocol", limit=5)[0]
+        assert "dnr_soft_expired" not in hit, (
+            "an unlocked decision has no lock to expire; the keys are omitted "
+            "so the common path costs nothing"
+        )
+        assert "dnr_age_days" not in hit
+
+    def test_threshold_zero_disables_the_flag(self, project, monkeypatch) -> None:
+        monkeypatch.setenv("CODEVIRA_DNR_SOFT_EXPIRE_DAYS", "0")
+        self._seed_old_locked("never rewrite the wire protocol")
+        hit = decisions_store.search("wire protocol", limit=5)[0]
+        assert hit["dnr_soft_expired"] is False, "0 means disabled, per the docs"
+        assert hit["dnr_age_days"] > 180, "age stays observable even when disabled"

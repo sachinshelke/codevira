@@ -464,14 +464,14 @@ def reaffirm_decision(decision_id: str) -> dict:
 
     Long-lived locked decisions can grow stale — the world that made
     them right may have changed. v3.2.0 introduces a soft expiry
-    (default 180 days, override via ``CODEVIRA_DNR_SOFT_EXPIRE_DAYS``),
-    computed on demand by
-    :func:`mcp_server.storage.decisions_store.compute_dnr_soft_expire`.
+    (default 180 days, override via ``CODEVIRA_DNR_SOFT_EXPIRE_DAYS``,
+    ``0`` disables).
 
-    That helper has no production consumer: the status is **not**
-    projected onto ``search`` / ``list_all`` output, so no reader is told
-    a lock is overdue unless it computes the age itself. Reaffirming is
-    therefore a deliberate act, not a response to a prompt.
+    Since 4.0.1 ``search`` and ``list_all`` carry ``dnr_soft_expired``
+    and ``dnr_age_days`` on every protected decision, so a reader is told
+    which locks are overdue without computing anything. Unprotected
+    decisions omit both keys — there is no lock to expire. The flag is
+    advice only: the lock never auto-flips.
 
     When a soft-expired decision is still load-bearing, call
     ``reaffirm_decision(id)`` to reset the clock. The amendment is

@@ -626,7 +626,7 @@ def list_all(
     paged = filtered[:limit]
 
     if full:
-        decisions = paged
+        decisions = [{**d, **_dnr_fields(d)} for d in paged]
     else:
         # Slim shape — preserve the v2.1.2 contract: id, decision, file_path,
         # do_not_revert, tags, created_at.
@@ -642,6 +642,8 @@ def list_all(
                 # v3.7.0: expose outcome so freshness-ranking callers
                 # (get_session_context) can down-rank reverted decisions.
                 "outcome": d.get("outcome"),
+                # 4.0.1: {dnr_soft_expired, dnr_age_days} on locked decisions.
+                **_dnr_fields(d),
             }
             for d in paged
         ]
@@ -651,6 +653,29 @@ def list_all(
         "total": total,
         "has_more": total > limit,
         "decisions": decisions,
+    }
+
+
+def _dnr_fields(record: dict[str, Any]) -> dict[str, Any]:
+    """Soft-expire status for a projection, or ``{}`` when there is no lock.
+
+    v3.2.0 shipped :func:`compute_dnr_soft_expire` and documented the result
+    as surfaced on search / list output, but nothing ever called it — a
+    decision locked three years ago read exactly like one locked this morning.
+    This is the wiring.
+
+    Emitted ONLY for ``do_not_revert`` decisions. ``soft_expired`` is
+    definitionally False without a lock to expire, so carrying the pair on
+    every row would be pure token cost on a surface that is deliberately
+    summary-by-default. Absent keys therefore mean "not protected", never
+    "not computed".
+    """
+    if not record.get("do_not_revert"):
+        return {}
+    status = compute_dnr_soft_expire(record)
+    return {
+        "dnr_soft_expired": bool(status["soft_expired"]),
+        "dnr_age_days": status["age_days"],
     }
 
 
@@ -745,6 +770,8 @@ def search(
             # surface provenance per candidate. None for v3.0.x records
             # (callers treat absent → ide="unknown").
             "origin": d.get("origin"),
+            # 4.0.1: {dnr_soft_expired, dnr_age_days} on locked decisions.
+            **_dnr_fields(d),
         }
         results.append(result)
         if len(results) >= limit:
@@ -1002,14 +1029,13 @@ def reaffirm(decision_id: str) -> dict[str, Any]:
 # Long-lived `do_not_revert` decisions can grow stale — the world that
 # made them right may have changed. v3.2.0 introduces a SOFT expiry: a
 # decision still loads as locked, and `compute_dnr_soft_expire()` below
-# returns {soft_expired, age_days, max_age_days, effective_ts} for any
-# caller that asks.
+# returns {soft_expired, age_days, max_age_days, effective_ts}.
 #
-# NOTHING CALLS IT IN THE READ PATH. These fields are not projected onto
-# `search` / `list_all` output, so a reader only learns a lock is overdue
-# by computing the age itself. Wiring it into both projections is the
-# unbuilt half of the staleness read-side work. The lock itself does NOT
-# auto-flip; the user (or a future engine policy) decides what to do.
+# Since 4.0.1 `_dnr_fields()` projects that onto `search` and `list_all`
+# as {dnr_soft_expired, dnr_age_days}, for protected decisions only — an
+# unprotected one has no lock to expire, so both keys are omitted rather
+# than emitted as False on every row. The lock itself does NOT auto-flip;
+# the user (or a future engine policy) decides what to do.
 #
 # Default threshold: 180 days (~6 months). Override per process via
 # CODEVIRA_DNR_SOFT_EXPIRE_DAYS. Set to 0 to disable (always live).

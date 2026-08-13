@@ -272,7 +272,11 @@ class TestInjectClaude:
         assert "codevira" in data["mcpServers"]
         entry = data["mcpServers"]["codevira"]
         assert entry["command"] == "/usr/bin/codevira"
-        assert entry["cwd"] == str(project)
+        # 4.0.1: was `entry["cwd"] == str(project)`. cwd is the weakest slot in
+        # the binding chain and gets outranked by the MCP roots handshake;
+        # --project-dir is the only pin roots cannot override. See
+        # TestCursorIsProjectDirPinned.
+        assert entry["args"] == ["--project-dir", str(project)]
 
     def test_preserves_existing_mcp_json(self, tmp_path):
         """If <project>/.mcp.json already has other MCP servers, the
@@ -308,7 +312,11 @@ class TestInjectCursor:
         assert "codevira" in data["mcpServers"]
         entry = data["mcpServers"]["codevira"]
         assert entry["command"] == "/usr/bin/codevira"
-        assert entry["cwd"] == str(project)
+        # 4.0.1: was `entry["cwd"] == str(project)`. cwd is the weakest slot in
+        # the binding chain and gets outranked by the MCP roots handshake;
+        # --project-dir is the only pin roots cannot override. See
+        # TestCursorIsProjectDirPinned.
+        assert entry["args"] == ["--project-dir", str(project)]
 
     def test_preserves_existing_cursor_config(self, tmp_path):
         project = tmp_path / "proj"
@@ -2296,3 +2304,79 @@ class TestM1AntigravityMultiTargetFailure:
 
         # Pre-write content restored exactly.
         assert ok_target.read_text() == original
+
+
+class TestCursorIsProjectDirPinned:
+    """Cursor was the only configured IDE whose project binding could be
+    silently overridden at runtime.
+
+    Claude Code, Claude Desktop and Antigravity all register with
+    ``--project-dir`` (D000126 / D00012C / v3.7.1 fix B). Cursor registered
+    with ``args: []`` plus ``cwd``, which sits at the BOTTOM of the resolution
+    chain (paths._resolve_project_root) rather than the top.
+
+    That matters because ``server._bind_project_from_client_roots`` skips any
+    server carrying an explicit pin — "Respect an explicit pin — never
+    override --project-dir / the env var" — so for every pinned IDE the roots
+    handshake never runs. For Cursor it did, and
+    ``project_binding.choose_binding`` rule 1 binds to the client's workspace
+    root whenever THAT root is an initialized codevira project, without
+    checking cwd. Cursor configured for project A, opened on a workspace
+    rooted at project B, writes A's decisions into B — D000126 verbatim.
+
+    choose_binding's own docstring names the remedy: "pin --project-dir for
+    that case."
+    """
+
+    def test_cursor_entry_pins_project_dir(self, tmp_path):
+        project = tmp_path / "myproj"
+        project.mkdir()
+        _inject_cursor(project, "/usr/bin/codevira", "python3")
+        entry = json.loads((project / ".cursor" / "mcp.json").read_text())[
+            "mcpServers"
+        ]["codevira"]
+        assert "--project-dir" in entry["args"], (
+            "an unpinned Cursor entry can be re-bound by client roots at "
+            "runtime; --project-dir is the only slot roots cannot outrank"
+        )
+        assert str(project) in entry["args"]
+
+    def test_cursor_matches_the_other_pinned_ides(self, tmp_path):
+        """The pin is only meaningful if it is the same shape the server
+        recognises, so assert against a sibling rather than a literal."""
+        project = tmp_path / "myproj"
+        project.mkdir()
+        _inject_cursor(project, "/usr/bin/codevira", "python3")
+        cursor = json.loads((project / ".cursor" / "mcp.json").read_text())[
+            "mcpServers"
+        ]["codevira"]
+        pinned = _build_server_config(
+            "/usr/bin/codevira", "python3", project, use_cwd=False
+        )
+        assert cursor["args"] == pinned["args"]
+
+    def test_per_project_claude_code_is_pinned_too(self, tmp_path):
+        """Found while fixing Cursor: `_inject_claude` carried the identical
+        flaw. Both write a project-local config with a `cwd` pin and no
+        `--project-dir`, so both are re-bindable by client roots. Claude
+        Desktop (_build_server_config use_cwd=False) and Antigravity were
+        already pinned; these two were the stragglers."""
+        project = tmp_path / "myproj"
+        project.mkdir()
+        _inject_claude(project, "/usr/bin/codevira", "python3")
+        entry = json.loads((project / ".mcp.json").read_text())["mcpServers"][
+            "codevira"
+        ]
+        assert "--project-dir" in entry["args"]
+        assert str(project) in entry["args"]
+
+    def test_python_fallback_was_already_pinned_and_stays_so(self, tmp_path):
+        """When the codevira binary is missing, _build_server_config already
+        emitted --project-dir. That path was never exposed; keep it that way."""
+        project = tmp_path / "myproj"
+        project.mkdir()
+        _inject_cursor(project, "python3", "python3")
+        entry = json.loads((project / ".cursor" / "mcp.json").read_text())[
+            "mcpServers"
+        ]["codevira"]
+        assert entry["args"] == ["-m", "mcp_server", "--project-dir", str(project)]

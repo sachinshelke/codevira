@@ -208,6 +208,37 @@ Behaviour is otherwise unchanged: the write still never fails, and a healthy
 index still skips the rebuild. *(Regression tests:
 `TestFtsWriteFailureIsRecoverable`, one per write path.)*
 
+### Fixed — Cursor and per-project Claude Code could still bind to the wrong project
+
+D000126 — *"a session in agent-mcp wrote its decisions into Agentic/LH"* — was
+fixed for Claude Code's user-scope entry, Claude Desktop and Antigravity by
+pinning each registration with `--project-dir`. Two writers were missed:
+`_inject_cursor` and `_inject_claude` (the project-local `<project>/.mcp.json`)
+both registered with `args: []` plus a `cwd`.
+
+`cwd` is the **bottom** of `paths._resolve_project_root`'s chain, and that
+placement is what makes it unsafe. `server._bind_project_from_client_roots`
+returns early on an explicit pin — *"Respect an explicit pin — never override
+`--project-dir` / the env var"* — so for every pinned IDE the MCP roots
+handshake never runs at all. For these two it did, and `choose_binding` rule 1
+re-binds to the client's workspace root whenever **that** root is itself a
+codevira project, without consulting cwd.
+
+So: Cursor configured for project A, opened on a workspace rooted at project B
+(a monorepo parent, a multi-root workspace, or Cursor simply opened a level
+up), silently writes A's decisions into B's store. `choose_binding`'s own
+docstring already named the remedy — *"pin `--project-dir` for that case"* —
+and these were the two registrations that never got it.
+
+Both now emit `args: ["--project-dir", "<project>"]`, matching Desktop and
+Antigravity. Existing configs are rewritten on the next `codevira setup`.
+`~/.cursor/mcp.json` (true global mode, one entry for every project) still
+binds dynamically — it has no single project to pin to, by design.
+
+*(Regression tests: `TestCursorIsProjectDirPinned`. Two older tests asserted
+`entry["cwd"]`; they now assert the pin, since that is the property that
+actually protects the binding.)*
+
 ### Fixed — the watcher and a background full-index could rebuild the graph at once
 
 The module lock documents itself as preventing *"the background watcher and

@@ -786,8 +786,19 @@ def _build_server_config(
 
     If cmd_path is the Python interpreter (fallback), use `-m mcp_server --project-dir`.
     If cmd_path is the codevira binary:
-      - use_cwd=True:  {"command": ..., "args": [], "cwd": ...}   (Claude / Cursor)
-      - use_cwd=False: {"command": ..., "args": ["--project-dir", ...]}  (tools that ignore cwd)
+      - use_cwd=True:  {"command": ..., "args": [], "cwd": ...}
+      - use_cwd=False: {"command": ..., "args": ["--project-dir", ...]}
+
+    Prefer use_cwd=False for anything codevira registers. ``cwd`` sits at the
+    BOTTOM of ``paths._resolve_project_root``'s chain, so a cwd-pinned server
+    still runs the MCP roots handshake — and ``choose_binding`` rule 1 re-binds
+    to the client's workspace root whenever that root is itself a codevira
+    project, without consulting cwd. ``--project-dir`` is the only slot roots
+    cannot outrank: ``server._bind_project_from_client_roots`` returns early on
+    an explicit pin. That is the D000126 wrong-project bug, and until 4.0.1 the
+    per-project Claude Code and Cursor writers were still on the losing side of
+    it. No caller passes True any more; the branch stays for callers that
+    genuinely want ambient binding.
     """
     is_python_fallback = cmd_path == python_exe
 
@@ -948,7 +959,7 @@ def _inject_claude(project_root: Path, cmd_path: str, python_exe: str) -> str | 
     config_path = _claude_config_path(project_root)
     existing = _read_json_safe(config_path)
     server_config = _build_server_config(
-        cmd_path, python_exe, project_root, use_cwd=True
+        cmd_path, python_exe, project_root, use_cwd=False
     )
     # v3.1.0 M1: stamp CODEVIRA_IDE so the spawned MCP server tags
     # every write with origin.ide="claude_code".
@@ -1022,7 +1033,7 @@ def _inject_cursor(project_root: Path, cmd_path: str, python_exe: str) -> str | 
     config_path = _cursor_config_path(project_root)
     existing = _read_json_safe(config_path)
     server_config = _build_server_config(
-        cmd_path, python_exe, project_root, use_cwd=True
+        cmd_path, python_exe, project_root, use_cwd=False
     )
     # v3.1.0 M1: origin.ide stamp.
     server_config["env"] = {

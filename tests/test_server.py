@@ -1041,6 +1041,64 @@ class TestServerMain:
 # the recommended decision-level API.
 
 
+class TestAdvertisedFieldsExist:
+    """A tool description is a contract with every agent that reads it.
+
+    Advertising a response field the code never emits is worse than not
+    documenting it: an agent will look for the field, not find it, and have
+    no way to tell a missing feature from a bug in its own parsing.
+    """
+
+    def test_dnr_soft_expired_is_not_advertised_unless_emitted(
+        self, tmp_path, monkeypatch
+    ):
+        """v3.2.0 soft-expire: `compute_dnr_soft_expire` computes the status
+        on demand, but nothing wires it into the search / list projections.
+
+        This asserts the honest invariant rather than a fixed wording: the
+        identifier may appear in a tool description ONLY IF the field is
+        really there. Wiring it up later flips both sides together and the
+        test keeps passing; re-advertising it without wiring turns it red.
+        """
+        from mcp_server.server import list_tools
+
+        project = tmp_path / "proj"
+        (project / ".codevira").mkdir(parents=True)
+        (project / ".codevira" / "config.yaml").write_text(
+            "project:\n  name: dnr-probe\n"
+        )
+        import mcp_server.paths as _paths
+
+        monkeypatch.setattr(_paths, "_project_dir_override", None)
+        monkeypatch.chdir(project)
+
+        from mcp_server.storage import decisions_store
+
+        decisions_store.record(decision="lock the wire format", do_not_revert=True)
+        hits = decisions_store.search("wire format", limit=5)
+        rows = decisions_store.list_all(limit=5)["decisions"]
+
+        emitted: set[str] = set()
+        for row in list(hits) + list(rows):
+            emitted |= set(row.keys())
+
+        monkeypatch.delenv("CODEVIRA_TOOL_PROFILE", raising=False)
+        advertising = [
+            t.name
+            for t in _run(list_tools())
+            if "dnr_soft_expired" in (t.description or "")
+        ]
+
+        if "dnr_soft_expired" not in emitted:
+            assert not advertising, (
+                "tool description(s) "
+                f"{advertising} advertise a 'dnr_soft_expired' field, but "
+                "neither decisions_store.search nor list_all emits it "
+                f"(they return {sorted(emitted)}). Either wire the field into "
+                "both projections or stop advertising it."
+            )
+
+
 class TestLeanToolProfile:
     """v3.0.0 (D000018): CODEVIRA_TOOL_PROFILE=lean trims the advertised
     tool surface to the daily-driver set to cut the tools/list token cost.

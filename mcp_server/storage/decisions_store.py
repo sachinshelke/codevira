@@ -987,10 +987,15 @@ def reaffirm(decision_id: str) -> dict[str, Any]:
 #
 # Long-lived `do_not_revert` decisions can grow stale — the world that
 # made them right may have changed. v3.2.0 introduces a SOFT expiry: a
-# decision still loads as locked, but readers can see it's overdue for
-# a check via the {dnr_soft_expired, dnr_age_days} fields surfaced by
-# search/list. The lock itself does NOT auto-flip; the user (or a
-# future engine policy) decides what to do.
+# decision still loads as locked, and `compute_dnr_soft_expire()` below
+# returns {soft_expired, age_days, max_age_days, effective_ts} for any
+# caller that asks.
+#
+# NOTHING CALLS IT IN THE READ PATH. These fields are not projected onto
+# `search` / `list_all` output, so a reader only learns a lock is overdue
+# by computing the age itself. Wiring it into both projections is the
+# unbuilt half of the staleness read-side work. The lock itself does NOT
+# auto-flip; the user (or a future engine policy) decides what to do.
 #
 # Default threshold: 180 days (~6 months). Override per process via
 # CODEVIRA_DNR_SOFT_EXPIRE_DAYS. Set to 0 to disable (always live).

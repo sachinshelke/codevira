@@ -802,15 +802,17 @@ async def list_tools() -> list[Tool]:
             name="reaffirm_decision",
             description=(
                 "v3.2.0: refresh a do_not_revert decision's soft-expire "
-                "clock. Long-lived locked decisions can grow stale; "
-                "v3.2.0 surfaces a 'dnr_soft_expired' flag on search/"
-                "list output (default 180 days, override via "
-                "CODEVIRA_DNR_SOFT_EXPIRE_DAYS). Call this on a "
-                "still-load-bearing soft-expired decision to reset the "
-                "clock — appends a single 'reaffirmed_at' amendment to "
-                ".codevira/decisions.jsonl. For semantic rewrites use "
-                "supersede_decision; for flipping the flag use "
-                "set_decision_flag."
+                "clock. Long-lived locked decisions can grow stale, so "
+                "they carry a soft-expire threshold — 180 days by "
+                "default, override via CODEVIRA_DNR_SOFT_EXPIRE_DAYS "
+                "(0 disables). The age is computed on demand; it is NOT "
+                "returned on search / list output, so nothing will tell "
+                "you a decision is overdue. Call this whenever you "
+                "confirm a locked decision is still load-bearing — it "
+                "appends a single 'reaffirmed_at' amendment to "
+                ".codevira/decisions.jsonl and resets the clock. For "
+                "semantic rewrites use supersede_decision; for flipping "
+                "the flag use set_decision_flag."
             ),
             inputSchema={
                 "type": "object",

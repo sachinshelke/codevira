@@ -143,6 +143,30 @@ sanitized project path) now resolves these to their registration — classified
 entries **21 → 14**, nothing newly removable. *(Regression test:
 `TestSlugJoinFallback`.)*
 
+### Fixed — `reaffirm_decision` advertised a response field that does not exist
+
+The MCP tool description told every agent that codevira *"surfaces a
+`dnr_soft_expired` flag on search/list output"*. It does not, and never has.
+`compute_dnr_soft_expire()` computes the status on demand and has **no**
+production consumer — neither `search` nor `list_all` projects the field, so
+an agent that went looking for it found nothing and had no way to tell a
+missing feature from a bug in its own parsing. Two internal docstrings
+repeated the claim, and one of them also named the wrong keys
+(`{dnr_soft_expired, dnr_age_days}`; the helper returns
+`{soft_expired, age_days, max_age_days, effective_ts}`).
+
+All three now say what is true: the threshold is real (180 days, override via
+`CODEVIRA_DNR_SOFT_EXPIRE_DAYS`, `0` disables), the age is computed on demand,
+and nothing surfaces it — so reaffirming a still-load-bearing lock is a
+deliberate act, not a response to a prompt. Behaviour is unchanged;
+`reaffirm_decision` already reset the clock correctly.
+
+Guarded by an invariant rather than a fixed wording: `dnr_soft_expired` may
+appear in a tool description only if it is genuinely in the `search` /
+`list_all` output. Wiring the field up later flips both sides together and the
+test keeps passing. *(Regression test:
+`TestAdvertisedFieldsExist::test_dnr_soft_expired_is_not_advertised_unless_emitted`.)*
+
 ### Internal — the code stranded by the v2.2.0 Chroma removal is gone (`indexer.chunker` no longer importable)
 
 v2.2.0 dropped ChromaDB, sentence-transformers and torch, but left the code

@@ -830,6 +830,9 @@ async def list_tools() -> list[Tool]:
             description=(
                 "Check whether a proposed decision contradicts any "
                 "do_not_revert=True decision OR duplicates an existing one. "
+                "A NEGATED restatement is always a conflict, never a duplicate: "
+                "'never do X' and 'do X' differ by one token and score as "
+                "near-identical text, so they are separated explicitly. "
                 "Returns {status: novel|duplicate|conflict, conflicts, "
                 "duplicates}. Call BEFORE record_decision to surface conflicts "
                 "proactively (record_decision also runs this internally and "
@@ -1121,6 +1124,12 @@ async def list_tools() -> list[Tool]:
                 "Returns current roadmap phase, recent decisions with confidence, "
                 "learned preferences, and active rules — everything a new session needs. "
                 "Call this at the START of every session instead of multiple separate calls. "
+                "recent_decisions is ranked by recency x outcome-confidence (a decision "
+                "git watched survive outranks one nothing has tested); reverted and "
+                "outdated ones are hidden entirely. A decision whose file has CHANGED "
+                "since it was recorded carries 'needs_review': true plus a "
+                "'review_hint' — reaffirm_decision if it still holds, supersede or "
+                "mark_decision_outdated if it does not. "
                 "Works seamlessly across AI tools: Cursor, Claude Code, Antigravity."
             ),
             inputSchema={"type": "object", "properties": {}},

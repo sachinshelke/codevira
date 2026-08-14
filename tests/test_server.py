@@ -1049,6 +1049,27 @@ class TestAdvertisedFieldsExist:
     no way to tell a missing feature from a bug in its own parsing.
     """
 
+    def test_every_conditional_response_field_is_documented(self):
+        """Generalises the check below to every field a tool emits only
+        SOMETIMES.
+
+        `dnr_soft_expired` got its own test because it was advertised and never
+        emitted. `needs_review` then shipped the other way round — emitted by
+        get_session_context and mentioned in no description at all — which the
+        single-field test could not catch. A field an agent can only discover
+        by stumbling over it in a response is undocumented API.
+        """
+        from mcp_server.server import list_tools
+
+        descriptions = " ".join(t.description or "" for t in _run(list_tools()))
+        # Fields emitted conditionally, and the tool whose description must
+        # name them. Add a row here whenever a new conditional field ships.
+        for field in ("dnr_soft_expired", "needs_review", "review_hint"):
+            assert field in descriptions, (
+                f"{field!r} is emitted in a response but named in no tool "
+                "description — an agent has no way to learn it exists"
+            )
+
     def test_dnr_soft_expired_is_not_advertised_unless_emitted(
         self, tmp_path, monkeypatch
     ):

@@ -1,5 +1,24 @@
 # Codevira v2.0 — Master Plan
 
+> **⚠️ Frozen planning artifact — v2.0 era. Do not read this as current state.**
+>
+> This was the plan of record for v2.0 and is kept as a record of intent. Four
+> of the ten "heroes" it lists as shipping were later **removed** after they
+> were measured in real sessions, each for a documented reason
+> (`mcp_server/engine/policies/__init__.py` carries the verdicts):
+>
+> | # | Hero | Outcome |
+> |---|---|---|
+> | 3 | Proactive Scope Contract Lock | removed v2.2.0 — never fired; users did not trust it |
+> | 7 | Live Style Enforcement | removed v2.2.0 — consumed the preferences/rules surface, both since deleted |
+> | 9 | Proactive Intent Inference | removed v2.2.0 — guessed wrong about half the time |
+> | 10 | AI Promotion Score | removed v2.2.0 — produced noise; never validated in real sessions |
+> | 8 | Decision Replay | scaffolded as a browse surface, never a Policy |
+>
+> For what actually runs today, read `mcp_server/engine/policies/__init__.py`
+> (the registered set), `CHANGELOG.md`, and `docs/architecture.md`.
+
+
 > Single source of truth for the v2.0 release. Per-hero detailed specs live in `docs/heroes/`. Running progress log: `docs/v2-execution-log.md`.
 
 ---

@@ -9,6 +9,41 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Fixed — a workspace root inside a project no longer binds to the wrong project
+
+An MCP client advertises its workspace roots, and codevira uses them to bind to
+the right project when the server is not pinned. Measured against Claude Code
+2.1.221: `roots/list` returns the **literal session directory**, so opening
+`~/repo/packages/web` advertises that path — not `~/repo`.
+
+Such a root has neither `.codevira/` nor `.git/`, so it matched no branch of
+`pick_project_root`, fell through to "first valid root", and `choose_binding`
+then kept the inherited cwd. The binding silently landed on whatever project
+the process happened to start in — precisely the failure roots-binding exists
+to prevent.
+
+Each candidate root is now resolved to its **enclosing** initialized codevira
+project before being classified, and duplicates are dropped — so `--add-dir`
+of two subdirectories of one repo is one project, not an ambiguous multi-root
+workspace.
+
+This closes the same split already documented in `_is_git_repo`: `paths.
+_discover_project_root` has always walked upward, while `pick_project_root`
+judged each root as-is. Two layers disagreeing about what counts as a project.
+
+Deliberately the `.codevira` walk **only**, not the generic marker walk — a
+walk that stopped at a bare `.git` would let `choose_binding` rule 2 auto-init
+`.codevira` at a monorepo root the user never opted into. The `$HOME` refusal
+is load-bearing rather than defensive: `~/.codevira` always exists, so an
+unguarded walk would bind every marker-less folder to `$HOME` (the v1.8.0
+rogue-`$HOME`-project crash).
+
+Proved end-to-end over the real MCP wire, not only in unit tests: with roots
+pointing at `…/packages/web/src` and cwd set to a *different* project, the
+patched server binds to the enclosing project while the unpatched build binds
+to cwd. *(Tests: `TestSubdirectoryRoots` (6) — 4 fail without the change; 2
+are regression guards for the `$HOME` and bare-`.git` limits.)*
+
 ### Added — `get_session_context` ranks by recency × outcome-confidence (Phase 26)
 
 `recent_decisions` was a binary filter: drop reverted and outdated, then take

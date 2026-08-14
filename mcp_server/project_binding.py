@@ -74,10 +74,12 @@ def root_uri_to_path(uri: str | None) -> Path | None:
 def pick_project_root(candidates: list[Path | None]) -> Path | None:
     """Choose the best project root from candidate workspace roots.
 
-    Preference order, among roots that are real directories and not
-    refused system roots:
-      1. a root that already has a ``.codevira/`` dir (an initialized
-         codevira project);
+    Each candidate that is a real directory and not a refused system root is
+    first resolved to its **enclosing** initialized codevira project (a
+    workspace root is often a subdirectory of the project — see below), and
+    duplicates are dropped. Then, in preference order:
+      1. a root that has a ``.codevira/`` dir (an initialized codevira
+         project);
       2. a root that has a ``.git/`` dir (a repo);
       3. the first valid root.
 
@@ -104,6 +106,39 @@ def pick_project_root(candidates: list[Path | None]) -> Path | None:
 
     if not valid:
         return None
+
+    # A workspace root can be a SUBDIRECTORY of the project. Claude Code
+    # advertises the literal session cwd, so opening ``~/repo/packages/web``
+    # yields that path and not ``~/repo`` (measured against 2.1.221, D00013U).
+    # Resolve each candidate to its enclosing codevira project BEFORE
+    # classifying: otherwise such a root matches neither branch below, falls
+    # through to ``valid[0]``, and choose_binding keeps the inherited cwd —
+    # the wrong project, which is the bug roots-binding exists to fix. This is
+    # the same "two layers disagreeing about what a project is" split already
+    # called out in _is_git_repo, on the walk-up axis instead.
+    #
+    # ORPHAN roots only — a root carrying either marker keeps its own identity.
+    # Without that guard, `codevira init` in ~/Projects would make every repo
+    # under it resolve to ~/Projects, merging unrelated projects' memory into
+    # one store. The walk is for roots with NO project identity of their own.
+    #
+    # Deliberately the ``.codevira`` walk, not the generic marker walk in
+    # paths._discover_project_root: stopping at a bare ``.git`` would let
+    # choose_binding rule 2 auto-init ``.codevira`` at a monorepo root the user
+    # never opted into. resolve_project_from_file_path refuses $HOME and system
+    # tops, which is load-bearing here — ``~/.codevira`` ALWAYS exists, so an
+    # unguarded walk would bind every marker-less folder to $HOME (v1.8.0).
+    walked: list[Path] = []
+    for c in valid:
+        if _has_codevira(c) or _is_git_repo(c):
+            target = c
+        else:
+            target = resolve_project_from_file_path(str(c)) or c
+        if target not in walked:
+            # Two subdirs of one repo are ONE project, not an ambiguous
+            # multi-root workspace — de-dupe before the ambiguity check.
+            walked.append(target)
+    valid = walked
 
     codevira_roots = [c for c in valid if _has_codevira(c)]
     if len(codevira_roots) > 1:

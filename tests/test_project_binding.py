@@ -269,6 +269,112 @@ class TestChooseBinding:
         assert choose_binding(None, tmp_path) is None
 
 
+class TestSubdirectoryRoots:
+    """A workspace root can be a SUBDIRECTORY of the project.
+
+    Measured against Claude Code 2.1.221 (D00013U): ``roots/list`` returns the
+    literal session cwd, so opening ``~/repo/packages/web`` advertises that
+    path and not ``~/repo``. Such a root has neither ``.codevira`` nor ``.git``,
+    so before the walk-up it matched no branch of pick_project_root, fell
+    through to ``valid[0]``, and choose_binding then kept the inherited cwd —
+    i.e. the wrong project, which is the whole bug roots-binding exists to fix.
+    """
+
+    def test_subdir_resolves_to_enclosing_codevira_project(
+        self, tmp_path: Path
+    ) -> None:
+        proj = tmp_path / "repo"
+        (proj / ".codevira").mkdir(parents=True)
+        web = proj / "packages" / "web"
+        web.mkdir(parents=True)
+        assert pick_project_root([web]) == proj
+
+    def test_two_subdirs_of_one_project_are_not_ambiguous(
+        self, tmp_path: Path, caplog
+    ) -> None:
+        """--add-dir of two subdirs of ONE repo is not a multi-project
+        workspace; de-duping after the walk-up keeps the ambiguity warning
+        for the case it was written for."""
+        import logging
+
+        proj = tmp_path / "repo"
+        (proj / ".codevira").mkdir(parents=True)
+        a, b = proj / "packages" / "a", proj / "packages" / "b"
+        a.mkdir(parents=True)
+        b.mkdir(parents=True)
+        with caplog.at_level(logging.WARNING):
+            assert pick_project_root([a, b]) == proj
+        assert not [r for r in caplog.records if "ambiguous" in r.message]
+
+    def test_walkup_never_escapes_to_home(self, tmp_path: Path, monkeypatch) -> None:
+        """$HOME ALWAYS has a .codevira (codevira's own global home lives at
+        ~/.codevira), so an unguarded walk-up would bind every marker-less
+        folder to $HOME — the v1.8.0 rogue-$HOME-project crash."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        (tmp_path / ".codevira").mkdir()
+        plain = tmp_path / "scratch"
+        plain.mkdir()
+        assert pick_project_root([plain]) == plain
+
+    def test_git_only_subdir_is_deliberately_not_walked_up(
+        self, tmp_path: Path
+    ) -> None:
+        """Only the .codevira walk-up happens. Walking up to a bare .git would
+        let choose_binding rule 2 auto-init .codevira at a monorepo root the
+        user never opted into, so a git-only subdir is left as-is."""
+        repo = tmp_path / "repo"
+        (repo / ".git").mkdir(parents=True)
+        sub = repo / "packages" / "web"
+        sub.mkdir(parents=True)
+        assert pick_project_root([sub]) == sub
+
+    def test_end_to_end_through_resolve_from_roots(self, tmp_path: Path) -> None:
+        proj = tmp_path / "repo"
+        (proj / ".codevira").mkdir(parents=True)
+        web = proj / "packages" / "web"
+        web.mkdir(parents=True)
+        session = _session([_root(f"file://{web}")])
+        assert asyncio.run(resolve_project_root_from_roots(session)) == proj
+
+    def test_a_root_that_is_its_own_repo_is_never_walked_up(
+        self, tmp_path: Path
+    ) -> None:
+        """An ancestor's .codevira must not swallow a root that already has a
+        project identity of its own.
+
+        Real shape: someone ran `codevira init` in ~/Projects, then opens
+        ~/Projects/myapp — a fresh repo. Walking up would bind the whole
+        parent folder and every sibling project's memory with it. The walk-up
+        is for ORPHAN roots only: those with neither marker.
+        """
+        outer = tmp_path / "Projects"
+        (outer / ".codevira").mkdir(parents=True)
+        app = outer / "myapp"
+        (app / ".git").mkdir(parents=True)
+        assert pick_project_root([app]) == app
+
+    def test_a_nested_codevira_project_keeps_itself(self, tmp_path: Path) -> None:
+        outer = tmp_path / "outer"
+        (outer / ".codevira").mkdir(parents=True)
+        inner = outer / "vendored"
+        (inner / ".codevira").mkdir(parents=True)
+        assert pick_project_root([inner]) == inner
+
+    def test_subdir_loses_to_a_directly_advertised_project(
+        self, tmp_path: Path
+    ) -> None:
+        """Order is preserved after the walk-up: a subdir listed first still
+        resolves to its parent, and that parent still wins as the first
+        .codevira root."""
+        outer = tmp_path / "outer"
+        (outer / ".codevira").mkdir(parents=True)
+        sub = outer / "pkg"
+        sub.mkdir()
+        other = tmp_path / "other"
+        (other / ".codevira").mkdir(parents=True)
+        assert pick_project_root([sub, other]) == outer
+
+
 class TestIsInitialized:
     def test_true_for_codevira_dir(self, tmp_path: Path) -> None:
         (tmp_path / ".codevira").mkdir()

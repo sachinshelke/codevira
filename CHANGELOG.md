@@ -9,6 +9,27 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+
+## [4.1.0] — 2026-08-16
+
+**If you are on 4.0.1, upgrade.** That release will silently replace a decision
+with its own negation: supersede-on-write is on by default and fires at Jaccard
+≥ 0.75, while `"never do X"` and `"do X"` score **0.75–0.83** against each other.
+Measured on the shipped 4.0.1 artifact, not inferred. Only `do_not_revert`
+decisions were exempt. The guard that fixes it is below, and it is the reason
+this release exists.
+
+Also here: a workspace root that is a *subdirectory* of your project no longer
+binds to the wrong project, and `get_session_context` now ranks the brief by
+recency × outcome-confidence instead of write order — the one change in this
+release that alters observable output of a documented tool, and so the reason
+this is a minor rather than a patch.
+
+`reconcile.cluster_store()` and `reconcile.pick_canonical()` (Phases 25 and 29)
+land as **library internals**. They are complete and tested, but nothing calls
+them yet — no MCP tool, no CLI subcommand. They are groundwork for a merge
+surface, listed here for contributors, not as capabilities you can invoke.
+
 ### Fixed — a workspace root inside a project no longer binds to the wrong project
 
 An MCP client advertises its workspace roots, and codevira uses them to bind to
@@ -70,7 +91,8 @@ decisions are still hidden entirely.
 `outcome="modified"` is exactly the churn signal Phase 26 asks for — the
 tracker saw the decision's file change but not disappear. Those rows now carry
 `needs_review` and a hint to `reaffirm_decision` if the decision still holds,
-or supersede / `mark_outdated` if it does not. It needs a human verdict, not
+or `supersede_decision` / `mark_decision_outdated` if it does not. It needs a
+human verdict, not
 silent removal. The keys are absent on every other row, so the brief stays
 lean.
 

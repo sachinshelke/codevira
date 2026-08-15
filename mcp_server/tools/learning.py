@@ -763,10 +763,16 @@ def get_session_context(since: str | None = None) -> dict:
             return {
                 **d,
                 "needs_review": True,
+                # Tool names here must be the REGISTERED MCP tool names, not the
+                # decisions_store function names — an agent reads this hint and
+                # calls what it says. `mark_outdated` is the store function; the
+                # tool is `mark_decision_outdated`, and a bare `supersede` is not
+                # a tool at all. Guarded by
+                # test_review_hint_only_names_callable_tools.
                 "review_hint": (
                     "the file behind this decision has changed since it was "
                     "recorded — reaffirm_decision if it still holds, or "
-                    "supersede/mark_outdated if it does not"
+                    "supersede_decision / mark_decision_outdated if it does not"
                 ),
             }
 

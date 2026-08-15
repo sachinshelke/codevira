@@ -1,5 +1,34 @@
 # Migrating to Codevira
 
+## Upgrading to 4.1.0
+
+No migration steps, no config changes, no data conversion. Upgrade and restart
+your IDE.
+
+**Do upgrade, though, if you are on 4.0.1.** That release could silently replace
+a decision with its own negation. `record_decision` supersedes a strong
+near-duplicate by default, the bar is Jaccard ≥ 0.75, and a sentence versus the
+same sentence with `never` / `do not` removed scores 0.75–0.83 — so recording
+the opposite of an existing decision retired the original instead of conflicting
+with it. Only `do_not_revert` decisions were protected.
+
+Nothing repairs itself: the decision log is append-only, so a supersession that
+already happened stays in the log as a supersession. If you suspect one, the
+amendment chain is intact and the original text is still there —
+`list_decisions(include_superseded=true)` and `origin_of()` will show it, and
+`reaffirm_decision` on the original restores it as live.
+
+Two smaller behaviour changes worth knowing:
+
+- `get_session_context` now orders `recent_decisions` by recency ×
+  outcome-confidence rather than write order, and adds `needs_review` +
+  `review_hint` on decisions whose file changed underneath them. Both are
+  additive; nothing is hidden that was previously shown.
+- A workspace root that is a subdirectory of your project (opening
+  `~/repo/packages/web`) now resolves to the enclosing project instead of
+  falling back to the server's inherited working directory. This only affects
+  setups with no `--project-dir` pin.
+
 ## Upgrading to 4.0.1
 
 A patch release, but it removes one command and repairs the code graph. If you

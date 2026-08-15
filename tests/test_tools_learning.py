@@ -996,6 +996,34 @@ class TestRecencyAndConfidenceRanking:
         assert out[0]["needs_review"] is True
         assert "reaffirm" in out[0]["review_hint"].lower()
 
+    def test_review_hint_only_names_callable_tools(self, tmp_path, monkeypatch):
+        """The hint is read by an AGENT, so every tool it names must be a tool
+        the agent can actually call.
+
+        It shipped naming ``mark_outdated`` — the internal decisions_store
+        function — where the registered MCP tool is ``mark_decision_outdated``.
+        An agent following the hint would call nothing. Asserting merely that
+        "reaffirm" appears cannot catch that, so match every identifier-shaped
+        token in the hint against the real tool registry.
+        """
+        import asyncio
+        import re
+
+        from mcp_server.server import list_tools
+
+        rows = [self._row("D1", "cache tokens in redis", 30, outcome="modified")]
+        hint = self._mk(monkeypatch, tmp_path, rows)[0]["review_hint"]
+
+        real = {t.name for t in asyncio.run(list_tools())}
+        # Tokens that look like a tool reference: snake_case with a verb-ish
+        # head. Plain prose words ("recorded", "changed") have no underscore.
+        named = {t for t in re.findall(r"[a-z][a-z0-9]*(?:_[a-z0-9]+)+", hint)}
+        assert named, "hint names no tool at all — the nudge is not actionable"
+        assert named <= real, (
+            f"review_hint names non-existent tool(s): {sorted(named - real)}. "
+            f"Registered tools include: {sorted(n for n in real if 'decision' in n)}"
+        )
+
     def test_an_unchurned_decision_carries_no_nudge(self, tmp_path, monkeypatch):
         rows = [self._row("D1", "cache tokens in redis", 30, outcome="kept")]
         out = self._mk(monkeypatch, tmp_path, rows)

@@ -122,9 +122,99 @@ def recency_decay(
 def outcome_weight(outcome: Any) -> float:
     """Multiplier for a decision's git-derived outcome, in [0, 1].
 
-    Unknown or absent outcomes get ``NO_OUTCOME_WEIGHT``. Note that
-    ``archived`` is the only value that can zero a score outright.
+    Unknown or absent outcomes get ``NO_OUTCOME_WEIGHT``.
+
+    ``archived`` is in the table but the outcome classifier never emits it
+    — ``indexer/outcome_classifier.py`` returns only kept / modified /
+    reverted. The entry is kept because the mapping is data, not control
+    flow, and a future archiver would land on it; nothing reaches it today.
     """
     if not outcome:
         return NO_OUTCOME_WEIGHT
     return _OUTCOME_WEIGHTS.get(str(outcome).strip().lower(), NO_OUTCOME_WEIGHT)
+
+
+#: Recency score for a decision whose timestamp is missing or unparseable.
+#: NOT 0.0: ``recency_decay`` returns 0.0 there so a malformed record cannot
+#: masquerade as fresh, which is right when recency is the whole score. As a
+#: *factor* it would instead zero the decision out of the ranking entirely —
+#: a missing ``ts`` would hide a real decision rather than merely fail to
+#: promote it. Neutral is the safe reading of "we don't know how old this is".
+UNKNOWN_AGE_RECENCY = 0.5
+
+
+def freshness(
+    outcome: Any,
+    timestamp: str | float | None,
+    *,
+    now: datetime,
+    dnr_soft_expired: bool = False,
+    half_life_days: float = DEFAULT_HALF_LIFE_DAYS,
+    weights: dict[str, float] | None = None,
+    no_outcome: float = NO_OUTCOME_WEIGHT,
+) -> float:
+    """How much should reality's verdict on a decision promote it? ``[0, 1]``.
+
+    ``outcome_weight`` × ``recency_decay`` — the composite every staleness
+    read-side surface needs (Phase 26), in one place so ``get_session_context``,
+    ``search`` and the relevance-injection hook cannot drift apart.
+
+    ``now`` is REQUIRED and keyword-only, deliberately — unlike
+    ``recency_decay``, which defaults it and re-samples the clock. One instant
+    must cover a whole comparison: sampling per row makes rows evaluated later
+    score microseconds younger, so the result becomes a function of evaluation
+    order rather than of the data. That exact bug shipped once. Having no
+    default makes it unrepresentable at every call site rather than merely
+    discouraged.
+
+    ``dnr_soft_expired`` halves the score: a ``do_not_revert`` lock nobody has
+    re-confirmed past the soft-expire threshold is weaker evidence than a
+    current one.
+
+    ``weights`` / ``no_outcome`` override the outcome table for callers with a
+    *stated* reason to disagree — see ``SESSION_BRIEF_OUTCOME_WEIGHTS`` and
+    ``SESSION_BRIEF_NO_OUTCOME``. Absent, the shared table applies, so surfaces
+    agree by default. They exist so consolidating an already-shipped scorer onto
+    this function is arithmetically identical rather than a quiet re-tune.
+    """
+    table = _OUTCOME_WEIGHTS if weights is None else weights
+    key = str(outcome).strip().lower() if outcome else ""
+    confidence = table.get(key, no_outcome) if key else no_outcome
+    if dnr_soft_expired:
+        confidence *= 0.5
+    # ABSENT timestamp -> neutral. PRESENT but ancient or unparseable -> whatever
+    # recency_decay says, including 0.0.
+    #
+    # An earlier cut rewrote a 0.0 from recency_decay back to neutral, reasoning
+    # that 0.0 meant "unparseable". It cannot: recency_decay returns 0.0 for a
+    # parse failure AND for anything old enough to round to zero. Conflating
+    # them promoted a 2020 decision to the same recency as one written today —
+    # measured, not hypothesised. Scoring a corrupt timestamp lowest is the safe
+    # direction: the row still returns, it just ranks last.
+    recency = (
+        recency_decay(timestamp, now=now, half_life_days=half_life_days)
+        if timestamp
+        else UNKNOWN_AGE_RECENCY
+    )
+    return confidence * recency
+
+
+#: The catch-up brief disagrees with the shared table on ``modified``,
+#: deliberately. ``modified`` means the tracker saw the decision's file change
+#: underneath it. In a *brief* that is a liability — it is the churn signal that
+#: earns ``needs_review``, so it should sink below an untested decision. In a
+#: *search* the same decision is a strong hit: you asked about this area and
+#: someone touched it recently, so the shared 0.6 is right there. Same
+#: arithmetic, two stated policies, rather than one number that fits neither.
+#:
+#: ``reverted`` is absent because the brief FILTERS those rows out before
+#: ranking (``_is_stale``); it never reaches the table.
+SESSION_BRIEF_OUTCOME_WEIGHTS: dict[str, float] = {
+    "kept": 1.0,
+    "modified": 0.4,
+}
+
+#: The brief's unobserved weight. Higher than the shared 0.5: a brief is a
+#: short list where an untested decision is still worth surfacing, whereas in a
+#: ranked search it competes against hits with real evidence behind them.
+SESSION_BRIEF_NO_OUTCOME = 0.7

@@ -86,7 +86,10 @@ class TestDigestRecord:
                 # assertion is exactly what earned the "mediocre
                 # signal-to-noise" verdict in D00005N.
                 "context": "lengthy rationale",
-                # Still dropped:
+                # v4.1 (Phase 26): NO LONGER dropped. The relevance hook scores
+                # digest rows, so with no `ts` here recency was not merely
+                # unranked, it was uncomputable — the hook had no timestamp
+                # from any source (the manifest carries bare id lists).
                 "ts": "2026-05-19T12:00:00Z",
             }
         )
@@ -98,9 +101,15 @@ class TestDigestRecord:
             "do_not_revert",
             "weight",
             "why",
+            # v4.1 (Phase 26) — see the digest_record docstring. `outcome` is
+            # the raw LABEL: `weight` is a pre-applied, lossy derivative that a
+            # caller needing a different table cannot un-apply.
+            "ts",
+            "outcome",
         }
         assert rec["why"] == "lengthy rationale"
-        assert "ts" not in rec
+        assert rec["ts"] == "2026-05-19T12:00:00Z"
+        assert rec["outcome"] == "kept"
         assert rec["id"] == "D000001"
         assert rec["summary"] == "Use bcrypt for password hashing"
         assert rec["tags"] == ["security", "auth"]
@@ -178,6 +187,8 @@ class TestRegenerate:
                 "do_not_revert",
                 "weight",
                 "why",  # 4.0 Step 2.3 — see test_shape_contract
+                "ts",  # v4.1 Phase 26 — see test_shape_contract
+                "outcome",
             }
 
     def test_regenerate_atomic_via_tmp(

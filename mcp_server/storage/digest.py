@@ -81,7 +81,7 @@ def digest_record(decision: dict[str, Any]) -> dict[str, Any]:
          tags, supersedes, superseded_by, outcome, ...}
 
     Output shape:
-        {id, summary, tags, file, do_not_revert, weight}
+        {id, summary, tags, file, do_not_revert, weight, ts, outcome, why}
     """
     return {
         "id": decision.get("id"),
@@ -90,6 +90,21 @@ def digest_record(decision: dict[str, Any]) -> dict[str, Any]:
         "file": decision.get("file_path"),
         "do_not_revert": bool(decision.get("do_not_revert", False)),
         "weight": weight_for_outcome(decision.get("outcome")),
+        # v4.1 (Phase 26): the raw timestamp and outcome LABEL, carried so the
+        # relevance hook can rank by recency x outcome-confidence.
+        #
+        # `weight` above cannot serve: it is a pre-applied, lossy derivative —
+        # it collapses "no outcome" and "unrecognised outcome" onto the same
+        # 0.5, and a caller that needs a different table (the catch-up brief
+        # scores `modified` lower than an untested decision, a search scores it
+        # higher) cannot un-apply it. `ts` had no source here at all, so
+        # recency was not merely wrong in the hook, it was uncomputable.
+        #
+        # Both stay cheap: two scalars on a record whose whole point is being
+        # ~50 tokens. `weight` is retained rather than replaced so a digest
+        # written by an older codevira keeps working until it regenerates.
+        "ts": decision.get("ts"),
+        "outcome": decision.get("outcome"),
         # 4.0 Step 2.3: a one-line "why", tightly clipped. The digest feeds
         # prompt injection, which is token-budgeted — the renderer adds
         # lines greedily until the budget is hit, so a longer line means

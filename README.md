@@ -169,7 +169,7 @@ one tool is visible to every tool.
 | **Frugal by design** | Tools return summaries by default; `get_session_context()` is one ~500-token call; the server cold-starts in well under a second with no ML model to load. |
 | **Concurrent-safe** | Every write is a crash-safe atomic write behind a Posix `fcntl.flock`, so two IDEs on one project don't race. [Details](#concurrency--safety) (expand) |
 
-<sub><strong>Latest: 4.1.0.</strong> 4.0 made enforcement <em>universal</em> — a locked decision now blocks a commit in every editor via a git <code>pre-commit</code> hook, not just an edit in Claude Code — and when it blocks, it shows the reasoning. 4.1.0 removes the deprecated <code>codevira clean</code> command plus two <code>doctor</code>/project-inventory fixes. Upgrading is automatic on the first server start. <a href="https://github.com/sachinshelke/codevira/blob/main/CHANGELOG.md">Full release notes →</a></sub>
+<sub><strong>Latest: 4.1.0.</strong> Upgrade if you are on 4.0.1: that release could silently replace a decision with its own <em>negation</em> — <code>"never do X"</code> and <code>"do X"</code> score 0.75&ndash;0.83 against each other, over the auto-supersede bar. 4.1.0 makes a one-sided negation a conflict by construction, stops a workspace root inside a project binding to the wrong project, and ranks the session brief, search and prompt injection by recency &times; outcome-confidence instead of write order. Upgrading is automatic on the first server start. <a href="https://github.com/sachinshelke/codevira/blob/main/CHANGELOG.md">Full release notes &rarr;</a></sub>
 
 ---
 

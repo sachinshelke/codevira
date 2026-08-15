@@ -146,6 +146,126 @@ class TestOutcomeWeight:
         assert zeros == ["archived"]
 
 
+class TestFreshness:
+    """Phase 26's composite: outcome-confidence x recency, shared by
+    get_session_context, search and the relevance-injection hook."""
+
+    def _ts(self, days_ago: float) -> str:
+        return (NOW - timedelta(days=days_ago)).isoformat()
+
+    def test_kept_beats_unobserved_beats_reverted_at_equal_age(self) -> None:
+        t = self._ts(10)
+        kept = score.freshness("kept", t, now=NOW)
+        unobserved = score.freshness(None, t, now=NOW)
+        reverted = score.freshness("reverted", t, now=NOW)
+        assert kept > unobserved > reverted
+
+    def test_recent_beats_old_at_equal_outcome(self) -> None:
+        assert score.freshness("kept", self._ts(1), now=NOW) > score.freshness(
+            "kept", self._ts(400), now=NOW
+        )
+
+    def test_half_life_is_ninety_days(self) -> None:
+        full = score.freshness("kept", self._ts(0), now=NOW)
+        half = score.freshness("kept", self._ts(90), now=NOW)
+        assert abs(half / full - 0.5) < 0.01, (full, half)
+
+    def test_soft_expired_lock_is_halved(self) -> None:
+        t = self._ts(10)
+        assert (
+            abs(
+                score.freshness("kept", t, now=NOW, dnr_soft_expired=True)
+                - score.freshness("kept", t, now=NOW) * 0.5
+            )
+            < 1e-9
+        )
+
+    def test_absent_timestamp_is_neutral(self) -> None:
+        """No ts at all is 'we don't know how old this is', not 'ancient'."""
+        assert score.freshness("kept", None, now=NOW) == pytest.approx(
+            1.0 * score.UNKNOWN_AGE_RECENCY
+        )
+
+    def test_an_ancient_decision_is_not_rescued_to_neutral(self) -> None:
+        """The bug this asserts against: an earlier cut treated recency_decay's
+        0.0 as 'unparseable' and rewrote it to neutral 0.5, which promoted a
+        2020 decision to the same recency as one written today. A present
+        timestamp must be taken at face value however old it is.
+        """
+        ancient = score.freshness("modified", self._ts(2400), now=NOW)
+        fresh_untested = score.freshness(None, self._ts(0), now=NOW)
+        assert ancient < 0.01, ancient
+        assert ancient < fresh_untested
+
+    def test_bounded_like_every_other_primitive(self) -> None:
+        vals = [
+            score.freshness(o, self._ts(d), now=NOW, dnr_soft_expired=x)
+            for o in (None, "kept", "modified", "reverted", "archived", "bogus")
+            for d in (0, 1, 90, 10_000)
+            for x in (False, True)
+        ]
+        assert all(0.0 <= v <= 1.0 for v in vals), [v for v in vals if not 0 <= v <= 1]
+
+    def test_session_brief_override_reproduces_the_shipped_brief_exactly(self) -> None:
+        """The consolidation must be arithmetically identical to the _rank that
+        shipped in 4.1.0, or it is a silent re-tune of a documented surface.
+
+        Shipped table: kept 1.0, modified 0.4, anything else 0.7; x0.5 when
+        dnr_soft_expired; recency 0.5 ** (age/90); unknown age -> 0.5.
+        """
+
+        def shipped(outcome, days, dnr=False):
+            confidence = {"kept": 1.0, "modified": 0.4}.get(str(outcome or ""), 0.7)
+            if dnr:
+                confidence *= 0.5
+            recency = 0.5 ** (days / 90.0) if days is not None else 0.5
+            return confidence * recency
+
+        for outcome in (None, "kept", "modified", "reverted", "weird"):
+            for days in (0, 3, 90, 365):
+                for dnr in (False, True):
+                    got = score.freshness(
+                        outcome,
+                        self._ts(days),
+                        now=NOW,
+                        dnr_soft_expired=dnr,
+                        weights=score.SESSION_BRIEF_OUTCOME_WEIGHTS,
+                        no_outcome=score.SESSION_BRIEF_NO_OUTCOME,
+                    )
+                    assert got == pytest.approx(
+                        shipped(outcome, days, dnr), abs=1e-3
+                    ), (
+                        outcome,
+                        days,
+                        dnr,
+                        got,
+                        shipped(outcome, days, dnr),
+                    )
+
+    def test_search_and_brief_disagree_on_modified_on_purpose(self) -> None:
+        """Churn sinks in a catch-up brief and lifts in a search — the one
+        deliberate divergence, asserted so it cannot be 'tidied' away."""
+        t = self._ts(10)
+        brief_mod = score.freshness(
+            "modified",
+            t,
+            now=NOW,
+            weights=score.SESSION_BRIEF_OUTCOME_WEIGHTS,
+            no_outcome=score.SESSION_BRIEF_NO_OUTCOME,
+        )
+        brief_none = score.freshness(
+            None,
+            t,
+            now=NOW,
+            weights=score.SESSION_BRIEF_OUTCOME_WEIGHTS,
+            no_outcome=score.SESSION_BRIEF_NO_OUTCOME,
+        )
+        assert brief_mod < brief_none, "brief: churn must sink below untested"
+        assert score.freshness("modified", t, now=NOW) > score.freshness(
+            None, t, now=NOW
+        ), "search: churn must lift above untested"
+
+
 class TestEveryPrimitiveIsBounded:
     def test_the_contract_that_makes_scores_comparable(self) -> None:
         vals = [
@@ -153,5 +273,6 @@ class TestEveryPrimitiveIsBounded:
             score.tag_jaccard(["a", "b"], ["b", "c"]),
             score.recency_decay((NOW - timedelta(days=14)).isoformat(), now=NOW),
             score.outcome_weight("modified"),
+            score.freshness("kept", (NOW - timedelta(days=14)).isoformat(), now=NOW),
         ]
         assert all(0.0 <= v <= 1.0 for v in vals), vals

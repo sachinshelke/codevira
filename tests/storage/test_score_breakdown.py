@@ -38,8 +38,13 @@ class TestBreakdownIsPresent:
         hits = decisions_store.search("atomic writes", limit=5)
         assert hits, "expected hits"
         bd = hits[0]["score_breakdown"]
-        assert set(bd) == {"bm25", "rank", "rank_norm", "matched"}
+        # `freshness` joined in v4.1 (Phase 26): search re-ranks BM25 by
+        # outcome-confidence x recency, and the breakdown must SAY so — an
+        # order the reader cannot explain is the thing this breakdown exists
+        # to prevent.
+        assert set(bd) == {"bm25", "rank", "rank_norm", "freshness", "matched"}
         assert bd["matched"] == "fts5"
+        assert 0.0 <= bd["freshness"] <= 1.0
 
     def test_mcp_tool_surfaces_it_under_full(self, project: Path) -> None:
         """Deliberately NOT in the compact row: measured at +122 tokens on
@@ -54,6 +59,75 @@ class TestBreakdownIsPresent:
 
         full = search_decisions("atomic writes", limit=5, full=True)
         assert full["results"][0]["score_breakdown"] is not None
+
+
+class TestSearchRanksByFreshness:
+    """v4.1 (Phase 26): search re-ranks BM25 relevance by outcome-confidence x
+    recency, and caps AFTER ranking.
+
+    Before this, the cap sat inside the BM25 loop, so freshness could only
+    reorder rows relevance had already selected — a two-year-old decision the
+    tracker never validated still displaced a current one that BM25 ranked
+    just below it.
+    """
+
+    def _rewrite(self, root: Path, mutate) -> None:
+        """Rewrite decisions.jsonl through `mutate`, then drop the caches."""
+        import json
+
+        from mcp_server.storage import fts5_index
+
+        p = paths.decisions_path(root)
+        rows = [json.loads(x) for x in p.read_text().splitlines() if x.strip()]
+        for r in rows:
+            mutate(r)
+        p.write_text("".join(json.dumps(r) + "\n" for r in rows))
+        decisions_store.invalidate_merged_cache()
+        fts5_index.mark_stale(paths.fts5_path(root))
+
+    def test_a_stale_decision_loses_to_a_fresh_one(self, project: Path) -> None:
+        ids = sorted(
+            json_id
+            for json_id in (
+                d["id"] for d in decisions_store.list_all(limit=50)["decisions"]
+            )
+        )
+        assert len(ids) >= 2
+        oldest, newest = ids[0], ids[-1]
+
+        def mutate(r):
+            if r.get("id") == oldest:
+                # ancient AND reverted-adjacent: the weakest possible evidence
+                r["ts"] = "2020-01-01T00:00:00+00:00"
+                r["outcome"] = "modified"
+            elif r.get("id") == newest:
+                r["ts"] = "2026-08-16T00:00:00+00:00"
+                r["outcome"] = "kept"
+
+        self._rewrite(project, mutate)
+
+        hits = decisions_store.search("atomic writes", limit=6)
+        order = [h["id"] for h in hits]
+        assert newest in order, order
+        if oldest in order:
+            assert order.index(newest) < order.index(oldest), (
+                "a 2020 decision the tracker saw churn must not outrank a "
+                f"current kept one: {order}"
+            )
+        fresh = next(h for h in hits if h["id"] == newest)
+        assert fresh["score_breakdown"]["freshness"] > 0.9
+
+    def test_order_is_deterministic_across_repeated_searches(
+        self, project: Path
+    ) -> None:
+        """The clock is sampled once per search. If it were sampled per row,
+        rows evaluated later would score younger and the order could drift
+        between two identical calls."""
+        runs = [
+            [h["id"] for h in decisions_store.search("atomic writes", limit=6)]
+            for _ in range(5)
+        ]
+        assert all(r == runs[0] for r in runs), runs
 
 
 class TestBreakdownIsMeaningful:

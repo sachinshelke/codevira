@@ -1101,3 +1101,73 @@ class TestRecencyAndConfidenceRanking:
             for i, p in enumerate(itertools.permutations(base))
         }
         assert len(seen) == 1, f"identical rows must rank identically; got {seen}"
+
+
+class TestRankingAppliesOnTheFocusBranch:
+    """The ranking must apply on the branch that actually runs.
+
+    ``get_session_context`` takes the FOCUS branch whenever the roadmap's
+    next_action yields one — the normal case in a live project. That branch
+    truncated the search hits with ``[:3]`` BEFORE ranking, so the three
+    surfaced decisions were chosen in relevance order and only reordered
+    afterwards; the backfill never ran either, because the list was already
+    full. Every other ranking test stubs ``search`` to ``[]`` and therefore
+    exercises only the chronological branch.
+    """
+
+    def _rows(self):
+        from datetime import datetime, timedelta, timezone
+
+        def row(id_, days, outcome):
+            return {
+                "id": id_,
+                "decision": f"{id_} about caching",
+                "created_at": (
+                    datetime.now(timezone.utc) - timedelta(days=days)
+                ).isoformat(),
+                "outcome": outcome,
+                "do_not_revert": False,
+                "tags": [],
+            }
+
+        # Relevance order (what search returns) is deliberately the INVERSE of
+        # freshness order, so a test that ranks correctly cannot also pass by
+        # accidentally preserving input order.
+        return [
+            row("D000001", 900, None),  # ancient, untested
+            row("D000002", 800, "modified"),  # ancient + churned
+            row("D000003", 700, None),
+            row("D000004", 1, "kept"),  # freshest, confirmed
+            row("D000005", 2, "kept"),
+        ]
+
+    def test_focus_branch_ranks_the_whole_hit_set_not_the_first_three(
+        self, tmp_path, monkeypatch
+    ):
+        _setup_project(tmp_path, monkeypatch)
+        from mcp_server.storage import decisions_store
+
+        rows = self._rows()
+        monkeypatch.setattr(decisions_store, "search", lambda *a, **k: rows)
+        monkeypatch.setattr(
+            decisions_store,
+            "list_all",
+            lambda **k: {
+                "decisions": [],
+                "count": 0,
+                "total": 0,
+                "has_more": False,
+            },
+        )
+        with patch(
+            "mcp_server.tools.roadmap.get_roadmap",
+            return_value={"current_phase": {"next_action": "fix the cache layer"}},
+        ):
+            out = learning.get_session_context()["recent_decisions"]
+
+        ids = [d["id"] for d in out]
+        assert "D000004" in ids, (
+            "the freshest confirmed decision was 4th in relevance order, so a "
+            f"pre-rank [:3] drops it entirely — got {ids}"
+        )
+        assert ids[0] == "D000004", ids

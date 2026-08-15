@@ -1128,8 +1128,8 @@ async def list_tools() -> list[Tool]:
                 "git watched survive outranks one nothing has tested); reverted and "
                 "outdated ones are hidden entirely. A decision whose file has CHANGED "
                 "since it was recorded carries 'needs_review': true plus a "
-                "'review_hint' — reaffirm_decision if it still holds, supersede or "
-                "mark_decision_outdated if it does not. "
+                "'review_hint' — reaffirm_decision if it still holds, "
+                "supersede_decision or mark_decision_outdated if it does not. "
                 "Works seamlessly across AI tools: Cursor, Claude Code, Antigravity."
             ),
             inputSchema={"type": "object", "properties": {}},

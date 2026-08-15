@@ -12,11 +12,21 @@ same sentence with `never` / `do not` removed scores 0.75–0.83 — so recordin
 the opposite of an existing decision retired the original instead of conflicting
 with it. Only `do_not_revert` decisions were protected.
 
-Nothing repairs itself: the decision log is append-only, so a supersession that
-already happened stays in the log as a supersession. If you suspect one, the
-amendment chain is intact and the original text is still there —
-`list_decisions(include_superseded=true)` and `origin_of()` will show it, and
-`reaffirm_decision` on the original restores it as live.
+Nothing repairs itself, and there is **no un-supersede command**. The decision
+log is append-only, so a supersession that already happened stays in the log.
+Your text is not lost — recovery is manual:
+
+1. `list_decisions(include_superseded=true)` to find it. The full original text
+   and its amendment chain are intact.
+2. `record_decision(...)` with that text to make it live again. Re-recording is
+   safe now: the negation guard classifies the pair as a conflict, so it will
+   not be auto-superseded a second time.
+
+`reaffirm_decision` does **not** restore it. It stamps `reaffirmed_at` — which
+is what resets a `do_not_revert` lock's soft-expiry — and returns
+`success: true`, but it never clears `superseded_by`, so the decision stays
+hidden from search and `list_decisions`. Use it to re-confirm a *live*
+decision, not to undo a supersession.
 
 Two smaller behaviour changes worth knowing:
 

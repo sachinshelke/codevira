@@ -721,6 +721,11 @@ def search(
     merged = _read_merged(project_root)
     by_id = {str(d.get("id")): d for d in merged}
 
+    # v4.1 (Phase 26): ONE instant for the whole comparison. Sampling the clock
+    # per row makes rows evaluated later score microseconds younger, i.e. the
+    # order becomes a function of evaluation order. That bug shipped once.
+    _now = datetime.now(timezone.utc)
+
     results: list[dict[str, Any]] = []
     for hit_rank, hit in enumerate(hits):
         d = by_id.get(hit["decision_id"])
@@ -735,6 +740,7 @@ def search(
             continue
         if since and (d.get("ts") or "") < since:
             continue
+        result_dnr = _dnr_fields(d)
         result = {
             "id": d.get("id"),
             "decision": d.get("decision"),
@@ -761,6 +767,15 @@ def search(
                 "bm25": hit["score"],
                 "rank": hit_rank,
                 "rank_norm": retrieval_score.rank_norm(hit_rank, len(hits)),
+                # v4.1 (Phase 26): outcome-confidence x recency. Reported, not
+                # just applied — `score` stays raw BM25 so the field's meaning
+                # is unchanged for callers, and this says why the ORDER moved.
+                "freshness": retrieval_score.freshness(
+                    d.get("outcome"),
+                    d.get("ts"),
+                    now=_now,
+                    dnr_soft_expired=bool(result_dnr.get("dnr_soft_expired")),
+                ),
                 "matched": "fts5",
             },
             "snippet": hit.get("snippet"),
@@ -771,13 +786,29 @@ def search(
             # (callers treat absent → ide="unknown").
             "origin": d.get("origin"),
             # 4.0.1: {dnr_soft_expired, dnr_age_days} on locked decisions.
-            **_dnr_fields(d),
+            **result_dnr,
         }
         results.append(result)
-        if len(results) >= limit:
-            break
 
-    return results
+    # v4.1 (Phase 26): re-rank BM25 relevance by freshness, THEN cap.
+    #
+    # The cap used to sit inside the loop above, so the surviving set was the
+    # first `limit` in pure BM25 order and freshness could only reorder what
+    # relevance had already chosen — a decision reverted-past or two years old
+    # still displaced a current one. `hits` is fetched at limit*2 precisely to
+    # leave this headroom, and the filters above (superseded / outdated /
+    # since) already thin the set, so ranking the survivors costs nothing.
+    #
+    # rank_norm, not raw BM25: BM25 is unbounded and negative, so multiplying
+    # it by a [0,1] factor would flip sign and invert the ordering. id is the
+    # final tiebreak so equal scores cannot be ordered by arrival.
+    results.sort(
+        key=lambda r: (
+            -(r["score_breakdown"]["rank_norm"] * r["score_breakdown"]["freshness"]),
+            str(r.get("id") or ""),
+        )
+    )
+    return results[:limit]
 
 
 #: Cap on how many projects a single cross-project search will touch. Each

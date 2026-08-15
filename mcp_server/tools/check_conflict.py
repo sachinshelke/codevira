@@ -70,6 +70,7 @@ from mcp_server.storage.reconcile import (  # noqa: E402
     _jaccard,
     _overlap_coefficient,
     _tokenize,
+    negation_disagrees,
 )
 
 __all__ = [
@@ -152,14 +153,23 @@ def check_conflict(
         # shape — terse new decision shares core tokens with a longer
         # protected decision). The Jaccard-below-DUP guard on the
         # asymmetric branch is the re-affirmation filter.
-        is_duplicate = jaccard >= _DUP_THRESHOLD
+        # v4.1: a negation on exactly one side is a CONTRADICTION, whatever the
+        # similarity says. This must be decided here and not only in
+        # reconcile.classify — this function is the one record_decision calls,
+        # and its `duplicates` list is what supersede-on-write consumes, so a
+        # guard that lives only in classify never runs on a real write.
+        is_negated = negation_disagrees(query_tokens, cand_tokens)
+        is_duplicate = jaccard >= _DUP_THRESHOLD and not is_negated
+        is_negation_conflict = is_negated and (
+            jaccard >= _DUP_THRESHOLD or overlap >= _CONFLICT_OVERLAP_THRESHOLD
+        )
         is_asymmetric_conflict = (
             is_protected
             and overlap >= _CONFLICT_OVERLAP_THRESHOLD
             and shared >= _CONFLICT_MIN_SHARED_TOKENS
             and jaccard < _DUP_THRESHOLD
         )
-        if not (is_duplicate or is_asymmetric_conflict):
+        if not (is_duplicate or is_negation_conflict or is_asymmetric_conflict):
             continue
 
         # Report the stronger of the two scores so the agent can see
@@ -171,7 +181,11 @@ def check_conflict(
             "jaccard": round(jaccard, 3),
             "overlap_coefficient": round(overlap, 3),
             "shared_tokens": shared,
-            "match_shape": "duplicate" if is_duplicate else "asymmetric-conflict",
+            "match_shape": (
+                "negated-conflict"
+                if is_negation_conflict
+                else ("duplicate" if is_duplicate else "asymmetric-conflict")
+            ),
             "do_not_revert": is_protected,
             "summary": (cand_text[:80] + "…") if len(cand_text) > 80 else cand_text,
             "file_path": cand.get("file_path"),
@@ -181,7 +195,12 @@ def check_conflict(
             # days ago" rather than just an opaque decision_id.
             "origin": cand.get("origin"),
         }
-        if is_protected:
+        # A negated pair goes to `conflicts` even when UNPROTECTED. That is the
+        # whole fix: `duplicates` is the list supersede-on-write draws from, so
+        # leaving a contradiction there is what silently retired "never do X"
+        # in favour of "do X". Protection was never the right gate for it —
+        # a contradiction is a contradiction.
+        if is_protected or is_negation_conflict:
             conflicts.append(entry)
         else:
             duplicates.append(entry)

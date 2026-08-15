@@ -66,6 +66,29 @@ KIND_DUPLICATE = "duplicate"
 KIND_CONFLICT = "conflict"
 KIND_DISTINCT = "distinct"
 
+
+def negation_disagrees(a_tokens: set[str], b_tokens: set[str]) -> bool:
+    """True when exactly ONE side of a pair carries a negation.
+
+    ``"never switch away from pnpm"`` and the same sentence without ``never``
+    differ by a single token, so set math scores them Jaccard 0.83 — over the
+    duplicate threshold and over the auto-supersede bar. Treating that as a
+    re-record retires a decision in favour of its own opposite.
+
+    Symmetric difference, so two texts that BOTH negate stay duplicates: the
+    rule keys on *disagreement*, not on the mere presence of a negation.
+
+    PUBLIC, and the reason it is: ``classify`` is not the only classifier.
+    ``tools/check_conflict`` re-implements the duplicate/conflict decision
+    inline from the shared primitives, and that is the path
+    ``record_decision`` -> supersede-on-write actually takes. When the guard
+    lived only inside ``classify`` it was dead code on the write path — every
+    test that drove ``classify`` directly passed while real writes still
+    superseded negations. One definition, both callers.
+    """
+    return bool((a_tokens ^ b_tokens) & _NEGATIONS)
+
+
 # Stop-word list for tokenization (English + common code words).
 _STOPWORDS = frozenset(
     {
@@ -165,14 +188,8 @@ def classify(a_text: str, b_text: str, *, b_protected: bool = False) -> dict[str
     ov = _overlap_coefficient(a, b)
     shared = len(a & b)
     sim = max(jac, ov)
-    # A negation on exactly one side flips an apparent duplicate into a
-    # conflict — see _NEGATIONS. Symmetric difference, so two texts that BOTH
-    # negate stay duplicates: the guard keys on disagreement, not on the mere
-    # presence of a negation.
-    negation_disagrees = bool((a ^ b) & _NEGATIONS)
-    if negation_disagrees and (
-        jac >= _DUP_THRESHOLD or ov >= _CONFLICT_OVERLAP_THRESHOLD
-    ):
+    disagrees = negation_disagrees(a, b)
+    if disagrees and (jac >= _DUP_THRESHOLD or ov >= _CONFLICT_OVERLAP_THRESHOLD):
         kind = KIND_CONFLICT
     elif jac >= _DUP_THRESHOLD:
         kind = KIND_DUPLICATE

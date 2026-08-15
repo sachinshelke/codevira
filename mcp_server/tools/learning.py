@@ -732,24 +732,35 @@ def get_session_context(since: str | None = None) -> dict:
 
         _rank_now = _dt.now(_tz.utc)
 
+        from mcp_server.retrieval import score as _score
+
         def _rank(d: dict) -> tuple[float, str]:
-            # Outcome-confidence: how much has reality tested this decision?
-            confidence = {
-                "kept": 1.0,  # the tracker watched the file survive
-                "modified": 0.4,  # the file changed underneath it
-            }.get(str(d.get("outcome") or ""), 0.7)  # unobserved sits between
-            # A do_not_revert lock nobody has re-confirmed past the soft-expire
-            # threshold is weaker evidence than a current one. Only protected
-            # decisions carry the field at all.
-            if d.get("dnr_soft_expired"):
-                confidence *= 0.5
-            # Recency, half-life _RANK_HALF_LIFE_DAYS. Exponential rather than
-            # a cliff so nothing drops off a shelf on an arbitrary birthday.
-            age = _age_days(d.get("created_at") or d.get("ts"), _rank_now)
-            recency = 0.5 ** (age / _RANK_HALF_LIFE_DAYS) if age is not None else 0.5
+            # outcome-confidence x recency. The arithmetic lives in
+            # retrieval.score.freshness so this brief, `search` and the
+            # relevance-injection hook cannot drift — they are the three
+            # surfaces Phase 26 names, and they previously shared nothing.
+            #
+            # The brief passes its OWN table, deliberately rather than by
+            # oversight: `modified` is the churn signal that earns needs_review
+            # here, so it must sink BELOW an untested decision, whereas in a
+            # search the same row is a strong hit. Both tables and the reason
+            # are stated in retrieval/score.py; a test pins that this call
+            # reproduces the pre-consolidation scores exactly.
+            #
             # id is the tiebreak, so equal-scoring rows cannot be ordered by
             # arrival. Negated score => descending on a plain ascending sort.
-            return (-(confidence * recency), str(d.get("id") or ""))
+            return (
+                -_score.freshness(
+                    d.get("outcome"),
+                    d.get("created_at") or d.get("ts"),
+                    now=_rank_now,
+                    dnr_soft_expired=bool(d.get("dnr_soft_expired")),
+                    half_life_days=_RANK_HALF_LIFE_DAYS,
+                    weights=_score.SESSION_BRIEF_OUTCOME_WEIGHTS,
+                    no_outcome=_score.SESSION_BRIEF_NO_OUTCOME,
+                ),
+                str(d.get("id") or ""),
+            )
 
         def _with_nudge(d: dict) -> dict:
             """Flag a decision whose file churned since it was recorded.
@@ -780,7 +791,14 @@ def get_session_context(since: str | None = None) -> dict:
         if focus:
             try:
                 hits = decisions_store.search(focus, limit=5, since=since)
-                recent_decisions = [d for d in hits if not _is_stale(d)][:3]
+                # NO [:3] here. Capping in relevance order before the rank
+                # below made the focus branch — the one that actually runs
+                # whenever next_action yields a focus — select by relevance and
+                # merely reorder afterwards, so a fresh confirmed decision
+                # sitting 4th in BM25 order was dropped rather than promoted.
+                # It also silently disabled the backfill, since the list was
+                # already full. The single cap after ranking is the only cap.
+                recent_decisions = [d for d in hits if not _is_stale(d)]
             except Exception:
                 recent_decisions = []
         # Fallback / pad to 3 with chronological-recent decisions from JSONL.

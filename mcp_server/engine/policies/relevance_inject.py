@@ -380,8 +380,14 @@ class RelevanceInject(Policy):
         digest_records: list[dict[str, Any]],
         min_score: float,
     ) -> list[dict[str, Any]]:
-        """Merge tag/file/FTS hits + outcome weight; return scored decisions
+        """Merge tag/file/FTS hits + freshness; return scored decisions
         sorted by score desc."""
+        from datetime import datetime as _dt, timezone as _tz
+
+        from mcp_server.retrieval import score as _score
+
+        # ONE instant for the whole comparison — see retrieval.score.freshness.
+        _now = _dt.now(_tz.utc)
         digest_by_id = {str(d.get("id")): d for d in digest_records}
 
         # Phase 13: effective weights (shipped defaults, or opt-in learned).
@@ -435,6 +441,21 @@ class RelevanceInject(Policy):
                 # line the "why" was silently dropped between the two.
                 why = digest_rec.get("why")
 
+            # v4.1 (Phase 26): outcome-confidence x RECENCY, replacing the bare
+            # outcome weight. Not multiplied on top of `weight` — freshness
+            # already contains the same outcome factor, so applying both would
+            # square it and let outcome swamp the tag/file/FTS relevance the
+            # score is mostly made of.
+            #
+            # A digest written before 4.1 has no `ts`, so recency has no source.
+            # Fall back to the stored `weight` — i.e. exactly the pre-4.1
+            # behaviour — rather than to a neutral 0.5, which would halve every
+            # score and could push real matches under min_score until the
+            # digest happened to regenerate. Degrade to unchanged, not to worse.
+            if digest_rec is not None and digest_rec.get("ts"):
+                weight = _score.freshness(
+                    digest_rec.get("outcome"), digest_rec.get("ts"), now=_now
+                )
             final = base * max(weight, 0.1)  # never zero-out a real match
             if final < min_score:
                 continue

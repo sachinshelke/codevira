@@ -1070,6 +1070,59 @@ class TestAdvertisedFieldsExist:
                 "description — an agent has no way to learn it exists"
             )
 
+    def test_no_tool_description_tells_an_agent_to_call_a_nonexistent_tool(self):
+        """A description is an instruction an agent follows literally.
+
+        Twice now a remediation hint has named something uncallable:
+        ``mark_outdated`` (the decisions_store function; the tool is
+        ``mark_decision_outdated``) and a bare ``supersede`` (the tool is
+        ``supersede_decision``). Both read as real tool names to an agent and
+        both were invisible to the field test above.
+
+        NEAR-MISS is the test, not "is it a real tool". Descriptions are full of
+        legitimate snake_case field names (``since_date``, ``rules_count``,
+        ``recency_decay``), so demanding every token be a tool needs a sprawling
+        allow-list that rots and then gets deleted. Instead flag only tokens
+        whose WORDS are a subset or superset of a real tool's words without
+        being that tool — which is exactly the shape of the bug:
+
+            mark_outdated  {mark, outdated} ⊂ {mark, decision, outdated}   FLAG
+            since_date     {since, date}    matches no tool                 ok
+            recency_decay  {recency, decay} matches no tool                 ok
+
+        Known limit: a BARE one-word verb (``supersede`` for
+        ``supersede_decision``) is not caught, because the same word appears
+        legitimately as English prose in these descriptions. That case is
+        covered by reading, not by this test.
+        """
+        import re
+
+        from mcp_server.server import list_tools
+
+        tools = _run(list_tools())
+        real = {t.name for t in tools}
+        real_words = {name: set(name.split("_")) for name in real}
+        # Response fields that happen to collide with a tool's word set. The
+        # rule cannot tell "field named after the tool that sets it" from
+        # "misspelled tool", so these are named once. Keep this list tiny — if
+        # it starts growing, the rule is wrong, not the code.
+        fields_that_look_like_tools = {"next_action"}  # vs update_next_action
+
+        offenders: dict[str, dict[str, str]] = {}
+        for t in tools:
+            toks = set(
+                re.findall(r"\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b", t.description or "")
+            )
+            for tok in toks - real - fields_that_look_like_tools:
+                words = set(tok.split("_"))
+                for name, nwords in real_words.items():
+                    if words < nwords or words > nwords:
+                        offenders.setdefault(t.name, {})[tok] = name
+        assert not offenders, (
+            "tool description(s) name a near-miss of a real tool — an agent "
+            f"reading this calls nothing: {offenders}. Use the REGISTERED name."
+        )
+
     def test_dnr_soft_expired_is_not_advertised_unless_emitted(
         self, tmp_path, monkeypatch
     ):

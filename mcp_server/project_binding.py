@@ -133,7 +133,7 @@ def pick_project_root(candidates: list[Path | None]) -> Path | None:
         if _has_codevira(c) or _is_git_repo(c):
             target = c
         else:
-            target = resolve_project_from_file_path(str(c)) or c
+            target = _enclosing_project_within_repo(c) or c
         if target not in walked:
             # Two subdirs of one repo are ONE project, not an ambiguous
             # multi-root workspace — de-dupe before the ambiguity check.
@@ -160,6 +160,60 @@ def pick_project_root(candidates: list[Path | None]) -> Path | None:
         if _is_git_repo(c):
             return c
     return valid[0]
+
+
+def _enclosing_project_within_repo(start: Path) -> Path | None:
+    """Nearest ancestor with ``.codevira/`` — but never across a repo boundary.
+
+    A workspace root can be a subdirectory of the project (Claude Code
+    advertises the literal session directory), so an orphan root has to be
+    walked up to find its project. The walk MUST stop at the first ancestor
+    carrying ``.git``:
+
+        ~/Projects/.codevira            <- `codevira init` was run up here
+        ~/Projects/myapp/.git           <- but myapp is its own repo
+        ~/Projects/myapp/src            <- opening this must bind to myapp
+
+    Without the stop, ``src`` resolves to ``~/Projects`` and every sibling
+    repo underneath shares one decision store — cross-project memory bleed,
+    which is the exact failure this whole binding path exists to prevent.
+    ``resolve_project_from_file_path`` deliberately has no such boundary (it
+    serves Claude Desktop, where the tool-call path is the only signal), so
+    this is a separate walk rather than a parameter on that one.
+
+    Returns None when no enclosing project is found before the boundary; the
+    caller then keeps the original candidate.
+    """
+    from mcp_server.paths import is_invalid_project_root
+
+    try:
+        chain = [start, *start.parents]
+    except (OSError, ValueError):
+        return None
+    for cand in chain:
+        try:
+            if is_invalid_project_root(cand) is not None:
+                continue  # never $HOME / a system top — ~/.codevira always exists
+            if _has_codevira(cand):
+                return cand
+            if cand != start and _is_git_repo(cand):
+                # A repo with no .codevira of its own: THIS is the project, and
+                # the walk stops here rather than continuing to some
+                # .codevira above. Returning the repo root (not None, not the
+                # original subdirectory) is what ``paths._discover_project_root``
+                # has always done for cwd — treating .git as a project marker —
+                # so the two layers now agree instead of answering "what
+                # project is this path in?" differently, which is the same
+                # split ``_is_git_repo`` was written to close.
+                #
+                # It cannot auto-init somewhere unwanted on its own:
+                # ``choose_binding`` rule 2 still requires that cwd is not
+                # already an initialized project before it will bind a bare
+                # repo.
+                return cand
+        except OSError:
+            continue
+    return None
 
 
 def _is_git_repo(path: Path) -> bool:

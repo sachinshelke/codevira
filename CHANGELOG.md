@@ -86,6 +86,46 @@ extra I/O:
 Ranking replaces the *ordering*, not the filter: reverted and outdated
 decisions are still hidden entirely.
 
+### Added — the same ranking now reaches `search` and prompt injection
+
+Phase 26 names **three** read surfaces. Only the session brief got the ranking
+at first; `search` and the relevance-injection hook still ordered purely by
+keyword relevance, so a two-year-old decision the tracker never validated
+outranked a current one scoring a hair lower on BM25.
+
+The arithmetic now lives once, in `retrieval.score.freshness()` —
+`outcome_weight × recency_decay`, both of which already existed there while
+three separate copies of the same table sat in `learning.py`, `digest.py` and
+`score.py`. `now` is a **required** keyword argument, unlike `recency_decay`
+which defaults it: one instant must cover a whole comparison, and having no
+default makes the sample-per-row bug unrepresentable rather than discouraged.
+
+**`search`** re-ranks by `rank_norm × freshness` and reports `freshness` in
+`score_breakdown`, so an order the reader cannot explain stays impossible. The
+`limit` cap moved *after* ranking — it used to sit inside the BM25 loop, so
+freshness could only reorder rows relevance had already selected. `score` is
+still raw BM25; its meaning is unchanged for callers.
+
+**The injection hook** could not do this at all before: it scores digest rows,
+and the digest carried no timestamp from any source (the manifest holds bare id
+lists). `digest_record` now carries `ts` and the raw `outcome` label. `weight`
+alone could not serve — it is a pre-applied, lossy derivative that collapses
+"no outcome" and "unrecognised outcome" onto 0.5 and cannot be re-tabled by a
+caller needing different weights.
+
+One deliberate divergence, stated rather than smoothed away: the brief scores
+`modified` **below** an untested decision, search scores it **above**. In a
+catch-up brief churn is the liability that earns `needs_review`; in a search it
+means you asked about this area and someone touched it recently. Same
+arithmetic, two named tables, both in `retrieval/score.py` with the reasoning.
+
+> **Existing projects:** the digest is appended incrementally, so decisions
+> recorded before this release keep their old rows until something rebuilds
+> them. Those rows fall back to the previous behaviour *exactly* — not to a
+> neutral score, which would have halved them and pushed real matches under the
+> injection threshold. Run `codevira sync` to rebuild immediately; otherwise it
+> heals as the outcome tracker rewrites the digest.
+
 ### Added — a churn nudge on decisions whose file moved
 
 `outcome="modified"` is exactly the churn signal Phase 26 asks for — the

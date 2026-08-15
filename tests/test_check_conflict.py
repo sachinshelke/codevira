@@ -201,7 +201,14 @@ class TestAsymmetricConflict:
         )
         assert len(r["conflicts"]) == 1
         c = r["conflicts"][0]
-        assert c["match_shape"] == "asymmetric-conflict"
+        # v4.1: this pair trips BOTH signals — the stored decision says
+        # "DO NOT switch" while the query says "should switch", and the overlap
+        # against a protected decision is high. The negation is reported
+        # because it is the more specific reason, and it holds regardless of
+        # protection. The pure-asymmetric shape is still covered by
+        # test_asymmetric_floor_filters_one_token_noise and
+        # test_reaffirmation_of_protected_is_duplicate_not_asymmetric.
+        assert c["match_shape"] == "negated-conflict"
         assert c["do_not_revert"] is True
         # Sanity: the overlap was the firing signal, jaccard was below
         # the duplicate threshold.
@@ -212,10 +219,22 @@ class TestAsymmetricConflict:
     def test_asymmetric_path_does_not_fire_against_unprotected(
         self, isolated_project: Path
     ) -> None:
-        """The asymmetric path is conflict-only — non-protected
-        decisions don't trigger it. Without protection, the same pair
-        falls through to duplicate-detection (symmetric Jaccard) which
-        misses by design."""
+        """The ASYMMETRIC path is conflict-only — non-protected decisions do
+        not trigger it.
+
+        v4.1: this pair is now caught anyway, by the NEGATION guard, and the
+        old ``novel`` was a false negative this test was pinning. "DO NOT
+        switch package manager" versus "should switch from pnpm to npm" is a
+        flat contradiction; returning ``novel`` meant the agent recorded the
+        reversal with no warning, and — worse — an unprotected near-duplicate
+        is exactly what supersede-on-write retires, so the original could be
+        replaced by its own opposite. Protection was never the right gate for
+        a contradiction.
+
+        The assertion below therefore checks the SHAPE, which is what
+        distinguishes the two mechanisms: asymmetric did not fire (it cannot,
+        unprotected), negation did.
+        """
         from mcp_server.storage import decisions_store
 
         decisions_store.record(
@@ -226,7 +245,13 @@ class TestAsymmetricConflict:
             do_not_revert=False,  # ← not protected
         )
         r = check_conflict("AgentStore should switch from pnpm to npm")
-        assert r["status"] == "novel"
+        assert r["status"] == "conflict"
+        assert [c["match_shape"] for c in r["conflicts"]] == ["negated-conflict"]
+        assert r["conflicts"][0]["do_not_revert"] is False
+        assert not r["duplicates"], (
+            "a contradiction must never sit in `duplicates` — that is the list "
+            "supersede-on-write draws from"
+        )
 
     def test_asymmetric_floor_filters_one_token_noise(
         self, isolated_project: Path

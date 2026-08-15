@@ -103,3 +103,73 @@ def test_distinct_decisions_are_not_superseded(monkeypatch):
     r2 = learning.record_decision(decision="render pdf receipts with a monospace font")
     assert "superseded" not in r2
     assert len(_active_ids()) == 2
+
+
+class TestANegationIsNeverAutoSuperseded:
+    """The reason 4.1.0 exists — asserted at the level that actually runs.
+
+    The negation guard lives in ``reconcile.classify``, but ``check_conflict``
+    re-implements the duplicate rule inline from the imported primitives and
+    never calls it. So every negation test that drove ``reconcile`` directly
+    passed while the WRITE PATH — record_decision -> check_conflict ->
+    supersede-on-write — happily retired "never do X" as a duplicate of "do X".
+
+    These drive ``record_decision`` end to end. They are RED at 2d6f885.
+    """
+
+    @staticmethod
+    def _pair(monkeypatch, positive: str, negated: str):
+        monkeypatch.setenv("CODEVIRA_SUPERSEDE_ON_RECORD", "1")
+        first = learning.record_decision(decision=positive)
+        second = learning.record_decision(decision=negated)
+        return first, second
+
+    def test_never_does_not_supersede_its_positive(self, monkeypatch):
+        first, second = self._pair(
+            monkeypatch,
+            "switch the package manager away from pnpm",
+            "never switch the package manager away from pnpm",
+        )
+        assert second.get("superseded") is None, (
+            "recording the NEGATION of a decision must not retire the original "
+            f"— it is a contradiction, not a re-record (got {second.get('superseded')})"
+        )
+        active = _active_ids()
+        assert first["decision_id"] in active, "the original must stay live"
+        assert second["decision_id"] in active
+        assert len(active) == 2
+
+    def test_do_not_is_also_caught(self, monkeypatch):
+        _, second = self._pair(
+            monkeypatch,
+            "auto-migrate the schema on startup",
+            "do not auto-migrate the schema on startup",
+        )
+        assert second.get("superseded") is None
+        assert len(_active_ids()) == 2
+
+    def test_check_conflict_reports_a_negation_as_conflict_not_duplicate(
+        self, monkeypatch
+    ):
+        """The tool description promises this in words; assert the behaviour."""
+        from mcp_server.tools.check_conflict import check_conflict
+
+        learning.record_decision(decision="expose the admin endpoint publicly")
+        out = check_conflict(decision_text="never expose the admin endpoint publicly")
+        assert out["status"] == "conflict", out
+        assert out["conflicts"], "the negated pair belongs in conflicts"
+        assert not out["duplicates"], (
+            "a negated restatement must NOT be offered as a duplicate — that "
+            "list is what supersede-on-write consumes"
+        )
+
+    def test_two_negations_are_still_duplicates(self, monkeypatch):
+        """The guard keys on DISAGREEMENT, not on the presence of a negation."""
+        monkeypatch.setenv("CODEVIRA_SUPERSEDE_ON_RECORD", "1")
+        a = learning.record_decision(decision="never cache the invalidation path")
+        b = learning.record_decision(
+            decision="never cache the invalidation path anywhere"
+        )
+        assert (
+            b.get("superseded") == a["decision_id"]
+        ), "both sides negate, so they agree — still a duplicate"

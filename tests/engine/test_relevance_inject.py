@@ -141,10 +141,9 @@ class TestOnTopicBudget:
         )
         verdict = policy.evaluate(event, signals=None)
         # Should fire — both "bcrypt" (FTS) and "auth.py" (file match)
-        assert verdict.action == "inject", (
-            f"on-topic prompt should inject; got {verdict.action}: "
-            f"{verdict.message}"
-        )
+        assert (
+            verdict.action == "inject"
+        ), f"on-topic prompt should inject; got {verdict.action}: {verdict.message}"
         assert verdict.inject_context
 
     def test_inject_respects_600_token_budget(self, seeded_decisions):
@@ -432,3 +431,91 @@ class TestRegistration:
         # The old policy class is still importable (dead code for Phase E)
         # but should NOT be in the default registration set.
         assert "cross_session_consistency" not in names
+
+
+class TestFreshnessRanking:
+    """v4.1 (Phase 26): the injection hook ranks by outcome-confidence x
+    RECENCY, not by outcome alone.
+
+    Before this the hook had no timestamp from any source — the digest carried
+    none and the manifest carries bare id lists — so recency was not merely
+    unranked here, it was uncomputable. `ts` and the raw `outcome` label now
+    ride on the digest record.
+    """
+
+    def _digest(self, did, *, ts, outcome, tag="cache"):
+        return {
+            "id": did,
+            "summary": f"Decision {did} about caching",
+            "tags": [tag],
+            "file": "src/cache.py",
+            "do_not_revert": False,
+            "weight": 1.0 if outcome == "kept" else 0.5,
+            "why": None,
+            "ts": ts,
+            "outcome": outcome,
+        }
+
+    def _score(self, digest_records):
+        from mcp_server.engine.policies.relevance_inject import RelevanceInject
+
+        return RelevanceInject()._score_candidates(
+            tag_candidates={"cache": [r["id"] for r in digest_records]},
+            file_candidates={},
+            fts_candidates=[],
+            digest_records=digest_records,
+            min_score=0.0,
+        )
+
+    def test_a_fresh_decision_outranks_an_ancient_one(self) -> None:
+        """Identical tag match, identical outcome — only age differs."""
+        scored = self._score(
+            [
+                self._digest("D000001", ts="2019-01-01T00:00:00+00:00", outcome="kept"),
+                self._digest("D000002", ts="2026-08-16T00:00:00+00:00", outcome="kept"),
+            ]
+        )
+        order = [s["id"] for s in scored]
+        assert order[0] == "D000002", order
+
+    def test_outcome_still_counts_at_equal_age(self) -> None:
+        ts = "2026-08-16T00:00:00+00:00"
+        scored = self._score(
+            [
+                self._digest("D000001", ts=ts, outcome="reverted"),
+                self._digest("D000002", ts=ts, outcome="kept"),
+            ]
+        )
+        assert [s["id"] for s in scored][0] == "D000002"
+
+    def test_a_pre_4_1_digest_degrades_to_UNCHANGED_not_to_worse(self) -> None:
+        """A digest written by an older codevira has no `ts`. Falling back to a
+        neutral recency would HALVE every score and could push real matches
+        under min_score until the digest happened to regenerate, so the old
+        stored `weight` is used verbatim instead.
+        """
+        old = {
+            "id": "D000001",
+            "summary": "Never cache the invalidation path",
+            "tags": ["cache"],
+            "file": "src/cache.py",
+            "do_not_revert": True,
+            "weight": 1.0,
+            "why": None,
+        }
+        scored = self._score([old])
+        assert scored, "a pre-4.1 digest row must still score"
+        # weight 1.0 x (tag 0.4) — exactly the pre-4.1 arithmetic.
+        assert scored[0]["score"] == pytest.approx(0.4, abs=1e-6), scored[0]
+
+    def test_ordering_is_stable_across_repeated_scoring(self) -> None:
+        recs = [
+            self._digest(
+                "D00000%d" % i,
+                ts="2026-0%d-01T00:00:00+00:00" % (i + 1),
+                outcome="kept",
+            )
+            for i in range(1, 5)
+        ]
+        runs = [[s["id"] for s in self._score(recs)] for _ in range(5)]
+        assert all(r == runs[0] for r in runs), runs

@@ -316,17 +316,28 @@ class TestSubdirectoryRoots:
         plain.mkdir()
         assert pick_project_root([plain]) == plain
 
-    def test_git_only_subdir_is_deliberately_not_walked_up(
-        self, tmp_path: Path
-    ) -> None:
-        """Only the .codevira walk-up happens. Walking up to a bare .git would
-        let choose_binding rule 2 auto-init .codevira at a monorepo root the
-        user never opted into, so a git-only subdir is left as-is."""
+    def test_git_only_subdir_resolves_to_its_repo_root(self, tmp_path: Path) -> None:
+        """A subdirectory of a bare repo resolves to the REPO ROOT.
+
+        An earlier cut left it as-is, reasoning that walking to a bare ``.git``
+        might auto-init at a monorepo root nobody opted into. That reasoning
+        does not survive the sibling-repo case: stopping the walk without
+        returning the repo means ``~/Projects/myapp/src`` binds to neither
+        ``myapp`` nor anything useful, while continuing past ``myapp/.git``
+        binds every sibling repo to one shared store.
+
+        The repo root is also what ``paths._discover_project_root`` returns for
+        the same path — it has always treated ``.git`` as a project marker — so
+        the two layers now agree rather than answering "what project is this
+        path in?" differently. ``choose_binding`` rule 2 remains the guard
+        against actually initializing anything: it will not bind a bare repo
+        when cwd is already an initialized project.
+        """
         repo = tmp_path / "repo"
         (repo / ".git").mkdir(parents=True)
         sub = repo / "packages" / "web"
         sub.mkdir(parents=True)
-        assert pick_project_root([sub]) == sub
+        assert pick_project_root([sub]) == repo
 
     def test_end_to_end_through_resolve_from_roots(self, tmp_path: Path) -> None:
         proj = tmp_path / "repo"
@@ -352,6 +363,35 @@ class TestSubdirectoryRoots:
         app = outer / "myapp"
         (app / ".git").mkdir(parents=True)
         assert pick_project_root([app]) == app
+
+    def test_the_walk_stops_at_a_git_boundary(self, tmp_path: Path) -> None:
+        """The walk must not cross OUT of a repo to find a .codevira above it.
+
+        Shape: `codevira init` was run in ~/Projects, and ~/Projects/myapp is
+        its own repo. Opening ~/Projects/myapp/src advertises a root that is
+        neither a codevira project nor a repo, so it gets walked up — and the
+        first cut walked straight past myapp/.git to Projects/.codevira. Every
+        sibling repo under Projects then shares one store: cross-project memory
+        bleed, which is precisely what the orphan guard exists to prevent. The
+        guard only covered a root that IS a repo, not one INSIDE a repo.
+        """
+        outer = tmp_path / "Projects"
+        (outer / ".codevira").mkdir(parents=True)
+        app = outer / "myapp"
+        (app / ".git").mkdir(parents=True)
+        src = app / "src"
+        src.mkdir()
+        assert pick_project_root([src]) == app
+
+    def test_the_walk_still_crosses_plain_directories(self, tmp_path: Path) -> None:
+        """Only a repo boundary stops it — an ordinary intermediate folder
+        (packages/, apps/) must still resolve to the enclosing project."""
+        proj = tmp_path / "repo"
+        (proj / ".codevira").mkdir(parents=True)
+        (proj / ".git").mkdir()
+        deep = proj / "packages" / "web" / "src"
+        deep.mkdir(parents=True)
+        assert pick_project_root([deep]) == proj
 
     def test_a_nested_codevira_project_keeps_itself(self, tmp_path: Path) -> None:
         outer = tmp_path / "outer"

@@ -196,19 +196,38 @@ release-gauntlet:
 	fi
 	@echo ""
 	@echo "▸ G4 — Crash log clean"
-	@if command -v codevira >/dev/null 2>&1; then \
-		CRASH_COUNT=$$(codevira report 2>/dev/null | grep -c CRASH); \
-		if [ "$$CRASH_COUNT" = "0" ]; then \
-			echo "  ✓ G4 passed (no crashes)" && echo true > .release-evidence/.g4.tmp; \
+	@# Reads the log FILE, not a CLI subcommand.
+	@#
+	@# This gate was dead. It ran `codevira report | grep -c CRASH`, and
+	@# `report` is not a codevira subcommand — it exits 2 with a usage error,
+	@# `2>/dev/null` swallowed that, grep counted an empty stream, and the count
+	@# was always 0. G4 could not fail. It reported "✓ no crashes" for 4.1.0
+	@# while three CRASH entries sat in the log, and every G4_crash_log_clean
+	@# in every past evidence file was therefore meaningless.
+	@#
+	@# A gate that depends on a CLI surface can be silently retired by a rename.
+	@# The log path is the thing being asserted about, so read it directly, and
+	@# distinguish "0 crashes" from "could not check" — a check that cannot run
+	@# must say so rather than pass.
+	@CRASH_LOG="$${CODEVIRA_HOME:-$$HOME/.codevira}/logs/crashes.log"; \
+	if [ ! -e "$$CRASH_LOG" ]; then \
+		echo "  ✓ G4 passed (no crash log at $$CRASH_LOG)"; \
+		echo true > .release-evidence/.g4.tmp; \
+	elif [ ! -r "$$CRASH_LOG" ]; then \
+		echo "  ⚠ G4 INDETERMINATE: $$CRASH_LOG exists but is not readable"; \
+		echo '"skipped"' > .release-evidence/.g4.tmp; \
+	else \
+		CRASH_COUNT=$$(grep -c '^CRASH:' "$$CRASH_LOG" 2>/dev/null || echo 0); \
+		if [ "$$CRASH_COUNT" -eq 0 ] 2>/dev/null; then \
+			echo "  ✓ G4 passed (0 crashes in $$CRASH_LOG)"; \
+			echo true > .release-evidence/.g4.tmp; \
 		else \
-			echo "  ⚠ G4 WARN: $$CRASH_COUNT crash entries in log (review with: codevira report)"; \
-			echo "    Not blocking — log retention spans previous versions. Set" >&2; \
-			echo "    G4_acknowledged=true in evidence file if you have reviewed and accepted." >&2; \
+			echo "  ⚠ G4 WARN: $$CRASH_COUNT crash(es) in $$CRASH_LOG"; \
+			grep '^CRASH:' "$$CRASH_LOG" | sort | uniq -c | sort -rn | sed -n '1,3p' | sed 's/^/      /'; \
+			echo "    Review, then archive rather than delete (keeps the audit):"; \
+			echo "      mv '$$CRASH_LOG' '$$CRASH_LOG.pre-$(VERSION)'"; \
 			echo '"warn"' > .release-evidence/.g4.tmp; \
 		fi; \
-	else \
-		echo "  ⚠ codevira binary not on PATH — G4 skipped"; \
-		echo '"skipped"' > .release-evidence/.g4.tmp; \
 	fi
 	@echo ""
 	@echo "Writing evidence to $(EVIDENCE_FILE) ..."

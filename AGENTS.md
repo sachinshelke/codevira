@@ -30,7 +30,7 @@
 - **D000015** list_decisions already DEFAULTS to a summary shape (full=False ⇒ slim ~50 tok/row: id, 200-char decision, file_path, do…  ·  _api-consistency, list-decisions, mcp-tools, search-decisions, token-efficiency, v3.0.1_
 - **D000016** v3.0.1 will add an interactive, queryable HTML viewer for codevira memory. Design (agreed 2026-05-26): self-contained S…  ·  _cli, cytoscape, export, feature, memory-viewer, v3.0.1, visualization_
 
-_+138 more decision(s) — full log in `.codevira/decisions.jsonl`._
+_+139 more decision(s) — full log in `.codevira/decisions.jsonl`._
 
 
 For the full decision log, use `search_decisions` / `list_decisions` (or the `codevira` CLI) — don't read `.codevira/*.jsonl` directly.

@@ -283,14 +283,14 @@ class TestOrderKeyIsTotal:
 
             # (a) idempotent
             twice = id_repair.normalize([dict(r) for r in once])["records"]
-            assert _canon(twice) == _canon(
-                once
-            ), f"case {case}: normalize is not a fixed point"
+            assert _canon(twice) == _canon(once), (
+                f"case {case}: normalize is not a fixed point"
+            )
 
             # (b) order-independent across several shuffles
             for shuffle in range(4):
                 mixed = [dict(r) for r in recs]
                 rng.shuffle(mixed)
-                assert _canon(id_repair.normalize(mixed)["records"]) == _canon(
-                    once
-                ), f"case {case}/shuffle {shuffle}: output depends on input order"
+                assert _canon(id_repair.normalize(mixed)["records"]) == _canon(once), (
+                    f"case {case}/shuffle {shuffle}: output depends on input order"
+                )

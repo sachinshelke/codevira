@@ -110,9 +110,9 @@ class TestItRefusesRatherThanLosing:
 
         assert res["promoted"] is False
         assert res.get("conflict_warning")
-        assert (
-            second not in working_store._tombstoned_ids()
-        ), "a refused promotion must not tombstone the source"
+        assert second not in working_store._tombstoned_ids(), (
+            "a refused promotion must not tombstone the source"
+        )
 
     def test_force_overrides_the_duplicate_check(self, project: Path) -> None:
         first = _add("Rebase onto main with --autostash, never merge")

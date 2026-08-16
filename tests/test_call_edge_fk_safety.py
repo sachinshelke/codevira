@@ -19,14 +19,16 @@ These tests cover:
   - Both missing → row dropped, no exception
   - INSERT OR REPLACE semantic preserved when both endpoints exist
 """
-from __future__ import annotations
 
+from __future__ import annotations
 
 
 from indexer.sqlite_graph import SQLiteGraph
 
 
-def _add_file_and_symbol(db: SQLiteGraph, file_id: str, symbol_id: str, name: str) -> None:
+def _add_file_and_symbol(
+    db: SQLiteGraph, file_id: str, symbol_id: str, name: str
+) -> None:
     """Helper: create a file node and a symbol attached to it."""
     db.add_node(file_id, "file", name + ".py", file_id, layer="api")
     db.add_symbol(
@@ -97,9 +99,9 @@ class TestFKSafety:
             # rc.4: silent drop.
             db.add_call_edge("file:ghost.py::missing", "file:b.py::bar", line=1)
 
-            count = db.conn.execute(
-                "SELECT COUNT(*) AS c FROM call_edges"
-            ).fetchone()["c"]
+            count = db.conn.execute("SELECT COUNT(*) AS c FROM call_edges").fetchone()[
+                "c"
+            ]
             assert count == 0, "row referencing missing caller should be dropped"
         finally:
             db.close()
@@ -111,9 +113,9 @@ class TestFKSafety:
 
             db.add_call_edge("file:a.py::foo", "file:ghost.py::missing", line=1)
 
-            count = db.conn.execute(
-                "SELECT COUNT(*) AS c FROM call_edges"
-            ).fetchone()["c"]
+            count = db.conn.execute("SELECT COUNT(*) AS c FROM call_edges").fetchone()[
+                "c"
+            ]
             assert count == 0
         finally:
             db.close()
@@ -122,9 +124,9 @@ class TestFKSafety:
         db = SQLiteGraph(tmp_path / "graph.db")
         try:
             db.add_call_edge("ghost1", "ghost2", line=1)
-            count = db.conn.execute(
-                "SELECT COUNT(*) AS c FROM call_edges"
-            ).fetchone()["c"]
+            count = db.conn.execute("SELECT COUNT(*) AS c FROM call_edges").fetchone()[
+                "c"
+            ]
             assert count == 0
         finally:
             db.close()
@@ -152,9 +154,9 @@ class TestFKSafety:
             # still references it. Pre-rc.4: crash. rc.4: silent drop.
             db.add_call_edge(all_symbols["foo"], all_symbols["bar"])
 
-            count = db.conn.execute(
-                "SELECT COUNT(*) AS c FROM call_edges"
-            ).fetchone()["c"]
+            count = db.conn.execute("SELECT COUNT(*) AS c FROM call_edges").fetchone()[
+                "c"
+            ]
             assert count == 0
         finally:
             db.close()

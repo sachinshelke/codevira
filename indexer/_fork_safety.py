@@ -34,6 +34,7 @@ don't waste a startup penalty on platforms that don't need it.
 Idempotent: setdefault means an explicit user override (e.g. in CI
 or for debugging) is preserved.
 """
+
 from __future__ import annotations
 
 import os
@@ -54,6 +55,7 @@ def init_fork_safety() -> None:
     # leave whatever's already in place.
     try:
         import multiprocessing
+
         current = multiprocessing.get_start_method(allow_none=True)
         if current != "spawn":
             multiprocessing.set_start_method("spawn", force=True)

@@ -138,6 +138,6 @@ class TestExactMode:
             # where the +1 overhead skews proportions; budget enforcement
             # cares about the ABSOLUTE deviation, not %, for small numbers.)
             ratio = char_est / max(exact, 1)
-            assert (
-                0.5 <= ratio <= 1.7
-            ), f"char_est={char_est} exact={exact} ratio={ratio:.2f} text={s!r}"
+            assert 0.5 <= ratio <= 1.7, (
+                f"char_est={char_est} exact={exact} ratio={ratio:.2f} text={s!r}"
+            )

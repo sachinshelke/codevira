@@ -3,6 +3,7 @@ Tests for mcp_server/tools/playbook.py — curated rule playbooks by task type.
 
 Standalone replacement for the playbook portion of test_playbook_and_auto_init.py.
 """
+
 from __future__ import annotations
 
 from unittest.mock import patch
@@ -14,6 +15,7 @@ from mcp_server.tools.playbook import get_playbook, PLAYBOOKS
 # ---------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------
+
 
 def _create_all_rule_files(rules_dir):
     """Create every rule file referenced in PLAYBOOKS so all lookups succeed."""
@@ -27,12 +29,15 @@ def _create_all_rule_files(rules_dir):
 
 def _patch_data_dir(tmp_path):
     """Patch get_package_data_dir to return tmp_path."""
-    return patch("mcp_server.tools.playbook.get_package_data_dir", return_value=tmp_path)
+    return patch(
+        "mcp_server.tools.playbook.get_package_data_dir", return_value=tmp_path
+    )
 
 
 # ---------------------------------------------------------------
 # Valid task types return rules
 # ---------------------------------------------------------------
+
 
 class TestValidTaskTypes:
     def test_add_tool(self, tmp_path):
@@ -118,6 +123,7 @@ class TestValidTaskTypes:
 # Unknown task type
 # ---------------------------------------------------------------
 
+
 class TestUnknownTaskType:
     def test_returns_not_found(self, tmp_path):
         with _patch_data_dir(tmp_path):
@@ -138,6 +144,7 @@ class TestUnknownTaskType:
 # ---------------------------------------------------------------
 # Missing rule file on disk
 # ---------------------------------------------------------------
+
 
 class TestMissingRuleFile:
     def test_missing_file_returns_placeholder_error_text(self, tmp_path):
@@ -182,6 +189,7 @@ class TestMissingRuleFile:
 # Case insensitivity + whitespace
 # ---------------------------------------------------------------
 
+
 class TestCaseInsensitivityAndWhitespace:
     def test_uppercase_with_whitespace(self, tmp_path):
         rules_dir = tmp_path / "rules"
@@ -218,6 +226,7 @@ class TestCaseInsensitivityAndWhitespace:
 # Correct number of rules per task type
 # ---------------------------------------------------------------
 
+
 class TestRuleCountsPerTaskType:
     def test_all_six_task_types_return_correct_rule_counts(self, tmp_path):
         """All 6 task types should map to the expected number of rule files."""
@@ -235,14 +244,21 @@ class TestRuleCountsPerTaskType:
 
     def test_exactly_six_task_types_defined(self):
         """PLAYBOOKS should contain exactly 6 task types."""
-        expected = {"add_tool", "add_service", "add_schema",
-                    "debug_pipeline", "commit", "write_test"}
+        expected = {
+            "add_tool",
+            "add_service",
+            "add_schema",
+            "debug_pipeline",
+            "commit",
+            "write_test",
+        }
         assert set(PLAYBOOKS.keys()) == expected
 
 
 # ---------------------------------------------------------------
 # Note and hint fields
 # ---------------------------------------------------------------
+
 
 class TestNoteAndHintFields:
     def test_note_field_present_on_valid_task(self, tmp_path):

@@ -260,9 +260,9 @@ class TestA_AllHeroesCoexistence:
                 )
             )
             assert v.action == "allow"
-            assert (
-                v.metadata.get("engine_disabled") is True
-            ), f"{evt}: kill switch metadata missing"
+            assert v.metadata.get("engine_disabled") is True, (
+                f"{evt}: kill switch metadata missing"
+            )
 
 
 # =====================================================================
@@ -684,9 +684,9 @@ class TestE_PublicAPIContract:
             "engine",  # internal hook entry
             "setup",  # Pillar 1 — partial; setup wizard
         ):
-            assert (
-                sub in result.stdout
-            ), f"Hero CLI subcommand {sub!r} missing from help output"
+            assert sub in result.stdout, (
+                f"Hero CLI subcommand {sub!r} missing from help output"
+            )
 
     def test_pillar_1_doctor_subcommand_status(self):
         """Pillar 1.3 called for a `codevira doctor` health check.
@@ -861,15 +861,15 @@ class TestG_FinalDeepReAudit:
         register_default_policies()
 
         for policy in registered_policies():
-            assert hasattr(
-                policy, "priority"
-            ), f"{policy.name} missing priority attribute"
-            assert isinstance(
-                policy.priority, int
-            ), f"{policy.name} priority not int: {policy.priority!r}"
-            assert (
-                0 <= policy.priority <= 200
-            ), f"{policy.name} priority out of [0, 200]: {policy.priority}"
+            assert hasattr(policy, "priority"), (
+                f"{policy.name} missing priority attribute"
+            )
+            assert isinstance(policy.priority, int), (
+                f"{policy.name} priority not int: {policy.priority!r}"
+            )
+            assert 0 <= policy.priority <= 200, (
+                f"{policy.name} priority out of [0, 200]: {policy.priority}"
+            )
 
     def test_every_default_policy_has_name(self):
         """Each policy's name must be non-empty AND unique."""
@@ -927,9 +927,9 @@ class TestG_FinalDeepReAudit:
                 session_id="audit-off",
             )
         )
-        assert (
-            v.action == "allow"
-        ), f"Universal off → expected allow, got {v.action} from {v.policy}"
+        assert v.action == "allow", (
+            f"Universal off → expected allow, got {v.action} from {v.policy}"
+        )
 
     def test_no_policy_has_dead_field(self):
         """Bug-3-shape final audit: enabled_by_default must actually

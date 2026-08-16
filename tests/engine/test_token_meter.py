@@ -1,4 +1,5 @@
 """Tests for mcp_server.engine.token_meter — per-session token accounting."""
+
 from __future__ import annotations
 
 import threading

@@ -36,6 +36,7 @@ A "language" is detected by the file extension passed to
 ``change_touches_signature``. Unknown extensions fall back to "any
 language" (the union of all regexes), which is also conservative.
 """
+
 from __future__ import annotations
 
 import re
@@ -91,14 +92,20 @@ _SIG_PATTERNS: dict[str, list[re.Pattern[str]]] = {
         re.compile(r"^[ \t]*class\s+\w+(?:\s*\([^)]*\))?\s*:"),
     ],
     "javascript": [
-        re.compile(r"^[ \t]*(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s+\w+\s*\("),
+        re.compile(
+            r"^[ \t]*(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s+\w+\s*\("
+        ),
         re.compile(r"^[ \t]*(?:export\s+)?class\s+\w+"),
         # const foo = (...) => — arrow function assigned to const at
         # module level.  Common pattern in modern TS.
-        re.compile(r"^[ \t]*(?:export\s+)?(?:const|let|var)\s+\w+\s*=\s*(?:async\s+)?(?:\(|function)"),
+        re.compile(
+            r"^[ \t]*(?:export\s+)?(?:const|let|var)\s+\w+\s*=\s*(?:async\s+)?(?:\(|function)"
+        ),
     ],
     "typescript": [
-        re.compile(r"^[ \t]*(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s+\w+\s*[<(]"),
+        re.compile(
+            r"^[ \t]*(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s+\w+\s*[<(]"
+        ),
         re.compile(r"^[ \t]*(?:export\s+)?(?:abstract\s+)?class\s+\w+"),
         re.compile(r"^[ \t]*(?:export\s+)?interface\s+\w+"),
         re.compile(r"^[ \t]*(?:export\s+)?type\s+\w+\s*="),
@@ -119,7 +126,9 @@ _SIG_PATTERNS: dict[str, list[re.Pattern[str]]] = {
         # Best-effort: any method/class declaration with access modifier.
         # Not perfect — Java's syntax is verbose — but catches the common
         # cases without false-positiving on ``return foo;``.
-        re.compile(r"^[ \t]*(?:@\w+\s+)*(?:public|protected|private|abstract|static|final|synchronized|\s)*\s+(?:class|interface|enum)\s+\w+"),
+        re.compile(
+            r"^[ \t]*(?:@\w+\s+)*(?:public|protected|private|abstract|static|final|synchronized|\s)*\s+(?:class|interface|enum)\s+\w+"
+        ),
         re.compile(
             r"^[ \t]*(?:@\w+\s+)*(?:public|protected|private)\s+"
             r"(?:static\s+|final\s+|abstract\s+|synchronized\s+|native\s+)*"
@@ -127,7 +136,9 @@ _SIG_PATTERNS: dict[str, list[re.Pattern[str]]] = {
         ),
     ],
     "csharp": [
-        re.compile(r"^[ \t]*(?:\[[^\]]+\]\s*)*(?:public|protected|private|internal)\s+(?:static\s+|abstract\s+|virtual\s+|sealed\s+|override\s+|async\s+|\s)*(?:class|interface|struct|enum|record)\s+\w+"),
+        re.compile(
+            r"^[ \t]*(?:\[[^\]]+\]\s*)*(?:public|protected|private|internal)\s+(?:static\s+|abstract\s+|virtual\s+|sealed\s+|override\s+|async\s+|\s)*(?:class|interface|struct|enum|record)\s+\w+"
+        ),
         re.compile(
             r"^[ \t]*(?:\[[^\]]+\]\s*)*(?:public|protected|private|internal)\s+"
             r"(?:static\s+|abstract\s+|virtual\s+|sealed\s+|override\s+|async\s+)*"

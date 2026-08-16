@@ -455,9 +455,9 @@ class TestGetRules:
 
         rules = db.get_rules(min_confidence=0.5, language="python")
         names = [r["rule_text"] for r in rules]
-        assert (
-            "Universal early returns" not in names
-        ), "Item 9 regression: NULL-language rule leaked across languages."
+        assert "Universal early returns" not in names, (
+            "Item 9 regression: NULL-language rule leaked across languages."
+        )
         assert "Go exported names capitalized" not in names
         db.close()
 

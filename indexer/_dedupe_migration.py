@@ -26,6 +26,7 @@ Called from :meth:`indexer.global_db.GlobalDB.__init__` once per connect. Kept
 in its own module so adding it doesn't trip the project's blast-radius veto on
 the hot ``global_db.py`` file.
 """
+
 from __future__ import annotations
 
 import logging
@@ -64,6 +65,7 @@ def dedupe_projects_by_git_remote(conn: sqlite3.Connection) -> int:
     storage_prefix: str | None = None
     try:
         from mcp_server.paths import get_global_home
+
         # storage_prefix is the parent of project data dirs:
         # ~/.codevira/projects/  — any registered path starting with this is a
         # storage path; anything else is canonical.

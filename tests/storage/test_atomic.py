@@ -124,9 +124,9 @@ class TestFileLock:
         for i in range(0, len(events), 2):
             assert events[i][0] == "enter"
             assert events[i + 1][0] == "exit"
-            assert (
-                events[i][1] == events[i + 1][1]
-            ), f"workers interleaved at events[{i}:{i + 2}]: {events[i:i + 2]}"
+            assert events[i][1] == events[i + 1][1], (
+                f"workers interleaved at events[{i}:{i + 2}]: {events[i : i + 2]}"
+            )
 
     def test_creates_anchor_file_if_missing(self, tmp_path: Path) -> None:
         target = tmp_path / "does-not-exist.yaml"
@@ -175,6 +175,6 @@ class TestFileLock:
                 "marker inside the with-block"
             )
         sentinel = target.with_suffix(target.suffix + ".lock")
-        assert (
-            not sentinel.exists()
-        ), "Windows sentinel must be unlinked on context exit"
+        assert not sentinel.exists(), (
+            "Windows sentinel must be unlinked on context exit"
+        )

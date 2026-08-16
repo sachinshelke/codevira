@@ -3,6 +3,7 @@
 Week 2 expands with git log scanning; this test covers the manual-record
 path + lookup + the is_revert heuristic that Hero 2 will use.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -24,7 +25,8 @@ def project(tmp_path, monkeypatch):
     fake_home = tmp_path / "global"
     fake_home.mkdir()
     monkeypatch.setattr(
-        "mcp_server.paths.get_global_home", lambda: fake_home,
+        "mcp_server.paths.get_global_home",
+        lambda: fake_home,
     )
     yield proj
     reset(proj)
@@ -78,15 +80,23 @@ class TestRecordValidation:
 class TestIsRevertHeuristic:
     def test_no_diff_means_not_revert(self):
         fix = FixRecord(
-            id=1, file_path="f.py", line_start=10, line_end=15,
-            description="x", source="manual",
+            id=1,
+            file_path="f.py",
+            line_start=10,
+            line_end=15,
+            description="x",
+            source="manual",
         )
         assert is_revert("", fix) is False
 
     def test_unrelated_diff_not_revert(self):
         fix = FixRecord(
-            id=1, file_path="f.py", line_start=10, line_end=15,
-            description="x", source="manual",
+            id=1,
+            file_path="f.py",
+            line_start=10,
+            line_end=15,
+            description="x",
+            source="manual",
         )
         # Diff in unrelated line range — heuristic says not a revert.
         diff = "@@ -100,5 +100,5 @@\n-old\n+new\n"
@@ -94,16 +104,24 @@ class TestIsRevertHeuristic:
 
     def test_diff_in_fix_range_with_deletion_flagged_as_revert(self):
         fix = FixRecord(
-            id=1, file_path="f.py", line_start=10, line_end=15,
-            description="x", source="manual",
+            id=1,
+            file_path="f.py",
+            line_start=10,
+            line_end=15,
+            description="x",
+            source="manual",
         )
         diff = "@@ -10,3 +10,1 @@\n-fixed_line()\n+old_buggy_line()\n"
         assert is_revert(diff, fix) is True
 
     def test_works_with_dict_fix(self):
         fix_dict = {
-            "id": 1, "file_path": "f.py", "line_start": 10,
-            "line_end": 15, "description": "x", "source": "manual",
+            "id": 1,
+            "file_path": "f.py",
+            "line_start": 10,
+            "line_end": 15,
+            "description": "x",
+            "source": "manual",
         }
         diff = "@@ -10,3 +10,1 @@\n-fixed\n+broken\n"
         assert is_revert(diff, fix_dict) is True

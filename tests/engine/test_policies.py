@@ -2,6 +2,7 @@
 
 Covers PolicyVerdict construction helpers and Policy base-class contract.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -78,4 +79,5 @@ class TestPolicyBase:
         class P(Policy):
             name = "p"
             handles = ()
+
         assert P().config_schema() == {}

@@ -109,9 +109,9 @@ class TestReconcileCandidate:
             )
             for p in itertools.permutations(corpus)
         }
-        assert seen == {
-            ("D1", "D5", "D9")
-        }, f"every permutation must rank identically; got {seen}"
+        assert seen == {("D1", "D5", "D9")}, (
+            f"every permutation must rank identically; got {seen}"
+        )
 
 
 class TestBackwardCompat:
@@ -243,9 +243,9 @@ class TestPickCanonical:
                 for p in itertools.permutations(cluster)
             )
         }
-        assert (
-            len(results) == 1
-        ), f"all 6 permutations must agree; got {len(results)} distinct outcomes"
+        assert len(results) == 1, (
+            f"all 6 permutations must agree; got {len(results)} distinct outcomes"
+        )
 
     def test_a_single_record_needs_no_merge(self):
         out = reconcile.pick_canonical([self._rec("D1", "x", "2026-01-01T00:00:00Z")])
@@ -411,9 +411,9 @@ class TestNegationIsNeverADuplicate:
     def test_a_negated_pair_is_a_conflict_not_a_duplicate(self):
         for a, b in self.PAIRS:
             c = reconcile.classify(a, b)
-            assert (
-                c["kind"] == reconcile.KIND_CONFLICT
-            ), f"{a!r} vs {b!r} classified {c['kind']} (jaccard {c['jaccard']:.2f})"
+            assert c["kind"] == reconcile.KIND_CONFLICT, (
+                f"{a!r} vs {b!r} classified {c['kind']} (jaccard {c['jaccard']:.2f})"
+            )
 
     def test_it_is_symmetric(self):
         a, b = self.PAIRS[0]

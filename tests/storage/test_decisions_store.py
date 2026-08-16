@@ -131,9 +131,9 @@ class TestDefaultSessionId:
         assert sessions[0] == "explicit-1"
         assert self._PATTERN.match(sessions[1])
         assert self._PATTERN.match(sessions[2])
-        assert (
-            sessions[1] == sessions[2]
-        ), "unattributed siblings recorded in one call must share a session"
+        assert sessions[1] == sessions[2], (
+            "unattributed siblings recorded in one call must share a session"
+        )
         assert sessions[3] == "explicit-2"
 
 
@@ -570,9 +570,9 @@ class TestFtsWriteFailureIsRecoverable:
         # A first decision, indexed normally: this is what stamps a RECENT
         # source_mtime into the index meta and arms the 1-second epsilon.
         decisions_store.record(decision="adopt structured logging everywhere")
-        assert decisions_store.search(
-            "structured logging", limit=5
-        ), "precondition: a healthy index finds the first decision"
+        assert decisions_store.search("structured logging", limit=5), (
+            "precondition: a healthy index finds the first decision"
+        )
 
         def _boom(*_a, **_k):
             raise RuntimeError("disk full")
@@ -657,9 +657,9 @@ class TestSoftExpireIsSurfaced:
         self._seed_old_locked("never rewrite the wire protocol")
         rows = decisions_store.list_all(limit=5, full=True)["decisions"]
         row = next(r for r in rows if r["id"] == "D000900")
-        assert (
-            row["dnr_soft_expired"] is True
-        ), "full=True must not be a downgrade — it returns MORE, not less"
+        assert row["dnr_soft_expired"] is True, (
+            "full=True must not be a downgrade — it returns MORE, not less"
+        )
 
     def test_a_fresh_lock_is_flagged_not_expired(self, project) -> None:
         decisions_store.record(decision="pin the wire protocol", do_not_revert=True)

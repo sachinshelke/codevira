@@ -168,9 +168,7 @@ def cmd_hooks_uninstall(*, dry_run: bool = False, yes: bool = False) -> int:
     print("  " + "─" * 40)
     print()
     if not existing and not settings_path.is_file():
-        print(
-            "  Nothing to remove — no codevira hook scripts found, " "no settings.json."
-        )
+        print("  Nothing to remove — no codevira hook scripts found, no settings.json.")
         return 0
 
     print(f"  Would remove {len(existing)} hook script(s):")

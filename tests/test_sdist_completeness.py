@@ -93,9 +93,9 @@ class TestTheShippedSuiteIsRunnable:
             n for n in sdist_names if n.startswith("tests/") and n.endswith(".py")
         }
         missing = on_disk - shipped
-        assert (
-            not missing
-        ), f"{len(missing)} test file(s) not shipped, e.g. {sorted(missing)[:5]}"
+        assert not missing, (
+            f"{len(missing)} test file(s) not shipped, e.g. {sorted(missing)[:5]}"
+        )
 
 
 class TestPackagingHygiene:

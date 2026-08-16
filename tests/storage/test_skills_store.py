@@ -596,9 +596,9 @@ class TestFts5IndexAmendmentSemantics:
 
         time.sleep(1.2)
         results = skills_store.search("pizzazz")
-        assert any(
-            r.get("procedure", "").startswith("brand-new") for r in results
-        ), f"supersede did not propagate to search: {results}"
+        assert any(r.get("procedure", "").startswith("brand-new") for r in results), (
+            f"supersede did not propagate to search: {results}"
+        )
 
 
 class TestFts5SanitizerEdgeCases:
@@ -782,9 +782,9 @@ class TestSetFlagTagsClearVsNoop:
         )
         skills_store.set_flag(kid, tags=[])
         rec = skills_store.get(kid)
-        assert (
-            rec["triggers"]["tags"] == []
-        ), f"tags=[] did not clear: got {rec['triggers']['tags']}"
+        assert rec["triggers"]["tags"] == [], (
+            f"tags=[] did not clear: got {rec['triggers']['tags']}"
+        )
 
     def test_none_is_noop(self, project: Path) -> None:
         kid = skills_store.record(

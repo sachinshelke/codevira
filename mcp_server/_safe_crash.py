@@ -25,8 +25,8 @@ guard in this helper is paranoid. But import-time failures (the line
 ``from mcp_server.crash_logger import log_crash``) are still possible
 in broken installs, so the defensive wrap stays.
 """
-from __future__ import annotations
 
+from __future__ import annotations
 
 
 def safe_log_crash(
@@ -49,9 +49,12 @@ def safe_log_crash(
     """
     try:
         from mcp_server.crash_logger import log_crash
+
         log_crash(
-            error, context=context,
-            tool_name=tool_name, project_path=project_path,
+            error,
+            context=context,
+            tool_name=tool_name,
+            project_path=project_path,
         )
     except Exception:  # noqa: BLE001 — last-resort defense
         pass

@@ -341,9 +341,9 @@ class TestRenderersEmptyCase:
         out = render_terminal([])
         joined = "\n".join(out)
         # Lesson #19 lock-in: NO empty section header. Always a body.
-        assert (
-            _EMPTY_PLACEHOLDER in joined
-        ), f"Empty terminal must show placeholder, got: {joined!r}"
+        assert _EMPTY_PLACEHOLDER in joined, (
+            f"Empty terminal must show placeholder, got: {joined!r}"
+        )
 
     def test_markdown_empty_shows_placeholder(self):
         out = render_markdown([])
@@ -476,12 +476,12 @@ class TestRenderersPopulated:
         body_start = out.find("<body>")
         assert body_start > 0, "HTML must have <body>"
         body = out[body_start:]
-        assert (
-            "<script>" not in body
-        ), f"XSS bug: unescaped <script> in body. Body excerpt:\n{body[:500]}"
-        assert (
-            "&lt;script&gt;" in body
-        ), "Adversarial input should appear as ESCAPED text"
+        assert "<script>" not in body, (
+            f"XSS bug: unescaped <script> in body. Body excerpt:\n{body[:500]}"
+        )
+        assert "&lt;script&gt;" in body, (
+            "Adversarial input should appear as ESCAPED text"
+        )
         # Adversarial img tag should also be escaped
         assert "<img src=x" not in body
         assert "&lt;img" in body
@@ -504,9 +504,9 @@ class TestMCPResourceHandler:
 
         resources = asyncio.run(handle_list_resources())
         uris = [str(r.uri) for r in resources]
-        assert any(
-            "codevira://decisions" in u for u in uris
-        ), f"list_resources must expose decisions URI; got {uris}"
+        assert any("codevira://decisions" in u for u in uris), (
+            f"list_resources must expose decisions URI; got {uris}"
+        )
 
     def test_read_resource_unknown_uri_raises(self):
         from mcp_server.server import handle_read_resource

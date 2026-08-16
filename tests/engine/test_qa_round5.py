@@ -99,16 +99,16 @@ class TestInjectSchemaConformance:
         assert rc == 0
         payload = json.loads(stdout)
         # The critical assertion: additionalContext must be NESTED.
-        assert (
-            "hookSpecificOutput" in payload
-        ), f"inject must use hookSpecificOutput; got payload: {payload}"
+        assert "hookSpecificOutput" in payload, (
+            f"inject must use hookSpecificOutput; got payload: {payload}"
+        )
         hso = payload["hookSpecificOutput"]
         assert hso["hookEventName"] == "SessionStart"
         assert "here is recent context" in hso["additionalContext"]
         # Must NOT have top-level additionalContext (legacy / wrong placement)
-        assert (
-            "additionalContext" not in payload
-        ), "additionalContext at top level is silently ignored — must be nested"
+        assert "additionalContext" not in payload, (
+            "additionalContext at top level is silently ignored — must be nested"
+        )
 
     def test_inject_for_each_event_type_uses_correct_hookEventName(
         self, tmp_path, monkeypatch
@@ -145,9 +145,9 @@ class TestInjectSchemaConformance:
             rc, stdout, _ = _run_handler(event_name, base, monkeypatch)
             assert rc == 0
             payload = json.loads(stdout)
-            assert (
-                payload["hookSpecificOutput"]["hookEventName"] == event_name
-            ), f"Event {event_name} payload: {payload}"
+            assert payload["hookSpecificOutput"]["hookEventName"] == event_name, (
+                f"Event {event_name} payload: {payload}"
+            )
 
 
 # =====================================================================

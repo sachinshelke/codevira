@@ -74,9 +74,9 @@ class TestRepairIdsStore:
         res = decisions_store.repair_ids(apply=True)
         assert res["applied"] is True
         text = p.read_text()
-        assert (
-            "<<<<<<< HEAD this is not json" in text
-        ), "malformed line was silently dropped — data loss"
+        assert "<<<<<<< HEAD this is not json" in text, (
+            "malformed line was silently dropped — data loss"
+        )
         # And the collision was still repaired.
         raw = jsonl_store.read_all(p)
         from mcp_server.storage import id_repair
@@ -183,9 +183,9 @@ class TestInstallMergeDriver:
             capture_output=True,
             text=True,
         )
-        assert (
-            ".gitattributes" in staged.stdout
-        ), ".gitattributes must be staged so teammates inherit the mapping"
+        assert ".gitattributes" in staged.stdout, (
+            ".gitattributes must be staged so teammates inherit the mapping"
+        )
 
     def test_gap_check_warns_on_fresh_clone(self, tmp_path):
         """H4: .gitattributes references the driver but this clone has no driver

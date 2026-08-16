@@ -120,9 +120,9 @@ class TestDoctorGhostNotStale:
             e for e in entries if getattr(e, "status", None) == "stale"
         ]
         assert leftover, "the empty leftover dir should appear in the inventory"
-        assert (
-            leftover[0].status == "stale"
-        ), "empty leftover must classify as 'stale', not 'ghost' (D0000Z4)"
+        assert leftover[0].status == "stale", (
+            "empty leftover must classify as 'stale', not 'ghost' (D0000Z4)"
+        )
 
         counts = summarize(entries)
         assert counts["ghost"] == 0, "no real-state dirs → zero ghosts"
@@ -131,9 +131,9 @@ class TestDoctorGhostNotStale:
         # The doctor surface delegates to the same inventory, so it must NOT
         # raise a ghost WARN for a stale-only registry.
         result = check_ghost_projects()
-        assert (
-            result.state == "PASS"
-        ), f"doctor disagreed with inventory: {result.state} / {result.message}"
+        assert result.state == "PASS", (
+            f"doctor disagreed with inventory: {result.state} / {result.message}"
+        )
         assert "no ghost" in result.message.lower()
 
 
@@ -244,9 +244,9 @@ class TestSummaryFirstAndExpand:
 
         full = search_tool.expand(ids=[did])
         assert full["count"] == 1 and not full["not_found"]
-        assert (
-            "INCIDENT-88" in full["decisions"][0]["decision"]
-        ), "expand() must return the full untruncated record (D0000ZQ)"
+        assert "INCIDENT-88" in full["decisions"][0]["decision"], (
+            "expand() must return the full untruncated record (D0000ZQ)"
+        )
 
     def test_detail_env_restores_verbose_default(self, project, monkeypatch):
         from mcp_server.tools import search as search_tool
@@ -255,9 +255,9 @@ class TestSummaryFirstAndExpand:
         monkeypatch.setenv("CODEVIRA_DECISION_DETAIL", "full")
         res = search_tool.search_decisions("retries", limit=5)
         row = next(r for r in res["results"] if r["id"] == did)
-        assert (
-            "INCIDENT-88" in row["decision"]
-        ), "CODEVIRA_DECISION_DETAIL=full restores the pre-E1 verbose default"
+        assert "INCIDENT-88" in row["decision"], (
+            "CODEVIRA_DECISION_DETAIL=full restores the pre-E1 verbose default"
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -331,9 +331,9 @@ class TestManagedFilesCrossTool:
 
         agents = block_of("AGENTS.md")
         assert "<!-- codevira:begin" in agents
-        assert (
-            block_of("CLAUDE.md") == agents == block_of("GEMINI.md")
-        ), "managed files must share one canonical block (D000110)"
+        assert block_of("CLAUDE.md") == agents == block_of("GEMINI.md"), (
+            "managed files must share one canonical block (D000110)"
+        )
 
     def test_default_is_agents_only(self, project):
         from mcp_server.storage import agents_md_generator as gen
@@ -503,6 +503,6 @@ class TestReleaseCoherence:
             text=True,
             timeout=30,
         )
-        assert (
-            result.returncode == 0
-        ), f"`codevira {cmd} --help` failed: {result.stderr[:400]}"
+        assert result.returncode == 0, (
+            f"`codevira {cmd} --help` failed: {result.stderr[:400]}"
+        )

@@ -40,9 +40,9 @@ class TestMarkOutdated:
         )
         decisions_store.mark_outdated(did)
         hits = decisions_store.search("redis ratelimiter cache", limit=10)
-        assert all(
-            h.get("decision_id") != did and h.get("id") != did for h in hits
-        ), "outdated decision must not surface in search()"
+        assert all(h.get("decision_id") != did and h.get("id") != did for h in hits), (
+            "outdated decision must not surface in search()"
+        )
 
     def test_set_flag_clears_outdated(self):
         did = decisions_store.record(decision="a decision that comes back")

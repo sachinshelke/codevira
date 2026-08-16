@@ -345,9 +345,7 @@ def check_detected_ides() -> CheckResult:
             "detected_ides",
             _WARN,
             "No AI coding tools detected (Claude Code, Cursor, etc.)",
-            fix_command=(
-                "Install at least one: claude.ai/download · cursor.sh · " "etc."
-            ),
+            fix_command=("Install at least one: claude.ai/download · cursor.sh · etc."),
         )
     return CheckResult(
         "detected_ides",

@@ -17,18 +17,26 @@ P0 #3: ``fix_history._connect`` must serialize cache access to prevent
        N threads creating N distinct connections (a real connection
        leak we measured at 20 distinct connections from 20 threads).
 """
+
 from __future__ import annotations
 
 import threading
 import time
 
 
-from indexer.fix_history import FixRecord, is_revert, _conn_cache, _connect_locked, reset
+from indexer.fix_history import (
+    FixRecord,
+    is_revert,
+    _conn_cache,
+    _connect_locked,
+    reset,
+)
 
 
 # =====================================================================
 # P0 #1: is_revert format support
 # =====================================================================
+
 
 class TestIsRevertEditFormat:
     """Claude Code Edit format: '--- before / --- after' with old_string,
@@ -39,7 +47,10 @@ class TestIsRevertEditFormat:
         """If `after` is empty (deletion of fix code), treat as revert."""
         change = "--- before\nfixed_retry_logic()\n--- after\n"
         fix = FixRecord(
-            id=1, file_path="f.py", line_start=10, line_end=15,
+            id=1,
+            file_path="f.py",
+            line_start=10,
+            line_end=15,
             description="connection retry was infinite-looping",
             source="manual",
         )
@@ -53,7 +64,10 @@ class TestIsRevertEditFormat:
             "--- after\nrate = rate  # original infinite loop spinner\n"
         )
         fix = FixRecord(
-            id=1, file_path="f.py", line_start=10, line_end=15,
+            id=1,
+            file_path="f.py",
+            line_start=10,
+            line_end=15,
             description="infinite loop spinner consumed CPU",
             source="manual",
         )
@@ -67,7 +81,10 @@ class TestIsRevertEditFormat:
             "--- after\ndef foo():\n    return 2\n"
         )
         fix = FixRecord(
-            id=1, file_path="f.py", line_start=10, line_end=15,
+            id=1,
+            file_path="f.py",
+            line_start=10,
+            line_end=15,
             description="off-by-one in pagination boundary",
             source="manual",
         )
@@ -77,7 +94,10 @@ class TestIsRevertEditFormat:
         """If the description is too generic (no useful keywords), bail."""
         change = "--- before\nx\n--- after\ny\n"
         fix = FixRecord(
-            id=1, file_path="f.py", line_start=10, line_end=15,
+            id=1,
+            file_path="f.py",
+            line_start=10,
+            line_end=15,
             description="fix bug",  # all stop-words → no useful tokens
             source="manual",
         )
@@ -90,16 +110,24 @@ class TestIsRevertUnifiedDiffStillWorks:
 
     def test_diff_in_fix_range_with_deletion_still_flagged(self):
         fix = FixRecord(
-            id=1, file_path="f.py", line_start=10, line_end=15,
-            description="x", source="manual",
+            id=1,
+            file_path="f.py",
+            line_start=10,
+            line_end=15,
+            description="x",
+            source="manual",
         )
         diff = "@@ -10,3 +10,1 @@\n-fixed_line()\n+old_buggy_line()\n"
         assert is_revert(diff, fix) is True
 
     def test_unified_diff_unrelated_range_not_revert(self):
         fix = FixRecord(
-            id=1, file_path="f.py", line_start=10, line_end=15,
-            description="x", source="manual",
+            id=1,
+            file_path="f.py",
+            line_start=10,
+            line_end=15,
+            description="x",
+            source="manual",
         )
         diff = "@@ -100,5 +100,5 @@\n-old\n+new\n"
         assert is_revert(diff, fix) is False
@@ -110,15 +138,23 @@ class TestIsRevertEmptyOrInvalidInput:
 
     def test_empty_string_false(self):
         fix = FixRecord(
-            id=1, file_path="f.py", line_start=1, line_end=1,
-            description="x", source="manual",
+            id=1,
+            file_path="f.py",
+            line_start=1,
+            line_end=1,
+            description="x",
+            source="manual",
         )
         assert is_revert("", fix) is False
 
     def test_random_text_no_markers_false(self):
         fix = FixRecord(
-            id=1, file_path="f.py", line_start=1, line_end=1,
-            description="connection", source="manual",
+            id=1,
+            file_path="f.py",
+            line_start=1,
+            line_end=1,
+            description="connection",
+            source="manual",
         )
         assert is_revert("hello world this is not a diff", fix) is False
 
@@ -126,6 +162,7 @@ class TestIsRevertEmptyOrInvalidInput:
 # =====================================================================
 # P0 #2: signals._load_graph legacy-path fallback
 # =====================================================================
+
 
 class TestSignalGraphLegacyFallback:
     """The signal layer must locate graph.db in either centralized
@@ -140,9 +177,7 @@ class TestSignalGraphLegacyFallback:
         proj.mkdir()
         fake_home = tmp_path / "global"
         fake_home.mkdir()
-        monkeypatch.setattr(
-            "mcp_server.paths.get_global_home", lambda: fake_home
-        )
+        monkeypatch.setattr("mcp_server.paths.get_global_home", lambda: fake_home)
 
         key = _sanitize_path_key(proj)
         centralized = fake_home / "projects" / key / "graph" / "graph.db"
@@ -163,9 +198,7 @@ class TestSignalGraphLegacyFallback:
         proj.mkdir()
         fake_home = tmp_path / "global"
         fake_home.mkdir()
-        monkeypatch.setattr(
-            "mcp_server.paths.get_global_home", lambda: fake_home
-        )
+        monkeypatch.setattr("mcp_server.paths.get_global_home", lambda: fake_home)
 
         # NO centralized — only legacy
         legacy = proj / ".codevira" / "graph" / "graph.db"
@@ -184,9 +217,7 @@ class TestSignalGraphLegacyFallback:
         proj.mkdir()
         fake_home = tmp_path / "global"
         fake_home.mkdir()
-        monkeypatch.setattr(
-            "mcp_server.paths.get_global_home", lambda: fake_home
-        )
+        monkeypatch.setattr("mcp_server.paths.get_global_home", lambda: fake_home)
 
         ctx = SignalContext(project_root=proj)
         graph = ctx.graph
@@ -201,9 +232,7 @@ class TestSignalGraphLegacyFallback:
         proj.mkdir()
         fake_home = tmp_path / "global"
         fake_home.mkdir()
-        monkeypatch.setattr(
-            "mcp_server.paths.get_global_home", lambda: fake_home
-        )
+        monkeypatch.setattr("mcp_server.paths.get_global_home", lambda: fake_home)
 
         key = _sanitize_path_key(proj)
         centralized = fake_home / "projects" / key / "graph" / "graph.db"
@@ -226,6 +255,7 @@ class TestSignalGraphLegacyFallback:
 # P0 #3: fix_history._connect thread-safe cache
 # =====================================================================
 
+
 class TestConnectionCacheRaceFix:
     """20 threads racing on _connect for the same project_root must
     receive ONE shared connection, not 20 distinct ones."""
@@ -235,9 +265,7 @@ class TestConnectionCacheRaceFix:
         proj.mkdir()
         fake_home = tmp_path / "global"
         fake_home.mkdir()
-        monkeypatch.setattr(
-            "mcp_server.paths.get_global_home", lambda: fake_home
-        )
+        monkeypatch.setattr("mcp_server.paths.get_global_home", lambda: fake_home)
         # Reset cache for a clean test
         _conn_cache.clear()
 
@@ -277,9 +305,7 @@ class TestConnectionCacheRaceFix:
         proj_b.mkdir()
         fake_home = tmp_path / "global"
         fake_home.mkdir()
-        monkeypatch.setattr(
-            "mcp_server.paths.get_global_home", lambda: fake_home
-        )
+        monkeypatch.setattr("mcp_server.paths.get_global_home", lambda: fake_home)
         _conn_cache.clear()
 
         ca, _ = _connect_locked(proj_a)
@@ -293,6 +319,7 @@ class TestConnectionCacheRaceFix:
 # =====================================================================
 # Round-2 QA: regression tests for the round-2 P1/P2 fixes
 # =====================================================================
+
 
 class TestIsRevertWordBoundary:
     """Round-2 P1 #1: keyword matching uses word boundaries.
@@ -321,7 +348,10 @@ class TestIsRevertWordBoundary:
             "rate = 1\n"
         )
         fix = FixRecord(
-            id=1, file_path="f.py", line_start=1, line_end=10,
+            id=1,
+            file_path="f.py",
+            line_start=1,
+            line_end=10,
             description="loop reuse spinner",
             source="manual",
         )
@@ -353,7 +383,10 @@ class TestIsRevertWordBoundary:
             "rate = rate  # restore the original infinite loop\n"
         )
         fix = FixRecord(
-            id=1, file_path="f.py", line_start=1, line_end=10,
+            id=1,
+            file_path="f.py",
+            line_start=1,
+            line_end=10,
             description="retry was infinite loop spinner",
             source="manual",
         )
@@ -375,7 +408,10 @@ class TestIsRevertWordBoundary:
             "infinite_loop_handler()  # AI renamed it\n"
         )
         fix = FixRecord(
-            id=1, file_path="f.py", line_start=1, line_end=10,
+            id=1,
+            file_path="f.py",
+            line_start=1,
+            line_end=10,
             description="infinite loop bug",
             source="manual",
         )
@@ -387,13 +423,13 @@ class TestIsRevertWordBoundary:
     def test_special_chars_in_keyword_handled(self):
         """re.escape protects against regex metacharacters in description."""
         change = (
-            "--- before\n"
-            "buffer = arr[0]\n"
-            "--- after\n"
-            "buffer = arr[0..n]  # off by one\n"
+            "--- before\nbuffer = arr[0]\n--- after\nbuffer = arr[0..n]  # off by one\n"
         )
         fix = FixRecord(
-            id=1, file_path="f.py", line_start=1, line_end=10,
+            id=1,
+            file_path="f.py",
+            line_start=1,
+            line_end=10,
             # Description with regex-special chars; re.escape handles it.
             description="off-by-one in arr[0..n] indexing",
             source="manual",
@@ -426,7 +462,10 @@ class TestIsRevertParserRobustness:
             "rate = 1\n"
         )
         fix = FixRecord(
-            id=1, file_path="f.py", line_start=1, line_end=10,
+            id=1,
+            file_path="f.py",
+            line_start=1,
+            line_end=10,
             description="connection retry timeout",
             source="manual",
         )
@@ -440,8 +479,12 @@ class TestIsRevertParserRobustness:
         # Random text with no recognizable markers
         change = "this is just some text with no structure"
         fix = FixRecord(
-            id=1, file_path="f.py", line_start=1, line_end=10,
-            description="x", source="manual",
+            id=1,
+            file_path="f.py",
+            line_start=1,
+            line_end=10,
+            description="x",
+            source="manual",
         )
         assert is_revert(change, fix) is False
 
@@ -451,8 +494,12 @@ class TestIsRevertParserRobustness:
         # Markers embedded mid-line — shouldn't match the regex.
         change = "code --- before that --- after this"
         fix = FixRecord(
-            id=1, file_path="f.py", line_start=1, line_end=10,
-            description="x", source="manual",
+            id=1,
+            file_path="f.py",
+            line_start=1,
+            line_end=10,
+            description="x",
+            source="manual",
         )
         # Should fall through to unified-diff path (which won't match
         # either) and return False without crashing.
@@ -467,8 +514,12 @@ class TestIsRevertSizeCap:
         big_payload = "x" * 101_000
         change = f"--- before\n{big_payload}\n--- after\ny\n"
         fix = FixRecord(
-            id=1, file_path="f.py", line_start=1, line_end=1,
-            description="x", source="manual",
+            id=1,
+            file_path="f.py",
+            line_start=1,
+            line_end=1,
+            description="x",
+            source="manual",
         )
         t0 = time.perf_counter()
         result = is_revert(change, fix)
@@ -482,8 +533,12 @@ class TestIsRevertSizeCap:
         big_payload = "x" * 50_000
         change = f"--- before\n{big_payload}\n--- after\ny\n"
         fix = FixRecord(
-            id=1, file_path="f.py", line_start=1, line_end=1,
-            description="x", source="manual",
+            id=1,
+            file_path="f.py",
+            line_start=1,
+            line_end=1,
+            description="x",
+            source="manual",
         )
         # Doesn't crash; returns a bool. Result depends on heuristic.
         result = is_revert(change, fix)
@@ -497,6 +552,7 @@ class TestConnCacheLockReentrant:
         """Same thread can acquire the lock recursively without
         deadlocking. Catches accidental nesting in future policies."""
         import indexer.fix_history as fh
+
         # acquire twice from one thread; release twice
         acquired_once = fh._conn_cache_lock.acquire(timeout=1)
         try:

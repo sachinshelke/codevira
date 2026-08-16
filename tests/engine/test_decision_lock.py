@@ -186,9 +186,9 @@ class TestAcceptanceScenarios:
             ]
         )
         verdict = policy.evaluate(event, signals)
-        assert (
-            verdict.is_allowing()
-        ), "decisions on OTHER files must not fire Hero 1; file= filter missing"
+        assert verdict.is_allowing(), (
+            "decisions on OTHER files must not fire Hero 1; file= filter missing"
+        )
 
     def test_3_edit_on_unlocked_file_allowed(self):
         """File has decisions but they're NOT locked → allow.
@@ -222,9 +222,9 @@ class TestAcceptanceScenarios:
             ]
         )
         verdict = policy.evaluate(event, signals)
-        assert (
-            verdict.is_allowing()
-        ), "unlocked decision should NOT trigger Hero 1; filter check missing"
+        assert verdict.is_allowing(), (
+            "unlocked decision should NOT trigger Hero 1; filter check missing"
+        )
 
     def test_4_edit_on_locked_file_blocked(self):
         """Locked file with decisions → block, listing the decisions."""
@@ -276,9 +276,9 @@ class TestAcceptanceScenarios:
         event = _make_event(target=target)
         verdict = policy.evaluate(event, signals)
         # Even with default mode=block, this case downgrades to warn
-        assert (
-            verdict.action == "warn"
-        ), f"locked-without-rationale should warn, not block; got {verdict.action}"
+        assert verdict.action == "warn", (
+            f"locked-without-rationale should warn, not block; got {verdict.action}"
+        )
         assert "no recorded decisions" in (verdict.message or "")
         assert verdict.metadata["locked_without_rationale"] is True
 
@@ -627,9 +627,9 @@ class TestCoexistenceWithHero4:
 
         eligible = [p for p in _POLICIES if EventType.PRE_TOOL_USE in set(p.handles)]
         eligible.sort(key=lambda p: p.priority, reverse=True)
-        assert (
-            eligible[0].name == "decision_lock"
-        ), f"Decision Lock (priority=100) must sort first; got {[p.name for p in eligible]}"
+        assert eligible[0].name == "decision_lock", (
+            f"Decision Lock (priority=100) must sort first; got {[p.name for p in eligible]}"
+        )
         assert eligible[1].name == "blast_radius_veto"
         # The priority field MATTERS — assert it directly.
         assert DecisionLock.priority > BlastRadiusVeto.priority, (
@@ -672,9 +672,9 @@ class TestRegistration:
         names = [p.name for p in registered_policies()]
         # Each name appears exactly once
         for n in ("decision_lock", "blast_radius_veto"):
-            assert (
-                names.count(n) == 1
-            ), f"{n} registered {names.count(n)} times — idempotency broken"
+            assert names.count(n) == 1, (
+                f"{n} registered {names.count(n)} times — idempotency broken"
+            )
 
 
 # =====================================================================
@@ -738,9 +738,9 @@ class TestSignalFailures:
         )
         file_arg, locked_arg, limit_arg = relevant[0]
         # file is the project-relative path
-        assert (
-            file_arg == "foo.py"
-        ), f"file filter should be 'foo.py' (project-relative); got {file_arg!r}"
+        assert file_arg == "foo.py", (
+            f"file filter should be 'foo.py' (project-relative); got {file_arg!r}"
+        )
         assert locked_arg is True
         assert isinstance(limit_arg, int) and limit_arg > 0
 

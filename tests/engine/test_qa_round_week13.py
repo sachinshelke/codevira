@@ -135,9 +135,9 @@ class TestL1_TenHeroes:
             for v in vars(decision_replay).values()
             if isinstance(v, type) and issubclass(v, Policy) and v is not Policy
         ]
-        assert (
-            policy_classes == []
-        ), f"Hero 8 must not define Policy subclasses; got {policy_classes}"
+        assert policy_classes == [], (
+            f"Hero 8 must not define Policy subclasses; got {policy_classes}"
+        )
 
 
 # =====================================================================

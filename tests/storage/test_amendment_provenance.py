@@ -118,9 +118,9 @@ class TestAnAmendmentNeverStealsAuthorship:
 
         merged = decisions_store.get(did)
         assert merged["is_outdated"] is True, "the amendment must still apply"
-        assert (
-            merged["origin"]["device_id"] == "alice-machine"
-        ), "authorship was rewritten to whoever amended it"
+        assert merged["origin"]["device_id"] == "alice-machine", (
+            "authorship was rewritten to whoever amended it"
+        )
 
     def test_the_overlay_guard_holds_for_orphan_ordering(self, tmp_path: Path) -> None:
         """A git union-merge can place the amendment BEFORE its base.
@@ -208,9 +208,9 @@ class TestTheTwoHostMerge:
         decisions_store.invalidate_merged_cache()
 
         assert out["collisions"] == 1
-        assert (
-            out["ambiguous_amendments"] == 0
-        ), "the supersession could not be attributed — this is the bug"
+        assert out["ambiguous_amendments"] == 0, (
+            "the supersession could not be attributed — this is the bug"
+        )
 
         alice_new = out["remap"][0]["new_id"]
         alice, bobs = decisions_store.get(alice_new), decisions_store.get(old)

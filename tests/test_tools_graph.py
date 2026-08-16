@@ -606,7 +606,7 @@ class TestGetImpact:
         for f in files:
             db.add_node(f"file:{f}", "file", f, f, layer="chain")
         for i in range(len(files) - 1):
-            db.add_edge(f"file:{files[i]}", f"file:{files[i+1]}", kind="imports")
+            db.add_edge(f"file:{files[i]}", f"file:{files[i + 1]}", kind="imports")
         db.close()
         result = graph.get_impact("f.py")
         affected_files = {a["file"] for a in result["affected_files"]}
@@ -647,7 +647,7 @@ class TestGetImpact:
         for f in chain:
             db.add_node(f"file:{f}", "file", f, f, layer="deep")
         for i in range(len(chain) - 1):
-            db.add_edge(f"file:{chain[i]}", f"file:{chain[i+1]}", kind="imports")
+            db.add_edge(f"file:{chain[i]}", f"file:{chain[i + 1]}", kind="imports")
         db.close()
 
         # Impact from the leaf node

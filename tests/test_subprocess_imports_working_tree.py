@@ -98,6 +98,6 @@ class TestTheIsolationThatDependsOnIt:
         )
         assert out.returncode == 0, out.stderr
         resolved = Path(out.stdout.strip().splitlines()[-1])
-        assert (
-            resolved != Path.home() / ".codevira"
-        ), "a subprocess reached the developer's real global home"
+        assert resolved != Path.home() / ".codevira", (
+            "a subprocess reached the developer's real global home"
+        )

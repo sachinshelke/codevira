@@ -20,6 +20,7 @@ Contract:
     safe identity for git-less projects).
   * Idempotent: running on a clean DB does nothing.
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -179,7 +180,12 @@ class TestDedupeSafety:
         db.executemany(
             "INSERT INTO projects (path, name, git_remote, last_synced_at) VALUES (?, ?, ?, ?)",
             [
-                (str(tmp_path / ".codevira" / "projects" / "storage"), "p", "g", "2026-05-01"),
+                (
+                    str(tmp_path / ".codevira" / "projects" / "storage"),
+                    "p",
+                    "g",
+                    "2026-05-01",
+                ),
                 ("/Users/sachin/canonical", "p", "g", "2026-05-13"),
             ],
         )
@@ -229,7 +235,12 @@ class TestDedupeIntegrationViaInit:
         conn.executemany(
             "INSERT INTO projects (path, name, git_remote, last_synced_at) VALUES (?, ?, ?, ?)",
             [
-                ("/Users/sachin/.codevira/projects/proj_abc", "proj", "g", "2026-05-01"),
+                (
+                    "/Users/sachin/.codevira/projects/proj_abc",
+                    "proj",
+                    "g",
+                    "2026-05-01",
+                ),
                 ("/Users/sachin/Documents/Projects/proj", "proj", "g", "2026-05-13"),
             ],
         )
@@ -238,6 +249,7 @@ class TestDedupeIntegrationViaInit:
 
         # Opening a GlobalDB on this file should auto-collapse the duplicates.
         from indexer.global_db import GlobalDB
+
         gdb = GlobalDB(db_path)
         try:
             # Count the cleaned-up rows directly.

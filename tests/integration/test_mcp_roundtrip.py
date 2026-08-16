@@ -265,9 +265,9 @@ class TestV212MCPRoundTrip:
         # Default list hides superseded
         r = call_tool("list_decisions", {"limit": 50, "tags": ["sec"]})
         ids_default = {d["id"] for d in r.get("decisions", [])}
-        assert (
-            old_id not in ids_default
-        ), "superseded decision should be hidden by default"
+        assert old_id not in ids_default, (
+            "superseded decision should be hidden by default"
+        )
 
         # include_superseded surfaces both
         r = call_tool("list_decisions", {"limit": 50, "include_superseded": True})
@@ -411,9 +411,9 @@ class TestV212MCPRoundTrip:
         assert r.get("count", 0) >= 1
         first = r["decisions"][0]
         allowed_keys = {"id", "summary", "do_not_revert"}
-        assert (
-            set(first.keys()) <= allowed_keys
-        ), f"summary_only leaked extra keys: {set(first.keys()) - allowed_keys}"
+        assert set(first.keys()) <= allowed_keys, (
+            f"summary_only leaked extra keys: {set(first.keys()) - allowed_keys}"
+        )
         assert len(first["summary"]) <= 80
 
         # Default (no flags) keeps the richer slim shape — no regression.

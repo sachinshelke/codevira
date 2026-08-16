@@ -162,9 +162,9 @@ class TestBounds:
 
         assert git_hooks.handle(repo) == 0
         err = capsys.readouterr().err
-        assert (
-            "NOT evaluated" in err and str(dropped) in err
-        ), f"the hook must say how many staged files it skipped; got: {err!r}"
+        assert "NOT evaluated" in err and str(dropped) in err, (
+            f"the hook must say how many staged files it skipped; got: {err!r}"
+        )
 
     def test_binary_and_unknown_suffixes_are_skipped(self, repo: Path) -> None:
         (repo / "blob.bin").write_bytes(b"\x00\x01\x02")
@@ -181,9 +181,9 @@ class TestBounds:
         (repo / "src" / name).write_text("// x\n")
         _git(repo, "add", "-A")
         files, _ = git_hooks.staged_files(repo)
-        assert any(
-            f.endswith(name) for f in files
-        ), f"{name} was filtered out before any policy could see it"
+        assert any(f.endswith(name) for f in files), (
+            f"{name} was filtered out before any policy could see it"
+        )
 
 
 class TestInstaller:

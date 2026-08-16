@@ -100,15 +100,22 @@ dev = [
   # after it, so gating solely on collection order cannot see that class of
   # bug. Three such leaks were invisible to CI until 2026-08-02.
   "pytest-randomly>=3.12",
-  # Upper bound is load-bearing. This repo carries NO [tool.ruff] config, so
-  # `make lint` inherits whatever rule set the installed version defaults to
-  # — which means a ruff release can turn CI red with no commit of ours. That
-  # happened on 2026-08-02: 0.16 widened the defaults and CI went from green
-  # to 484 errors, identically on main and on the release branch, none of them
-  # introduced by either. Raise this bound deliberately, with the findings
-  # triaged, rather than letting a resolver decide the project's lint policy.
-  # `.pre-commit-config.yaml` pins ruff for the same reason.
-  "ruff>=0.6.0,<0.16",
+  # EXACT pin, and it MUST equal `rev:` in .pre-commit-config.yaml.
+  #
+  # This repo carries NO [tool.ruff] config, so ruff's defaults ARE the
+  # project's lint and format policy — a different version is a different
+  # policy. A range let the two disagree: pip resolved `>=0.6.0,<0.16` to the
+  # newest (0.15.14) while pre-commit ran exactly 0.6.9, so `ruff format`
+  # locally rewrote 108 files that the commit hook then rewrote back. Every
+  # fresh dev environment reproduced it. A bound wide enough for a resolver to
+  # choose within is a bound that lets the resolver choose the policy.
+  #
+  # The upper bound was already load-bearing for the same reason: on
+  # 2026-08-02, 0.16 widened the defaults and CI went from green to 484 errors
+  # on main and the release branch alike, none introduced by either. Raise this
+  # deliberately, with the findings triaged, and move the pre-commit rev in the
+  # same commit. tests/test_toolchain_pins.py fails if they drift apart.
+  "ruff==0.15.14",
   "mypy>=1.10",
   "types-PyYAML",
   "pre-commit>=3.5",

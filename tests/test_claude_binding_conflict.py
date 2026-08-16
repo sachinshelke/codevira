@@ -105,9 +105,9 @@ class TestGlobalInjectionSkipsWhenScopedExists:
         ide_inject.inject_global_claude_code("/bin/codevira", "/bin/python", me)
 
         data = json.loads(fake_claude_home.read_text())
-        assert "codevira" not in data.get(
-            "mcpServers", {}
-        ), "bare global entry was re-added despite this project having one"
+        assert "codevira" not in data.get("mcpServers", {}), (
+            "bare global entry was re-added despite this project having one"
+        )
 
     def test_registers_when_called_without_project_context(
         self, fake_claude_home, monkeypatch
@@ -217,9 +217,9 @@ class TestNoCollateralRemoval:
         ide_inject._inject_claude(proj, "/bin/codevira", "/bin/py")
 
         data = json.loads(fake_claude_home.read_text())
-        assert (
-            "codevira" in data["mcpServers"]
-        ), "init orphaned every other project by deleting the bare global entry"
+        assert "codevira" in data["mcpServers"], (
+            "init orphaned every other project by deleting the bare global entry"
+        )
 
 
 class TestCorruptConfigIsNeverClobbered:

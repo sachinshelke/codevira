@@ -817,9 +817,9 @@ class TestVerboseFileDecisions:
             collect_decisions=True,
         )
         paths = {d["path"] for d in res["decisions"]}
-        assert not any(
-            "node_modules" in p for p in paths
-        ), "files inside an excluded directory must not each get a line"
+        assert not any("node_modules" in p for p in paths), (
+            "files inside an excluded directory must not each get a line"
+        )
         assert res["excluded_dirs"]["node_modules"] >= 1, (
             "but the count must still be reported — a user who wonders where "
             "their files went needs to see that a directory swallowed them"

@@ -141,9 +141,9 @@ class TestOnTopicBudget:
         )
         verdict = policy.evaluate(event, signals=None)
         # Should fire — both "bcrypt" (FTS) and "auth.py" (file match)
-        assert (
-            verdict.action == "inject"
-        ), f"on-topic prompt should inject; got {verdict.action}: {verdict.message}"
+        assert verdict.action == "inject", (
+            f"on-topic prompt should inject; got {verdict.action}: {verdict.message}"
+        )
         assert verdict.inject_context
 
     def test_inject_respects_600_token_budget(self, seeded_decisions):
@@ -199,9 +199,9 @@ class TestOnTopicBudget:
         decision_lines = [
             line for line in block.splitlines() if line.startswith(("🔒 **", "• **"))
         ]
-        assert (
-            len(decision_lines) <= 3
-        ), f"expected ≤3 decisions, got {len(decision_lines)}; block:\n{block}"
+        assert len(decision_lines) <= 3, (
+            f"expected ≤3 decisions, got {len(decision_lines)}; block:\n{block}"
+        )
 
 
 # ─── Scoring components ───────────────────────────────────────────────
@@ -331,9 +331,9 @@ class TestCacheStability:
             # ISO 8601 timestamp regex: digits-digits-digitsTdigits
             import re
 
-            assert not re.search(
-                r"\d{4}-\d{2}-\d{2}T", block
-            ), f"timestamp leaked into cache-stable output:\n{block}"
+            assert not re.search(r"\d{4}-\d{2}-\d{2}T", block), (
+                f"timestamp leaked into cache-stable output:\n{block}"
+            )
 
     def test_cache_key_in_header(self, seeded_decisions):
         policy = RelevanceInject()

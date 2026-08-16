@@ -170,6 +170,6 @@ class TestANegationIsNeverAutoSuperseded:
         b = learning.record_decision(
             decision="never cache the invalidation path anywhere"
         )
-        assert (
-            b.get("superseded") == a["decision_id"]
-        ), "both sides negate, so they agree — still a duplicate"
+        assert b.get("superseded") == a["decision_id"], (
+            "both sides negate, so they agree — still a duplicate"
+        )

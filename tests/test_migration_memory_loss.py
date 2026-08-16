@@ -100,9 +100,9 @@ class TestMigrationCarriesMemory:
         proj, gh = legacy_project
         migrate.migrate_to_centralized(proj)
 
-        assert (
-            proj / ".codevira" / "decisions.jsonl"
-        ).is_file(), "memory left the repo"
+        assert (proj / ".codevira" / "decisions.jsonl").is_file(), (
+            "memory left the repo"
+        )
         assert not (proj / ".codevira.migrated").exists(), "source was renamed away"
         # Still mirrored centrally (harmless backup; not the read path).
         assert (_centralized(gh, proj) / "decisions.jsonl").is_file()

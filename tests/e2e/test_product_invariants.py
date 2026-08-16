@@ -146,8 +146,7 @@ class TestP2SelfDiagnose:
         # Doctor's job is to detect issues, so non-zero exit on a fresh
         # machine is fine. The test is that it doesn't crash.
         assert "Traceback" not in result.stderr, (
-            f"P2 violation: doctor crashed with traceback.\n"
-            f"  stderr: {result.stderr}"
+            f"P2 violation: doctor crashed with traceback.\n  stderr: {result.stderr}"
         )
 
     def test_doctor_output_includes_remediation(
@@ -194,7 +193,7 @@ class TestP4DefensiveParsing:
 
         result = run_codevira(codevira_bin, ["init"], cwd=project)
         assert "Traceback" not in result.stderr, (
-            f"P4 violation: malformed yaml crashed init.\n" f"  stderr: {result.stderr}"
+            f"P4 violation: malformed yaml crashed init.\n  stderr: {result.stderr}"
         )
 
 

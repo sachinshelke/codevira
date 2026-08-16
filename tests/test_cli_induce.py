@@ -664,9 +664,9 @@ class TestObserveAllDecisionAmendmentMerge:
         monkeypatch.setattr(outcomes_writer, "_classify_decision", capture_classify)
 
         outcomes_writer.observe_all(project_root=project)
-        assert (
-            captured.get("file_path") == "new/path.py"
-        ), f"merged amendment did not override file_path; got {captured!r}"
+        assert captured.get("file_path") == "new/path.py", (
+            f"merged amendment did not override file_path; got {captured!r}"
+        )
 
 
 class TestClassifyDecisionMatrix:

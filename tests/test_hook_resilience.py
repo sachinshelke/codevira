@@ -30,6 +30,7 @@ And one happy path:
      exit code (so legitimate exit-2 blocks still work — critical for
      PreToolUse).
 """
+
 from __future__ import annotations
 
 import json
@@ -139,12 +140,15 @@ def test_hook_no_op_when_binary_is_stale(hook_name, event, tmp_path):
     """A hook whose codevira binary is too old to support `engine`
     (argparse error to stderr, nonzero exit, EMPTY stdout) must NOT
     propagate the failure. Emit no-op + exit 0."""
-    fake_bin = _make_fake_codevira(tmp_path, body=(
-        # Mimic argparse: write to stderr, exit 2, no stdout.
-        'echo "usage: codevira [-h] {init,index,clean} ..." 1>&2\n'
-        'echo "codevira: error: argument command: invalid choice: \'engine\'" 1>&2\n'
-        'exit 2\n'
-    ))
+    fake_bin = _make_fake_codevira(
+        tmp_path,
+        body=(
+            # Mimic argparse: write to stderr, exit 2, no stdout.
+            'echo "usage: codevira [-h] {init,index,clean} ..." 1>&2\n'
+            "echo \"codevira: error: argument command: invalid choice: 'engine'\" 1>&2\n"
+            "exit 2\n"
+        ),
+    )
 
     home = tmp_path / "home"
     home.mkdir()
@@ -168,10 +172,7 @@ def test_hook_no_op_when_binary_is_stale(hook_name, event, tmp_path):
 def test_hook_no_op_when_stdout_is_not_json(hook_name, event, tmp_path):
     """A binary that prints something OTHER than JSON to stdout must
     not poison the hook response — fall back to no-op."""
-    fake_bin = _make_fake_codevira(tmp_path, body=(
-        'echo "this is not json"\n'
-        'exit 0\n'
-    ))
+    fake_bin = _make_fake_codevira(tmp_path, body=('echo "this is not json"\nexit 0\n'))
 
     home = tmp_path / "home"
     home.mkdir()
@@ -192,10 +193,9 @@ def test_hook_no_op_when_stdout_is_not_json(hook_name, event, tmp_path):
 def test_hook_forwards_valid_json_with_allow_exit(hook_name, event, tmp_path):
     """When codevira returns valid JSON and exits 0, the hook must
     forward the JSON verbatim and exit 0."""
-    fake_bin = _make_fake_codevira(tmp_path, body=(
-        'printf \'{"continue": true, "engine": "live"}\\n\'\n'
-        'exit 0\n'
-    ))
+    fake_bin = _make_fake_codevira(
+        tmp_path, body=('printf \'{"continue": true, "engine": "live"}\\n\'\nexit 0\n')
+    )
 
     home = tmp_path / "home"
     home.mkdir()
@@ -216,13 +216,17 @@ def test_pre_tool_use_preserves_exit_2_block():
     legitimately wants to block a tool use. Otherwise Hero 1
     (Decision Lock) and friends are quietly disabled."""
     import tempfile
+
     tmp = Path(tempfile.mkdtemp())
     try:
-        fake_bin = _make_fake_codevira(tmp, body=(
-            # Engine wants to block — emits valid JSON + exit 2.
-            'printf \'{"continue": false, "reason": "decision locked"}\\n\'\n'
-            'exit 2\n'
-        ))
+        fake_bin = _make_fake_codevira(
+            tmp,
+            body=(
+                # Engine wants to block — emits valid JSON + exit 2.
+                'printf \'{"continue": false, "reason": "decision locked"}\\n\'\n'
+                "exit 2\n"
+            ),
+        )
         home = tmp / "home"
         home.mkdir()
         result = _run_hook(
@@ -254,10 +258,9 @@ def test_hook_kill_switch_short_circuits(hook_name, event, tmp_path):
     is installed."""
     # Use a fake binary that would FAIL noisily — the kill switch should
     # mean we never reach it.
-    fake_bin = _make_fake_codevira(tmp_path, body=(
-        'echo "engine should not have been invoked" 1>&2\n'
-        'exit 99\n'
-    ))
+    fake_bin = _make_fake_codevira(
+        tmp_path, body=('echo "engine should not have been invoked" 1>&2\nexit 99\n')
+    )
     home = tmp_path / "home"
     home.mkdir()
 

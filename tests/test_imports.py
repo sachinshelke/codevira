@@ -270,9 +270,13 @@ class TestExtractImportsDispatch:
         ts_file = tmp_path / "app.ts"
         ts_file.write_text("import { x } from './util';")
 
-        with patch("indexer.imports._TS_SUPPORTED_EXTENSIONS", {".ts"}), patch(
-            "indexer.imports._extract_imports_treesitter", return_value=["src/util.ts"]
-        ) as mock_ts:
+        with (
+            patch("indexer.imports._TS_SUPPORTED_EXTENSIONS", {".ts"}),
+            patch(
+                "indexer.imports._extract_imports_treesitter",
+                return_value=["src/util.ts"],
+            ) as mock_ts,
+        ):
             result = extract_imports(str(ts_file), str(tmp_path))
 
         mock_ts.assert_called_once()

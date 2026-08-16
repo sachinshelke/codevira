@@ -103,7 +103,7 @@ def symbol_at(
     # Innermost = smallest span. A tie means two symbols claim the exact
     # same range, which we cannot disambiguate — return None rather than
     # pick one arbitrarily.
-    rows = sorted(rows, key=lambda r: (r["end_line"] - r["start_line"]))
+    rows = sorted(rows, key=lambda r: r["end_line"] - r["start_line"])
     if len(rows) > 1:
         a, b = rows[0], rows[1]
         if (a["end_line"] - a["start_line"]) == (b["end_line"] - b["start_line"]):

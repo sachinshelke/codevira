@@ -33,7 +33,12 @@ repos:
 
   # ─── Python: ruff (lint + format, replaces black/isort/flake8) ────────────
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.6.9
+    # MUST equal the exact `ruff==` pin in pyproject.toml [dev].
+    # There is no [tool.ruff] config, so the version IS the format/lint policy;
+    # when these two disagreed (range in pyproject vs pin here) a local
+    # `ruff format` rewrote 108 files that this hook then rewrote back.
+    # tests/test_toolchain_pins.py fails if they drift apart.
+    rev: v0.15.14
     hooks:
       - id: ruff
         args: [--fix, --exit-non-zero-on-fix]

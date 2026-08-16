@@ -147,9 +147,9 @@ class TestSymmetricDuplicates:
         # decision text below shares all 3 content tokens
         # {bcrypt, password, hashing} verbatim, so Jaccard ≥ 0.60.
         r = check_conflict("Always use bcrypt for password hashing")
-        assert (
-            r["status"] == "duplicate"
-        ), f"expected duplicate, got {r['status']}; duplicates={r['duplicates']}"
+        assert r["status"] == "duplicate", (
+            f"expected duplicate, got {r['status']}; duplicates={r['duplicates']}"
+        )
         assert len(r["duplicates"]) >= 1
         assert r["duplicates"][0]["match_shape"] == "duplicate"
 
@@ -272,9 +272,9 @@ class TestAsymmetricConflict:
         r = check_conflict("Add pnpm")
         # Could be 'novel' or 'duplicate' depending on rounding, but
         # MUST NOT be 'conflict'.
-        assert (
-            r["status"] != "conflict"
-        ), f"1-token noise flagged as conflict: {r['conflicts']}"
+        assert r["status"] != "conflict", (
+            f"1-token noise flagged as conflict: {r['conflicts']}"
+        )
 
     def test_reaffirmation_of_protected_is_duplicate_not_asymmetric(
         self, isolated_project: Path

@@ -232,8 +232,7 @@ class TestBehavioralGates:
             policy.evaluate(event, None)
 
         assert calls == [], (
-            f"event_type gate degraded: end_session called on non-STOP "
-            f"events: {calls}"
+            f"event_type gate degraded: end_session called on non-STOP events: {calls}"
         )
 
     def test_session_id_none_gate_skips_end_session(
@@ -257,9 +256,9 @@ class TestBehavioralGates:
         event = _make_stop_event(session_id=None, project_root=isolated_project)
         policy.evaluate(event, None)
 
-        assert (
-            calls == []
-        ), f"session_id None gate degraded: end_session called: {calls}"
+        assert calls == [], (
+            f"session_id None gate degraded: end_session called: {calls}"
+        )
 
     def test_off_mode_skips_end_session(
         self,
@@ -312,8 +311,7 @@ class TestBehavioralGates:
         config = policy._config()
         # Validation kicks in: garbage falls back to default 'persist'
         assert config["mode"] == "persist", (
-            f"garbage CODEVIRA_TOKEN_BUDGET_MODE not validated; "
-            f"got {config['mode']!r}"
+            f"garbage CODEVIRA_TOKEN_BUDGET_MODE not validated; got {config['mode']!r}"
         )
 
         event = _make_stop_event(
@@ -356,7 +354,7 @@ class TestBehavioralGates:
             register_default_policies()
             names = {p.name for p in registered_policies()}
             assert "token_budget_persist" not in names, (
-                "enabled_by_default=False not honored; policy was " "still registered"
+                "enabled_by_default=False not honored; policy was still registered"
             )
             # Other heroes still register
             assert "decision_lock" in names

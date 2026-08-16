@@ -81,9 +81,9 @@ class TestItCrossesTheProcessBoundary:
         """The regression that motivated this. If CODEVIRA_HOME is ever
         dropped from conftest, this fails and the suite stops silently
         writing into the developer's real registry."""
-        assert os.environ.get(
-            paths.GLOBAL_HOME_ENV
-        ), "conftest must set CODEVIRA_HOME before any test runs"
+        assert os.environ.get(paths.GLOBAL_HOME_ENV), (
+            "conftest must set CODEVIRA_HOME before any test runs"
+        )
         assert Path.home() / ".codevira" != Path(os.environ[paths.GLOBAL_HOME_ENV])
 
     def test_no_test_writes_to_the_real_registry(self) -> None:

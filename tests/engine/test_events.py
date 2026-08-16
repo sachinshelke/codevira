@@ -3,6 +3,7 @@
 Covers HookEvent construction, immutability, and the convenience predicates
 (is_edit, is_read).
 """
+
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError

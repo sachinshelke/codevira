@@ -98,8 +98,7 @@ def _cmd_list(args: Any) -> int:
             if getattr(args, "all_projects", False):
                 continue
             print(
-                f"No snapshots for {label}.\n"
-                "  Take one with: codevira memory snapshot"
+                f"No snapshots for {label}.\n  Take one with: codevira memory snapshot"
             )
             return 0
         found += len(snaps)

@@ -88,7 +88,7 @@ class TestStripAgentsMdMarker:
     ) -> None:
         path = tmp_path / "AGENTS.md"
         path.write_text(
-            "<!-- codevira:begin -->\n" "managed content\n" "<!-- codevira:end -->\n",
+            "<!-- codevira:begin -->\nmanaged content\n<!-- codevira:end -->\n",
             encoding="utf-8",
         )
         changed = _strip_agents_md_marker(path)
@@ -98,7 +98,7 @@ class TestStripAgentsMdMarker:
     def test_leaves_malformed_marker_alone(self, tmp_path: Path) -> None:
         """If we can't find a closing tag we MUST NOT damage the file."""
         path = tmp_path / "AGENTS.md"
-        original = "Some content\n" "<!-- codevira:begin -->\n" "this never closes\n"
+        original = "Some content\n<!-- codevira:begin -->\nthis never closes\n"
         path.write_text(original, encoding="utf-8")
         changed = _strip_agents_md_marker(path)
         assert changed is False
@@ -183,9 +183,7 @@ class TestStripLegacyNudgeMarker:
         leave an empty stub behind."""
         path = tmp_path / "GEMINI.md"
         path.write_text(
-            "<!-- codevira:start -->\n"
-            "all-managed content\n"
-            "<!-- codevira:end -->\n",
+            "<!-- codevira:start -->\nall-managed content\n<!-- codevira:end -->\n",
             encoding="utf-8",
         )
         changed = _strip_legacy_nudge_marker(path)
@@ -197,9 +195,7 @@ class TestStripLegacyNudgeMarker:
         file intact rather than risk damaging user content."""
         path = tmp_path / ".windsurfrules"
         original = (
-            "User config\n"
-            "<!-- codevira:start -->\n"
-            "no close marker — file corrupt\n"
+            "User config\n<!-- codevira:start -->\nno close marker — file corrupt\n"
         )
         path.write_text(original, encoding="utf-8")
         changed = _strip_legacy_nudge_marker(path)

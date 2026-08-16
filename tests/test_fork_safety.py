@@ -12,6 +12,7 @@ sentence-transformers / torch are imported. These tests verify:
      enough to matter).
   5. On non-darwin platforms, init_fork_safety is a no-op (no env mods).
 """
+
 from __future__ import annotations
 
 import os
@@ -159,6 +160,7 @@ class TestFortSafetyAutoAppliesViaIndexerImport:
         # Verify the side-effect import is in indexer/__init__.py
         # (regression guard against accidental removal).
         import indexer
+
         init_path = indexer.__file__
         with open(init_path, "r", encoding="utf-8") as f:
             content = f.read()

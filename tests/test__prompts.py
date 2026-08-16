@@ -16,6 +16,7 @@ This file pins the post-fix contract:
 * EOFError (non-interactive stdin) returns False with a clear hint message.
 * KeyboardInterrupt returns False, no traceback.
 """
+
 from __future__ import annotations
 
 import io
@@ -27,24 +28,27 @@ from mcp_server._prompts import confirm
 class TestConfirmHappyPath:
     """y / n / Enter cases — must each terminate the prompt loop on first read."""
 
-    @pytest.mark.parametrize("answer,default,expected", [
-        ("y\n", True, True),
-        ("Y\n", True, True),
-        ("yes\n", True, True),
-        ("YES\n", True, True),
-        ("n\n", True, False),
-        ("N\n", True, False),
-        ("no\n", True, False),
-        ("NO\n", True, False),
-        ("\n", True, True),    # bare Enter, default=True
-        ("\n", False, False),  # bare Enter, default=False
-        ("y\n", False, True),  # explicit yes overrides default=False
-        ("n\n", True, False),  # explicit no overrides default=True
-        # Whitespace tolerance — .strip() should handle these.
-        ("  y\n", True, True),
-        ("y   \n", True, True),
-        ("\t\ty\t\n", True, True),
-    ])
+    @pytest.mark.parametrize(
+        "answer,default,expected",
+        [
+            ("y\n", True, True),
+            ("Y\n", True, True),
+            ("yes\n", True, True),
+            ("YES\n", True, True),
+            ("n\n", True, False),
+            ("N\n", True, False),
+            ("no\n", True, False),
+            ("NO\n", True, False),
+            ("\n", True, True),  # bare Enter, default=True
+            ("\n", False, False),  # bare Enter, default=False
+            ("y\n", False, True),  # explicit yes overrides default=False
+            ("n\n", True, False),  # explicit no overrides default=True
+            # Whitespace tolerance — .strip() should handle these.
+            ("  y\n", True, True),
+            ("y   \n", True, True),
+            ("\t\ty\t\n", True, True),
+        ],
+    )
     def test_single_recognised_answer(self, answer, default, expected, monkeypatch):
         monkeypatch.setattr("sys.stdin", io.StringIO(answer))
         assert confirm("Proceed?", default=default) is expected
@@ -89,33 +93,40 @@ class TestConfirmEdgeCases:
         # Simulate Ctrl+C by making input() raise KeyboardInterrupt.
         def fake_input(_prompt):
             raise KeyboardInterrupt
+
         monkeypatch.setattr("builtins.input", fake_input)
         assert confirm("Proceed?", default=True) is False
         # Must NOT propagate the KeyboardInterrupt — the whole point of the fix.
 
     def test_indent_is_configurable(self, monkeypatch):
         captured = []
+
         def fake_input(prompt):
             captured.append(prompt)
             return "y\n"
+
         monkeypatch.setattr("builtins.input", fake_input)
         confirm("Proceed?", default=True, indent="    ")
         assert captured[0].startswith("    "), captured[0]
 
     def test_default_false_renders_y_capital_n(self, monkeypatch):
         captured = []
+
         def fake_input(prompt):
             captured.append(prompt)
             return "n\n"
+
         monkeypatch.setattr("builtins.input", fake_input)
         confirm("Proceed?", default=False)
         assert "[y/N]" in captured[0]
 
     def test_default_true_renders_capital_y_n(self, monkeypatch):
         captured = []
+
         def fake_input(prompt):
             captured.append(prompt)
             return "y\n"
+
         monkeypatch.setattr("builtins.input", fake_input)
         confirm("Proceed?", default=True)
         assert "[Y/n]" in captured[0]
@@ -126,11 +137,14 @@ class TestConfirmFlushesStdoutBeforeRead:
 
     def test_flush_called_before_input(self, monkeypatch):
         import sys
+
         flush_called = []
         original_flush = sys.stdout.flush
+
         def tracking_flush():
             flush_called.append(True)
             original_flush()
+
         monkeypatch.setattr("sys.stdout.flush", tracking_flush)
         monkeypatch.setattr("sys.stdin", io.StringIO("y\n"))
         confirm("Proceed?", default=True)

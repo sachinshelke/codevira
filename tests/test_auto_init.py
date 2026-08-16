@@ -216,11 +216,11 @@ class TestEnsureProjectInitialized:
         data_dir = tmp_path / "data"
         data_dir.mkdir()
 
-        with patch(
-            "mcp_server.paths.get_project_root", return_value=project_root
-        ), patch(
-            "mcp_server.paths.get_data_dir", return_value=data_dir
-        ), _bg_init_patches(DEFAULT_DETECTED):
+        with (
+            patch("mcp_server.paths.get_project_root", return_value=project_root),
+            patch("mcp_server.paths.get_data_dir", return_value=data_dir),
+            _bg_init_patches(DEFAULT_DETECTED),
+        ):
             status = ensure_project_initialized(project_root)
             _join_indexing_thread()
 
@@ -272,9 +272,10 @@ class TestEnsureProjectInitialized:
         conn.commit()
         conn.close()
 
-        with patch(
-            "mcp_server.paths.get_project_root", return_value=project_root
-        ), patch("mcp_server.paths.get_data_dir", return_value=data_dir):
+        with (
+            patch("mcp_server.paths.get_project_root", return_value=project_root),
+            patch("mcp_server.paths.get_data_dir", return_value=data_dir),
+        ):
             status = ensure_project_initialized(project_root)
 
         assert status.ready is True
@@ -302,11 +303,11 @@ class TestEnsureProjectInitialized:
         data_dir = tmp_path / "data"
         data_dir.mkdir()
 
-        with patch(
-            "mcp_server.paths.get_project_root", return_value=project_root
-        ), patch(
-            "mcp_server.paths.get_data_dir", return_value=data_dir
-        ), _bg_init_patches(DEFAULT_DETECTED):
+        with (
+            patch("mcp_server.paths.get_project_root", return_value=project_root),
+            patch("mcp_server.paths.get_data_dir", return_value=data_dir),
+            _bg_init_patches(DEFAULT_DETECTED),
+        ):
             s1 = ensure_project_initialized(project_root)
             s2 = ensure_project_initialized(project_root)
             s3 = ensure_project_initialized(project_root)
@@ -345,9 +346,10 @@ class TestEnsureProjectInitializedOptInGate:
         project_root.mkdir()  # NO in-repo .codevira/config.yaml -> not opted in
         data_dir = tmp_path / "data"  # must stay untouched (no bootstrap)
 
-        with patch(
-            "mcp_server.paths.get_project_root", return_value=project_root
-        ), patch("mcp_server.paths.get_data_dir", return_value=data_dir):
+        with (
+            patch("mcp_server.paths.get_project_root", return_value=project_root),
+            patch("mcp_server.paths.get_data_dir", return_value=data_dir),
+        ):
             status = ensure_project_initialized(project_root)
 
         assert status.ready is False
@@ -372,11 +374,11 @@ class TestEnsureProjectInitializedOptInGate:
         data_dir = tmp_path / "data"
         data_dir.mkdir()
 
-        with patch(
-            "mcp_server.paths.get_project_root", return_value=project_root
-        ), patch(
-            "mcp_server.paths.get_data_dir", return_value=data_dir
-        ), _bg_init_patches(DEFAULT_DETECTED):
+        with (
+            patch("mcp_server.paths.get_project_root", return_value=project_root),
+            patch("mcp_server.paths.get_data_dir", return_value=data_dir),
+            _bg_init_patches(DEFAULT_DETECTED),
+        ):
             status = ensure_project_initialized(project_root)
             _join_indexing_thread()
 
@@ -473,11 +475,12 @@ class TestWriteMetadata:
         project_root = tmp_path / "my-project"
         project_root.mkdir()
 
-        with patch(
-            "mcp_server.paths._sanitize_path_key", return_value="test_key"
-        ), patch(
-            "mcp_server.paths._get_git_remote_url",
-            return_value="git@github.com:test/repo.git",
+        with (
+            patch("mcp_server.paths._sanitize_path_key", return_value="test_key"),
+            patch(
+                "mcp_server.paths._get_git_remote_url",
+                return_value="git@github.com:test/repo.git",
+            ),
         ):
             _write_metadata(data_dir, project_root)
 
@@ -501,8 +504,9 @@ class TestWriteMetadata:
         project_root = tmp_path / "proj"
         project_root.mkdir()
 
-        with patch("mcp_server.paths._sanitize_path_key", return_value="k"), patch(
-            "mcp_server.paths._get_git_remote_url", return_value=""
+        with (
+            patch("mcp_server.paths._sanitize_path_key", return_value="k"),
+            patch("mcp_server.paths._get_git_remote_url", return_value=""),
         ):
             _write_metadata(data_dir, project_root)
 
@@ -530,9 +534,16 @@ class TestRegisterGlobal:
         project_root.mkdir()
 
         mock_gdb = MagicMock()
-        with patch("indexer.global_db.GlobalDB", return_value=mock_gdb), patch(
-            "mcp_server.paths.get_global_db_path", return_value=tmp_path / "global.db"
-        ), patch("mcp_server.paths._get_git_remote_url", return_value="git@host:r.git"):
+        with (
+            patch("indexer.global_db.GlobalDB", return_value=mock_gdb),
+            patch(
+                "mcp_server.paths.get_global_db_path",
+                return_value=tmp_path / "global.db",
+            ),
+            patch(
+                "mcp_server.paths._get_git_remote_url", return_value="git@host:r.git"
+            ),
+        ):
             _register_global(data_dir, project_root, DEFAULT_DETECTED)
 
         mock_gdb.register_project.assert_called_once_with(
@@ -558,11 +569,13 @@ class TestRegisterGlobal:
         project_root = tmp_path / "proj"
         project_root.mkdir()
 
-        with patch(
-            "indexer.global_db.GlobalDB", side_effect=RuntimeError("DB error")
-        ), patch(
-            "mcp_server.paths.get_global_db_path", return_value=tmp_path / "g.db"
-        ), patch("mcp_server.paths._get_git_remote_url", return_value=""):
+        with (
+            patch("indexer.global_db.GlobalDB", side_effect=RuntimeError("DB error")),
+            patch(
+                "mcp_server.paths.get_global_db_path", return_value=tmp_path / "g.db"
+            ),
+            patch("mcp_server.paths._get_git_remote_url", return_value=""),
+        ):
             # Should NOT raise
             _register_global(data_dir, project_root, DEFAULT_DETECTED)
 
@@ -580,11 +593,11 @@ class TestBackgroundThread:
         data_dir = tmp_path / "data"
         data_dir.mkdir()
 
-        with patch(
-            "mcp_server.paths.get_project_root", return_value=project_root
-        ), patch(
-            "mcp_server.paths.get_data_dir", return_value=data_dir
-        ), _bg_init_patches(DEFAULT_DETECTED):
+        with (
+            patch("mcp_server.paths.get_project_root", return_value=project_root),
+            patch("mcp_server.paths.get_data_dir", return_value=data_dir),
+            _bg_init_patches(DEFAULT_DETECTED),
+        ):
             ensure_project_initialized(project_root)
             _join_indexing_thread()
 
@@ -643,12 +656,11 @@ class TestBackgroundThread:
                 assert released.wait(10), "test never released the background thread"
             return DEFAULT_DETECTED
 
-        with patch(
-            "mcp_server.paths.get_project_root", return_value=project_root
-        ), patch(
-            "mcp_server.paths.get_data_dir", return_value=data_dir
-        ), _bg_init_patches(DEFAULT_DETECTED), patch(
-            "mcp_server.detect.auto_detect_project", side_effect=_parked_detect
+        with (
+            patch("mcp_server.paths.get_project_root", return_value=project_root),
+            patch("mcp_server.paths.get_data_dir", return_value=data_dir),
+            _bg_init_patches(DEFAULT_DETECTED),
+            patch("mcp_server.detect.auto_detect_project", side_effect=_parked_detect),
         ):
             ensure_project_initialized(project_root)
             launched_record = ai._progress
@@ -846,13 +858,16 @@ class TestBackgroundInitExceptionBranches:
         data_dir = tmp_path / "data"
         data_dir.mkdir()
 
-        with _bg_init_patches(
-            DEFAULT_DETECTED,
-            discover_return=None,
-            index_side_effect=ImportError("no chromadb"),
-        ), patch(
-            "mcp_server.gitignore.discover_source_files",
-            side_effect=Exception("discover failed"),
+        with (
+            _bg_init_patches(
+                DEFAULT_DETECTED,
+                discover_return=None,
+                index_side_effect=ImportError("no chromadb"),
+            ),
+            patch(
+                "mcp_server.gitignore.discover_source_files",
+                side_effect=Exception("discover failed"),
+            ),
         ):
             ai._start_time = time.monotonic()
             _run_background_init(project_root, data_dir)

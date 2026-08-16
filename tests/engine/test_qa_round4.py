@@ -12,6 +12,7 @@ R4 HIGH #3 — SQL DoS via ``limit``: negative or huge ``limit`` argument
              to ``signals.decisions()`` could cause SQLite to return
              unbounded rows. Now clamped to [1, 1000].
 """
+
 from __future__ import annotations
 
 
@@ -25,6 +26,7 @@ from mcp_server.engine.signals import SignalContext
 # R4 HIGH #1: Path traversal containment
 # =====================================================================
 
+
 class TestPathTraversalContainment:
     """Path-traversal attempts via tool_input['file_path'] must NOT
     escape the project_root via Path.resolve(). Both wiring layers
@@ -32,6 +34,7 @@ class TestPathTraversalContainment:
 
     def test_claude_code_wiring_rejects_path_traversal(self, tmp_path):
         from mcp_server.engine.wiring.claude_code_hooks import _build_event
+
         proj = tmp_path / "proj"
         proj.mkdir()
 
@@ -55,11 +58,10 @@ class TestPathTraversalContainment:
 
     def test_mcp_dispatch_rejects_path_traversal(self, tmp_path, monkeypatch):
         from mcp_server.engine.wiring.mcp_dispatch import _build_pre_event
+
         proj = tmp_path / "proj"
         proj.mkdir()
-        monkeypatch.setattr(
-            "mcp_server.paths.get_project_root", lambda: proj.resolve()
-        )
+        monkeypatch.setattr("mcp_server.paths.get_project_root", lambda: proj.resolve())
 
         event = _build_pre_event(
             "Edit",
@@ -70,6 +72,7 @@ class TestPathTraversalContainment:
     def test_legitimate_relative_path_works(self, tmp_path):
         """A normal relative path inside the project should be accepted."""
         from mcp_server.engine.wiring.claude_code_hooks import _build_event
+
         proj = tmp_path / "proj"
         (proj / "src").mkdir(parents=True)
         target = proj / "src" / "foo.py"
@@ -94,6 +97,7 @@ class TestPathTraversalContainment:
     def test_absolute_path_outside_project_rejected(self, tmp_path):
         """Absolute path outside project_root → target_file = None."""
         from mcp_server.engine.wiring.claude_code_hooks import _build_event
+
         proj = tmp_path / "proj"
         proj.mkdir()
         outside = tmp_path / "elsewhere" / "secret.py"
@@ -120,6 +124,7 @@ class TestPathTraversalContainment:
         prefix-only string check would incorrectly accept it; commonpath
         catches this correctly."""
         from mcp_server.engine.wiring.claude_code_hooks import _build_event
+
         proj = tmp_path / "proj"
         proj.mkdir()
         evil = tmp_path / "proj-malicious"
@@ -133,8 +138,11 @@ class TestPathTraversalContainment:
                 "session_id": "x",
                 "cwd": str(proj),
                 "tool_name": "Edit",
-                "tool_input": {"file_path": str(target),
-                                "old_string": "x", "new_string": "y"},
+                "tool_input": {
+                    "file_path": str(target),
+                    "old_string": "x",
+                    "new_string": "y",
+                },
             },
         )
         assert event.target_file is None
@@ -143,6 +151,7 @@ class TestPathTraversalContainment:
 # =====================================================================
 # R4 HIGH #2: project_root validated via is_invalid_project_root
 # =====================================================================
+
 
 class TestProjectRootValidationInWiring:
     """The wiring layer must REFUSE to build events when the AI-supplied
@@ -156,10 +165,9 @@ class TestProjectRootValidationInWiring:
       - the outer handlers fail-open (return allow / don't break)
     """
 
-    def test_claude_code_build_event_raises_for_home(
-        self, tmp_path, monkeypatch
-    ):
+    def test_claude_code_build_event_raises_for_home(self, tmp_path, monkeypatch):
         from mcp_server.engine.wiring.claude_code_hooks import _build_event
+
         fake_home = tmp_path / "home"
         fake_home.mkdir()
         monkeypatch.setattr("pathlib.Path.home", lambda: fake_home)
@@ -215,9 +223,7 @@ class TestProjectRootValidationInWiring:
         fake_home = tmp_path / "home"
         fake_home.mkdir()
         monkeypatch.setattr("pathlib.Path.home", lambda: fake_home)
-        monkeypatch.setattr(
-            "mcp_server.paths.get_project_root", lambda: fake_home
-        )
+        monkeypatch.setattr("mcp_server.paths.get_project_root", lambda: fake_home)
 
         verdict = pre_call("Edit", {"file_path": "x.py"})
         assert verdict.is_allowing()
@@ -225,6 +231,7 @@ class TestProjectRootValidationInWiring:
     def test_legitimate_project_root_passes(self, tmp_path):
         """A normal project root (subdirectory of $HOME) works fine."""
         from mcp_server.engine.wiring.claude_code_hooks import _build_event
+
         proj = tmp_path / "proj"
         proj.mkdir()
 
@@ -243,6 +250,7 @@ class TestProjectRootValidationInWiring:
 # =====================================================================
 # R4 HIGH #3: SQL `limit` clamping in signals.decisions()
 # =====================================================================
+
 
 class TestDecisionsLimitClamp:
     """``signals.decisions(limit=N)`` must clamp N to [1, 1000].

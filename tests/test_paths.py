@@ -999,9 +999,9 @@ class TestIsInvalidProjectRoot:
 
         for p in ("/var", "/etc", "/opt"):
             if Path(p).exists():
-                assert (
-                    is_invalid_project_root(Path(p)) is not None
-                ), f"{p} should be invalid"
+                assert is_invalid_project_root(Path(p)) is not None, (
+                    f"{p} should be invalid"
+                )
 
     def test_accepts_real_project_path(self, tmp_path):
         """A normal project directory passes (returns None)."""

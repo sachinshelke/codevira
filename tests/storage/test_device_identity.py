@@ -59,9 +59,9 @@ class TestIdentitySurvivesTheNetworkStack:
         origin._persisted_device_id.cache_clear()  # as if a new process
         after = origin.current_origin()
 
-        assert (
-            before["host_hash"] != after["host_hash"]
-        ), "test is vacuous unless the legacy identity actually drifts"
+        assert before["host_hash"] != after["host_hash"], (
+            "test is vacuous unless the legacy identity actually drifts"
+        )
         assert before["device_id"] == after["device_id"]
 
     def test_it_is_persisted_where_a_reinstall_will_find_it(

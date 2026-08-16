@@ -59,9 +59,9 @@ class TestSupersedeNoFork:
             if not d.get("is_superseded") and not d.get("superseded_by")
         ]
         texts = {d["decision"] for d in active}
-        assert (
-            "use yarn" not in texts
-        ), "a forked (contradictory) active decision exists"
+        assert "use yarn" not in texts, (
+            "a forked (contradictory) active decision exists"
+        )
         assert "use pnpm" in texts
 
     def test_superseding_the_head_still_works(self, store):
@@ -111,9 +111,9 @@ class TestSessionContextExposesId:
 
         recents = ctx.get("recent_decisions") or []
         assert recents, "no recent decisions surfaced"
-        assert any(
-            r.get("id") == rid for r in recents
-        ), "the brief shows a decision the agent cannot expand() — no id"
+        assert any(r.get("id") == rid for r in recents), (
+            "the brief shows a decision the agent cannot expand() — no id"
+        )
 
 
 class TestLoserIdDoesNotEndTheScheme:

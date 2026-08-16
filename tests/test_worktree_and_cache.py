@@ -94,9 +94,9 @@ class TestProvisionalCacheRefreshes:
 
         assert paths._is_provisional(proj, first) is True
         refreshed = paths._resolve_data_dir(proj)
-        assert (
-            refreshed == proj / ".codevira"
-        ), "server kept using a directory the CLI never reads"
+        assert refreshed == proj / ".codevira", (
+            "server kept using a directory the CLI never reads"
+        )
 
     def test_settled_resolution_is_not_reresolved(self, tmp_path):
         """A cache entry pointing at a REAL store must stay cached (the fast

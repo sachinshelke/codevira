@@ -10,6 +10,7 @@ Usage (via CLI):
 
 This is macOS-only. Windows and Linux service support is planned for v2.0.
 """
+
 from __future__ import annotations
 
 import logging
@@ -53,6 +54,7 @@ def install_launchd(
         raise RuntimeError("launchd auto-start is only supported on macOS.")
 
     from mcp_server.ide_inject import _resolve_command
+
     cmd_path, _ = _resolve_command()
 
     args = [cmd_path, "serve", "--host", host, "--port", str(port)]
@@ -99,9 +101,7 @@ def install_launchd(
         timeout=10,
     )
     if result.returncode != 0:
-        raise RuntimeError(
-            f"launchctl load failed:\n{result.stderr or result.stdout}"
-        )
+        raise RuntimeError(f"launchctl load failed:\n{result.stderr or result.stdout}")
 
     logger.info("Launchd service loaded: %s", _PLIST_LABEL)
     return _PLIST_PATH

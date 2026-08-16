@@ -136,9 +136,9 @@ class TestConcurrentAppendSurvives:
         decisions_store.repair_ids(apply=True)
         t.join(timeout=5)
 
-        assert "concurrent" in _texts(
-            store
-        ), "a concurrently appended decision was destroyed by the repair"
+        assert "concurrent" in _texts(store), (
+            "a concurrently appended decision was destroyed by the repair"
+        )
 
     def test_repair_still_fixes_the_collision(self, store):
         """The race fix must not break what repair_ids is for."""

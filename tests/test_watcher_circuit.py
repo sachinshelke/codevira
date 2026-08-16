@@ -12,6 +12,7 @@ filesystem watcher needed for these). Verifies:
   * 14 silent-exception audit doesn't apply here (we use crash_logger
     in the watcher, not silent except)
 """
+
 from __future__ import annotations
 
 
@@ -28,7 +29,6 @@ def _reset_circuit():
 
 
 class TestCircuitBreaker:
-
     def test_initial_state_is_closed(self):
         assert ic._watcher_circuit_should_run() is True
         s = ic.watcher_circuit_status()
@@ -101,6 +101,7 @@ class TestCircuitInDoctor:
 
     def test_clean_circuit_is_pass(self):
         from mcp_server.doctor import check_watcher_circuit
+
         ic.reset_watcher_circuit()
         r = check_watcher_circuit()
         assert r.state == "PASS"
@@ -108,6 +109,7 @@ class TestCircuitInDoctor:
 
     def test_below_threshold_failures_warn(self):
         from mcp_server.doctor import check_watcher_circuit
+
         ic._watcher_circuit_record_failure(RuntimeError("once"))
         r = check_watcher_circuit()
         assert r.state == "WARN"
@@ -115,6 +117,7 @@ class TestCircuitInDoctor:
 
     def test_open_circuit_fails(self):
         from mcp_server.doctor import check_watcher_circuit
+
         for _ in range(ic._CIRCUIT_OPEN_THRESHOLD):
             ic._watcher_circuit_record_failure(RuntimeError("boom"))
         r = check_watcher_circuit()

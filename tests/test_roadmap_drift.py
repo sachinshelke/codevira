@@ -10,6 +10,7 @@ have landed since. These tests cover:
   - Output shape (keys, message format)
   - Integration with ``get_session_context`` so the field surfaces
 """
+
 from __future__ import annotations
 
 import os
@@ -40,13 +41,19 @@ def _init_git_repo(path: Path, commits: int = 0, days_ago: int = 0) -> None:
     control how recent the commits look without time travel.
     """
     subprocess.run(
-        ["git", "init", "--quiet", "-b", "main"], cwd=path, check=True,
+        ["git", "init", "--quiet", "-b", "main"],
+        cwd=path,
+        check=True,
     )
     subprocess.run(
-        ["git", "config", "user.email", "test@example.com"], cwd=path, check=True,
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=path,
+        check=True,
     )
     subprocess.run(
-        ["git", "config", "user.name", "test"], cwd=path, check=True,
+        ["git", "config", "user.name", "test"],
+        cwd=path,
+        check=True,
     )
 
     when = datetime.now(timezone.utc) - timedelta(days=days_ago)
@@ -63,7 +70,9 @@ def _init_git_repo(path: Path, commits: int = 0, days_ago: int = 0) -> None:
         subprocess.run(["git", "add", str(f)], cwd=path, check=True)
         subprocess.run(
             ["git", "commit", "-m", f"commit {i}", "--quiet"],
-            cwd=path, check=True, env=env,
+            cwd=path,
+            check=True,
+            env=env,
         )
 
 
@@ -75,12 +84,24 @@ def _init_git_repo(path: Path, commits: int = 0, days_ago: int = 0) -> None:
 class TestParseIso:
     def test_z_suffix_parses(self):
         assert _parse_iso("2026-05-02T23:21:00Z") == datetime(
-            2026, 5, 2, 23, 21, 0, tzinfo=timezone.utc,
+            2026,
+            5,
+            2,
+            23,
+            21,
+            0,
+            tzinfo=timezone.utc,
         )
 
     def test_offset_suffix_parses(self):
         assert _parse_iso("2026-05-02T23:21:00+00:00") == datetime(
-            2026, 5, 2, 23, 21, 0, tzinfo=timezone.utc,
+            2026,
+            5,
+            2,
+            23,
+            21,
+            0,
+            tzinfo=timezone.utc,
         )
 
     def test_garbage_returns_none(self):
@@ -103,7 +124,8 @@ class TestResolveReferenceTime:
     def test_picks_last_updated_when_present(self, tmp_path):
         cp = {"last_updated": "2026-05-05T12:00:00Z", "started": "2026-05-01T00:00:00Z"}
         ref = _resolve_reference_time(
-            current_phase=cp, roadmap_path=tmp_path / "missing.yaml",
+            current_phase=cp,
+            roadmap_path=tmp_path / "missing.yaml",
             project_root=tmp_path,
         )
         # Freshest of the two timestamps wins (last_updated > started).
@@ -112,7 +134,8 @@ class TestResolveReferenceTime:
     def test_falls_back_to_started_when_no_last_updated(self, tmp_path):
         cp = {"started": "2026-05-01T00:00:00Z"}
         ref = _resolve_reference_time(
-            current_phase=cp, roadmap_path=tmp_path / "missing.yaml",
+            current_phase=cp,
+            roadmap_path=tmp_path / "missing.yaml",
             project_root=tmp_path,
         )
         assert ref == datetime(2026, 5, 1, 0, 0, 0, tzinfo=timezone.utc)
@@ -121,7 +144,9 @@ class TestResolveReferenceTime:
         roadmap = tmp_path / "roadmap.yaml"
         roadmap.write_text("name: stub\n")
         ref = _resolve_reference_time(
-            current_phase=None, roadmap_path=roadmap, project_root=tmp_path,
+            current_phase=None,
+            roadmap_path=roadmap,
+            project_root=tmp_path,
         )
         assert ref is not None
         # Within the last 5 seconds (just touched the file).
@@ -143,7 +168,9 @@ class TestResolveReferenceTime:
         # roadmap.yaml mtime ≈ now, much fresher than the 2026-05-02 string.
         cp = {"started": "2026-05-02T23:21:00Z"}
         ref = _resolve_reference_time(
-            current_phase=cp, roadmap_path=roadmap, project_root=tmp_path,
+            current_phase=cp,
+            roadmap_path=roadmap,
+            project_root=tmp_path,
         )
         assert ref is not None
         # Today, not the May 2 string.
@@ -189,7 +216,9 @@ class TestCheckDriftFires:
         assert result is not None
         assert result["drifted"] is True
         assert result["days_since_update"] >= 4.5
-        assert "days" in result["message"].lower() or "stale" in result["message"].lower()
+        assert (
+            "days" in result["message"].lower() or "stale" in result["message"].lower()
+        )
 
     def test_fires_on_commits_threshold(self, tmp_path):
         # Phase started recently but lots of commits since
@@ -249,7 +278,9 @@ class TestCustomThresholds:
         # threshold, drift fires.
         assert check_drift(project_root=tmp_path, current_phase=cp) is None
         result = check_drift(
-            project_root=tmp_path, current_phase=cp, days_threshold=1,
+            project_root=tmp_path,
+            current_phase=cp,
+            days_threshold=1,
         )
         assert result is not None and result["drifted"]
 
@@ -261,7 +292,9 @@ class TestCustomThresholds:
         # 1-commit threshold, drift fires.
         assert check_drift(project_root=tmp_path, current_phase=cp) is None
         result = check_drift(
-            project_root=tmp_path, current_phase=cp, commits_threshold=1,
+            project_root=tmp_path,
+            current_phase=cp,
+            commits_threshold=1,
         )
         assert result is not None and result["drifted"]
 
@@ -345,6 +378,7 @@ class TestSessionContextIntegration:
 
         # Build a roadmap.yaml with a stale current phase.
         from mcp_server.tools.roadmap import _save_roadmap, _load_roadmap
+
         roadmap = _load_roadmap()
         old_iso = (datetime.now(timezone.utc) - timedelta(days=10)).isoformat()
         roadmap["current_phase"] = {
@@ -356,6 +390,7 @@ class TestSessionContextIntegration:
         _save_roadmap(roadmap)
 
         from mcp_server.tools.learning import get_session_context
+
         result = get_session_context()
 
         # The field is always present (None when no drift, dict when drifted).
@@ -372,11 +407,13 @@ class TestSessionContextIntegration:
         project, data_dir, db = project_env
 
         from mcp_server.tools.roadmap import _save_roadmap, _load_roadmap
+
         roadmap = _load_roadmap()
         # roadmap.yaml just got written, so mtime ≈ now → no drift.
         _save_roadmap(roadmap)
 
         from mcp_server.tools.learning import get_session_context
+
         result = get_session_context()
 
         assert "drift_warning" in result

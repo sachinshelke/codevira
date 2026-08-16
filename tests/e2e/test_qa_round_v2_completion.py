@@ -181,9 +181,9 @@ class TestC_Bug8ParityAcrossAllCLIs:
             f"{' '.join(subcommand_args)}: expected rc=1 (Bug-8 reject); "
             f"got rc={result.returncode}, stdout={result.stdout!r}"
         )
-        assert (
-            "not a valid project root" in result.stdout
-        ), f"{' '.join(subcommand_args)}: missing Bug-8 message"
+        assert "not a valid project root" in result.stdout, (
+            f"{' '.join(subcommand_args)}: missing Bug-8 message"
+        )
 
 
 # =====================================================================
@@ -268,9 +268,9 @@ class TestE_SqliteUtilOnRealGraph:
         g = SQLiteGraph(db_path)
         try:
             mode = g.conn.execute("PRAGMA journal_mode").fetchone()[0]
-            assert (
-                str(mode).lower() == "wal"
-            ), f"Phase 5 dedup regression: WAL not enabled. mode={mode}"
+            assert str(mode).lower() == "wal", (
+                f"Phase 5 dedup regression: WAL not enabled. mode={mode}"
+            )
         finally:
             g.close()
 
@@ -284,9 +284,9 @@ class TestE_SqliteUtilOnRealGraph:
         gdb = GlobalDB(get_global_home() / "global.db")
         try:
             mode = gdb.conn.execute("PRAGMA journal_mode").fetchone()[0]
-            assert (
-                str(mode).lower() == "wal"
-            ), f"Phase 5 dedup regression in global_db. mode={mode}"
+            assert str(mode).lower() == "wal", (
+                f"Phase 5 dedup regression in global_db. mode={mode}"
+            )
         finally:
             gdb.close()
 

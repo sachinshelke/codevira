@@ -120,9 +120,9 @@ class TestSizeCap:
         assert begin != -1 and end != -1
         block = content[begin : end + len("<!-- codevira:end -->")]
         block_bytes = len(block.encode("utf-8"))
-        assert (
-            block_bytes <= 5 * 1024
-        ), f"Block exceeded 5 KB cap: {block_bytes} bytes; content:\n{block[:500]}..."
+        assert block_bytes <= 5 * 1024, (
+            f"Block exceeded 5 KB cap: {block_bytes} bytes; content:\n{block[:500]}..."
+        )
 
     def test_dropped_decisions_reported(self, isolated_project: Path):
         for i in range(100):
@@ -133,7 +133,7 @@ class TestSizeCap:
             )
         summary = agents_md_generator.regenerate()
         assert summary["decisions_dropped"] >= 1, (
-            f"100 decisions should overflow 5 KB cap; " f"summary={summary}"
+            f"100 decisions should overflow 5 KB cap; summary={summary}"
         )
         content = (isolated_project / "AGENTS.md").read_text()
         assert "more decision(s)" in content
@@ -252,9 +252,9 @@ class TestDeterminism:
         )
         assert block_match
         block = block_match.group(0)
-        assert not re.search(
-            r"\d{4}-\d{2}-\d{2}T", block
-        ), f"timestamp in cache-stable block:\n{block}"
+        assert not re.search(r"\d{4}-\d{2}-\d{2}T", block), (
+            f"timestamp in cache-stable block:\n{block}"
+        )
 
 
 class TestSyncIntegration:

@@ -4,6 +4,7 @@ Tests for mcp_server/launchd.py — macOS launchd service management.
 Mocks sys.platform, subprocess.run, _PLIST_PATH, and _resolve_command
 to avoid real system interactions.
 """
+
 from __future__ import annotations
 
 import plistlib
@@ -23,6 +24,7 @@ from mcp_server.launchd import (
 # ---------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------
+
 
 @pytest.fixture
 def mock_darwin():
@@ -44,8 +46,10 @@ def mock_plist_path(tmp_path):
 @pytest.fixture
 def mock_resolve_command():
     """Mock _resolve_command at the source module (it's imported lazily inside install_launchd)."""
-    with patch("mcp_server.ide_inject._resolve_command",
-               return_value=("/usr/local/bin/codevira", "codevira")):
+    with patch(
+        "mcp_server.ide_inject._resolve_command",
+        return_value=("/usr/local/bin/codevira", "codevira"),
+    ):
         yield
 
 
@@ -61,9 +65,11 @@ def mock_subprocess():
 # install_launchd()
 # ---------------------------------------------------------------
 
+
 class TestInstallLaunchd:
-    def test_generates_valid_plist(self, mock_darwin, mock_plist_path,
-                                   mock_resolve_command, mock_subprocess):
+    def test_generates_valid_plist(
+        self, mock_darwin, mock_plist_path, mock_resolve_command, mock_subprocess
+    ):
         """install_launchd writes a valid plist file and calls launchctl."""
         result_path = install_launchd(port=7007)
 
@@ -78,8 +84,9 @@ class TestInstallLaunchd:
         assert plist["RunAtLoad"] is True
         assert plist["KeepAlive"] is True
 
-    def test_calls_launchctl_with_timeout(self, mock_darwin, mock_plist_path,
-                                           mock_resolve_command, mock_subprocess):
+    def test_calls_launchctl_with_timeout(
+        self, mock_darwin, mock_plist_path, mock_resolve_command, mock_subprocess
+    ):
         """install_launchd calls launchctl unload (cleanup) then launchctl load."""
         install_launchd()
 
@@ -91,8 +98,9 @@ class TestInstallLaunchd:
         assert calls[1][0][0] == ["launchctl", "load", str(mock_plist_path)]
         assert calls[1][1]["timeout"] == 10
 
-    def test_plist_content_validates(self, mock_darwin, mock_plist_path,
-                                      mock_resolve_command, mock_subprocess):
+    def test_plist_content_validates(
+        self, mock_darwin, mock_plist_path, mock_resolve_command, mock_subprocess
+    ):
         """Plist has all required keys: Label, ProgramArguments, RunAtLoad,
         KeepAlive, StandardOutPath, StandardErrorPath."""
         install_launchd(port=8080, host="0.0.0.0")
@@ -100,12 +108,19 @@ class TestInstallLaunchd:
         with open(mock_plist_path, "rb") as f:
             plist = plistlib.load(f)
 
-        required_keys = {"Label", "ProgramArguments", "RunAtLoad",
-                         "KeepAlive", "StandardOutPath", "StandardErrorPath"}
+        required_keys = {
+            "Label",
+            "ProgramArguments",
+            "RunAtLoad",
+            "KeepAlive",
+            "StandardOutPath",
+            "StandardErrorPath",
+        }
         assert required_keys.issubset(set(plist.keys()))
 
-    def test_program_arguments_contain_serve_flags(self, mock_darwin, mock_plist_path,
-                                                    mock_resolve_command, mock_subprocess):
+    def test_program_arguments_contain_serve_flags(
+        self, mock_darwin, mock_plist_path, mock_resolve_command, mock_subprocess
+    ):
         """ProgramArguments contains the command path plus serve, --host, --port flags."""
         install_launchd(port=9090, host="0.0.0.0")
 
@@ -120,8 +135,9 @@ class TestInstallLaunchd:
         assert "--port" in args
         assert "9090" in args
 
-    def test_https_flag_appended(self, mock_darwin, mock_plist_path,
-                                  mock_resolve_command, mock_subprocess):
+    def test_https_flag_appended(
+        self, mock_darwin, mock_plist_path, mock_resolve_command, mock_subprocess
+    ):
         """When use_https=True, --https flag is appended to ProgramArguments."""
         install_launchd(use_https=True)
 
@@ -130,8 +146,9 @@ class TestInstallLaunchd:
 
         assert "--https" in plist["ProgramArguments"]
 
-    def test_no_https_flag_by_default(self, mock_darwin, mock_plist_path,
-                                       mock_resolve_command, mock_subprocess):
+    def test_no_https_flag_by_default(
+        self, mock_darwin, mock_plist_path, mock_resolve_command, mock_subprocess
+    ):
         """When use_https=False (default), --https is NOT in ProgramArguments."""
         install_launchd(use_https=False)
 
@@ -140,8 +157,9 @@ class TestInstallLaunchd:
 
         assert "--https" not in plist["ProgramArguments"]
 
-    def test_custom_host_and_port(self, mock_darwin, mock_plist_path,
-                                   mock_resolve_command, mock_subprocess):
+    def test_custom_host_and_port(
+        self, mock_darwin, mock_plist_path, mock_resolve_command, mock_subprocess
+    ):
         """Custom host and port are reflected in ProgramArguments."""
         install_launchd(port=3000, host="192.168.1.10")
 
@@ -152,8 +170,9 @@ class TestInstallLaunchd:
         assert "192.168.1.10" in args
         assert "3000" in args
 
-    def test_launchctl_failure_raises_runtime_error(self, mock_darwin, mock_plist_path,
-                                                     mock_resolve_command, mock_subprocess):
+    def test_launchctl_failure_raises_runtime_error(
+        self, mock_darwin, mock_plist_path, mock_resolve_command, mock_subprocess
+    ):
         """If launchctl load fails, a RuntimeError is raised."""
         # First call (unload) succeeds, second call (load) fails
         mock_subprocess.side_effect = [
@@ -195,9 +214,11 @@ class TestInstallLaunchd:
 # uninstall_launchd()
 # ---------------------------------------------------------------
 
+
 class TestUninstallLaunchd:
-    def test_calls_launchctl_unload_and_removes_plist(self, mock_darwin, mock_plist_path,
-                                                       mock_subprocess):
+    def test_calls_launchctl_unload_and_removes_plist(
+        self, mock_darwin, mock_plist_path, mock_subprocess
+    ):
         """uninstall_launchd calls launchctl unload and deletes the plist file."""
         # Create the plist file so uninstall finds it
         mock_plist_path.write_bytes(b"fake plist content")
@@ -213,8 +234,9 @@ class TestUninstallLaunchd:
             timeout=10,
         )
 
-    def test_uninstall_when_not_installed_returns_false(self, mock_darwin, mock_plist_path,
-                                                         mock_subprocess):
+    def test_uninstall_when_not_installed_returns_false(
+        self, mock_darwin, mock_plist_path, mock_subprocess
+    ):
         """If plist file doesn't exist, uninstall returns False without calling launchctl."""
         # Ensure plist does NOT exist
         if mock_plist_path.exists():
@@ -230,8 +252,11 @@ class TestUninstallLaunchd:
 # launchd_status()
 # ---------------------------------------------------------------
 
+
 class TestLaunchdStatus:
-    def test_returns_installed_running(self, mock_darwin, mock_plist_path, mock_subprocess):
+    def test_returns_installed_running(
+        self, mock_darwin, mock_plist_path, mock_subprocess
+    ):
         """When plist exists and launchctl list succeeds, returns installed+running."""
         mock_plist_path.write_bytes(b"plist")
         mock_subprocess.return_value = MagicMock(returncode=0)
@@ -243,7 +268,9 @@ class TestLaunchdStatus:
         assert status["plist_path"] == str(mock_plist_path)
         assert status["label"] == _PLIST_LABEL
 
-    def test_installed_but_not_running(self, mock_darwin, mock_plist_path, mock_subprocess):
+    def test_installed_but_not_running(
+        self, mock_darwin, mock_plist_path, mock_subprocess
+    ):
         """When plist exists but launchctl list fails, installed=True but running=False."""
         mock_plist_path.write_bytes(b"plist")
         mock_subprocess.return_value = MagicMock(returncode=1)
@@ -265,7 +292,9 @@ class TestLaunchdStatus:
         assert status["plist_path"] is None
         assert status["label"] == _PLIST_LABEL
 
-    def test_calls_launchctl_list_with_label(self, mock_darwin, mock_plist_path, mock_subprocess):
+    def test_calls_launchctl_list_with_label(
+        self, mock_darwin, mock_plist_path, mock_subprocess
+    ):
         """launchd_status calls launchctl list with the correct label."""
         mock_plist_path.write_bytes(b"plist")
 
@@ -282,6 +311,7 @@ class TestLaunchdStatus:
 # ---------------------------------------------------------------
 # Non-macOS platform
 # ---------------------------------------------------------------
+
 
 class TestNonMacosPlatform:
     def test_install_raises_on_linux(self):
@@ -312,9 +342,11 @@ class TestNonMacosPlatform:
 # launchctl failure handling
 # ---------------------------------------------------------------
 
+
 class TestLaunchctlFailureHandling:
-    def test_unload_failure_during_install_is_ignored(self, mock_darwin, mock_plist_path,
-                                                       mock_resolve_command, mock_subprocess):
+    def test_unload_failure_during_install_is_ignored(
+        self, mock_darwin, mock_plist_path, mock_resolve_command, mock_subprocess
+    ):
         """The initial unload during install is a cleanup step; failures are ignored."""
         mock_subprocess.side_effect = [
             MagicMock(returncode=3, stderr="not loaded"),  # unload fails (normal)
@@ -325,8 +357,9 @@ class TestLaunchctlFailureHandling:
         result = install_launchd()
         assert result == mock_plist_path
 
-    def test_load_failure_stderr_in_error_message(self, mock_darwin, mock_plist_path,
-                                                    mock_resolve_command, mock_subprocess):
+    def test_load_failure_stderr_in_error_message(
+        self, mock_darwin, mock_plist_path, mock_resolve_command, mock_subprocess
+    ):
         """RuntimeError from launchctl load includes stderr content."""
         mock_subprocess.side_effect = [
             MagicMock(returncode=0),  # unload
@@ -336,8 +369,9 @@ class TestLaunchctlFailureHandling:
         with pytest.raises(RuntimeError, match="Bootstrap failed: 5"):
             install_launchd()
 
-    def test_load_failure_stdout_fallback(self, mock_darwin, mock_plist_path,
-                                           mock_resolve_command, mock_subprocess):
+    def test_load_failure_stdout_fallback(
+        self, mock_darwin, mock_plist_path, mock_resolve_command, mock_subprocess
+    ):
         """When stderr is empty, stdout is used in the error message."""
         mock_subprocess.side_effect = [
             MagicMock(returncode=0),  # unload

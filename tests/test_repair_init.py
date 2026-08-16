@@ -114,8 +114,7 @@ class TestRepairGhostDir:
             conn.close()
         assert row is not None, "Project should be registered in global.db"
         assert row[0] == str(project_root), (
-            "Bug 20 regression: project must register under project_root, "
-            "not data_dir."
+            "Bug 20 regression: project must register under project_root, not data_dir."
         )
         assert row[1] == "demo"
         assert row[2] == "git@host:demo.git"

@@ -70,9 +70,9 @@ class TestLiteralPathsWithGlobChars:
 
         result = decisions_store.list_all(file_pattern=fp, protected_only=True)
 
-        assert (
-            result["total"] == 1
-        ), "protected decision on a dynamic route is invisible"
+        assert result["total"] == 1, (
+            "protected decision on a dynamic route is invisible"
+        )
 
     def test_glob_patterns_still_work(self, store):
         """Exact-match-first must not break intentional glob callers."""

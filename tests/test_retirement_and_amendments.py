@@ -65,9 +65,9 @@ class TestRetiringActuallyRetires:
         decisions_store.rebuild_indexes()
 
         rows = jsonl_store.read_all(paths.digest_path())
-        assert all(
-            r.get("id") != rec_id for r in rows
-        ), "retired decision is still injected into every prompt"
+        assert all(r.get("id") != rec_id for r in rows), (
+            "retired decision is still injected into every prompt"
+        )
 
     def test_outdated_decision_leaves_agents_md(self, store):
         """AGENTS.md is read by Cursor / Copilot / Codex / Windsurf.
@@ -83,9 +83,9 @@ class TestRetiringActuallyRetires:
         agents_md_generator.regenerate()
 
         text = (store / "AGENTS.md").read_text()
-        assert (
-            "RETIRED-MARKER-TEXT" not in text
-        ), "a retired decision is still published to other AI tools"
+        assert "RETIRED-MARKER-TEXT" not in text, (
+            "a retired decision is still published to other AI tools"
+        )
 
     def test_active_decision_is_still_published(self, store):
         from mcp_server.storage import agents_md_generator
@@ -103,9 +103,9 @@ class TestIndexesFoldAmendments:
         decisions_store.rebuild_indexes()
 
         m = manifest.load(paths.manifest_path())
-        assert rec_id not in (
-            m.get("do_not_revert_ids") or []
-        ), "unprotecting a decision never took effect in the manifest"
+        assert rec_id not in (m.get("do_not_revert_ids") or []), (
+            "unprotecting a decision never took effect in the manifest"
+        )
 
     def test_amended_decision_keeps_its_text_in_the_digest(self, store):
         """The amendment row won per-id and had no text, so the decision was
@@ -128,9 +128,9 @@ class TestIndexesFoldAmendments:
         decisions_store.rebuild_indexes()
 
         m = manifest.load(paths.manifest_path())
-        assert (
-            m.get("total_decisions") == 1
-        ), f"amendment counted as a decision: {m.get('total_decisions')}"
+        assert m.get("total_decisions") == 1, (
+            f"amendment counted as a decision: {m.get('total_decisions')}"
+        )
 
 
 class TestAmendmentsPreserveCreationTime:
@@ -192,9 +192,9 @@ class TestTsHealingEdgeCase:
         )
 
         merged = {d["id"]: d for d in jsonl_store.read_merged(path)}
-        assert (
-            merged["D1"].get("ts") == "2026-07-20T00:00:00+00:00"
-        ), "missing base ts was not healed by the amendment"
+        assert merged["D1"].get("ts") == "2026-07-20T00:00:00+00:00", (
+            "missing base ts was not healed by the amendment"
+        )
 
     def test_present_base_ts_still_wins(self, store):
         """The common case is unchanged: a real creation ts survives."""

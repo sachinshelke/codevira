@@ -81,9 +81,9 @@ class TestTheChainSurvives:
         )
         successor = next(r for r in out["records"] if r["id"] == "D000201")
 
-        assert (
-            successor["supersedes"] == alice_old
-        ), "the edge must follow Alice's renumbered record, not stay on Bob's"
+        assert successor["supersedes"] == alice_old, (
+            "the edge must follow Alice's renumbered record, not stay on Bob's"
+        )
         assert not successor.get("_reference_ambiguous")
 
     def test_the_edge_never_silently_lands_on_the_other_engineer(self) -> None:

@@ -268,9 +268,9 @@ class TestMigrateToCentralized:
         migrate_to_centralized(project)
 
         assert (project / ".codevira").exists(), "in-repo store must stay"
-        assert not (
-            project / ".codevira.migrated"
-        ).exists(), "migration must not rename the source away"
+        assert not (project / ".codevira.migrated").exists(), (
+            "migration must not rename the source away"
+        )
 
     def test_no_legacy_returns_false(self, tmp_path, monkeypatch):
         from mcp_server.migrate import migrate_to_centralized
@@ -561,9 +561,9 @@ class TestPartialRecovery:
         result = migrate_to_centralized(project)
         assert result["migrated"] is True
 
-        assert (
-            stale_backup / "decisions.jsonl"
-        ).is_file(), "migration destroyed a pre-existing backup"
+        assert (stale_backup / "decisions.jsonl").is_file(), (
+            "migration destroyed a pre-existing backup"
+        )
         assert "old" in (stale_backup / "decisions.jsonl").read_text()
 
 

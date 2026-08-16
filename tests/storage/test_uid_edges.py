@@ -251,6 +251,6 @@ class TestOnTheWritePath:
             "the edge names the merged view; id_repair looks up the raw base "
             "line, so this amendment would never resolve exactly"
         )
-        assert (
-            uid.uid_of(decisions_store.get("D000001")) != expected
-        ), "fixture assumption: merged and raw genuinely differ here"
+        assert uid.uid_of(decisions_store.get("D000001")) != expected, (
+            "fixture assumption: merged and raw genuinely differ here"
+        )

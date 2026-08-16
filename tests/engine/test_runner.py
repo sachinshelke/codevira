@@ -11,6 +11,7 @@ The runner is the heart of the engine. These tests cover:
   - CODEVIRA_ENGINE=0 escape hatch disables everything
   - signals attached to event are accessible from policy.evaluate
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -92,6 +93,7 @@ class TestRegistration:
         class Anon(Policy):
             name = ""
             handles = ()
+
         with pytest.raises(ValueError):
             register_policy(Anon())
 
@@ -145,12 +147,14 @@ class TestVerdictCombination:
         class WarnA(Policy):
             name = "warn_a"
             handles = (EventType.PRE_TOOL_USE,)
+
             def evaluate(self, e):
                 return PolicyVerdict.warn("first warning")
 
         class WarnB(Policy):
             name = "warn_b"
             handles = (EventType.PRE_TOOL_USE,)
+
             def evaluate(self, e):
                 return PolicyVerdict.warn("second warning")
 
@@ -178,6 +182,7 @@ class TestErrorHandling:
         class Boom(Policy):
             name = "boom"
             handles = (EventType.PRE_TOOL_USE,)
+
             def evaluate(self, e):
                 raise RuntimeError("policy crashed")
 
@@ -192,6 +197,7 @@ class TestErrorHandling:
             name = "boom"
             handles = (EventType.PRE_TOOL_USE,)
             priority = 100  # runs first
+
             def evaluate(self, e):
                 raise RuntimeError("policy crashed")
 
@@ -205,6 +211,7 @@ class TestErrorHandling:
         class BadReturn(Policy):
             name = "bad_return"
             handles = (EventType.PRE_TOOL_USE,)
+
             def evaluate(self, e):
                 return "not a verdict"  # type: ignore[return-value]
 
@@ -230,6 +237,7 @@ class TestPriorityOrdering:
             name = "high"
             handles = (EventType.PRE_TOOL_USE,)
             priority = 100
+
             def evaluate(self, e):
                 executed.append("high")
                 return PolicyVerdict.allow()
@@ -238,6 +246,7 @@ class TestPriorityOrdering:
             name = "low"
             handles = (EventType.PRE_TOOL_USE,)
             priority = 0
+
             def evaluate(self, e):
                 executed.append("low")
                 return PolicyVerdict.allow()
@@ -255,9 +264,12 @@ class TestSignalsAttached:
         class Inspector(Policy):
             name = "inspector"
             handles = (EventType.PRE_TOOL_USE,)
+
             def evaluate(self, e):
                 captured["has_signals"] = hasattr(e, "signals")
-                captured["signals_type"] = type(e.signals).__name__ if hasattr(e, "signals") else None
+                captured["signals_type"] = (
+                    type(e.signals).__name__ if hasattr(e, "signals") else None
+                )
                 return PolicyVerdict.allow()
 
         register_policy(Inspector())

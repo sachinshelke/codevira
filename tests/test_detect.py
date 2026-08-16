@@ -384,12 +384,12 @@ class TestAutoDetectProject:
         assert ".md" in result["file_extensions"]
         assert ".toml" in result["file_extensions"]
         # And ONLY what's on disk — no false positives:
-        assert (
-            ".swift" not in result["file_extensions"]
-        ), "Bug M regression: .swift detected when none on disk"
-        assert (
-            ".elm" not in result["file_extensions"]
-        ), "Bug M regression: .elm detected when none on disk"
+        assert ".swift" not in result["file_extensions"], (
+            "Bug M regression: .swift detected when none on disk"
+        )
+        assert ".elm" not in result["file_extensions"], (
+            "Bug M regression: .elm detected when none on disk"
+        )
 
         # Legacy single-language mode
         narrow = auto_detect_project(root, single_language=True)
@@ -415,9 +415,9 @@ class TestAutoDetectProject:
         assert ".tsx" in result["file_extensions"]
         assert ".json" in result["file_extensions"]  # tsconfig.json
         # Not on disk → not detected:
-        assert (
-            ".py" not in result["file_extensions"]
-        ), "Bug M regression: .py detected for TS project with no .py files"
+        assert ".py" not in result["file_extensions"], (
+            "Bug M regression: .py detected for TS project with no .py files"
+        )
 
     def test_go_project(self, tmp_path):
         """rc.5: file_extensions defaults to the union, narrows with single_language=True."""
@@ -622,10 +622,13 @@ class TestDetectWatchedDirsEdgeCases:
         from mcp_server.detect import detect_watched_dirs
 
         # discover_source_files is imported locally inside detect_watched_dirs
-        with patch(
-            "mcp_server.gitignore.discover_source_files",
-            side_effect=Exception("no pathspec"),
-        ), patch("pathlib.Path.iterdir", side_effect=PermissionError("access denied")):
+        with (
+            patch(
+                "mcp_server.gitignore.discover_source_files",
+                side_effect=Exception("no pathspec"),
+            ),
+            patch("pathlib.Path.iterdir", side_effect=PermissionError("access denied")),
+        ):
             result = detect_watched_dirs(tmp_path, "python")
         assert isinstance(result, list)
 

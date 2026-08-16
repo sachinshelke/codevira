@@ -39,9 +39,9 @@ class TestSchemaMigration:
         try:
             cols = db.conn.execute("PRAGMA table_info(decisions)").fetchall()
             names = {row["name"] for row in cols}
-            assert (
-                "do_not_revert" in names
-            ), "Bug 2: decisions table must have do_not_revert column"
+            assert "do_not_revert" in names, (
+                "Bug 2: decisions table must have do_not_revert column"
+            )
         finally:
             db.close()
 
@@ -263,9 +263,9 @@ class TestMCPToolRegistration:
 
         server_path = Path(mcp_server.__file__).parent / "server.py"
         content = server_path.read_text(encoding="utf-8")
-        assert (
-            'name="update_node"' not in content
-        ), "update_node tool should be deleted in v2.2.0+ — surface-cut audit"
+        assert 'name="update_node"' not in content, (
+            "update_node tool should be deleted in v2.2.0+ — surface-cut audit"
+        )
         return
 
         # Legacy assertion (kept as comment for archaeology):

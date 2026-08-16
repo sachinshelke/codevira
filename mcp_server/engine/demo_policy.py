@@ -16,6 +16,7 @@ moved to tests).
 Activated only when CODEVIRA_DEMO_POLICY=1 is set in the env. We don't
 want a stray ``.py.bak`` block firing in production.
 """
+
 from __future__ import annotations
 
 import os

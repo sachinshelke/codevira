@@ -152,9 +152,9 @@ def test_allows_non_bash_tool_calls(tmp_path):
 )
 def test_blocks_real_release_without_evidence(command, tmp_path):
     result = _run(command, tmp_path)
-    assert (
-        result.returncode == _BLOCK
-    ), f"hook let a release through: {command!r}\n  stdout: {result.stdout}"
+    assert result.returncode == _BLOCK, (
+        f"hook let a release through: {command!r}\n  stdout: {result.stdout}"
+    )
     assert "RELEASE BLOCKED" in result.stderr
 
 

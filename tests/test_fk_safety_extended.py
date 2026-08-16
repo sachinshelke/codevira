@@ -11,6 +11,7 @@ All three fixes follow the same pattern: ``WHERE EXISTS`` subqueries
 that silently drop rows referencing missing parents instead of raising
 ``IntegrityError`` and crashing the watcher / engine.
 """
+
 from __future__ import annotations
 
 
@@ -70,7 +71,8 @@ class TestAddSymbolFKSafety:
             db.add_symbol(
                 symbol_id="file:src/a.py::foo",
                 file_node_id="file:src/a.py",
-                name="foo", kind="function",
+                name="foo",
+                kind="function",
             )
             rows = db.conn.execute("SELECT * FROM symbols").fetchall()
             assert len(rows) == 1
@@ -84,7 +86,8 @@ class TestAddSymbolFKSafety:
             db.add_symbol(
                 symbol_id="file:ghost.py::foo",
                 file_node_id="file:ghost.py",
-                name="foo", kind="function",
+                name="foo",
+                kind="function",
             )
             rows = db.conn.execute("SELECT * FROM symbols").fetchall()
             assert len(rows) == 0
@@ -129,6 +132,7 @@ class TestClaudeConfigPathProjectScope:
 
     def test_returns_dot_mcp_json_at_project_root(self, tmp_path):
         from mcp_server.ide_inject import _claude_config_path
+
         path = _claude_config_path(tmp_path)
         assert path == tmp_path / ".mcp.json", (
             "Bug 16: per-project Claude Code MCP config must be "
@@ -152,6 +156,7 @@ class TestClaudeConfigPathProjectScope:
         assert (proj / ".mcp.json").exists()
 
         import json
+
         data = json.loads((proj / ".mcp.json").read_text())
         assert "mcpServers" in data
         assert "codevira" in data["mcpServers"]

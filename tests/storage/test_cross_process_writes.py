@@ -153,9 +153,9 @@ class TestCrossProcessConcurrentWrites:
 
         # All subprocesses returned a real decision id (no errors).
         errors = [r for r in results if r is None or r.startswith("ERROR")]
-        assert (
-            errors == []
-        ), f"{len(errors)} of {n} subprocess record() calls failed: {errors[:3]}"
+        assert errors == [], (
+            f"{len(errors)} of {n} subprocess record() calls failed: {errors[:3]}"
+        )
         # All IDs are unique — jsonl_store's fcntl.flock crossed
         # process boundaries successfully.
         ids = [r for r in results if r and not r.startswith("ERROR")]
@@ -180,8 +180,7 @@ class TestCrossProcessConcurrentWrites:
 
         failures = [r for r in results if not r.get("success")]
         assert failures == [], (
-            f"{len(failures)} of {n} subprocess add_phase calls failed: "
-            f"{failures[:3]}"
+            f"{len(failures)} of {n} subprocess add_phase calls failed: {failures[:3]}"
         )
 
         # All 20 phases must be in the roadmap. Pre-fix (no flock or

@@ -12,6 +12,7 @@ signals across the policies that share an event.
 
 See docs/heroes/00-engine.md "Policy plugin API" for the contract.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -75,7 +76,10 @@ class PolicyVerdict:
 
     @classmethod
     def inject(
-        cls, context: str, *, message: str | None = None,
+        cls,
+        context: str,
+        *,
+        message: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> "PolicyVerdict":
         return cls(
@@ -137,7 +141,9 @@ class Policy:
         # registration so test fixtures can build anonymous subclasses.
 
     def __repr__(self) -> str:  # pragma: no cover — debugging aid
-        return f"<Policy {self.name or self.__class__.__name__} priority={self.priority}>"
+        return (
+            f"<Policy {self.name or self.__class__.__name__} priority={self.priority}>"
+        )
 
     # --- Required override ---
 

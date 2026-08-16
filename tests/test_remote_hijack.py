@@ -73,9 +73,9 @@ class TestInitializedProjectWins:
 
         resolved = paths._resolve_data_dir(b)
 
-        assert (
-            resolved == b / ".codevira"
-        ), "explicitly-initialized project was routed to a sibling's store"
+        assert resolved == b / ".codevira", (
+            "explicitly-initialized project was routed to a sibling's store"
+        )
 
     def test_remote_lookup_still_survives_a_rename(
         self, tmp_path, global_home, monkeypatch

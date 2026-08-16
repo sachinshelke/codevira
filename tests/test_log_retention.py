@@ -1,6 +1,7 @@
 """
 Tests for mcp_server/log_retention.py — the logs.retention_days enforcement.
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -20,6 +21,7 @@ from mcp_server.log_retention import (
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_project(tmp_path: Path, retention_days: int = 0) -> Path:
     """Create a minimal project data dir with config.yaml + graph.db."""
@@ -58,7 +60,9 @@ def _make_project(tmp_path: Path, retention_days: int = 0) -> Path:
     return data_dir
 
 
-def _insert_session(data_dir: Path, session_id: str, days_ago: int, n_decisions: int = 0):
+def _insert_session(
+    data_dir: Path, session_id: str, days_ago: int, n_decisions: int = 0
+):
     """Insert a session with created_at set to N days ago, plus N decisions."""
     db_path = data_dir / "graph" / "graph.db"
     conn = sqlite3.connect(str(db_path))
@@ -80,6 +84,7 @@ def _insert_session(data_dir: Path, session_id: str, days_ago: int, n_decisions:
 # ---------------------------------------------------------------------------
 # _read_retention_days
 # ---------------------------------------------------------------------------
+
 
 class TestReadRetentionDays:
     def test_reads_value_from_config(self, tmp_path):
@@ -105,6 +110,7 @@ class TestReadRetentionDays:
 # ---------------------------------------------------------------------------
 # _should_run_cleanup / _mark_cleanup_done
 # ---------------------------------------------------------------------------
+
 
 class TestCleanupInterval:
     def test_runs_when_no_marker_exists(self, tmp_path):
@@ -135,6 +141,7 @@ class TestCleanupInterval:
 # ---------------------------------------------------------------------------
 # enforce_retention
 # ---------------------------------------------------------------------------
+
 
 class TestEnforceRetention:
     def test_retention_zero_is_noop(self, tmp_path):

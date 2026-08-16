@@ -20,6 +20,7 @@ cap to be raised from 200ms to 500ms based on heavily-contended-system
 feedback; we ship 200ms cap here matching the historical default.
 v2.0.x can raise it via env var if real-world signal demands.
 """
+
 from __future__ import annotations
 
 import logging
@@ -80,5 +81,6 @@ def enable_wal_with_retry(
     logger.warning(
         "Could not enable WAL on %s after %d retries; "
         "continuing in default journal mode",
-        db_path, attempts,
+        db_path,
+        attempts,
     )

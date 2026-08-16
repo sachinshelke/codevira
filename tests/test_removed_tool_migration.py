@@ -45,9 +45,9 @@ class TestEveryRemovedToolExplainsItself:
     def test_names_a_successor(self, tool: str) -> None:
         """A pointer to MIGRATING.md alone still costs a round trip."""
         body = _text(asyncio.run(call_tool(tool, {})))
-        assert (
-            _REMOVED_IN_4_0[tool] in body
-        ), f"{tool} does not name what to use instead"
+        assert _REMOVED_IN_4_0[tool] in body, (
+            f"{tool} does not name what to use instead"
+        )
 
     @pytest.mark.parametrize("tool", sorted(_REMOVED_IN_4_0))
     def test_points_at_the_migration_guide(self, tool: str) -> None:
@@ -60,9 +60,9 @@ class TestEveryRemovedToolExplainsItself:
         sentence. Caught when three successors written with em-dashes
         failed the successor assertion above for that reason alone."""
         body = _text(asyncio.run(call_tool(tool, {})))
-        assert (
-            "\\u" not in body
-        ), f"escaped non-ASCII in the message an agent reads: {body}"
+        assert "\\u" not in body, (
+            f"escaped non-ASCII in the message an agent reads: {body}"
+        )
 
 
 class TestTheTableMatchesTheRelease:

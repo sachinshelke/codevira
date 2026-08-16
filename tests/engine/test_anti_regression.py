@@ -163,9 +163,9 @@ class TestAcceptanceScenarios:
         )
         event = _make_event(target=target, proposed_diff=diff)
         verdict = policy.evaluate(event, signals)
-        assert (
-            verdict.is_allowing()
-        ), f"unrelated diff shouldn't trigger anti-regression; got {verdict.action}"
+        assert verdict.is_allowing(), (
+            f"unrelated diff shouldn't trigger anti-regression; got {verdict.action}"
+        )
 
     def test_4_revert_match_blocks_with_diagnostic(self):
         """The diff matches is_revert's heuristic → block.
@@ -343,14 +343,14 @@ class TestAcceptanceScenarios:
         verdict = dispatch(event)
         assert verdict.is_blocking()
         # Decision Lock (priority=100) wins as primary
-        assert (
-            verdict.policy == "decision_lock"
-        ), f"expected decision_lock to be primary; got {verdict.policy}"
+        assert verdict.policy == "decision_lock", (
+            f"expected decision_lock to be primary; got {verdict.policy}"
+        )
         # Anti-regression should appear in other_blocking_policies
         others = verdict.metadata.get("other_blocking_policies", [])
-        assert (
-            "anti_regression" in others
-        ), f"anti_regression should be in others; got {others}"
+        assert "anti_regression" in others, (
+            f"anti_regression should be in others; got {others}"
+        )
         reset_policies()
 
     def test_8_evaluate_under_5ms_p95(self):
@@ -398,9 +398,9 @@ class TestBehavioralGates:
         spy = _FakeSignals()
         for tool in ("Read", "Bash", "Glob", "Grep"):
             policy.evaluate(_make_event(tool_name=tool), spy)
-        assert (
-            spy.fixes_calls == []
-        ), f"is_edit gate degraded: signals.fixes called: {spy.fixes_calls}"
+        assert spy.fixes_calls == [], (
+            f"is_edit gate degraded: signals.fixes called: {spy.fixes_calls}"
+        )
 
     @pytest.mark.skip(
         reason="v2.2.0: cross_session module deleted (replaced by relevance_inject)"
@@ -417,9 +417,9 @@ class TestBehavioralGates:
         )
         verdict = policy.evaluate(event, spy)
         assert verdict.is_allowing()
-        assert (
-            spy.fixes_calls == []
-        ), f"target_file None gate degraded: {spy.fixes_calls}"
+        assert spy.fixes_calls == [], (
+            f"target_file None gate degraded: {spy.fixes_calls}"
+        )
 
     @pytest.mark.skip(
         reason="v2.2.0: cross_session module deleted (replaced by relevance_inject)"
@@ -507,9 +507,9 @@ class TestBehavioralGates:
             proposed_diff="--- before\nx\n--- after\ny\n",
         )
         policy.evaluate(event, spy_signals)
-        assert (
-            is_revert_calls == []
-        ), f"empty-fixes gate degraded: is_revert called: {is_revert_calls}"
+        assert is_revert_calls == [], (
+            f"empty-fixes gate degraded: is_revert called: {is_revert_calls}"
+        )
 
     def test_none_diff_skips_is_revert(
         self,
@@ -551,9 +551,9 @@ class TestBehavioralGates:
         )
         event = _make_event(target=target, tool_name="Write", proposed_diff=None)
         policy.evaluate(event, spy_signals)
-        assert (
-            is_revert_calls == []
-        ), f"None-diff gate degraded: is_revert called: {is_revert_calls}"
+        assert is_revert_calls == [], (
+            f"None-diff gate degraded: is_revert called: {is_revert_calls}"
+        )
 
     def test_per_fix_failure_doesnt_break_evaluation(
         self,

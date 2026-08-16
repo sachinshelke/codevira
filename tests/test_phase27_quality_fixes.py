@@ -101,9 +101,9 @@ class TestFixHistoryStalenessRefresh:
         assert r3["rescanned"] is True
 
         fixes = fix_history.lookup(repo, "b.py")
-        assert any(
-            "b.py" in (f.get("file_path") or "") for f in fixes
-        ), "the post-boot fix commit must be visible after a HEAD-move refresh"
+        assert any("b.py" in (f.get("file_path") or "") for f in fixes), (
+            "the post-boot fix commit must be visible after a HEAD-move refresh"
+        )
 
     def test_refresh_no_git_repo_is_graceful(self, tmp_path):
         not_a_repo = tmp_path / "plain"

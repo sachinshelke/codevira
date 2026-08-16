@@ -69,16 +69,16 @@ class TestMigrationPreservesReadableMemory:
         result = migrate.migrate_to_centralized(project)
         assert result["migrated"] is True, result
 
-        assert (
-            _readable_decisions(project) == 5
-        ), "migration made decisions unreadable — the exact data-loss bug"
+        assert _readable_decisions(project) == 5, (
+            "migration made decisions unreadable — the exact data-loss bug"
+        )
 
     def test_in_repo_store_is_not_renamed_away(self, project):
         migrate.migrate_to_centralized(project)
         assert (project / ".codevira").is_dir(), "in-repo store was moved"
-        assert not (
-            project / ".codevira.migrated"
-        ).exists(), "migration renamed the source away — nothing may be stranded"
+        assert not (project / ".codevira.migrated").exists(), (
+            "migration renamed the source away — nothing may be stranded"
+        )
 
     def test_all_memory_files_remain_in_repo(self, project):
         migrate.migrate_to_centralized(project)

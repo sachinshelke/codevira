@@ -368,5 +368,5 @@ class TestCrossToolUniversality:
         )
         # With engine off, NO decision should reach the inject
         assert "we use bcrypt" not in inject, (
-            "Kill switch broken: decisions surfacing despite " "CODEVIRA_ENGINE=0"
+            "Kill switch broken: decisions surfacing despite CODEVIRA_ENGINE=0"
         )

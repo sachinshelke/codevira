@@ -54,6 +54,7 @@ The function is defensive: any error during git invocation, timestamp
 parsing, or roadmap read returns ``None``. Drift detection MUST never
 crash the session context call — that's the whole product working.
 """
+
 from __future__ import annotations
 
 import logging

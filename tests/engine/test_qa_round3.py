@@ -186,9 +186,9 @@ class TestHookFastPath:
             env=self._hook_env(),
             timeout=5,
         )
-        assert (
-            result.returncode == 0
-        ), f"hook returned {result.returncode}; stderr: {result.stderr}"
+        assert result.returncode == 0, (
+            f"hook returned {result.returncode}; stderr: {result.stderr}"
+        )
         payload = json.loads(result.stdout.strip())
         assert payload["continue"] is True
 

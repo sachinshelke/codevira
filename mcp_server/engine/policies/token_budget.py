@@ -10,6 +10,7 @@ companion ``codevira budget`` CLI reads the same JSONL.
 
 See ``docs/heroes/06-token-budget.md`` for the spec.
 """
+
 from __future__ import annotations
 
 import os
@@ -35,9 +36,14 @@ class TokenBudgetPersist(Policy):
     priority = 10
 
     def _config(self) -> dict[str, Any]:
-        mode_raw = os.environ.get(
-            "CODEVIRA_TOKEN_BUDGET_MODE", _DEFAULT_MODE,
-        ).strip().lower()
+        mode_raw = (
+            os.environ.get(
+                "CODEVIRA_TOKEN_BUDGET_MODE",
+                _DEFAULT_MODE,
+            )
+            .strip()
+            .lower()
+        )
         mode = mode_raw if mode_raw in _MODES else _DEFAULT_MODE
         return {"mode": mode}
 
@@ -53,7 +59,9 @@ class TokenBudgetPersist(Policy):
         }
 
     def evaluate(
-        self, event: HookEvent, signals: SignalContext | None = None,
+        self,
+        event: HookEvent,
+        signals: SignalContext | None = None,
     ) -> PolicyVerdict:
         # Stage 1: structural filters
         if event.event_type != EventType.STOP:
@@ -68,33 +76,40 @@ class TokenBudgetPersist(Policy):
         # Stage 2: persist via Week-2 plumbing
         try:
             from mcp_server.engine.token_meter import end_session
+
             summary = end_session(
                 event.session_id,
                 project_root=event.project_root,
             )
         except Exception:  # noqa: BLE001 — never crash on telemetry
-            return PolicyVerdict.allow(metadata={
-                "policy": self.name,
-                "persisted": False,
-                "error": "end_session_raised",
-            })
+            return PolicyVerdict.allow(
+                metadata={
+                    "policy": self.name,
+                    "persisted": False,
+                    "error": "end_session_raised",
+                }
+            )
 
         if summary is None:
             # No active meter for this session — common when the AI
             # session never recorded any tokens. Not an error.
-            return PolicyVerdict.allow(metadata={
-                "policy": self.name,
-                "persisted": False,
-                "reason": "no_meter_for_session",
-            })
+            return PolicyVerdict.allow(
+                metadata={
+                    "policy": self.name,
+                    "persisted": False,
+                    "reason": "no_meter_for_session",
+                }
+            )
 
         # Stage 3: success — record telemetry in metadata for `codevira
         # doctor` and crash logs to surface.
-        return PolicyVerdict.allow(metadata={
-            "policy": self.name,
-            "persisted": True,
-            "session_id": event.session_id,
-            "injected_total": summary.get("injected_total", 0),
-            "used_total": summary.get("used_total", 0),
-            "efficiency": summary.get("efficiency", 0.0),
-        })
+        return PolicyVerdict.allow(
+            metadata={
+                "policy": self.name,
+                "persisted": True,
+                "session_id": event.session_id,
+                "injected_total": summary.get("injected_total", 0),
+                "used_total": summary.get("used_total", 0),
+                "efficiency": summary.get("efficiency", 0.0),
+            }
+        )

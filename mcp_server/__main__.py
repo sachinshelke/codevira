@@ -15,6 +15,7 @@ MCP config example:
       }
     }
 """
+
 from mcp_server.cli import main
 
 main()

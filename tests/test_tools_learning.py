@@ -449,9 +449,9 @@ class TestGetSessionContext:
             result = learning.get_session_context()
 
         surfaced = {d.get("decision") for d in result["recent_decisions"]}
-        assert (
-            old_txt not in surfaced
-        ), "superseded decision must not surface via the chronological backfill"
+        assert old_txt not in surfaced, (
+            "superseded decision must not surface via the chronological backfill"
+        )
         assert new_txt in surfaced, "its replacement should surface in its place"
 
     def test_session_context_backfills_past_reverted_top_decisions(
@@ -680,9 +680,9 @@ class TestGetSessionContext:
 
         if result["recent_decisions"]:
             for d in result["recent_decisions"]:
-                assert (
-                    d.get("source") == "session"
-                ), f"recent_decisions entries must be tagged source='session'; got {d}"
+                assert d.get("source") == "session", (
+                    f"recent_decisions entries must be tagged source='session'; got {d}"
+                )
 
     def test_session_context_recent_decisions_preserve_file_path(
         self, tmp_path, monkeypatch

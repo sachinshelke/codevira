@@ -372,9 +372,9 @@ class TestCommitSessionPathSafety:
         from mcp_server.storage.decisions_store import default_session_id
 
         sid = default_session_id()
-        assert (
-            "/" not in sid and "\\" not in sid and ".." not in sid
-        ), f"auto session_id became unsafe: {sid!r}"
+        assert "/" not in sid and "\\" not in sid and ".." not in sid, (
+            f"auto session_id became unsafe: {sid!r}"
+        )
 
 
 # ──────────────────────────────────────────────────────────────────────

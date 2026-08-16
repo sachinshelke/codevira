@@ -181,6 +181,6 @@ class TestProvisionalCacheIsCheap:
         (proj / ".codevira").mkdir()
         (proj / ".codevira" / "config.yaml").write_text("schema_version: 1\n")
 
-        assert (
-            paths.get_data_dir() == proj / ".codevira"
-        ), "a store created in another process was never noticed"
+        assert paths.get_data_dir() == proj / ".codevira", (
+            "a store created in another process was never noticed"
+        )

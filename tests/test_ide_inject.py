@@ -529,9 +529,9 @@ class TestAntigravityNameSanitization:
         server_name = keys[0]
         assert server_name.startswith("codevira-")
         safe_part = server_name[len("codevira-") :]
-        assert re_mod.match(
-            r"^[a-z0-9-]+$", safe_part
-        ), f"Unsafe chars in '{safe_part}'"
+        assert re_mod.match(r"^[a-z0-9-]+$", safe_part), (
+            f"Unsafe chars in '{safe_part}'"
+        )
 
     def test_spaces_become_hyphens(self, tmp_path, monkeypatch):
         config_file = tmp_path / "mcp_config.json"
@@ -1156,15 +1156,15 @@ class TestInjectIdeConfigIntegration:
             "codevira-beta",
         ], f"expected per-project keys, got {keys}"
         # The bare global entry (which crashes / goes inert) must NOT be written.
-        assert (
-            "codevira" not in servers
-        ), "bare global 'codevira' entry must NOT be written for Antigravity"
+        assert "codevira" not in servers, (
+            "bare global 'codevira' entry must NOT be written for Antigravity"
+        )
         # Each per-project entry carries a WORKING --project-dir binding.
         for name, proj in (("codevira-alpha", proj_a), ("codevira-beta", proj_b)):
             args = servers[name]["args"]
-            assert (
-                "--project-dir" in args and str(proj) in args
-            ), f"{name} missing --project-dir binding: {args}"
+            assert "--project-dir" in args and str(proj) in args, (
+                f"{name} missing --project-dir binding: {args}"
+            )
 
     def test_global_mode_claude_registers_per_project(self, tmp_path, monkeypatch):
         """D000126 fix: Claude Code registers PER-PROJECT (--project-dir-pinned),
@@ -1576,9 +1576,9 @@ class TestClaudeCodeCliShellOut:
             f"or the CLI swallows it as an env value; argv was {add_argv}"
         )
         # And the command path is the very next token after the name.
-        assert (
-            add_argv[name_idx + 1] == "/usr/bin/codevira"
-        ), f"commandOrUrl must immediately follow the name; argv was {add_argv}"
+        assert add_argv[name_idx + 1] == "/usr/bin/codevira", (
+            f"commandOrUrl must immediately follow the name; argv was {add_argv}"
+        )
 
     def test_falls_back_to_direct_merge_when_cli_missing(self, tmp_path, monkeypatch):
         """When claude CLI is NOT on PATH, fall back to direct merge of
@@ -1791,9 +1791,9 @@ class TestAtomicWriteHardening:
         target = tmp_path / "config.json"
         _write_json_safe(target, {"a": 1})
         leftovers = [p for p in tmp_path.iterdir() if p.name.endswith(".tmp")]
-        assert (
-            leftovers == []
-        ), f"P3 regression: tempfile leftovers in target dir: {leftovers}"
+        assert leftovers == [], (
+            f"P3 regression: tempfile leftovers in target dir: {leftovers}"
+        )
 
     def test_concurrent_writes_dont_collide_on_tmp(self, tmp_path):
         """Two writes to the same path in quick succession must both
@@ -1922,9 +1922,9 @@ class TestM1OriginStampAntigravity:
         for path in (a, b):
             data = json.loads(path.read_text())
             entry = data["mcpServers"]["codevira"]
-            assert (
-                entry["env"]["CODEVIRA_IDE"] == "antigravity"
-            ), f"target {path} missing CODEVIRA_IDE stamp"
+            assert entry["env"]["CODEVIRA_IDE"] == "antigravity", (
+                f"target {path} missing CODEVIRA_IDE stamp"
+            )
             # And the envelope survived too.
             assert "$typeName" in entry
             assert entry["$typeName"].startswith("exa.cascade_plugins_pb")
@@ -2276,9 +2276,9 @@ class TestM1AntigravityMultiTargetFailure:
 
         # v3.1.x fix: write #1 was rolled back when write #2 failed.
         # ok_target didn't exist before; rollback unlinked it.
-        assert (
-            not ok_target.is_file()
-        ), "rollback failed — write #1 still on disk after write #2 fail"
+        assert not ok_target.is_file(), (
+            "rollback failed — write #1 still on disk after write #2 fail"
+        )
 
     def test_rollback_restores_pre_write_content_when_target_existed(
         self, tmp_path, monkeypatch

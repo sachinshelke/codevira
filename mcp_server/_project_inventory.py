@@ -121,8 +121,7 @@ def enumerate_projects() -> list[ProjectEntry]:
             conn = sqlite3.connect(str(db_path))
             conn.row_factory = sqlite3.Row
             for r in conn.execute(
-                "SELECT path, name, language, git_remote, last_synced_at "
-                "FROM projects"
+                "SELECT path, name, language, git_remote, last_synced_at FROM projects"
             ).fetchall():
                 row = dict(r)
                 registered_by_path[row["path"]] = row

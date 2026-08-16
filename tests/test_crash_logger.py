@@ -70,9 +70,7 @@ class TestSanitizePEM:
 
     def test_ec_private_key_block(self):
         pem = (
-            "-----BEGIN EC PRIVATE KEY-----\n"
-            "somekeydata\n"
-            "-----END EC PRIVATE KEY-----"
+            "-----BEGIN EC PRIVATE KEY-----\nsomekeydata\n-----END EC PRIVATE KEY-----"
         )
         assert "***PRIVATE_KEY***" in _sanitize(pem)
 

@@ -237,9 +237,9 @@ class TestWriteAdditiveFixDecisionLock:
                 ]
 
         verdict = DecisionLock().evaluate(_write_event(target, tmp_path, new), _Sig())
-        assert (
-            verdict.is_blocking()
-        ), "destructive Write touching the decision must block"
+        assert verdict.is_blocking(), (
+            "destructive Write touching the decision must block"
+        )
         assert verdict.metadata["pure_insertion"] is False
         assert verdict.metadata["content_orthogonal"] is False
 
@@ -290,9 +290,9 @@ class TestWriteAdditiveFixBlastRadius:
         verdict = BlastRadiusVeto().evaluate(
             _write_event(target, tmp_path, new), _ImpactSignals(radius=20)
         )
-        assert (
-            verdict.is_blocking()
-        ), "removing a public signature from a hot file must block"
+        assert verdict.is_blocking(), (
+            "removing a public signature from a hot file must block"
+        )
 
 
 class TestEndToEndHookWiring:

@@ -112,9 +112,9 @@ class TestIdempotency:
         assert result2.all_succeeded
         # Every step should be no_change — file exists, content matches
         for r in result2.steps:
-            assert (
-                r.action == "no_change"
-            ), f"step {r.step.preview} reported {r.action} on idempotent re-run"
+            assert r.action == "no_change", (
+                f"step {r.step.preview} reported {r.action} on idempotent re-run"
+            )
 
 
 # =====================================================================
@@ -230,9 +230,9 @@ class TestMalformedConfig:
         script_results = [
             r for r in result.steps if r.step.target_path.name != "settings.json"
         ]
-        assert all(
-            r.succeeded for r in script_results
-        ), "script-install steps must succeed even when settings.json is broken"
+        assert all(r.succeeded for r in script_results), (
+            "script-install steps must succeed even when settings.json is broken"
+        )
         settings_results = [
             r for r in result.steps if r.step.target_path.name == "settings.json"
         ]
@@ -536,14 +536,14 @@ class TestExternalSchema:
             import re
 
             for tool in ("Edit", "Write", "MultiEdit"):
-                assert re.search(
-                    entry["matcher"], tool
-                ), f"{event} matcher {entry['matcher']!r} doesn't match {tool}"
+                assert re.search(entry["matcher"], tool), (
+                    f"{event} matcher {entry['matcher']!r} doesn't match {tool}"
+                )
             # Negative: should NOT match Read/Bash
             for tool in ("Read", "Bash", "Glob"):
-                assert not re.fullmatch(
-                    entry["matcher"], tool
-                ), f"{event} matcher {entry['matcher']!r} unexpectedly matches {tool}"
+                assert not re.fullmatch(entry["matcher"], tool), (
+                    f"{event} matcher {entry['matcher']!r} unexpectedly matches {tool}"
+                )
 
     def test_session_lifecycle_events_have_no_matcher(self, isolated: Path):
         """SessionStart / UserPromptSubmit / Stop have no tool name —
@@ -567,9 +567,9 @@ class TestExternalSchema:
             entries = data["hooks"][event]
             assert entries, f"no entries for {event}"
             entry = entries[0]
-            assert (
-                "matcher" not in entry
-            ), f"{event} should not have a matcher (no tool name in event)"
+            assert "matcher" not in entry, (
+                f"{event} should not have a matcher (no tool name in event)"
+            )
 
     # v2.2.0+: test_canonical_block_under_windsurf_12k_cap deleted.
     # `.windsurfrules` was a per-IDE nudge file dropped in the
@@ -699,9 +699,9 @@ class TestIntegrationFindings:
             for p in isolated.iterdir()
             if p.name.startswith(".AGENTS.md.") and p.name.endswith(".tmp")
         ]
-        assert (
-            not leftovers
-        ), f"atomic write left temp files behind: {[p.name for p in leftovers]}"
+        assert not leftovers, (
+            f"atomic write left temp files behind: {[p.name for p in leftovers]}"
+        )
 
     def test_atomic_write_helper_writes_correctly(self, tmp_path: Path):
         """v2.2.0+: the ``_atomic_write_text`` helper was inlined into
@@ -802,9 +802,9 @@ class TestIntegrationFindings:
         )
         result1 = execute_plan(plan1)
         # First run: at least one step that's not no_change/skipped
-        assert any(
-            r.action not in ("no_change", "skipped") for r in result1.steps
-        ), f"first run did nothing: {[r.action for r in result1.steps]}"
+        assert any(r.action not in ("no_change", "skipped") for r in result1.steps), (
+            f"first run did nothing: {[r.action for r in result1.steps]}"
+        )
 
         plan2 = build_setup_plan(
             isolated,
@@ -924,9 +924,9 @@ class TestClaudeCodeRegistrationIsPerProject:
         assert key.startswith("codevira-"), f"not a named per-project key: {key}"
         args = entry.get("args") or []
         assert "--project-dir" in args, f"entry is not pinned: {args}"
-        assert args[args.index("--project-dir") + 1] == str(
-            isolated
-        ), "the pin must point at THIS project, not an ambient one"
+        assert args[args.index("--project-dir") + 1] == str(isolated), (
+            "the pin must point at THIS project, not an ambient one"
+        )
         assert (entry.get("env") or {}).get("CODEVIRA_IDE") == "claude_code"
 
     def test_a_prior_bare_entry_is_removed(self, isolated: Path):
@@ -938,6 +938,6 @@ class TestClaudeCodeRegistrationIsPerProject:
             json.dumps({"mcpServers": {"codevira": {"command": "x", "args": []}}})
         )
         cj = self._run(isolated)
-        assert "codevira" not in (
-            cj.get("mcpServers") or {}
-        ), "the pre-existing bare entry survived setup"
+        assert "codevira" not in (cj.get("mcpServers") or {}), (
+            "the pre-existing bare entry survived setup"
+        )

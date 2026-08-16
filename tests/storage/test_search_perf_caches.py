@@ -119,9 +119,9 @@ class TestStalenessCacheSemantics:
         future = time.time() + 5
         os.utime(d_path, (future, future))
 
-        assert (
-            fts5_index.staleness_check(d_path, i_path) is True
-        ), "the memoized FRESH verdict masked a genuinely stale index"
+        assert fts5_index.staleness_check(d_path, i_path) is True, (
+            "the memoized FRESH verdict masked a genuinely stale index"
+        )
 
     def test_invalidate_helpers_are_callable(self, project: Path) -> None:
         decisions_store.record("x")

@@ -480,9 +480,9 @@ class TestFirstContact:
             )
 
         init_result = run_codevira(codevira_bin, ["init"], cwd=project_root)
-        assert (
-            init_result.returncode == 0
-        ), f"init failed for fixture {project_root.name}:\n{init_result.combined}"
+        assert init_result.returncode == 0, (
+            f"init failed for fixture {project_root.name}:\n{init_result.combined}"
+        )
 
         # Discovery side: init advertises detected extensions. Every code
         # extension that exists on disk MUST appear, or those files never
@@ -498,9 +498,9 @@ class TestFirstContact:
 
         # Index side: run the standard flow and read the resulting node count.
         index_result = run_codevira(codevira_bin, ["index"], cwd=project_root)
-        assert (
-            index_result.returncode == 0
-        ), f"index failed for fixture {project_root.name}:\n{index_result.combined}"
+        assert index_result.returncode == 0, (
+            f"index failed for fixture {project_root.name}:\n{index_result.combined}"
+        )
         status = run_codevira(codevira_bin, ["status"], cwd=project_root)
         nodes = _parse_graph_nodes(status.combined)
         assert nodes is not None, (

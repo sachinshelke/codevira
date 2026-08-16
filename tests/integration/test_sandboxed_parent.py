@@ -520,9 +520,9 @@ class TestSandboxedParent:
         )
         res = _spawn_codevira_mcp(project, home, inputs=inputs)
         responses = _parse_jsonrpc_responses(res.stdout)
-        assert (
-            responses
-        ), f"no JSON-RPC response from codevira in sanitized env.\n{res.diagnostics()}"
+        assert responses, (
+            f"no JSON-RPC response from codevira in sanitized env.\n{res.diagnostics()}"
+        )
         first = responses[0]
         assert "result" in first, f"initialize returned error: {first}"
         assert first["result"].get("serverInfo", {}).get("name") == "codevira"
@@ -560,12 +560,12 @@ class TestSandboxedParent:
             (r for r in responses if r.get("id") == 3),
             None,
         )
-        assert (
-            tools_list_resp is not None
-        ), f"no tools/list response when torch is blocked.\n{res.diagnostics()}"
-        assert (
-            "result" in tools_list_resp
-        ), f"tools/list returned error when torch blocked: {tools_list_resp}"
+        assert tools_list_resp is not None, (
+            f"no tools/list response when torch is blocked.\n{res.diagnostics()}"
+        )
+        assert "result" in tools_list_resp, (
+            f"tools/list returned error when torch blocked: {tools_list_resp}"
+        )
         tools = tools_list_resp["result"].get("tools", [])
         assert len(tools) > 10, f"expected ≥10 MCP tools registered; got {len(tools)}"
         # Verify a sampling of NON-search tools are present (they don't
@@ -613,9 +613,9 @@ class TestSandboxedParent:
         )
         responses = _parse_jsonrpc_responses(res.stdout)
         call_resp = next((r for r in responses if r.get("id") == 3), None)
-        assert (
-            call_resp is not None
-        ), f"no list_decisions response when torch blocked.\n{res.diagnostics()}"
+        assert call_resp is not None, (
+            f"no list_decisions response when torch blocked.\n{res.diagnostics()}"
+        )
         # The response is a CallToolResult — content is a list of
         # TextContent. Unpack the text and verify it's a JSON object
         # with the v2.1.2 list_decisions shape.
@@ -715,16 +715,16 @@ class TestSandboxedParent:
         call_resp = next((r for r in responses if r.get("id") == 3), None)
         assert call_resp is not None, f"no get_impact response.\n{res.diagnostics()}"
         payload = json.loads(call_resp["result"]["content"][0]["text"])
-        assert (
-            payload.get("not_opted_in") is True
-        ), f"expected not_opted_in hint for un-init'd project, got: {payload}"
+        assert payload.get("not_opted_in") is True, (
+            f"expected not_opted_in hint for un-init'd project, got: {payload}"
+        )
         # ...and NOTHING is adopted: no centralized ghost dir, no in-repo store.
         projects_dir = home / ".codevira" / "projects"
         ghosts = list(projects_dir.iterdir()) if projects_dir.is_dir() else []
         assert not ghosts, f"opt-in leak: server created ghost dir(s): {ghosts}"
-        assert not (
-            project / ".codevira"
-        ).exists(), "opt-in leak: in-repo store created"
+        assert not (project / ".codevira").exists(), (
+            "opt-in leak: in-repo store created"
+        )
 
 
 class TestSpawnInstrumentation:
@@ -763,9 +763,9 @@ class TestSpawnInstrumentation:
         assert "3.204" in report, "must report WHEN the last output arrived"
         assert "26.9s of silence" in report, "must quantify the stall"
         assert "responses seen, in order: [1]" in report
-        assert (
-            "NOT spawn/import cost" in report
-        ), "partial-output timeouts must steer away from raising the budget"
+        assert "NOT spawn/import cost" in report, (
+            "partial-output timeouts must steer away from raising the budget"
+        )
 
         never_started = dataclasses.replace(
             stalled,
@@ -932,9 +932,9 @@ class TestStdinIsHeldOpenUntilAnswered:
         # passed against the pre-fix harness too — a later close() emits the
         # "stdin closed" row regardless, so the ordering held while the actual
         # bug was still present. Assert on the descriptor, not on a log line.
-        assert (
-            res.stdin_open_when_answered is not None
-        ), f"responses never all arrived\n{res.diagnostics()}"
+        assert res.stdin_open_when_answered is not None, (
+            f"responses never all arrived\n{res.diagnostics()}"
+        )
         assert res.stdin_open_when_answered is True, (
             f"stdin was already CLOSED when the responses arrived — the SDK "
             f"tears the session down on EOF and an in-flight request loses its "

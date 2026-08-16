@@ -289,18 +289,35 @@ release-verify-version:
 			echo "    Promote the [Unreleased] section to [$(VERSION)] before releasing."; \
 			exit 1; \
 		fi; \
-		\
-		NEWER=$$(find mcp_server indexer -type f \( -name "*.py" -o -name "*.html" \) -newer CHANGELOG.md 2>/dev/null | wc -l | tr -d ' '); \
-		if [ "$$NEWER" -gt "0" ]; then \
-			echo "  ✗ CHANGELOG.md is OLDER than $$NEWER source file(s) under mcp_server/ + indexer/."; \
-			echo "    The current $(VERSION) entry is probably stale relative to the wheel."; \
-			echo "    Either: (a) update the entry to cover the new commits, OR"; \
-			echo "    (b) bump the patch version + add a new entry."; \
-			echo "    First offenders:"; \
-			find mcp_server indexer -type f \( -name "*.py" -o -name "*.html" \) -newer CHANGELOG.md 2>/dev/null | head -5 | sed 's/^/      /'; \
-			exit 1; \
+	fi
+	@# Staleness is a GIT question, not an mtime question. The old check used
+	@# `find -newer CHANGELOG.md`, which reports any file whose mtime moved for
+	@# a reason that has nothing to do with its content — a `git checkout` that
+	@# restores a file, a formatter rewriting it in place, a fresh clone. It
+	@# produced a false blocker on two consecutive releases while the CHANGELOG
+	@# was in fact current, which trains a maintainer to bypass the gate.
+	@#
+	@# Commits that touch source AFTER the commit that last touched CHANGELOG.md
+	@# is the thing actually being asked about, and it cannot be faked by a
+	@# timestamp. Uncommitted source edits are caught by the clean-tree check
+	@# at the top of this target, so they need no separate case here.
+	@if [ -f CHANGELOG.md ]; then \
+		CL_COMMIT=$$(git log -1 --format=%H -- CHANGELOG.md 2>/dev/null); \
+		if [ -z "$$CL_COMMIT" ]; then \
+			echo "  ⚠ CHANGELOG.md is untracked — skipping the staleness check"; \
+		else \
+			STALE=$$(git log --format=%H "$$CL_COMMIT"..HEAD -- mcp_server indexer 2>/dev/null | wc -l | tr -d ' '); \
+			if [ "$$STALE" -gt "0" ]; then \
+				echo "  ✗ $$STALE commit(s) changed mcp_server/ or indexer/ AFTER the last"; \
+				echo "    CHANGELOG.md edit, so the $(VERSION) entry does not describe the wheel."; \
+				echo "    Either: (a) update the entry to cover them, OR"; \
+				echo "    (b) bump the patch version + add a new entry."; \
+				echo "    Commits not yet described:"; \
+				git log --format='      %h %s' "$$CL_COMMIT"..HEAD -- mcp_server indexer 2>/dev/null | sed -n '1,5p'; \
+				exit 1; \
+			fi; \
+			echo "  ✓ CHANGELOG.md covers every source commit through HEAD"; \
 		fi; \
-		echo "  ✓ CHANGELOG.md is fresh (newer than every tracked source file)"; \
 	fi
 	@# 6. Tag check: if tag exists, must point at HEAD.
 	@if git rev-parse "v$(VERSION)" >/dev/null 2>&1; then \

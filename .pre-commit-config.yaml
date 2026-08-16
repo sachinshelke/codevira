@@ -40,7 +40,10 @@ repos:
     # tests/test_toolchain_pins.py fails if they drift apart.
     rev: v0.15.14
     hooks:
-      - id: ruff
+      # `ruff-check`, not `ruff`. The bare id still resolves at this rev but
+      # prints "(legacy alias)" — a deprecation that would eventually be
+      # removed under us, which is the same drift this pin exists to prevent.
+      - id: ruff-check
         args: [--fix, --exit-non-zero-on-fix]
       - id: ruff-format
 

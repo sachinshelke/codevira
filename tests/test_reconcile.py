@@ -444,3 +444,90 @@ class TestNegationIsNeverADuplicate:
         out = reconcile.cluster_store(records)
         assert out["merges"] == [], "a decision and its negation must never merge"
         assert [c["ids"] for c in out["conflicts"]] == [["D1", "D2"]]
+
+
+class TestACitedDecisionIsNotAContradiction:
+    """A decision that NAMES another is referencing it, not disagreeing.
+
+    Found on the first real run of `codevira reconcile` against this repo's
+    own store: D0000NJ deferred per-prompt preference injection, and D0000QI
+    says "Phase 10 resolved by HONORING the D0000NJ deferral". They AGREE —
+    one explicitly upholds the other. Set math saw a shared topic plus the
+    negation-ish token "deferred" on one side and called it a contradiction at
+    similarity 0.69.
+
+    Citation is a strong, cheap signal that a pair is deliberately related
+    rather than accidentally similar, and it is purely lexical, so the
+    classifier stays deterministic.
+    """
+
+    @staticmethod
+    def _rec(rid, text, ts="2026-01-01T00:00:00Z"):
+        return {"id": rid, "decision": text, "ts": ts, "do_not_revert": False}
+
+    def test_a_citing_pair_is_not_reported_as_a_conflict(self):
+        from mcp_server.storage import reconcile
+
+        # The REAL texts from this repo's store, trimmed. A synthetic pair was
+        # tried first and classified `distinct`, so the test passed without the
+        # guard even existing — a tautology. These reproduce the actual shape:
+        # jaccard 0.31 (below the duplicate bar), overlap 0.62 (above the
+        # conflict bar), and "not" present on one side only, which trips the
+        # negation rule.
+        a = (
+            "Per-prompt preference injection into relevance_inject is DEFERRED "
+            "(not shipped in v3.3.0). The read side ships as the session-start "
+            "style panel in get_session_context only."
+        )
+        b = (
+            "Phase 10 resolved by HONORING the D0000NJ deferral (per-prompt "
+            "preference injection into relevance_inject stays deferred) and "
+            "closing the REAL gap: the get_session_context communication style "
+            "panel shipped in v3.3.0 (D0000LU) had zero end-to-end test coverage."
+        )
+        assert reconcile.classify(a, b)["kind"] == reconcile.KIND_CONFLICT, (
+            "fixture no longer reproduces the false positive it guards against"
+        )
+        recs = [self._rec("D0000NJ", a), self._rec("D0000QI", b)]
+        out = reconcile.cluster_store(recs)
+        flagged = {i for c in out["conflicts"] for i in c["ids"]}
+        assert not flagged, f"a citing pair must not be a conflict: {out['conflicts']}"
+
+    def test_a_citing_pair_is_not_merged_either(self):
+        """Citing means 'related on purpose'. Merging them would collapse an
+        amendment into the thing it amends and lose the chain."""
+        from mcp_server.storage import reconcile
+
+        recs = [
+            self._rec("D000001", "adopt bcrypt hashing for passwords"),
+            self._rec(
+                "D000002", "adopt bcrypt hashing for passwords, refining D000001"
+            ),
+        ]
+        out = reconcile.cluster_store(recs)
+        assert not out["merges"], f"a citing pair must not merge: {out['merges']}"
+
+    def test_an_uncited_negation_is_still_a_conflict(self):
+        """The guard must not blunt the thing 4.1.0 exists for."""
+        from mcp_server.storage import reconcile
+
+        recs = [
+            self._rec("D000001", "cache the invalidation path aggressively"),
+            self._rec("D000002", "never cache the invalidation path aggressively"),
+        ]
+        out = reconcile.cluster_store(recs)
+        assert out["conflicts"], "an uncited negation must still be caught"
+
+    def test_a_substring_id_does_not_count_as_a_citation(self):
+        """`D1` must not match inside `D100`, or the guard silently suppresses
+        real findings as the store grows."""
+        from mcp_server.storage import reconcile
+
+        recs = [
+            self._rec("D1", "cache the invalidation path aggressively"),
+            self._rec(
+                "D100", "never cache the invalidation path aggressively per D1000"
+            ),
+        ]
+        out = reconcile.cluster_store(recs)
+        assert out["conflicts"], "D1 is not cited by a text mentioning D1000"

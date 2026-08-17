@@ -1371,6 +1371,39 @@ def main() -> None:
         help="Show what would be rendered without writing",
     )
 
+    # `codevira reconcile` — Tier-1: decisions that say the same THING in
+    # different words (Tier-0 `repair-ids` handles records colliding on an ID;
+    # different failure mode). Report-only: cluster_store returns a plan, and
+    # executing it would rewrite decisions.jsonl, which is separate work.
+    reconcile_parser = subparsers.add_parser(
+        "reconcile",
+        help="Report duplicate decision clusters and contradictions",
+        description=(
+            "Scan this project's decisions for two problems a shared repo "
+            "creates: near-duplicates (two people recorded the same decision "
+            "in different words, each with its own id) and contradictions "
+            "(one decision negates another while scoring as a textual "
+            "duplicate). REPORT ONLY — nothing is written, and conflicts are "
+            "never proposed for a merge; they need a human verdict via "
+            "supersede_decision or mark_decision_outdated."
+        ),
+    )
+    reconcile_parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Show the winning text for each cluster, not just ids",
+    )
+    reconcile_parser.add_argument(
+        "--max-records",
+        type=int,
+        default=2000,
+        help=(
+            "Bound on the O(n^2) pairing scan (default: 2000). "
+            "Truncation is reported, never silent."
+        ),
+    )
+
     # 2026-05-19 v2.2.0 Phase D: `codevira sync` — regenerate AGENTS.md
     # + manifest + digest + FTS5 from decisions.jsonl. Manual / recovery
     # path; every record_decision triggers this synchronously by default.
@@ -1986,6 +2019,16 @@ def main() -> None:
             with_reflections=getattr(args, "with_reflections", True),
         )
         sys.exit(rc)
+    elif args.command == "reconcile":
+        # Tier-1 duplicate/conflict report. Read-only by construction.
+        from mcp_server.cli_reconcile import cmd_reconcile
+
+        rc = cmd_reconcile(
+            verbose=getattr(args, "verbose", False),
+            max_records=getattr(args, "max_records", 2000),
+        )
+        raise SystemExit(rc)
+
     elif args.command == "sync":
         # 2026-05-19 v2.2.0 Phase D: regenerate AGENTS.md + indexes.
         from mcp_server.cli_sync import cmd_sync

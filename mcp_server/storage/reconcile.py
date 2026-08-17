@@ -406,6 +406,43 @@ def pick_canonical(
 _DEFAULT_MAX_RECORDS = 2000
 
 
+def _cites_each_other(
+    a: dict[str, Any],
+    b: dict[str, Any],
+    *,
+    id_field: str,
+    text_field: str,
+) -> bool:
+    """True when either record's text NAMES the other's id.
+
+    A decision that cites another is referencing it — amending, honouring,
+    superseding — not accidentally saying the same thing and not contradicting
+    it. Citation is the cheapest, most reliable "these are deliberately
+    related" signal available, and it is purely lexical, so the classifier
+    stays deterministic.
+
+    The case that motivated it, from this repo's own store on the first real
+    run of ``codevira reconcile``: D0000NJ deferred per-prompt preference
+    injection; D0000QI says *"Phase 10 resolved by HONORING the D0000NJ
+    deferral"*. They AGREE — one explicitly upholds the other. Set math saw a
+    shared topic and ``not`` present on only one side, and reported a
+    contradiction at overlap 0.62.
+
+    Matched on a WORD BOUNDARY, not a substring: ``D1`` must not match inside
+    ``D100`` or ``D1000``, or the guard would silently suppress real findings
+    as ids grow longer — a false negative in the classifier that exists to
+    prevent false positives.
+    """
+    ids = (str(a.get(id_field) or ""), str(b.get(id_field) or ""))
+    texts = (str(a.get(text_field) or ""), str(b.get(text_field) or ""))
+    for rid, other_text in ((ids[0], texts[1]), (ids[1], texts[0])):
+        if not rid:
+            continue
+        if re.search(rf"(?<![A-Za-z0-9]){re.escape(rid)}(?![A-Za-z0-9])", other_text):
+            return True
+    return False
+
+
 def cluster_store(
     records: list[dict[str, Any]],
     *,
@@ -460,6 +497,10 @@ def cluster_store(
     for i in range(len(ordered)):
         for j in range(i + 1, len(ordered)):
             a, b = ordered[i], ordered[j]
+            if _cites_each_other(a, b, id_field=id_field, text_field=text_field):
+                # Deliberately related, so neither merge nor conflict. See
+                # _cites_each_other for the case that motivated this.
+                continue
             c = classify(
                 str(a.get(text_field) or ""),
                 str(b.get(text_field) or ""),

@@ -1697,11 +1697,25 @@ def main() -> None:
     # 4.0 Step 8: enforce at the COMMIT boundary, which every IDE crosses.
     # Hard PreToolUse blocking reaches 2 of ~7 supported editors; git
     # reaches all of them, including ones that do not exist yet.
-    engine_sub.add_parser(
+    precommit_parser = engine_sub.add_parser(
         "pre-commit",
         help="Evaluate staged changes against locked decisions. Exit 1 "
         "blocks the commit. Called by the installed git pre-commit hook; "
         "override once with `git commit --no-verify`.",
+    )
+    # --base/--head switch this from the staged index to a commit RANGE, which
+    # is what CI has: a pull request has no index. Same evaluator either way —
+    # a separate CI implementation would be free to drift from the local hook.
+    precommit_parser.add_argument(
+        "--base",
+        default=None,
+        help="Evaluate a commit RANGE instead of the index: the base ref "
+        "(use the PR merge-base). Requires --head.",
+    )
+    precommit_parser.add_argument(
+        "--head",
+        default=None,
+        help="Head ref of the range. Requires --base.",
     )
     engine_sub.add_parser(
         "install-git-hook",
@@ -2141,7 +2155,19 @@ def main() -> None:
         if engine_action == "pre-commit":
             from mcp_server.engine.wiring.git_hooks import handle as _git_handle
 
-            sys.exit(_git_handle())
+            _base = getattr(args, "base", None)
+            _head = getattr(args, "head", None)
+            if bool(_base) != bool(_head):
+                # Half a range is not a range. Failing loudly beats silently
+                # falling back to the index and reporting "clean" for a PR
+                # that was never actually evaluated.
+                print(
+                    "codevira: --base and --head must be given together "
+                    "(a commit range needs both endpoints).",
+                    file=sys.stderr,
+                )
+                sys.exit(2)
+            sys.exit(_git_handle(base=_base, head=_head))
         if engine_action == "install-git-hook":
             from mcp_server.engine.wiring.git_hooks import install_hook
 

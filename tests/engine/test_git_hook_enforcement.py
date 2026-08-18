@@ -267,3 +267,69 @@ class TestWorktreeLayout:
         hook = hook / "hooks" / "pre-commit"
         assert hook.is_file()
         assert git_hooks._MARKER in hook.read_text()
+
+
+class TestRangeEnforcementForCI:
+    """A PR has no staged index — it is a commit RANGE.
+
+    `evaluate()` and every policy are already range-agnostic; only
+    `staged_files()` (git diff --cached) and `_versions()` (git show :<f>)
+    read the index. Parameterising those two is what lets CI run the SAME
+    evaluation a local pre-commit runs.
+
+    That sameness is the point. A guard that lives in one path and is dead in
+    the other is precisely the bug shipped in the first 4.1.0 build, where the
+    negation guard sat in reconcile.classify while writes went through
+    check_conflict. One evaluator, two diff sources.
+    """
+
+    def test_a_committed_violation_is_caught_over_a_range(self, repo: Path) -> None:
+        """Nothing is staged — the violation is already committed on a branch,
+        exactly as it arrives in a pull request."""
+        base = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True
+        ).stdout.strip()
+        _git(repo, "checkout", "-q", "-b", "feature")
+        (repo / "src" / "cache.py").write_text(
+            "def get(k):\n    return _memo_cache.get(k)  # add a cache layer\n"
+        )
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-q", "-m", "add caching")
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True
+        ).stdout.strip()
+
+        # Index is clean: a --cached evaluation would see nothing at all.
+        staged = subprocess.run(
+            ["git", "diff", "--cached", "--name-only"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        assert staged == "", "precondition: nothing staged, this is a range"
+
+        verdicts = git_hooks.evaluate(repo, base=base, head=head)
+        assert verdicts, "a locked decision must be enforced over a commit range"
+        blob = " ".join(v.message or "" for v in verdicts)
+        assert "stale reads" in blob, "the reasoning must reach CI output too"
+
+    def test_a_clean_range_passes(self, repo: Path) -> None:
+        base = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True
+        ).stdout.strip()
+        _git(repo, "checkout", "-q", "-b", "docs")
+        (repo / "README.md").write_text("# hello\n")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-q", "-m", "docs")
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True
+        ).stdout.strip()
+        assert git_hooks.evaluate(repo, base=base, head=head) == []
+
+    def test_the_index_remains_the_default(self, repo: Path) -> None:
+        """Local pre-commit behaviour must be untouched by the new parameter."""
+        (repo / "src" / "cache.py").write_text(
+            "def get(k):\n    return _memo_cache.get(k)  # add a cache layer\n"
+        )
+        _git(repo, "add", "-A")
+        assert git_hooks.evaluate(repo), "staged evaluation must still work"

@@ -1,0 +1,51 @@
+# Enforce locked decisions on a pull request.
+#
+# `decision_lock` already blocks a LOCAL commit through the pre-commit hook.
+# For a team that is advisory: `git commit --no-verify` overrides it, and a
+# teammate who never ran `codevira init` has no hook at all. CI is where
+# enforcement stops being optional.
+#
+# This runs the SAME evaluator the local hook runs — `codevira engine
+# pre-commit`, with --base/--head instead of the staged index, because a pull
+# request has no index. A separate CI implementation would be free to drift
+# out of agreement with the hook, and a rule enforced in one path and dead in
+# the other is how a guard silently stops guarding.
+#
+# NOT REQUIRED BY DEFAULT. A failing check here reports; it only blocks a
+# merge if you mark it required in branch protection. Turn that on
+# deliberately, once you trust what it flags.
+name: codevira enforce
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  locked-decisions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Both endpoints of the range must exist locally, and the default
+          # shallow clone has neither the base branch nor the merge-base.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install codevira
+        run: pip install --quiet .
+
+      - name: Evaluate the PR range against locked decisions
+        env:
+          # The repo's own committed .codevira/ is the source of truth; do not
+          # let the action adopt or mutate anything it finds.
+          CODEVIRA_PROJECT_DIR: ${{ github.workspace }}
+        run: |
+          BASE="$(git merge-base "origin/${{ github.base_ref }}" HEAD)"
+          echo "base (merge-base): $BASE"
+          echo "head:              $(git rev-parse HEAD)"
+          codevira engine pre-commit --base "$BASE" --head "$(git rev-parse HEAD)"

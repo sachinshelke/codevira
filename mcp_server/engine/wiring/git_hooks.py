@@ -118,18 +118,32 @@ def is_merge_commit(project_root: Path) -> bool:
     return bool(p and p.exists())
 
 
-def staged_files(project_root: Path) -> tuple[list[str], int]:
-    """``(reviewable staged paths, how many were dropped by the cap)``.
+def staged_files(
+    project_root: Path, *, base: str | None = None, head: str | None = None
+) -> tuple[list[str], int]:
+    """``(reviewable changed paths, how many were dropped by the cap)``.
+
+    Default (``base`` and ``head`` unset) reads the STAGED INDEX — the local
+    pre-commit case, unchanged.
+
+    Passing ``base``/``head`` reads a COMMIT RANGE instead. A pull request has
+    no index, so CI cannot use ``--cached``; parameterising the diff source is
+    what lets CI run the SAME evaluator rather than a second implementation
+    that can drift out of agreement with the local hook.
 
     The cap is returned rather than applied silently. Enforcement is not
     sampling: if the file carrying a locked decision sorts past the cap,
-    the commit passes and an unreported truncation makes that
+    the change passes and an unreported truncation makes that
     indistinguishable from "nothing was locked". The caller says so on
     stderr.
     """
-    out = _run(
-        ["git", "diff", "--cached", "--name-only", "--diff-filter=d"], project_root
-    )
+    if base and head:
+        # Two-dot: exactly what changed between the two endpoints. The caller
+        # supplies a merge-base for `base` when it wants PR semantics.
+        cmd = ["git", "diff", "--name-only", "--diff-filter=d", base, head]
+    else:
+        cmd = ["git", "diff", "--cached", "--name-only", "--diff-filter=d"]
+    out = _run(cmd, project_root)
     files = [
         ln.strip()
         for ln in out.splitlines()
@@ -138,37 +152,69 @@ def staged_files(project_root: Path) -> tuple[list[str], int]:
     return files[:_MAX_FILES], max(0, len(files) - _MAX_FILES)
 
 
-def _versions(project_root: Path, rel: str) -> tuple[str, str]:
-    """(HEAD content, staged content) for a path. Empty string when absent."""
-    before = _run(["git", "show", f"HEAD:{rel}"], project_root)
-    after = _run(["git", "show", f":{rel}"], project_root)
-    return before, after
+def _versions(
+    project_root: Path,
+    rel: str,
+    *,
+    base: str | None = None,
+    head: str | None = None,
+) -> tuple[str, str]:
+    """(before, after) content for a path. Empty string when absent.
+
+    Default is (HEAD, index) — the local pre-commit pair. With ``base``/``head``
+    it is (base commit, head commit), which is the pull-request pair.
+    """
+    if base and head:
+        return (
+            _run(["git", "show", f"{base}:{rel}"], project_root),
+            _run(["git", "show", f"{head}:{rel}"], project_root),
+        )
+    return (
+        _run(["git", "show", f"HEAD:{rel}"], project_root),
+        _run(["git", "show", f":{rel}"], project_root),
+    )
 
 
 def evaluate(
-    project_root: Path, *, skipped: list[int] | None = None
+    project_root: Path,
+    *,
+    skipped: list[int] | None = None,
+    base: str | None = None,
+    head: str | None = None,
 ) -> list[PolicyVerdict]:
-    """Run the engine over the staged change set. Never raises.
+    """Run the engine over a change set. Never raises.
 
-    ``skipped`` — an out-param the caller passes to learn how many staged
-    files the ``_MAX_FILES`` cap dropped, so it can say so rather than
-    letting a truncated run read as a clean one.
+    Default: the STAGED INDEX (local pre-commit). With ``base``/``head``: a
+    COMMIT RANGE, which is what a pull request is — CI has no index.
+
+    ONE evaluator, two diff sources. A second implementation for CI would be
+    free to drift out of agreement with the local hook, and a rule enforced in
+    one path and dead in the other is the exact shape of the negation-guard
+    bug: the guard existed, every test that drove it directly passed, and the
+    path real writes took never called it.
+
+    ``skipped`` — an out-param the caller passes to learn how many files the
+    ``_MAX_FILES`` cap dropped, so it can say so rather than letting a
+    truncated run read as a clean one.
     """
     verdicts: list[PolicyVerdict] = []
     try:
-        if is_merge_commit(project_root):
+        # A merge commit is exempt only in the local/index case. Over a range
+        # there is no "current commit" to inspect, and a PR branch containing
+        # a merge must still be enforced.
+        if not (base and head) and is_merge_commit(project_root):
             return verdicts
         from mcp_server.engine import register_default_policies
         from mcp_server.engine.runner import dispatch
 
         register_default_policies()
 
-        files, dropped = staged_files(project_root)
+        files, dropped = staged_files(project_root, base=base, head=head)
         if skipped is not None:
             skipped.append(dropped)
 
         for rel in files:
-            before, after = _versions(project_root, rel)
+            before, after = _versions(project_root, rel, base=base, head=head)
             if before == after:
                 continue
             # `target_file` is NOT derived by HookEvent — every wiring
@@ -196,8 +242,17 @@ def evaluate(
     return verdicts
 
 
-def handle(project_root: Path | None = None) -> int:
-    """pre-commit entry point. 0 allows the commit, 1 blocks it."""
+def handle(
+    project_root: Path | None = None,
+    *,
+    base: str | None = None,
+    head: str | None = None,
+) -> int:
+    """pre-commit entry point. 0 allows the change, 1 blocks it.
+
+    ``base``/``head`` switch it from the staged index to a commit range, which
+    is how CI evaluates a pull request through this same path.
+    """
     import sys
 
     try:
@@ -207,7 +262,7 @@ def handle(project_root: Path | None = None) -> int:
         root = project_root or Path.cwd()
 
         skipped: list[int] = []
-        verdicts = evaluate(root, skipped=skipped)
+        verdicts = evaluate(root, skipped=skipped, base=base, head=head)
         blocking = [v for v in verdicts if v.action == "block"]
 
         # Say what was NOT looked at. A silent cap makes "we checked

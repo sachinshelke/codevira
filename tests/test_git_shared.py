@@ -253,3 +253,64 @@ class TestDerivedStateDoesNotConflictOnMerge:
         assert ".codevira/decisions.jsonl" not in gi
         # AGENTS.md stays committed: other tools read it without codevira.
         assert "AGENTS.md" not in gi
+
+
+class TestAgentsMdMergeDriver:
+    """AGENTS.md is derived, but it must stay COMMITTED.
+
+    It is the contract Codex and Copilot read WITHOUT running codevira, so
+    gitignoring it — the fix used for digest/manifest — would trade a
+    cross-tool promise for a merge conflict. Instead it gets a driver that
+    regenerates the managed block, because the block is a pure function of
+    decisions.jsonl and decisions.jsonl merges correctly via its own driver.
+
+    The driver auto-resolves ONLY when both sides differ inside the
+    codevira-managed markers. Prose a human wrote outside them is not
+    codevira's to discard: if that differs, the conflict is real and stays.
+    """
+
+    def _write(self, p, user_tail, block_body):
+        from mcp_server.storage.agents_md_generator import _BEGIN_MARKER, _END_MARKER
+
+        p.write_text(f"{_BEGIN_MARKER}\n{block_body}\n{_END_MARKER}\n\n{user_tail}\n")
+
+    def test_block_only_divergence_auto_resolves(self, tmp_path):
+        from mcp_server.cli_repair import cmd_merge_driver_agents
+
+        base, ours, theirs = (tmp_path / n for n in ("O", "A", "B"))
+        self._write(base, "hand-written notes", "- D1 alpha")
+        self._write(ours, "hand-written notes", "- D1 alpha\n- D2 bravo")
+        self._write(theirs, "hand-written notes", "- D1 alpha\n- D3 charlie")
+
+        rc = cmd_merge_driver_agents(str(base), str(ours), str(theirs))
+        assert rc == 0, "block-only divergence must not conflict"
+        out = ours.read_text()
+        assert "hand-written notes" in out, "user prose must survive"
+
+    def test_user_prose_divergence_still_conflicts(self, tmp_path):
+        """The guard that keeps this honest. If a human edited prose on both
+        sides, codevira must NOT pick a winner — that is a real conflict."""
+        from mcp_server.cli_repair import cmd_merge_driver_agents
+
+        base, ours, theirs = (tmp_path / n for n in ("O", "A", "B"))
+        self._write(base, "original notes", "- D1 alpha")
+        self._write(ours, "MY rewrite of the notes", "- D1 alpha")
+        self._write(theirs, "THEIR rewrite of the notes", "- D1 alpha")
+
+        rc = cmd_merge_driver_agents(str(base), str(ours), str(theirs))
+        assert rc != 0, (
+            "diverging human prose is a real conflict; codevira must not "
+            "silently discard one side"
+        )
+
+    def test_driver_is_registered_for_agents_md(self, tmp_path):
+        import subprocess
+
+        from mcp_server.cli_repair import install_merge_driver
+
+        root = tmp_path / "repo"
+        root.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        install_merge_driver(root)
+        ga = (root / ".gitattributes").read_text()
+        assert "AGENTS.md merge=codevira-agents" in ga, ga

@@ -1483,6 +1483,25 @@ def main() -> None:
     merge_driver_parser.add_argument("ours", help="%%A — current version (output)")
     merge_driver_parser.add_argument("theirs", help="%%B — other version")
 
+    # AGENTS.md driver. Ignoring the file (the fix used for digest/manifest)
+    # was rejected: other AI tools read it WITHOUT running codevira.
+    agents_driver_parser = subparsers.add_parser(
+        "merge-driver-agents",
+        help="git merge driver for AGENTS.md (invoked by git)",
+        description=(
+            "Custom git merge driver for AGENTS.md. The codevira-managed "
+            "block is a pure function of the decision log, so a conflict in "
+            "it is noise: this REGENERATES the block instead of picking a "
+            "side. It auto-resolves only when both sides agree OUTSIDE the "
+            "markers — prose a human wrote is not codevira's to discard, so "
+            "if that diverges the conflict is left for a person. Registered "
+            "by `codevira init` via .gitattributes + git config."
+        ),
+    )
+    agents_driver_parser.add_argument("base", help="%%O — common-ancestor version")
+    agents_driver_parser.add_argument("ours", help="%%A — current version (output)")
+    agents_driver_parser.add_argument("theirs", help="%%B — other version")
+
     # v2.2.0 Phase F: `codevira observe-git` — git-observed outcome tracker.
     observe_parser = subparsers.add_parser(
         "observe-git",
@@ -2053,6 +2072,13 @@ def main() -> None:
         from mcp_server.cli_repair import cmd_merge_driver
 
         rc = cmd_merge_driver(args.base, args.ours, args.theirs)
+        sys.exit(rc)
+    elif args.command == "merge-driver-agents":
+        # git-invoked driver for AGENTS.md: regenerate the managed block
+        # rather than pick a side. Conflicts only when human prose diverges.
+        from mcp_server.cli_repair import cmd_merge_driver_agents
+
+        rc = cmd_merge_driver_agents(args.base, args.ours, args.theirs)
         sys.exit(rc)
     elif args.command == "observe-git":
         # 2026-05-19 v2.2.0 Phase F: classify decision outcomes from git.

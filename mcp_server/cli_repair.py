@@ -18,8 +18,11 @@ Two commands + an installer:
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def cmd_repair_ids(
@@ -83,6 +86,75 @@ def _union_dedup(*record_lists: list[dict]) -> list[dict]:
     return out
 
 
+def _split_managed(text: str) -> tuple[str, str, str] | None:
+    """Split AGENTS.md into (before, managed_block, after) around the markers.
+
+    Returns None when the markers are absent or malformed — the caller then
+    declines to auto-resolve rather than guessing at the structure.
+    """
+    from mcp_server.storage.agents_md_generator import _BEGIN_MARKER, _END_MARKER
+
+    b = text.find(_BEGIN_MARKER)
+    e = text.find(_END_MARKER)
+    if b == -1 or e == -1 or e < b:
+        return None
+    return text[:b], text[b : e + len(_END_MARKER)], text[e + len(_END_MARKER) :]
+
+
+def cmd_merge_driver_agents(base: str, ours: str, theirs: str) -> int:
+    """git merge driver for AGENTS.md — regenerate, do not pick a winner.
+
+    AGENTS.md is fully derived from the decision log, so a merge conflict in
+    the codevira-managed block is noise: the block is a pure function of
+    ``decisions.jsonl``, which merges correctly through its own driver. The
+    right resolution is to regenerate, not to choose a side.
+
+    But the file is only PART generated. Everything outside the markers is
+    prose a human wrote, and that is not codevira's to discard. So this
+    auto-resolves ONLY when both sides agree outside the block; if the human
+    text diverges, it returns non-zero and lets git raise a real conflict for
+    a real disagreement.
+
+    Ignoring AGENTS.md instead (the fix used for digest/manifest) was rejected:
+    it is the contract Codex and Copilot read WITHOUT running codevira, so
+    dropping it from the repo would trade a cross-tool promise for a merge
+    conflict.
+
+    Returns 0 when resolved, 1 to let git report a conflict.
+    """
+    ours_p = Path(ours)
+    try:
+        a = _split_managed(ours_p.read_text(encoding="utf-8"))
+        b = _split_managed(Path(theirs).read_text(encoding="utf-8"))
+    except OSError:
+        return 1
+    if a is None or b is None:
+        # No usable markers — this is not a shape we can reason about.
+        return 1
+    a_before, a_block, a_after = a
+    b_before, b_block, b_after = b
+    if (a_before, a_after) != (b_before, b_after):
+        # Human prose diverged. Real conflict; codevira does not adjudicate it.
+        return 1
+    if a_block == b_block:
+        return 0  # identical already; nothing to do
+
+    # Same prose, different generated block: regenerate from the merged log.
+    # regenerate() rewrites the managed block in place and preserves
+    # everything outside the markers, which is exactly the contract here.
+    try:
+        from mcp_server.storage import agents_md_generator
+
+        agents_md_generator.regenerate(target_path=ours_p)
+        return 0
+    except Exception as exc:  # noqa: BLE001 — a driver must not traceback
+        logger.warning("AGENTS.md merge driver could not regenerate: %s", exc)
+        # Fall back to OURS rather than conflicting: the block is derived, and
+        # the next record_decision / `codevira sync` rewrites it anyway.
+        ours_p.write_text(a_before + a_block + a_after, encoding="utf-8")
+        return 0
+
+
 def cmd_merge_driver(base: str, ours: str, theirs: str) -> int:
     """git custom merge driver for the append-only codevira decision log.
 
@@ -123,17 +195,22 @@ def install_merge_driver(project_root: Path) -> dict:
         return result
 
     ga = project_root / ".gitattributes"
-    entry = ".codevira/decisions.jsonl merge=codevira-jsonl"
+    # AGENTS.md gets its own driver rather than an ignore: it is derived, but
+    # other AI tools read it WITHOUT running codevira, so it must stay in the
+    # repo. See cmd_merge_driver_agents.
+    entries = [
+        ".codevira/decisions.jsonl merge=codevira-jsonl",
+        "AGENTS.md merge=codevira-agents",
+    ]
     existing = ga.read_text() if ga.exists() else ""
-    if entry not in existing.splitlines():
+    missing = [e for e in entries if e not in existing.splitlines()]
+    if missing:
         with open(ga, "a", encoding="utf-8") as f:
             if existing and not existing.endswith("\n"):
                 f.write("\n")
-            f.write(
-                "\n# Codevira — deterministic id-collision merge for the "
-                "decision log\n"
-                f"{entry}\n"
-            )
+            f.write("\n# Codevira — deterministic merges for generated memory\n")
+            for e in missing:
+                f.write(f"{e}\n")
     result["gitattributes"] = str(ga)
 
     # Stage .gitattributes so a teammate who clones INHERITS the driver mapping
@@ -176,8 +253,34 @@ def install_merge_driver(project_root: Path) -> dict:
             capture_output=True,
             text=True,
         )
-        # Honest: only 'configured' when git actually accepted both writes.
-        result["configured"] = r1.returncode == 0 and r2.returncode == 0
+        r3 = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(project_root),
+                "config",
+                "merge.codevira-agents.name",
+                "Codevira AGENTS.md regenerate-on-merge",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        r4 = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(project_root),
+                "config",
+                "merge.codevira-agents.driver",
+                "codevira merge-driver-agents %O %A %B",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        # Honest: only 'configured' when git actually accepted every write.
+        result["configured"] = all(r.returncode == 0 for r in (r1, r2, r3, r4))
     except (FileNotFoundError, OSError):
         pass
 

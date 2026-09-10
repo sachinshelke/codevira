@@ -1,13 +1,12 @@
-# Founder dogfood checklist — v2.0.0rc1
+# Founder dogfood checklist
 
 > **Note for readers other than the founder.** This is an internal QA
-> checklist that drove the dogfood phase consolidating into the public
-> v2.0.0rc1 release on PyPI (2026-05-14). Kept here for historical
-> reference. If you're a user looking to upgrade from v1.x, see
-> [MIGRATING.md](MIGRATING.md). References to "v2.0-rc.1" / "rc.1" below
-> mean the public v2.0.0rc1 PyPI release.
+> checklist. It began as the dogfood run for v2.0.0rc1 (PyPI, 2026-05-14)
+> and is maintained against the current release — run it against whatever
+> is in the tree. If you're a user looking to upgrade from v1.x, see
+> [MIGRATING.md](MIGRATING.md).
 
-**Goal**: install codevira on your real daily-use machine and use it for **1 week of actual coding** across **at least 2 different AI tools** (e.g. Claude Code + Cursor) on the same project. This validates the universality wedge end-to-end and surfaces real-world residue the 2170-test suite of that release couldn't find.
+**Goal**: install codevira on your real daily-use machine and use it for **1 week of actual coding** across **at least 2 different AI tools** (e.g. Claude Code + Cursor) on the same project. This validates the universality wedge end-to-end and surfaces real-world residue the automated suite can't find.
 
 **Time commitment**: 30 min setup + your normal dev work for 7 days + 30 min wrap-up. No extra time required during the week — codevira runs in the background.
 
@@ -19,7 +18,7 @@ The QA discipline caught 8 production bugs across the build phase. Real usage wi
 
 ```bash
 cd ~/Documents/Projects/LogisticsOS/agent-mcp
-git log --oneline -1   # should be the v2.0-rc.1 head commit
+git log --oneline -1   # note the commit you are dogfooding
 
 # Confirm clean test baseline on YOUR machine (full suite)
 .venv/bin/pytest tests/ -q
@@ -38,7 +37,7 @@ If anything fails on your machine but passes mine — stop and report. That's a 
 # Don't dogfood on this codevira repo. Use a real project of yours.
 cd ~/path/to/some-real-project   # any project with .git + pyproject.toml / package.json / etc.
 
-# Install codevira from the rc.1 head
+# Install codevira from the head of this working tree
 pipx install --force --editable ~/Documents/Projects/LogisticsOS/agent-mcp
 
 # One-prompt setup (Pillar 1.1)
@@ -57,7 +56,7 @@ codevira doctor
 
 ## During the week (no extra time — your normal coding)
 
-Just code. The engine's 8 active policies run automatically. **Don't disable anything.** If something blocks you legitimately:
+Just code. The engine's 7 active policies run automatically. **Don't disable anything.** If something blocks you legitimately:
 
 ```bash
 # Switch any single hero to advisory:
@@ -69,7 +68,7 @@ export CODEVIRA_BLAST_RADIUS_MODE=warn         # Hero 4
 export CODEVIRA_ENGINE=0
 ```
 
-**Note when you reach for these.** Each one is a UX failure we should fix in v2.0.x.
+**Note when you reach for these.** Each one is a UX failure we should fix.
 
 ---
 
@@ -145,7 +144,7 @@ Write up the answers as a 1-page note. **That note is the gate** to recruiting a
 
 ---
 
-## Decision rule for shipping rc.1 → alpha-tester batch
+## Decision rule for shipping → alpha-tester batch
 
 **Ship**:
 - 0 critical bugs (data loss, crash that requires reinstall, wedge broken)

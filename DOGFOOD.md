@@ -57,18 +57,11 @@ codevira doctor
 
 Just code. The engine's 8 active policies run automatically. **Don't disable anything.** If something blocks you legitimately:
 
-> **Note (v2.2.0+):** the 2026-05-22 surface-cut audit removed several early
-> "heroes" and their CLI. Live-Style enforcement (`CODEVIRA_LIVE_STYLE_MODE`),
-> the Scope-Contract lock, Intent Inference, and the AI-Promotion commands
-> `codevira insights` / `codevira budget` were removed — they error with
-> `invalid choice`. Scenarios below that use them are historical.
-
 ```bash
 # Switch any single hero to advisory:
 export CODEVIRA_DECISION_LOCK_MODE=warn        # Hero 1
 export CODEVIRA_ANTI_REGRESSION_MODE=warn      # Hero 2
 export CODEVIRA_BLAST_RADIUS_MODE=warn         # Hero 4
-export CODEVIRA_LIVE_STYLE_MODE=off            # Hero 7
 
 # Or the nuclear kill switch (disables ALL heroes globally):
 export CODEVIRA_ENGINE=0
@@ -89,7 +82,7 @@ Day 2: [...]
 
 ---
 
-## Trigger scenarios to actually try (do at least 4 of 6)
+## Trigger scenarios to actually try (do at least 3 of 4)
 
 These are the real-world tests our automated suite can't simulate:
 
@@ -116,26 +109,7 @@ Then ask the AI to "switch to argon2" in `auth.py`. Expected: blocked with the l
 
 Find a recent fix commit in your project. Ask the AI to "improve" the file the fix touched. Hero 2 should warn or block if the AI's diff reverts the fix region.
 
-### 4. Scope contract (Hero 3, opt-in)
-
-```bash
-export CODEVIRA_SCOPE_LOCK_MODE=block
-```
-
-Tell the AI: "fix the null check in `auth.py`". Then watch — if the AI tries to edit anything besides `auth.py`, it should get blocked with a clear reason.
-
-### 5. Insights (Hero 10)
-<!-- codevira-lint: historical -->
-
-After ≥ 2 days of real use:
-
-```bash
-codevira insights
-```
-
-You should see the project's stable decisions ranked by score, plus any that got reverted often. **If the output is empty**, the outcome tracker isn't running on your git history — file a bug.
-
-### 6. Replay (Hero 8)
+### 4. Replay (Hero 8)
 
 ```bash
 codevira replay --query auth --format html --out /tmp/timeline.html

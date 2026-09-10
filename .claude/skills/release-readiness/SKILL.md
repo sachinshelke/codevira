@@ -69,15 +69,31 @@ scripts/check_real_ide_smoke.sh
 Pass criterion: codevira appears connected in Claude Code AND Claude
 Desktop AND at least one other IDE. `tools/list` returns in <1s.
 
-**Today's state:** the script is a stub. Until it's filled in,
-G3 = "skipped" in evidence. That's tolerable for v2.0.x releases
-but BLOCKING for v2.1's launch.
+**Today's state:** the script is real and G3 has recorded `true` since
+3.1.0. It was a stub before that, recording `"skipped"` — and this file
+used to say that was "tolerable for v2.0.x but BLOCKING for v2.1".
+It never became blocking. Six releases shipped with G3 unverified,
+because a sentence in a skill is not an enforcement point.
+
+It is enforced now: `pre-release-block.sh` refuses any gate that is not
+`true`, with one stated exception (G4 may be `"warn"`). `"skipped"`
+blocks.
 
 ### G4 — Crash-log clean
 
 ```bash
-test "$(codevira report 2>/dev/null | grep -c CRASH)" = "0"
+CRASH_LOG="${CODEVIRA_HOME:-$HOME/.codevira}/logs/crashes.log"
+test ! -e "$CRASH_LOG" || test "$(grep -c '^CRASH:' "$CRASH_LOG")" = "0"
 ```
+
+Read the log FILE, not a CLI surface. This gate used to run
+`codevira report | grep -c CRASH`, and `report` is not a codevira
+subcommand: it exited 2 with a usage error, `2>/dev/null` swallowed it,
+grep counted an empty stream, and the answer was always 0. G4 could not
+fail. It reported "no crashes" for 4.1.0 with three CRASH entries in the
+log, and every `G4_crash_log_clean` in every past evidence file was
+meaningless. A gate that depends on a CLI surface can be retired by a
+rename without anyone noticing.
 
 Pass criterion: zero CRASH entries in `~/.codevira/logs/crashes.log`
 after the e2e gauntlet has run. Catches the Chroma HNSW writer
@@ -119,8 +135,8 @@ PURPOSE:
 GATES STATUS:
   G1 unit tests:      [ ] Run `make test-unit` and report exit code.
   G2 first-contact:   [ ] Run `make test-e2e` and report PASS/FAIL per fixture.
-  G3 real-IDE smoke:  [ ] Run scripts/check_real_ide_smoke.sh OR confirm "skipped".
-  G4 crash-log clean: [ ] Run `codevira report | grep -c CRASH` (expect 0).
+  G3 real-IDE smoke:  [ ] Run scripts/check_real_ide_smoke.sh. "skipped" BLOCKS.
+  G4 crash-log clean: [ ] grep -c '^CRASH:' in ~/.codevira/logs/crashes.log (expect 0).
   G5 human confirmed: [ ] Maintainer must run manually and edit evidence file.
 
 EVIDENCE FILE:
@@ -177,8 +193,12 @@ make release-smoke
 - "I ran the gauntlet" without referring to the evidence file.
 - Proposing `twine upload` without evidence file existing.
 - Setting `G5_human_confirmed=true` yourself. You're not the human.
-- Skipping G3/G4 because "they're optional." Optional means "may be
-  'skipped' in evidence" — NOT "may be omitted from the walkthrough."
+- Skipping G3/G4 because "they're optional." They are not optional and
+  never were. `"skipped"` in evidence means the gate could not run, and
+  the publish hook now refuses it. The single tolerated non-`true`
+  verdict is G4 = `"warn"`.
+- Reporting a gate as passed from the exit status of a command you did
+  not watch run. G4 passed for years on a subcommand that did not exist.
 
 ## Rollback plan
 

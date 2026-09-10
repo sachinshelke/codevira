@@ -236,25 +236,164 @@ def test_gh_release_create_without_draft_false_is_allowed(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_allows_release_when_evidence_shows_all_gates_pass(tmp_path):
+def _evidence(tmp_path, **overrides):
+    """Write an all-passing evidence file, with fields overridden."""
+    gates = {
+        "G1_unit_tests": True,
+        "G2_first_contact": True,
+        "G3_real_ide_smoke": True,
+        "G4_crash_log_clean": True,
+        "G5_human_confirmed": True,
+    }
+    gates.update(overrides)
     evidence_dir = tmp_path / ".release-evidence"
-    evidence_dir.mkdir()
-    (evidence_dir / "9.9.9.json").write_text(
-        json.dumps(
-            {
-                "G1_unit_tests": True,
-                "G2_first_contact": True,
-                "G3_real_ide_smoke": "skipped",
-                "G4_crash_log_clean": "warn",
-                "G5_human_confirmed": True,
-            }
-        )
-    )
+    evidence_dir.mkdir(exist_ok=True)
+    (evidence_dir / "9.9.9.json").write_text(json.dumps(gates))
+    return evidence_dir
+
+
+def test_allows_release_when_evidence_shows_all_gates_pass(tmp_path):
+    # This test used to set G3 to "skipped" and assert ALLOW, under a name
+    # claiming all gates passed. It was pinning the defect: a gate that did
+    # not run recorded the same verdict as one that ran and passed.
+    evidence_dir = _evidence(tmp_path, G4_crash_log_clean="warn")
 
     result = _run("twine upload dist/*", tmp_path)
 
     assert result.returncode == _ALLOW, result.stderr
     assert (evidence_dir / "audit.log").exists(), "allowed release must be audited"
+
+
+# ---------------------------------------------------------------------------
+# A gate that could not run is not a gate that passed.
+#
+# G3 read "skipped" in every evidence file from 2.0.0 through 3.0.0 — the
+# real-IDE smoke script was a stub returning exit 2 — and the hook allowed
+# all six uploads. The Makefile printed "NOT a release-ready state" next to
+# it each time. Nothing enforced that sentence.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "gate", ["G1_unit_tests", "G2_first_contact", "G3_real_ide_smoke"]
+)
+def test_a_skipped_gate_is_not_a_pass(gate, tmp_path):
+    _evidence(tmp_path, **{gate: "skipped"})
+
+    result = _run("twine upload dist/*", tmp_path)
+
+    assert result.returncode == _BLOCK, f"{gate}=skipped was allowed through"
+    assert gate in result.stderr, result.stderr
+
+
+def test_g4_warn_is_tolerated_but_g4_skipped_is_not(tmp_path):
+    """The one documented exception, and its boundary.
+
+    A crash log with entries does not block: the release may be what fixes
+    them. A crash log that could not be READ is a different thing — it is
+    the could-not-check state, and it blocks like any other.
+    """
+    _evidence(tmp_path, G4_crash_log_clean="warn")
+    assert _run("twine upload dist/*", tmp_path).returncode == _ALLOW
+
+    _evidence(tmp_path, G4_crash_log_clean="skipped")
+    result = _run("twine upload dist/*", tmp_path)
+    assert result.returncode == _BLOCK
+    assert "G4_crash_log_clean" in result.stderr
+
+
+def test_a_gate_the_hook_never_heard_of_is_still_enforced(tmp_path):
+    """The anti-rot property, and the reason the check enumerates.
+
+    The hook named five gates. Four more were added to the gauntlet in
+    2.1.2 — G1.5, G1.6, G1.7, G2.5 — and were never added here, so seven
+    releases went out with the wall enforcing a subset of itself. A gate
+    the hook has no special knowledge of must still be able to fail it.
+    """
+    _evidence(tmp_path, G6_a_gate_added_after_this_test_was_written=False)
+
+    result = _run("twine upload dist/*", tmp_path)
+
+    assert result.returncode == _BLOCK, (
+        "a failing gate the hook does not know by name was allowed through — "
+        "the hardcoded-list rot is back"
+    )
+    assert "G6_a_gate_added_after_this_test_was_written" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "missing",
+    [
+        "G1_unit_tests",
+        "G2_first_contact",
+        "G3_real_ide_smoke",
+        "G4_crash_log_clean",
+        "G5_human_confirmed",
+    ],
+)
+def test_a_gate_absent_from_the_evidence_blocks(missing, tmp_path):
+    """Enumerating only what is present would let {} pass with zero
+    failures. Absence is the strongest form of could-not-check."""
+    evidence_dir = tmp_path / ".release-evidence"
+    evidence_dir.mkdir(exist_ok=True)
+    gates = {
+        "G1_unit_tests": True,
+        "G2_first_contact": True,
+        "G3_real_ide_smoke": True,
+        "G4_crash_log_clean": True,
+        "G5_human_confirmed": True,
+    }
+    del gates[missing]
+    (evidence_dir / "9.9.9.json").write_text(json.dumps(gates))
+
+    result = _run("twine upload dist/*", tmp_path)
+
+    assert result.returncode == _BLOCK
+    assert missing in result.stderr and "absent" in result.stderr, result.stderr
+
+
+def test_an_empty_evidence_file_blocks(tmp_path):
+    evidence_dir = tmp_path / ".release-evidence"
+    evidence_dir.mkdir(exist_ok=True)
+    (evidence_dir / "9.9.9.json").write_text("{}")
+
+    result = _run("twine upload dist/*", tmp_path)
+
+    assert result.returncode == _BLOCK
+
+
+def test_the_block_message_names_the_gate_that_actually_failed(tmp_path):
+    """It used to say "Specifically, G5 ..." whatever had failed, sending
+    the maintainer to confirm a gate that was already true."""
+    _evidence(tmp_path, G2_first_contact=False)
+
+    result = _run("twine upload dist/*", tmp_path)
+
+    assert result.returncode == _BLOCK
+    assert "G2_first_contact" in result.stderr, result.stderr
+
+
+def test_provenance_fields_are_not_mistaken_for_gates(tmp_path):
+    """2.1.2 evidence carries G5_confirmed_at / G5_confirmed_by strings.
+    They start with G5 but are not verdicts; reading them as gates would
+    block every release that records who confirmed it."""
+    evidence_dir = tmp_path / ".release-evidence"
+    evidence_dir.mkdir(exist_ok=True)
+    (evidence_dir / "9.9.9.json").write_text(
+        json.dumps(
+            {
+                "G1_unit_tests": True,
+                "G2_first_contact": True,
+                "G3_real_ide_smoke": True,
+                "G4_crash_log_clean": True,
+                "G5_human_confirmed": True,
+                "G5_confirmed_at": "2026-09-10T00:00:00Z",
+                "G5_confirmed_by": "sachin",
+            }
+        )
+    )
+
+    assert _run("twine upload dist/*", tmp_path).returncode == _ALLOW
 
 
 def test_blocks_release_when_g5_not_confirmed(tmp_path):

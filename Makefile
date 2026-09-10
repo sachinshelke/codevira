@@ -186,12 +186,12 @@ release-gauntlet:
 		cat /tmp/.g3_output; \
 		case "$$G3_EXIT" in \
 			0) echo "  ✓ G3 passed" && echo true > .release-evidence/.g3.tmp ;; \
-			2) echo "  ⚠ G3 skipped (stub script returned exit 2 — fill in script for v2.2)" && echo '"skipped"' > .release-evidence/.g3.tmp ;; \
+			2) echo "  ✗ G3 skipped (stub returned exit 2) — PUBLISH WILL BE BLOCKED" && echo '"skipped"' > .release-evidence/.g3.tmp ;; \
 			*) echo "  ✗ G3 FAILED (exit $$G3_EXIT) — release blocked"; rm -f /tmp/.g3_output; exit 1 ;; \
 		esac; \
 		rm -f /tmp/.g3_output; \
 	else \
-		echo "  ⚠ scripts/check_real_ide_smoke.sh missing — G3 skipped (NOT a release-ready state)"; \
+		echo "  ✗ scripts/check_real_ide_smoke.sh missing — G3 skipped, PUBLISH WILL BE BLOCKED"; \
 		echo '"skipped"' > .release-evidence/.g3.tmp; \
 	fi
 	@echo ""
@@ -214,7 +214,7 @@ release-gauntlet:
 		echo "  ✓ G4 passed (no crash log at $$CRASH_LOG)"; \
 		echo true > .release-evidence/.g4.tmp; \
 	elif [ ! -r "$$CRASH_LOG" ]; then \
-		echo "  ⚠ G4 INDETERMINATE: $$CRASH_LOG exists but is not readable"; \
+		echo "  ✗ G4 INDETERMINATE: $$CRASH_LOG exists but is not readable — PUBLISH WILL BE BLOCKED"; \
 		echo '"skipped"' > .release-evidence/.g4.tmp; \
 	else \
 		CRASH_COUNT=$$(grep -c '^CRASH:' "$$CRASH_LOG" 2>/dev/null || echo 0); \

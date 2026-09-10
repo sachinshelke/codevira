@@ -11,18 +11,29 @@ This process replaces trust with evidence.
 
 ---
 
-## The 5 gates
+## The gates
 
 | Gate | What it checks | Pass criterion | Enforced by |
 |---|---|---|---|
 | **G1** | Unit tests pass | `make test-unit` exit 0 | `make release-gauntlet` |
+| **G1.5** | MCP round-trip | `tests/integration/test_mcp_roundtrip.py` | `make release-gauntlet` |
+| **G1.6** | Help text vs constants | `tests/integration/test_help_text_consistency.py` | `make release-gauntlet` |
+| **G1.7** | Sandboxed-parent MCP | `tests/integration/test_sandboxed_parent.py` | `make release-gauntlet` |
 | **G2** | First-contact e2e (4 fixtures) | `make test-e2e` exit 0 | `make release-gauntlet` + GitHub Actions |
-| **G3** | Real-IDE smoke | `scripts/check_real_ide_smoke.sh` exit 0 | (stub — must be filled for v2.1 launch) |
-| **G4** | Crash-log clean | `codevira report \| grep -c CRASH` is 0 | `make release-gauntlet` |
+| **G2.5** | Cold-install wheel smoke | `scripts/cold_install_smoke.sh` exit 0 | `make release-gauntlet` |
+| **G3** | Real-IDE smoke | `scripts/check_real_ide_smoke.sh` exit 0 | `make release-gauntlet` |
+| **G4** | Crash-log clean | `grep -c '^CRASH:' ~/.codevira/logs/crashes.log` is 0 | `make release-gauntlet` |
 | **G5** | Human verification | Maintainer set `G5_human_confirmed: true` | `.claude/hooks/pre-release-block.sh` |
 
-All 5 must be true in `.release-evidence/<version>.json` for the
-PreToolUse hook to allow `twine upload`.
+Every gate in `.release-evidence/<version>.json` must be `true` for the
+PreToolUse hook to allow `twine upload` — including gates added after
+this table was written, which the hook enforces without being told about
+them. G1.5/G1.6/G1.7/G2.5 were added in 2.1.2 and went unenforced for
+seven releases because the hook named its gates by hand.
+
+The one tolerated exception is **G4 = `"warn"`**: a crash log records
+history, and the release may be what fixes it. `"skipped"` is never a
+pass — it means the gate could not run.
 
 ---
 
@@ -100,9 +111,17 @@ Fix any failure before proceeding.
 make release-gauntlet
 ```
 
-This runs G1 (unit), G2 (e2e), G3 (stub → "skipped"), G4 (crash log)
-and writes `.release-evidence/X.Y.Z.json`. If any gate fails, the
-gauntlet exits non-zero and no evidence file is finalized.
+This runs G1 (unit), G1.5-G1.7, G2 (e2e), G2.5 (cold-install), G3
+(real-IDE smoke), G4 (crash log) and writes
+`.release-evidence/X.Y.Z.json`. If any gate fails, the gauntlet exits
+non-zero and no evidence file is finalized.
+
+A gate may also record `"skipped"`, meaning it could not run. **That is
+not a pass and the publish hook refuses it.** G3 read `"skipped"` in
+every evidence file from 2.0.0 through 3.0.0, and all six of those
+releases were allowed through; the only gate permitted a non-`true`
+verdict now is G4, which may be `"warn"` because a crash log records
+history and the release may be what fixes it.
 
 Inspect the result:
 
@@ -119,9 +138,13 @@ Expected structure:
   "version": "X.Y.Z",
   "timestamp": "2026-05-16T20:00:00Z",
   "G1_unit_tests": true,
+  "G1_5_mcp_roundtrip": true,
+  "G1_6_help_text_consistency": true,
+  "G1_7_sandboxed_parent": true,
   "G2_first_contact": true,
-  "G3_real_ide_smoke": "skipped",
-  "G4_crash_log_clean": "skipped",
+  "G2_5_cold_install_smoke": true,
+  "G3_real_ide_smoke": true,
+  "G4_crash_log_clean": true,
   "G5_human_confirmed": false,
   "note": "G5 must be set true by hand after maintainer verification on a real machine."
 }

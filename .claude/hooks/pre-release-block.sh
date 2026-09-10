@@ -405,19 +405,67 @@ EOF
 fi
 
 # Evidence file exists. Verify all gates pass — env-var-passed path.
+#
+# This check used to name five gates and accept "skipped" for G3:
+#
+#     g3 = d.get("G3_real_ide_smoke") in (True, "skipped")
+#
+# Both halves failed the same way, and both shipped releases.
+#
+#   * "skipped" meant the real-IDE smoke script was missing or still a
+#     stub. The Makefile printed "NOT a release-ready state" and the hook
+#     allowed the upload anyway. G3 was "skipped" for six consecutive
+#     releases (2.0.0 through 3.0.0). A gate that could not run reported
+#     the same verdict as a gate that ran and passed.
+#
+#   * The five names were hardcoded, so the four gates added in 2.1.2
+#     (G1.5 MCP round-trip, G1.6 help-text, G1.7 sandboxed-parent, G2.5
+#     cold-install) were never checked here at all. Seven releases went
+#     out with the wall enforcing a subset of itself, and nothing said so
+#     — a list that must be edited by hand every time a gate is added is
+#     a list that goes stale.
+#
+# So: every G-prefixed verdict in the evidence must be True. Unknown
+# gates are enforced too, which is what keeps a newly added gate from
+# being silently unguarded. Deviations need an entry in TOLERATED with a
+# stated reason, and the required set must be PRESENT — enumerating only
+# what is there would let an empty {} pass with zero failing gates.
 ALL_PASS=$(EVIDENCE_FILE="$EVIDENCE_FILE" python3 -c '
-import json, os, sys
+import json, os
+
+REQUIRED = (
+    "G1_unit_tests",
+    "G2_first_contact",
+    "G3_real_ide_smoke",
+    "G4_crash_log_clean",
+    "G5_human_confirmed",
+)
+
+# The ONLY non-True verdict that still permits a release. The crash log is
+# historical state, and a release may be the thing that FIXES the crashes
+# it records; the Makefile surfaces the count to the maintainer either way.
+# "skipped" is deliberately NOT here for any gate: could-not-check is the
+# exact condition this wall exists to refuse.
+TOLERATED = {"G4_crash_log_clean": ("warn",)}
+
+# Provenance fields, not verdicts. They share the G5 prefix by accident of
+# naming, so they are excluded by name rather than by shape.
+METADATA = ("G5_confirmed_at", "G5_confirmed_by")
+
 try:
     d = json.load(open(os.environ["EVIDENCE_FILE"]))
-    g1 = d.get("G1_unit_tests") is True
-    g2 = d.get("G2_first_contact") is True
-    g3 = d.get("G3_real_ide_smoke") in (True, "skipped")
-    # G4 accepts True, "skipped", or "warn" — crash log is historical
-    # state, not a release blocker for a release that may FIX the crashes.
-    # Warn surfaces to the user via Makefile output; release is allowed.
-    g4 = d.get("G4_crash_log_clean") in (True, "skipped", "warn")
-    g5 = d.get("G5_human_confirmed") is True
-    print("all_pass" if (g1 and g2 and g3 and g4 and g5) else "missing")
+    gates = {
+        k: v
+        for k, v in d.items()
+        if len(k) > 1 and k[0] == "G" and k[1].isdigit() and k not in METADATA
+    }
+    problems = ["%s=absent" % k for k in REQUIRED if k not in gates]
+    problems += [
+        "%s=%s" % (k, json.dumps(v))
+        for k, v in sorted(gates.items())
+        if v is not True and v not in TOLERATED.get(k, ())
+    ]
+    print("all_pass" if not problems else "FAILED: " + ", ".join(problems))
 except Exception:
     print("parse_error")
 ' 2>/dev/null || echo "parse_error")
@@ -437,11 +485,15 @@ Command attempted: $COMMAND
 Evidence file exists but not all gates pass:
   $EVIDENCE_FILE
 
-Specifically, G5 (human-in-the-loop confirmation) requires the
-maintainer to verify on a real machine and explicitly set:
-  "G5_human_confirmed": true
+  $ALL_PASS
 
-Open $EVIDENCE_FILE and set that field to true after verification.
+A gate reading "skipped" did not run. That is not a pass — it is the
+absence of a result, and it is why G3 rode along unverified from 2.0.0
+to 3.0.0. Make the gate run, or record honestly why it cannot and use
+the logged override.
+
+If the gate above is G5_human_confirmed, it is waiting on you: verify
+on a real machine, then set "G5_human_confirmed": true in that file.
 EOF
     exit 2
     ;;

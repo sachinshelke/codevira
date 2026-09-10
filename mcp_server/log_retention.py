@@ -89,7 +89,32 @@ def enforce_retention(data_dir: Path | None = None, *, force: bool = False) -> d
     from mcp_server.paths import get_data_dir
 
     if data_dir is None:
-        data_dir = get_data_dir()
+        try:
+            data_dir = get_data_dir()
+        except ValueError as exc:
+            # NO RESOLVABLE PROJECT — ordinary, not a crash.
+            #
+            # Claude Desktop registers ONE dynamic entry (args: [], no cwd), so
+            # the process starts at `/` and binds per tool call from
+            # `file_path`. Startup tasks run before any tool call, so
+            # get_data_dir() refuses `/` and raises. The caller in server.py
+            # then wrote it to the crash log: 39 of 45 entries on the
+            # maintainer's machine were this one line, daily for three weeks,
+            # while nothing was actually wrong. A crash log that is mostly
+            # expected noise is a crash log nobody reads — the same failure
+            # the vanished-file demotion fixed in 4.0.1.
+            #
+            # Only this case is swallowed. Anything else still propagates, so
+            # a genuine retention failure keeps reaching the crash log.
+            logger.debug("log retention skipped — no resolvable project: %s", exc)
+            return {
+                "enabled": False,
+                "retention_days": 0,
+                "ran": False,
+                "sessions_deleted": 0,
+                "decisions_deleted": 0,
+                "skipped_reason": "no resolvable project root",
+            }
 
     retention_days = _read_retention_days(data_dir)
 

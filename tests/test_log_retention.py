@@ -8,6 +8,7 @@ import sqlite3
 import time
 from pathlib import Path
 
+import pytest
 import yaml
 
 from mcp_server.log_retention import (
@@ -252,3 +253,67 @@ class TestEnforceRetention:
         result = enforce_retention(data_dir=data_dir, force=True)
         assert result["sessions_deleted"] == 1
         assert result["decisions_deleted"] == 2  # only the 2 linked to "old"
+
+
+class TestUnresolvableProjectIsNotACrash:
+    """An unpinned server started at `/` has no project — that is ORDINARY.
+
+    Claude Desktop registers ONE dynamic entry with `args: []` and no cwd, so
+    the process starts at `/` and binds per tool call from `file_path`. Startup
+    tasks run before any tool call, so `get_data_dir()` raises:
+
+        ValueError: get_data_dir() refuses invalid project root:
+                    / is a system directory, not a project.
+
+    server.py catches it and calls safe_log_crash. Measured on the
+    maintainer's machine: 39 of 45 crash-log entries were this one line, every
+    day from 2026-08-21 to 2026-09-09. Nothing was broken — retention simply
+    had no project to act on — but a crash log that is 87% expected noise is a
+    crash log nobody reads, which is the same failure as the vanished-file
+    entries demoted in 4.0.1.
+
+    `is_invalid_project_root` gives the right answer; the caller has to HANDLE
+    it rather than let it propagate. That is the same defect shape as
+    register_all's $HOME discovery.
+    """
+
+    def test_it_returns_a_no_op_instead_of_raising(self, monkeypatch):
+        from mcp_server import log_retention
+
+        def _refuse():
+            raise ValueError(
+                "get_data_dir() refuses invalid project root: / is a system "
+                "directory, not a project. (root resolved to /)"
+            )
+
+        monkeypatch.setattr("mcp_server.paths.get_data_dir", _refuse)
+        res = log_retention.enforce_retention()  # must not raise
+        assert res["ran"] is False
+        assert res["enabled"] is False
+        assert res["sessions_deleted"] == 0
+        assert res["decisions_deleted"] == 0
+
+    def test_it_says_why_it_skipped(self, monkeypatch):
+        """Silence would be the other failure: a no-op indistinguishable from
+        'ran and found nothing' is how a broken retention goes unnoticed."""
+        from mcp_server import log_retention
+
+        def _refuse():
+            raise ValueError("get_data_dir() refuses invalid project root: /")
+
+        monkeypatch.setattr("mcp_server.paths.get_data_dir", _refuse)
+        res = log_retention.enforce_retention()
+        assert res.get("skipped_reason"), f"no reason reported: {res}"
+
+    def test_a_real_error_still_propagates(self, monkeypatch):
+        """Only the unresolvable-root case is expected. A genuine failure must
+        still reach the crash log — swallowing everything would trade a noisy
+        log for a silent one."""
+        from mcp_server import log_retention
+
+        def _boom():
+            raise OSError("disk is on fire")
+
+        monkeypatch.setattr("mcp_server.paths.get_data_dir", _boom)
+        with pytest.raises(OSError):
+            log_retention.enforce_retention()

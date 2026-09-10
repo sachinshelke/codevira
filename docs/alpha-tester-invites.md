@@ -85,12 +85,14 @@ When someone says yes, send them this:
 > 3. Try at least 3 of these scenarios sometime during the 2 days:
 >    - Ask the AI: "what did I decide about [some-thing] last week?"
 >    - Switch between Claude Code → Cursor → ask the same question (the wedge moment)
->    - Run `codevira insights` after day 2
+>    - Run `codevira status --global` after day 2
 >    - Run `codevira replay` after day 2
 >
 > 4. After 2 days, send me back ANY of:
 >    - 1-paragraph answer to "did codevira save you time? would you keep it?"
->    - Crash logs if you hit any (`codevira report`)
+>    - Crash logs if you hit any — `codevira doctor` reports the count and
+>      most recent type; the raw log is at
+>      `${CODEVIRA_HOME:-$HOME/.codevira}/logs/crashes.log`
 >    - Things that bugged you / wording you'd change
 >    - Things you wanted that don't exist
 >

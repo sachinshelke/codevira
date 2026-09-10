@@ -162,6 +162,11 @@ release-gauntlet:
 		&& echo "  ✓ G1.7 passed" \
 		|| (echo "  ✗ G1.7 FAILED — release blocked (Antigravity-class regression — issue #10)"; exit 1)
 	@echo ""
+	@echo "▸ G1.8 — Docs cite real subcommands (tests/integration/test_docs_subcommands_exist.py)"
+	@PYTHONPATH=. $(PYTHON) -m pytest tests/integration/test_docs_subcommands_exist.py -q --timeout=30 \
+		&& echo "  ✓ G1.8 passed" \
+		|| (echo "  ✗ G1.8 FAILED — release blocked (a doc tells users to run a dead subcommand — the `codevira report` class)"; exit 1)
+	@echo ""
 	@echo "▸ G2 — First-contact e2e"
 	@$(MAKE) test-e2e && echo "  ✓ G2 passed" || (echo "  ✗ G2 FAILED — release blocked"; exit 1)
 	@echo ""

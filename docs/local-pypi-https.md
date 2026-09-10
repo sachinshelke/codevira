@@ -162,7 +162,7 @@ rm -rf ~/.codevira-local-pypi
 - **Adding `codevira` to an IDE/app that requires HTTPS.** Most MCP clients
   (Claude Code, Cursor, Windsurf, Antigravity) use **stdio transport by
   default**, not HTTPS — stdio needs no URL at all, just the `codevira`
-  binary path. `codevira register` sets this up for you. HTTPS transport
+  binary path. `codevira setup` sets this up for you. HTTPS transport
   is only needed for the preview `codevira serve --https` multi-project
   server mode (see v1.7 HTTPS-preview docs). If your client is asking for
   an HTTPS URL, that's the serve path — different from this local-PyPI

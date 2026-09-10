@@ -4,12 +4,11 @@ cli.py — Entry point for the `codevira` command.
 Dispatches subcommands:
   codevira                      → start MCP server (default)
   codevira init                 → initialize project in centralized storage
-  codevira register             → one-time global IDE registration (v1.6)
+  codevira setup                → configure every detected AI tool
   codevira index                → run incremental index update
   codevira index --full         → full index rebuild
   codevira status               → show index health and stats
-  codevira report               → show recent crash logs
-  codevira report --clear       → clear the crash log
+  codevira doctor               → health checks, incl. recorded crashes (C12)
   codevira serve                → start MCP HTTP server
   codevira serve --install-service   → install macOS launchd auto-start
   codevira serve --uninstall-service → remove macOS launchd service

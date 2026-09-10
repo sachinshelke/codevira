@@ -493,7 +493,25 @@ def cmd_incremental(
 
     console = Console(quiet=quiet)
 
-    db = SQLiteGraph(get_data_dir() / "graph" / "graph.db")
+    # NO RESOLVABLE PROJECT — degrade, do not crash.
+    #
+    # The background watcher calls this on a timer, independent of any tool
+    # call. An unpinned server (Claude Desktop's single dynamic entry: args
+    # [], no cwd) runs at `/`, so get_data_dir() refuses the root and this
+    # raised — into a thread whose caller writes it to the crash log. That is
+    # exactly what made log retention emit 39 false crash entries over three
+    # weeks before d8635b5. `cmd_status` above already guards this, for the
+    # same stated reason; the incremental path did not.
+    #
+    # Only the unresolvable-root ValueError is caught. A genuine failure still
+    # propagates, so a real indexing break keeps reaching the crash log.
+    try:
+        data_dir = get_data_dir()
+    except ValueError as exc:
+        console.print(f"  Not initialized — {exc}")
+        return
+
+    db = SQLiteGraph(data_dir / "graph" / "graph.db")
     explicit_files = file_paths or []
     changed_items = (
         _get_requested_files(explicit_files)

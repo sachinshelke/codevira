@@ -2058,3 +2058,46 @@ class TestTransientFilesAreNotCrashes:
         assert [k for k, _ in logged] == ["ValueError"], (
             f"unexpected errors must still be logged as crashes (got {logged})"
         )
+
+
+class TestIncrementalDegradesWithoutAProject:
+    """The background watcher's work must not crash on an unresolvable root.
+
+    Claude Desktop registers ONE dynamic entry (args: [], no cwd), so the
+    process runs at `/` and binds per tool call from `file_path`. The watcher
+    thread runs on a timer, independent of tool calls, so it can fire while
+    the root is still unresolvable — and `get_data_dir()` refuses `/`.
+
+    This is the SAME defect that made log retention write 39 false crash-log
+    entries over three weeks (fixed in d8635b5). `cmd_status` in this very
+    file already guards it, with the same reasoning in its comment; the
+    incremental path did not.
+
+    Background work degrades. A TOOL answering a question must still raise —
+    silently returning empty is what produced a misleading empty session
+    brief and sent a whole debugging session down the wrong path.
+    """
+
+    def test_it_returns_instead_of_raising(self, monkeypatch, capsys):
+        import indexer.index_codebase as ic
+
+        def _refuse():
+            raise ValueError(
+                "get_data_dir() refuses invalid project root: / is a system "
+                "directory, not a project. (root resolved to /)"
+            )
+
+        monkeypatch.setattr(ic, "get_data_dir", _refuse)
+        ic.cmd_incremental(quiet=True)  # must not raise
+
+    def test_a_real_error_still_propagates(self, monkeypatch):
+        """Only the unresolvable-root case is expected. Swallowing everything
+        would trade a noisy crash log for a silent one."""
+        import indexer.index_codebase as ic
+
+        def _boom():
+            raise OSError("disk is on fire")
+
+        monkeypatch.setattr(ic, "get_data_dir", _boom)
+        with pytest.raises(OSError):
+            ic.cmd_incremental(quiet=True)

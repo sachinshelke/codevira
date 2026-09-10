@@ -169,7 +169,7 @@ one tool is visible to every tool.
 | **Frugal by design** | Tools return summaries by default; `get_session_context()` is one ~500-token call; the server cold-starts in well under a second with no ML model to load. |
 | **Concurrent-safe** | Every write is a crash-safe atomic write behind a Posix `fcntl.flock`, so two IDEs on one project don't race. [Details](#concurrency--safety) (expand) |
 
-<sub><strong>Latest: 4.1.0.</strong> Upgrade if you are on 4.0.1: that release could silently replace a decision with its own <em>negation</em> — <code>"never do X"</code> and <code>"do X"</code> score 0.75&ndash;0.83 against each other, over the auto-supersede bar. 4.1.0 makes a one-sided negation a conflict by construction, stops a workspace root inside a project binding to the wrong project, and ranks the session brief, search and prompt injection by recency &times; outcome-confidence instead of write order. Upgrading is automatic on the first server start. <a href="https://github.com/sachinshelke/codevira/blob/main/CHANGELOG.md">Full release notes &rarr;</a></sub>
+<sub><strong>Latest: 4.2.0.</strong> Upgrade if you use codevira in more than one project: a stray registration at <code>$HOME</code> could make <code>register-all</code> discover exactly one project and discard every real one as &ldquo;nested&rdquo; (measured on a real machine: 1 found, 11 excluded). 4.2.0 also stops background work writing false entries to the crash log &mdash; 39 of 45 entries on that machine were one harmless line &mdash; and adds <code>codevira reconcile</code> to report duplicate and contradicting decisions. Upgrading is automatic, <strong>but a registration that was already wrong is not repaired for you</strong>: run <code>codevira register-all</code> once after upgrading to recover projects that went missing. <a href="https://github.com/sachinshelke/codevira/blob/main/CHANGELOG.md">Full release notes &rarr;</a></sub>
 
 ---
 
@@ -509,8 +509,22 @@ corrupt-JSONL graceful degradation, and read-only-directory hostility). See
 ## Upgrading & troubleshooting
 
 **Upgrading is automatic** — codevira migrates your memory on the first server start after an
-upgrade, with no manual steps, and your existing decisions stay put. (After a
-`pipx upgrade codevira`, restart your IDE so its MCP server reloads the new binary.)
+upgrade, and your existing decisions stay put. (After a `pipx upgrade codevira`, restart your IDE
+so its MCP server reloads the new binary.)
+
+**One exception, if you are coming from 4.1.0 or earlier.** A bug could register `$HOME` itself as
+a project, and every genuine project below it was then discarded as a "nested sub-store". 4.2.0
+stops that happening, but it does **not** repair a registration that is already wrong — nothing
+prunes the bad row on upgrade. If projects went missing from an IDE, run this once:
+
+```bash
+codevira doctor          # names the bound project; flags a $HOME entry if present
+codevira untrack -y "$HOME"   # only if doctor flags it — removes the bogus entry
+codevira register-all    # re-register every real project
+```
+
+Then restart the IDE. Your decisions were never touched by this — only the registry that points
+IDEs at them, so nothing needs restoring.
 
 If an IDE then shows the wrong project, doesn't show codevira at all, or memory looks missing,
 it's almost always a stale IDE-config entry rather than lost data. Two fixes cover most cases:

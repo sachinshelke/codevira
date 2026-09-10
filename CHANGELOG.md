@@ -17,6 +17,13 @@ registration at `$HOME` could make `register-all` discover exactly one project
 and discard every real one as "nested" — measured on the maintainer's machine
 as **1 found, 11 excluded**, with a plan to unregister two working entries.
 
+**Action required if projects went missing from an IDE.** This release stops `$HOME`
+being registered as a project, but it does not repair a registration that is
+already wrong — no startup migration prunes the bad row. Run `codevira doctor`,
+then `codevira untrack -y "$HOME"` if it flags one, then `codevira register-all`,
+then restart the IDE. Decisions are untouched by this; only the registry that
+points IDEs at them.
+
 The through-line of this release is one failure shape, found three times:
 a guard that exists, is correct, and is not on the path that runs.
 `paths.is_invalid_project_root()` returned the right answer in all three cases

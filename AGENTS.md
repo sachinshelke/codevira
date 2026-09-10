@@ -29,7 +29,7 @@
 - **D000011** v3.0.1 candidate fix list (a/b/c from the v3-rc-dogfood session) verified EMPTY on 2026-05-25 — no code work needed. (a…  ·  _decisions-store, no-op, v3.0.1, verification_
 - **D000013** Antigravity 2.0 BROKE codevira's IDE integration: the hardcoded Antigravity MCP-config path '~/.gemini/in/mcp_config.js…  ·  _antigravity, broken-integration, cross-tool, ide-inject, setup-wizard, v3.0.1_
 
-_+143 more decision(s) — full log in `.codevira/decisions.jsonl`._
+_+144 more decision(s) — full log in `.codevira/decisions.jsonl`._
 
 
 For the full decision log, use `search_decisions` / `list_decisions` (or the `codevira` CLI) — don't read `.codevira/*.jsonl` directly.

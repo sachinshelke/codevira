@@ -30,9 +30,9 @@ projects keep their files (init is idempotent — never touches files
 that are already present).
 
 If the project has v2.1.x data at ``~/.codevira/projects/<key>/graph.db``,
-``codevira init`` does NOT migrate it. Run ``codevira archive-legacy``
-afterwards to preserve those decisions as a read-only reference at
-``.codevira/legacy.jsonl``.
+``codevira init`` does NOT migrate it. The ``archive-legacy`` subcommand
+that used to export it was removed and has no successor — read the old
+``graph.db`` directly with ``sqlite3`` if its contents are still needed.
 """
 
 from __future__ import annotations

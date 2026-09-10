@@ -59,9 +59,9 @@ Just code. The engine's 8 active policies run automatically. **Don't disable any
 
 > **Note (v2.2.0+):** the 2026-05-22 surface-cut audit removed several early
 > "heroes" and their CLI. Live-Style enforcement (`CODEVIRA_LIVE_STYLE_MODE`),
-> the Scope-Contract lock, Intent Inference, and the AI-Promotion / `codevira
-> insights` + `codevira budget` commands referenced later in this doc are no
-> longer shipped — treat those scenarios as historical.
+> the Scope-Contract lock, Intent Inference, and the AI-Promotion commands
+> `codevira insights` / `codevira budget` were removed — they error with
+> `invalid choice`. Scenarios below that use them are historical.
 
 ```bash
 # Switch any single hero to advisory:
@@ -125,6 +125,7 @@ export CODEVIRA_SCOPE_LOCK_MODE=block
 Tell the AI: "fix the null check in `auth.py`". Then watch — if the AI tries to edit anything besides `auth.py`, it should get blocked with a clear reason.
 
 ### 5. Insights (Hero 10)
+<!-- codevira-lint: historical -->
 
 After ≥ 2 days of real use:
 
@@ -148,11 +149,8 @@ Should render a clean HTML timeline of decisions about auth-ish things. Plus che
 ## End of week wrap-up (30 min)
 
 ```bash
-# Snapshot the budget data
-codevira budget --full > /tmp/budget-week.txt
-
-# Snapshot insights
-codevira insights --since 7d > /tmp/insights-week.txt
+# Snapshot the decisions timeline
+codevira replay --since 7d > /tmp/replay-week.txt
 
 # Re-run doctor (the crash_log_size check surfaces accumulated crash logs)
 codevira doctor

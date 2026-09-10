@@ -4,7 +4,7 @@ test_docs_subcommands_exist.py — doc-drift lint (G1.8).
 Every ``codevira <subcommand>`` that a LIVE doc tells a reader to RUN must
 be a subcommand the CLI actually dispatches.
 
-Why this exists — this class of rot has now bitten twice:
+Why this exists — this class of rot has now bitten three times:
 
 1. **The G4 release gate (fixed 2026-09-10, 0bfe977).** The crash-log gate
    ran ``codevira report 2>/dev/null | grep -c CRASH``. ``report`` was cut
@@ -13,9 +13,14 @@ Why this exists — this class of rot has now bitten twice:
    The gate could not fail. It certified "no crashes" for 4.1.0 while the
    log held three CRASH entries.
 
-2. **``docs/alpha-tester-invites.md`` (fixed here).** The same dead
-   ``codevira report`` was still being handed to alpha testers, alongside
-   a second dead command, ``codevira insights``, that nobody had noticed.
+2. **``docs/alpha-tester-invites.md``.** The same dead ``codevira report``
+   was still being handed to alpha testers, alongside a second dead
+   command, ``codevira insights``, that nobody had noticed.
+
+3. **``MIGRATING.md`` / ``DOGFOOD.md``.** Found by extending this lint to
+   the root docs: a live "run this" fence in the v2.1.x migration path
+   invoked ``codevira archive-legacy``, and the dogfood guide's week-end
+   wrap-up invoked ``codevira budget`` / ``codevira insights``.
 
 Sibling of ``test_help_text_consistency.py`` (G1.6), which lints help-text
 *descriptions* against module constants. This lints doc *commands* against
@@ -26,6 +31,30 @@ Choices are what ``main()`` actually dispatches on, and they include
 subcommands hidden from help (``reconcile``, ``merge-driver-agents``).
 
 Pure static analysis — no subprocess, no MCP server, no chromadb. Fast.
+
+
+Prose vs instruction
+--------------------
+Naming a dead command is not the same as telling someone to run one. A
+doc legitimately names removed commands when it documents their removal
+("| `codevira clean` | **Removed in 4.0.1** ..."), and a version-transition
+doc does it constantly — MIGRATING.md's rollback recipe says to run
+``codevira register`` because that recipe puts you back on 1.8.0, where
+``register`` is the correct command. Linting that against TODAY's
+dispatch table would demand breaking working instructions.
+
+So a mention is treated as prose, not an instruction, when any of:
+
+* the line itself declares a removal (``_REMOVAL_MARKER``);
+* the enclosing section's HEADING declares one ("### Breaking: `codevira
+  clean` is gone", "### `codevira agents` no longer creates ...");
+* the section carries an explicit ``<!-- codevira-lint: historical -->``
+  marker, for version-transition sections whose headings say nothing
+  about removal ("### Activated (new in 2.0)", "## Rollback to 1.8.0").
+
+The explicit marker is deliberately visible and greppable rather than
+inferred, and it lives in the doc rather than in a list inside this test:
+the doc is where a human editing that section will see it.
 """
 
 from __future__ import annotations
@@ -63,9 +92,20 @@ _HISTORICAL_PREFIXES = (
     "docs/morning-handoff-",  # dated handoff notes
 )
 
-# A line that DOCUMENTS a command's removal is not an instruction to run
-# it — e.g. README's "| `codevira clean` | **Removed in 4.0.1** ... It now
-# errors `invalid choice`. Use `prune` ... |".
+# Root-level docs that carry run instructions. docs/**.md is swept
+# automatically; these sit at the repo root, so they are named.
+_ROOT_DOCS = (
+    "README.md",
+    "FAQ.md",
+    "MIGRATING.md",
+    "CONTRIBUTING.md",
+    "DOGFOOD.md",
+)
+
+# A line — or a section heading — that DOCUMENTS a command's removal is
+# not an instruction to run it. e.g. README's "| `codevira clean` |
+# **Removed in 4.0.1** ... It now errors `invalid choice`. Use `prune` |",
+# or MIGRATING's "### Breaking: `codevira clean` is gone".
 #
 # Self-maintaining on purpose: documenting a future removal the same way
 # passes with no edit here, and none of these phrases appear in a line
@@ -73,9 +113,19 @@ _HISTORICAL_PREFIXES = (
 _REMOVAL_MARKER = re.compile(
     r"\bremoved\b|\bremoval\b|\bdeleted\b|\bno longer\b|\binvalid choice\b"
     r"|\bnot a (?:valid )?subcommand\b|\bdoes not exist\b|\brenamed to\b"
-    r"|\breplaced by\b|\bsuperseded by\b|\bdeprecated\b",
+    r"|\breplaced by\b|\bsuperseded by\b|\bdeprecated\b|\bis gone\b"
+    r"|\bare gone\b|\bbreaking\b",
     re.IGNORECASE,
 )
+
+# Explicit opt-out for a version-transition section whose heading says
+# nothing about removal — "### Activated (new in 2.0)", "## Rollback to
+# 1.8.0 if needed". Applies from the marker to the next heading.
+_HISTORICAL_SECTION = re.compile(r"<!--\s*codevira-lint:\s*historical\s*-->", re.I)
+
+# A markdown heading, outside a fence. Bash comments inside a fence also
+# start with `#`, which is why fence state is tracked first.
+_HEADING = re.compile(r"^#{1,6}\s")
 
 # `codevira foo` / `$ codevira foo` inside inline backticks.
 _INLINE = re.compile(r"`\$?\s*codevira ([a-z][a-z0-9-]*)")
@@ -99,27 +149,44 @@ def _live_docs() -> list[Path]:
         for p in sorted((REPO_ROOT / "docs").rglob("*.md"))
         if not str(p.relative_to(REPO_ROOT)).startswith(_HISTORICAL_PREFIXES)
     ]
-    return docs + [REPO_ROOT / "README.md"]
+    return docs + [REPO_ROOT / name for name in _ROOT_DOCS]
 
 
 def _scan(text: str) -> list[tuple[int, str]]:
     """Return ``(line_number, subcommand)`` for every RUN instruction.
 
     Counts inline-backtick commands and command lines inside fences.
-    Skips lines that document a removal.
+    Skips anything the module docstring classifies as prose: a line that
+    declares a removal, a section whose heading declares one, and a
+    section carrying an explicit historical marker.
     """
     found: list[tuple[int, str]] = []
     in_fence = False
+    section_is_prose = False
+
     for lineno, line in enumerate(text.splitlines(), 1):
         if line.lstrip().startswith("```"):
             in_fence = not in_fence
             continue
-        if _REMOVAL_MARKER.search(line):
+
+        if not in_fence:
+            if _HEADING.match(line):
+                # A new section resets prose mode; the heading itself may
+                # re-enter it by declaring a removal.
+                section_is_prose = bool(_REMOVAL_MARKER.search(line))
+                continue
+            if _HISTORICAL_SECTION.search(line):
+                section_is_prose = True
+                continue
+
+        if section_is_prose or _REMOVAL_MARKER.search(line):
             continue
+
         names = [m.group(1) for m in _INLINE.finditer(line)]
         if in_fence:
             names += [m.group(1) for m in _FENCED.finditer(line)]
         found.extend((lineno, n) for n in names)
+
     return found
 
 
@@ -143,10 +210,12 @@ class TestDocsSubcommandsExist:
             "Doc(s) instruct a reader to run a subcommand that does not "
             "exist. `codevira <name>` would exit 2 with `invalid choice`:\n"
             + "\n".join(violations)
-            + "\n\nFix the doc to name a real subcommand, or — if the line "
-            "documents that the command was removed — say so on that line "
-            '(e.g. "Removed in 4.0.1"), which marks it as prose, not an '
-            "instruction.\nReal subcommands: " + ", ".join(sorted(real))
+            + "\n\nFix the doc to name a real subcommand. If the line is "
+            "PROSE about a removed command, say so on that line (e.g. "
+            '"Removed in 4.0.1"). If a whole section documents an older '
+            "version — a migration table, a rollback recipe — put\n"
+            "    <!-- codevira-lint: historical -->\n"
+            "under its heading.\nReal subcommands: " + ", ".join(sorted(real))
         )
 
     # -----------------------------------------------------------------
@@ -169,6 +238,17 @@ class TestDocsSubcommandsExist:
             f"only {total} `codevira <cmd>` instructions found across "
             f"{len(docs)} docs — the detector is matching almost nothing"
         )
+
+    def test_root_docs_are_actually_covered(self):
+        """Every named root doc must exist and be scanned.
+
+        A rename would otherwise drop it from the lint silently — the
+        list is by name, so a missing file is a hole, not a pass.
+        """
+        for name in _ROOT_DOCS:
+            path = REPO_ROOT / name
+            assert path.exists(), f"{name} is in _ROOT_DOCS but does not exist"
+            assert path in _live_docs(), f"{name} is not being scanned"
 
     def test_detector_catches_a_planted_dead_command(self, tmp_path: Path):
         """The detector must fire on a command that isn't real."""
@@ -198,6 +278,48 @@ class TestDocsSubcommandsExist:
             "`invalid choice`. Use `prune` |\n"
         )
         assert _scan(doc.read_text()) == []
+
+    def test_removal_heading_covers_its_whole_section(self, tmp_path: Path):
+        """A heading that declares a removal puts its section in prose mode.
+
+        Models MIGRATING.md's "### Breaking: `codevira clean` is gone",
+        whose migration table names the dead command in every left cell.
+        """
+        doc = tmp_path / "section.md"
+        doc.write_text(
+            "### Breaking: `codevira clean` is gone\n\n"
+            "| You used to run | Run instead |\n"
+            "|---|---|\n"
+            "| `codevira clean --ghosts` | `codevira prune --ghosts` |\n\n"
+            "### Something else\n\n"
+            "Run `codevira budget`.\n"
+        )
+        real = _real_subcommands()
+        dead = [(ln, n) for ln, n in _scan(doc.read_text()) if n not in real]
+        assert [n for _, n in dead] == ["budget"], (
+            f"section scoping wrong — expected only the post-section "
+            f"`budget` to survive, got {dead}"
+        )
+
+    def test_explicit_historical_marker_covers_its_section(self, tmp_path: Path):
+        """`<!-- codevira-lint: historical -->` exempts to the next heading.
+
+        Models MIGRATING.md's "## Rollback to 1.8.0 if needed", where
+        `codevira register` is CORRECT advice — that recipe puts you back
+        on 1.8.0, where `register` is the command that exists.
+        """
+        doc = tmp_path / "hist.md"
+        doc.write_text(
+            "## Rollback to 1.8.0 if needed\n"
+            "<!-- codevira-lint: historical -->\n\n"
+            "```bash\ncodevira register\n```\n\n"
+            "## Today\n\n"
+            "```bash\ncodevira register\n```\n"
+        )
+        dead = [ln for ln, n in _scan(doc.read_text()) if n == "register"]
+        assert dead == [11], (
+            f"marker must exempt only its own section; flagged lines {dead}"
+        )
 
     def test_report_specifically_is_not_a_subcommand(self):
         """Regression guard for the 2026-09-10 G4 escape.

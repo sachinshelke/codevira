@@ -393,16 +393,14 @@ That's it. Future `record_decision` calls write to `.codevira/decisions.jsonl`.
 
 ### Preserving v2.1.x decisions (optional)
 
-If you want your v2.1.x decisions visible as a read-only reference:
+> **Removed.** `codevira archive-legacy` was cut after v2.2.0 and has no
+> implementation today — it errors with `invalid choice`. There is no
+> supported one-shot export of a v2.1.x `graph.db`. If you still have one
+> and need its contents, read it directly with `sqlite3`; the active
+> decision pool is unaffected either way.
 
-```bash
-codevira archive-legacy   # writes .codevira/legacy.jsonl (one-shot export)
-```
-
-This is NOT a migration — the entries don't enter the active decision
-pool, don't appear in search, don't update AGENTS.md. They're just a
-text record of what was in the old graph.db, so a teammate can grep
-through them if needed.
+It was never a migration — the entries didn't enter the active decision
+pool, didn't appear in search, and didn't update AGENTS.md.
 
 ### What's removed in v2.2.0
 
@@ -546,6 +544,7 @@ binary + the new lifecycle hooks.
 ## What changed in 2.0 — the short list
 
 ### Activated (new in 2.0)
+<!-- codevira-lint: historical -->
 
 * **10 hero policies** intercept every AI tool call (`Edit`, `Write`,
   `UserPromptSubmit`, `SessionStart`) and route through the engine.
@@ -595,6 +594,7 @@ binary + the new lifecycle hooks.
 opt-out-able if you want the legacy behavior.**
 
 ### 1. `codevira init` indexes everything by default
+<!-- codevira-lint: historical -->
 
 Pre-2.0, a Python project got `file_extensions: ['.py']` and silently
 dropped `.yaml`, `.md`, `.html`, `.json`, etc. Polyglot projects lost
@@ -618,6 +618,7 @@ an existing project, run `codevira configure` (interactive picker) or
 `codevira configure --extensions .py,.ts,.yaml,.md` (explicit list).
 
 ### 2. `codevira agents` only renders for detected IDEs
+<!-- codevira-lint: historical -->
 
 Pre-2.0, `agents` rendered nudge files for every supported IDE
 regardless of whether it was installed on your machine. Files appeared
@@ -735,6 +736,7 @@ project:
 Or via env var: `CODEVIRA_CROSS_SESSION_MODE=off`.
 
 ### `codevira insights` and `codevira replay`
+<!-- codevira-lint: historical -->
 
 ```bash
 codevira insights              # 7-day summary of stable + reverted decisions
@@ -843,6 +845,7 @@ precedence over bundled defaults.
 ---
 
 ## Rollback to 1.8.0 if needed
+<!-- codevira-lint: historical -->
 
 If 2.0 causes a real problem and you need to fall back:
 

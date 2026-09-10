@@ -238,7 +238,7 @@ release-gauntlet:
 	@echo "Writing evidence to $(EVIDENCE_FILE) ..."
 	@G3_RESULT=$$(cat .release-evidence/.g3.tmp); \
 	G4_RESULT=$$(cat .release-evidence/.g4.tmp); \
-	printf '{\n  "version": "%s",\n  "timestamp": "%s",\n  "G1_unit_tests": true,\n  "G1_5_mcp_roundtrip": true,\n  "G1_6_help_text_consistency": true,\n  "G1_7_sandboxed_parent": true,\n  "G2_first_contact": true,\n  "G2_5_cold_install_smoke": true,\n  "G3_real_ide_smoke": %s,\n  "G4_crash_log_clean": %s,\n  "G5_human_confirmed": false,\n  "note": "G5 must be set true by hand after maintainer verification on a real machine."\n}\n' "$(VERSION)" "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$$G3_RESULT" "$$G4_RESULT" > $(EVIDENCE_FILE)
+	printf '{\n  "version": "%s",\n  "timestamp": "%s",\n  "G1_unit_tests": true,\n  "G1_5_mcp_roundtrip": true,\n  "G1_6_help_text_consistency": true,\n  "G1_7_sandboxed_parent": true,\n  "G1_8_docs_subcommands": true,\n  "G2_first_contact": true,\n  "G2_5_cold_install_smoke": true,\n  "G3_real_ide_smoke": %s,\n  "G4_crash_log_clean": %s,\n  "G5_human_confirmed": false,\n  "note": "G5 must be set true by hand after maintainer verification on a real machine."\n}\n' "$(VERSION)" "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$$G3_RESULT" "$$G4_RESULT" > $(EVIDENCE_FILE)
 	@rm -f .release-evidence/.g3.tmp .release-evidence/.g4.tmp
 	@echo ""
 	@echo "✓ Gauntlet complete for v$(VERSION)"

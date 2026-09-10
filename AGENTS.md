@@ -17,7 +17,9 @@
 - **D00011Z** [supersedes D00011W: D00011W claimed the data-loss bug was fixed and was locked do_not_revert on that basis. An adversa…  ·  `mcp_server/migrate.py`  ·  _corrected, data-loss, high-severity, migration, release-blocker, root-cause, v3.7.1_
 - **D00012K** [supersedes D0000PV: D0000PV's constraint is right and stands, but both of its numbers were retired by D00011J's measur…  ·  _budget, do-not-revert, footprint, invariant, lean, lightweight, performance_
 - **D00012X** `codevira clean` is the UNINSTALLER, not a registry pruner — it removes hooks, unregisters from settings.json, and dele…  ·  `mcp_server/cli_uninstall.py`  ·  _cli, destructive, gotcha, incident, naming_
-- **D00013X** STANDING RULE (Sachin, 2026-08-16): everything in flight goes into 4.1.0, and NO other version is cut until 4.1.0 is pu…
+- **D000140** Background work degrades on an unresolvable project root; a tool answering a question refuses loudly. Never guard a too…  ·  `tests/test_background_degrades.py`  ·  _background-work, crash-log, do-not-revert, invariant, project-binding, reachability, v4.2.0_
+- **D000141** check_conflict deliberately classifies a non-negated near-duplicate of a do_not_revert decision as a CONFLICT, where re…  ·  `mcp_server/tools/check_conflict.py`  ·  _check-conflict, classifier, do-not-revert, invariant, reconcile, supersede-on-write, v4.2.0_
+- **D000142** "skipped" in a release-evidence file means a gate could not run, and the publish hook refuses it. The hook enforces EVE…  ·  `.claude/hooks/pre-release-block.sh`  ·  _could-not-check, do-not-revert, gates, invariant, pre-release-hook, release-gauntlet, v4.2.0_
 
 ### Active conventions
 
@@ -26,11 +28,8 @@
 - **D000005** v3.0.0 is NOT yet published to PyPI. .release-evidence/3.0.0.json::G5_human_confirmed=false. The PreToolUse hook blocks…
 - **D000011** v3.0.1 candidate fix list (a/b/c from the v3-rc-dogfood session) verified EMPTY on 2026-05-25 — no code work needed. (a…  ·  _decisions-store, no-op, v3.0.1, verification_
 - **D000013** Antigravity 2.0 BROKE codevira's IDE integration: the hardcoded Antigravity MCP-config path '~/.gemini/in/mcp_config.js…  ·  _antigravity, broken-integration, cross-tool, ide-inject, setup-wizard, v3.0.1_
-- **D000014** [supersedes D000013: Original D000013 dropped its file_path + context (malformed parameters in the record_decision call…  ·  `mcp_server/ide_inject.py`  ·  _antigravity, broken-integration, cross-tool, ide-inject, setup-wizard, v3.0.1_
-- **D000015** list_decisions already DEFAULTS to a summary shape (full=False ⇒ slim ~50 tok/row: id, 200-char decision, file_path, do…  ·  _api-consistency, list-decisions, mcp-tools, search-decisions, token-efficiency, v3.0.1_
-- **D000016** v3.0.1 will add an interactive, queryable HTML viewer for codevira memory. Design (agreed 2026-05-26): self-contained S…  ·  _cli, cytoscape, export, feature, memory-viewer, v3.0.1, visualization_
 
-_+139 more decision(s) — full log in `.codevira/decisions.jsonl`._
+_+143 more decision(s) — full log in `.codevira/decisions.jsonl`._
 
 
 For the full decision log, use `search_decisions` / `list_decisions` (or the `codevira` CLI) — don't read `.codevira/*.jsonl` directly.

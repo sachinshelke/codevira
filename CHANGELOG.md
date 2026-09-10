@@ -10,6 +10,169 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ## [Unreleased]
 
 
+## [4.2.0] — 2026-09-10
+
+**If you run codevira across more than one project, upgrade.** A single rogue
+registration at `$HOME` could make `register-all` discover exactly one project
+and discard every real one as "nested" — measured on the maintainer's machine
+as **1 found, 11 excluded**, with a plan to unregister two working entries.
+
+The through-line of this release is one failure shape, found three times:
+a guard that exists, is correct, and is not on the path that runs.
+`paths.is_invalid_project_root()` returned the right answer in all three cases
+below; the callers did not handle it. The full suite and every release gate
+stayed green throughout, because the gauntlet verified that things RUN, not
+that a guard is WIRED IN. Gates for that are also in this release.
+
+Nothing here changes the observable output of a documented tool. This is a
+minor rather than a patch because of `codevira reconcile` and the CI
+enforcement entry point.
+
+### Fixed — `$HOME` could be discovered as a project, hiding every real one
+
+`discover_projects()` applied no guard against invalid roots. Codevira's own
+global home is `~/.codevira`, so `$HOME` always carries a `.codevira` marker
+and looks like a project to a naive scan. Once discovered it sorts as
+top-level, and the nesting rule immediately below then discards every genuine
+project beneath it as a nested sub-store.
+
+Measured before the fix:
+
+```
+projects (1):  codevira-sachin -> /Users/sachin
+excluded nested: 11 real projects
+plan: Claude Code  -2 old / +1 named
+```
+
+`register-all` now filters candidates through `is_invalid_project_root()`, the
+same refusal `get_data_dir()` has always applied. *(Test:
+`TestHomeIsNeverATopLevelProject` — fails without the change. Note the first
+version of that test passed vacuously, because pytest's `tmp_path` lives under
+`/private/var/folders/`, which the scanner already excludes as junk.)*
+
+### Fixed — background work no longer crashes when no project is resolvable
+
+An unpinned server binds per tool call. Claude Desktop registers one dynamic
+entry (`args: []`, no `cwd`), so the process starts at `/` — and startup tasks
+and timer work run *before* any tool call, when `get_data_dir()` correctly
+refuses `/`.
+
+Two entry points let that refusal escape as a crash:
+
+- **Log retention** wrote it to the crash log on every start. **39 of 45
+  entries** on the maintainer's machine were this one line, daily for three
+  weeks, while nothing was actually wrong.
+- **The background watcher's incremental pass** raised on a timer, inside a
+  thread, with no caller to catch it.
+
+Both now degrade to a no-op that states the reason. The line this draws, and
+the reason it is not applied everywhere: **background work degrades; a tool
+answering a question refuses loudly.** A tool that returned an empty result
+instead is what produced a wrong-project session brief that read as plausible
+and said nothing — the call succeeded, and nothing indicated it had read a
+different project's store.
+
+A crash log that is mostly expected noise is a crash log nobody reads.
+
+*(Tests: `tests/test_background_degrades.py` — a registry of every background
+entry point, parametrised, plus a meta-test that fails when a new crash-logged
+startup task appears in `server.py` without coverage. Reverting any one guard
+turns it red.)*
+
+### Added — `codevira reconcile`
+
+`cluster_store()` and `pick_canonical()` shipped in 4.1.0 complete, tested,
+and called by nothing: no MCP tool, no CLI subcommand, 294 lines a user could
+not reach. The 4.1.0 notes had to say so. This is the surface.
+
+**Report-only by construction.** `cluster_store` returns a *plan*; executing
+it means rewriting `decisions.jsonl` with supersessions and alias rewrites —
+separate work, on the most precious data in the product. A command that can
+only read cannot corrupt anything, and knowing you have N duplicate clusters
+and M conflicts is useful on its own.
+
+Conflicts are never offered as merges. A pair where one side negates the other
+scores as a near-perfect textual duplicate (Jaccard 0.83), which is exactly
+why merging on similarity alone is dangerous.
+
+Also fixed here: a decision that **cites** another (`[[D0001]]`) is no longer
+read as contradicting it, and the citation match is word-bounded, so `D1`
+cannot match inside `D1000`.
+
+*(Tests: `tests/test_cli_reconcile.py` — one asserts the store is
+byte-identical after a run; another asserts no conflicting id ever appears in
+a merge plan.)*
+
+### Added — enforce locked decisions over a commit range, for CI
+
+`decision_lock` blocks a *local* commit through the pre-commit hook. For a
+team that is advisory: `git commit --no-verify` overrides it, and a teammate
+who never ran `codevira init` has no hook at all. CI is where enforcement
+stops being optional.
+
+A pull request has no staged index, so the existing entry point could not
+evaluate one. Only two functions were index-bound — `staged_files()` reading
+`git diff --cached` and `_versions()` reading `git show :<file>`. Both now
+take optional `base`/`head`; the index stays the default, and a test pins that
+local pre-commit behaviour is unchanged.
+
+### Fixed — shared mode merges cleanly
+
+Dogfooding team mode for the first time, two branches each recording one
+decision: the canonical log merged correctly — the merge driver re-minted the
+colliding id, both decisions survived, ids stayed unique — but `git merge`
+still exited 1, because `.codevira/digest.jsonl` and `.codevira/manifest.yaml`
+conflicted. Both are pure functions of `decisions.jsonl`. Committing them
+makes every concurrent write in a team repo a merge conflict in generated
+content nobody reviews; they are now ignored.
+
+`AGENTS.md` is deliberately **not** ignored — it is the contract Codex and
+Copilot read *without* running codevira, so dropping it would trade a
+cross-tool promise for a merge conflict. Its codevira block is regenerated on
+merge instead. The driver auto-resolves only when both sides agree outside the
+markers: prose a human wrote is not codevira's to adjudicate, and a real
+disagreement still raises a real conflict.
+
+### Fixed — release gates that could not run reported that they passed
+
+Three defects in the release machinery itself, all the same shape as the bugs
+above, and all of which had let releases through:
+
+- **G4 was dead.** It ran `codevira report | grep -c CRASH`. `report` is not a
+  subcommand — it exits 2 with a usage error, `2>/dev/null` swallowed that,
+  grep counted an empty stream, and the count was always 0. G4 **could not
+  fail**. It reported "no crashes" for 4.1.0 with three CRASH entries in the
+  log, and every `G4_crash_log_clean` in every past evidence file was
+  meaningless. It now reads the log file directly and distinguishes clean from
+  could-not-check.
+- **`"skipped"` counted as a pass** in the publish hook. G3 read `"skipped"` in
+  every evidence file from 2.0.0 through 3.0.0 — the real-IDE smoke script was
+  a stub — and all six of those releases were allowed through. The gauntlet
+  printed "NOT a release-ready state" beside it each time.
+- **The hook checked five gates by name.** G1.5, G1.6, G1.7 and G2.5 were added
+  to the gauntlet in 2.1.2 and never added to the hook, so seven releases went
+  out with the wall enforcing a subset of itself.
+
+The hook now enumerates every gate in the evidence file and requires `true` —
+including gates it has no built-in knowledge of, which is what stops the third
+from recurring. One tolerated exception, stated in place: `G4 = "warn"`,
+because a crash log records history and the release may be what fixes it. The
+CHANGELOG staleness gate also moved from an mtime heuristic to a git one,
+after mtimes produced a false blocker on two consecutive releases.
+
+### Internal — tests that pin the shapes above
+
+- The write path and the shared classifier are now asserted to **agree**. 4.1.0
+  was cut for the negation bug and shipped without fixing it: the guard landed
+  in `reconcile.classify()`, while `record_decision` goes through
+  `check_conflict`, which re-implements the rule inline. Both paths passed
+  their own example-based tests; nobody asserted they matched. A differential
+  sweep now runs every retrieved pair through both.
+- `ruff` is pinned identically in `pyproject.toml` and `.pre-commit-config.yaml`
+  (0.15.14) and uses the non-deprecated `ruff-check` hook id. A range in one
+  file and an exact pin in the other had the two disagreeing by nine minor
+  versions, which reformatted 107 files spuriously.
+
 ## [4.1.0] — 2026-08-16
 
 **If you are on 4.0.1, upgrade.** That release will silently replace a decision

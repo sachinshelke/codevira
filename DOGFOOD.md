@@ -7,7 +7,7 @@
 > [MIGRATING.md](MIGRATING.md). References to "v2.0-rc.1" / "rc.1" below
 > mean the public v2.0.0rc1 PyPI release.
 
-**Goal**: install codevira on your real daily-use machine and use it for **1 week of actual coding** across **at least 2 different AI tools** (e.g. Claude Code + Cursor) on the same project. This validates the universality wedge end-to-end and surfaces real-world residue our 2170-test suite couldn't find.
+**Goal**: install codevira on your real daily-use machine and use it for **1 week of actual coding** across **at least 2 different AI tools** (e.g. Claude Code + Cursor) on the same project. This validates the universality wedge end-to-end and surfaces real-world residue the 2170-test suite of that release couldn't find.
 
 **Time commitment**: 30 min setup + your normal dev work for 7 days + 30 min wrap-up. No extra time required during the week — codevira runs in the background.
 
@@ -23,7 +23,9 @@ git log --oneline -1   # should be the v2.0-rc.1 head commit
 
 # Confirm clean test baseline on YOUR machine (full suite)
 .venv/bin/pytest tests/ -q
-# Expected: 2170 passed, 1 skipped, 0 failed
+# Expected: 0 failed. The pass/skip counts grow with the suite — the
+# baseline is that nothing FAILS, not that it matches a number recorded
+# here. `make test-unit` is the faster subset (excludes e2e + integration).
 ```
 
 If anything fails on your machine but passes mine — stop and report. That's a real-world bug we missed (env / OS / Python version delta).

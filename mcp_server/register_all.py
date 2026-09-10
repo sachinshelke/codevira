@@ -38,6 +38,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from mcp_server.paths import is_invalid_project_root
 from mcp_server.ide_inject import (
     _antigravity_write_targets,
     _claude_desktop_config_path,
@@ -183,10 +184,23 @@ def discover_projects(extra_scan_roots: list[str] | None = None) -> Discovery:
     claude_json = _read_json_safe(_claude_global_config_path())
     known = _registered_paths(claude_json) | _antigravity_registered_paths()
     roots = _auto_scan_roots(known, extra_scan_roots or [])
+    # $HOME and system tops are REFUSED here, not merely deprioritised.
+    #
+    # codevira's own global home is ~/.codevira, so $HOME always carries a
+    # .codevira marker and looks like a project to a naive scan. Left in, it
+    # sorts as top-level and every genuine project underneath is discarded as
+    # a "nested sub-store" by the rule below — turning a self-heal command
+    # into one that de-registers the whole machine. Measured on the
+    # maintainer's box: discovery reported 1 project and excluded 11, with a
+    # plan of "-2 old / +1 named"; removing the rogue $HOME entry took it to
+    # 12. `paths.is_invalid_project_root` already refuses these for BINDING —
+    # this is the same question, so it must be the same answer.
     candidates = sorted(
         p
         for p in (known | _scan_for_stores(roots))
-        if Path(p).is_dir() and not _is_junk(p + "/")
+        if Path(p).is_dir()
+        and not _is_junk(p + "/")
+        and is_invalid_project_root(Path(p)) is None
     )
     top = [
         p

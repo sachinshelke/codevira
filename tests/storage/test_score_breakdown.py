@@ -61,6 +61,13 @@ class TestBreakdownIsPresent:
         assert full["results"][0]["score_breakdown"] is not None
 
 
+def _now_iso() -> str:
+    """Current UTC instant, for fixtures that assert on absolute recency."""
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat()
+
+
 class TestSearchRanksByFreshness:
     """v4.1 (Phase 26): search re-ranks BM25 relevance by outcome-confidence x
     recency, and caps AFTER ranking.
@@ -101,7 +108,14 @@ class TestSearchRanksByFreshness:
                 r["ts"] = "2020-01-01T00:00:00+00:00"
                 r["outcome"] = "modified"
             elif r.get("id") == newest:
-                r["ts"] = "2026-08-16T00:00:00+00:00"
+                # RELATIVE to now, not a literal date. This was hardcoded to
+                # 2026-08-16 and the assertion below is an absolute threshold,
+                # so the test passed on the day it was written and started
+                # failing ~10 days later as the 90-day half-life decayed the
+                # score past 0.9 — a time bomb, not a regression. Any test
+                # asserting an absolute freshness value must generate its own
+                # timestamp.
+                r["ts"] = _now_iso()
                 r["outcome"] = "kept"
 
         self._rewrite(project, mutate)

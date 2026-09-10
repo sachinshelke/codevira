@@ -320,3 +320,98 @@ class TestRegisterAllEndToEnd:
         dtd = json.loads(desktop.read_text())
         assert [k for k in dtd["mcpServers"] if "codevira" in k.lower()] == ["codevira"]
         assert "--project-dir" not in dtd["mcpServers"]["codevira"]["args"]
+
+
+class TestHomeIsNeverATopLevelProject:
+    """$HOME must never be discovered as a project.
+
+    ``paths.is_invalid_project_root`` already refuses $HOME for BINDING,
+    because codevira's own global home lives at ``~/.codevira`` — so $HOME
+    always carries a ``.codevira`` marker and looks like a project to naive
+    discovery. ``discover_projects`` did not apply that guard.
+
+    The consequence is not cosmetic. $HOME sorts as top-level, and every real
+    project sits underneath it, so all of them are discarded as "nested
+    sub-stores". Measured on the maintainer's machine: `register-all --dry-run`
+    reported ONE project (`/Users/sachin`) and excluded eleven real ones, and
+    the plan was "-2 old / +1 named" — i.e. running it would de-register the
+    entire machine. Removing the rogue $HOME entry took discovery from 1 to 12.
+
+    Two layers disagreeing about "is this a valid project root" — the same
+    class of split as _is_git_repo vs _discover_project_root.
+    """
+
+    def _home_with_project(self, tmp_path, monkeypatch):
+        home = tmp_path / "home"
+        (home / ".codevira").mkdir(parents=True)  # codevira's own global home
+        proj = home / "Projects" / "realapp"
+        (proj / ".codevira").mkdir(parents=True)
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+        # pytest's tmp_path lives under /private/var/folders/, which is in
+        # _JUNK_FRAGMENTS. Junk-filtering is not what these tests are about,
+        # and leaving it on made the first one pass VACUOUSLY on an empty
+        # Discovery — a tautology, not a guard.
+        from mcp_server import register_all as _ra
+
+        monkeypatch.setattr(_ra, "_is_junk", lambda _p: False)
+        return home, proj
+
+    def test_home_is_not_returned_as_a_project(self, tmp_path, monkeypatch):
+        from mcp_server import register_all
+
+        home, proj = self._home_with_project(tmp_path, monkeypatch)
+        monkeypatch.setattr(register_all, "_registered_paths", lambda *_a, **_k: set())
+        monkeypatch.setattr(
+            register_all, "_antigravity_registered_paths", lambda *_a, **_k: set()
+        )
+        monkeypatch.setattr(
+            register_all,
+            "_scan_for_stores",
+            lambda roots: {str(home), str(proj)},
+        )
+        d = register_all.discover_projects()
+        assert str(home) not in d.projects, (
+            f"$HOME was discovered as a project: {d.projects}"
+        )
+
+    def test_the_real_project_under_home_survives(self, tmp_path, monkeypatch):
+        """The failure that matters: $HOME winning does not merely add a bad
+        entry, it DELETES every genuine project by making them look nested."""
+        from mcp_server import register_all
+
+        home, proj = self._home_with_project(tmp_path, monkeypatch)
+        monkeypatch.setattr(register_all, "_registered_paths", lambda *_a, **_k: set())
+        monkeypatch.setattr(
+            register_all, "_antigravity_registered_paths", lambda *_a, **_k: set()
+        )
+        monkeypatch.setattr(
+            register_all,
+            "_scan_for_stores",
+            lambda roots: {str(home), str(proj)},
+        )
+        d = register_all.discover_projects()
+        assert str(proj) in d.projects, (
+            f"the real project was swallowed as nested under $HOME: "
+            f"projects={d.projects} nested={d.nested_excluded}"
+        )
+
+    def test_a_genuinely_nested_substore_is_still_excluded(self, tmp_path, monkeypatch):
+        """The guard must not blunt the real nesting rule it sits next to."""
+        from mcp_server import register_all
+
+        home, proj = self._home_with_project(tmp_path, monkeypatch)
+        sub = proj / "packages" / "inner"
+        (sub / ".codevira").mkdir(parents=True)
+        monkeypatch.setattr(register_all, "_registered_paths", lambda *_a, **_k: set())
+        monkeypatch.setattr(
+            register_all, "_antigravity_registered_paths", lambda *_a, **_k: set()
+        )
+        monkeypatch.setattr(
+            register_all,
+            "_scan_for_stores",
+            lambda roots: {str(home), str(proj), str(sub)},
+        )
+        d = register_all.discover_projects()
+        assert str(proj) in d.projects
+        assert str(sub) in d.nested_excluded, "a true sub-store must stay excluded"

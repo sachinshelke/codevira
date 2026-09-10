@@ -160,6 +160,49 @@ because a crash log records history and the release may be what fixes it. The
 CHANGELOG staleness gate also moved from an mtime heuristic to a git one,
 after mtimes produced a false blocker on two consecutive releases.
 
+### Fixed — docs told you to run subcommands the CLI would reject (G1.8)
+
+`docs/alpha-tester-invites.md` asked alpha testers to collect crash logs with
+`codevira report`. That command was cut in v2.2.0 and exits 2 with `invalid
+choice`. The same rot had just been found in the G4 release gate above, which
+ran that identical dead command — so the failure was reaching testers and the
+release process from the same source.
+
+Eight sites, not one. `codevira insights` sat two lines above the first one
+and nobody had noticed. `codevira budget`, `codevira register` and
+`codevira archive-legacy` appeared in live "run this" fences —
+`archive-legacy` has no implementation anywhere in the tree and no successor.
+`DOGFOOD.md` walked the reader through two whole scenarios for heroes cut in
+the 2026-05-22 audit, one of which told them to **file a bug** if the output
+came back empty. The module docstrings in `cli.py` and `cli_init.py`
+advertised the dead commands too, so the rot was in the source, not only the
+prose.
+
+**New gate — G1.8**, wired into the gauntlet after G1.7: every `codevira
+<cmd>` a live doc tells you to RUN must exist in the argparse dispatch table.
+Source of truth is subparser **choices**, not `--help` output — choices are
+what `main()` dispatches on, and they include subcommands deliberately hidden
+from help (`reconcile`, `merge-driver-agents`). Checking `--help` would fail
+a doc for correctly documenting a working command.
+
+Because the bug it prevents was a gate that *could not fail*, G1.8 carries
+vacuity guards of its own: it asserts the doc set is non-empty, that it
+matches a meaningful number of instructions, that a planted dead command IS
+caught, and that a real one is NOT.
+
+It separates prose from instruction in three tiers (line marker, a
+removal-declaring heading, or an explicit `<!-- codevira-lint: historical -->`
+escape). That distinction is load-bearing: `MIGRATING.md:856` tells you to run
+`codevira register` and is **correct**, because that recipe reinstalls 1.8.0,
+where `register` exists. A flat check would have demanded breaking working
+instructions to satisfy the linter.
+
+Also corrected in `DOGFOOD.md`: a baseline check asserting "2170 passed, 1
+skipped" — a number that drifts every week — became "0 failed"; and "the
+engine's 8 active policies" is 7, measured by calling
+`register_default_policies()` rather than counting the registration tuple,
+which is filtered on `enabled_by_default`.
+
 ### Internal — tests that pin the shapes above
 
 - The write path and the shared classifier are now asserted to **agree**. 4.1.0

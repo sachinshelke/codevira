@@ -19,10 +19,19 @@ as **1 found, 11 excluded**, with a plan to unregister two working entries.
 
 **Action required if projects went missing from an IDE.** This release stops `$HOME`
 being registered as a project, but it does not repair a registration that is
-already wrong — no startup migration prunes the bad row. Run `codevira doctor`,
-then `codevira untrack -y "$HOME"` if it flags one, then `codevira register-all`,
-then restart the IDE. Decisions are untouched by this; only the registry that
-points IDEs at them.
+already wrong — no startup migration prunes the bad row. Run `codevira
+register-all --dry-run` (read-only): if it reports one project at your home
+directory and your real ones as *excluded nested*, that is this bug.
+
+Then run `codevira untrack --dry-run "$HOME"` and **read it**, because
+`untrack` removes the project's data directory as well as its registry entry —
+if you were wrongly bound to `$HOME`, decisions recorded during that time are
+in there. Copy the directory aside if you want it. Your other projects each
+have their own and are unaffected. Finally `codevira untrack -y "$HOME"`,
+`codevira register-all`, and restart the IDE.
+
+`codevira doctor` does NOT detect this: its checks cover the current binding
+and whether `global.db` opens, not the rows inside it.
 
 The through-line of this release is one failure shape, found three times:
 a guard that exists, is correct, and is not on the path that runs.

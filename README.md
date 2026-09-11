@@ -518,13 +518,33 @@ stops that happening, but it does **not** repair a registration that is already 
 prunes the bad row on upgrade. If projects went missing from an IDE, run this once:
 
 ```bash
-codevira doctor          # names the bound project; flags a $HOME entry if present
-codevira untrack -y "$HOME"   # only if doctor flags it — removes the bogus entry
-codevira register-all    # re-register every real project
+codevira register-all --dry-run   # read-only; shows what IS registered
 ```
 
-Then restart the IDE. Your decisions were never touched by this — only the registry that points
-IDEs at them, so nothing needs restoring.
+If that prints one project at your home directory with your real ones listed as *excluded
+nested*, that is this bug. Before clearing it, look at what would be removed:
+
+```bash
+codevira untrack --dry-run "$HOME"   # read-only; lists IDE entries AND the data dir
+```
+
+**Read that output.** `untrack` deletes the project's data directory, not just the registry
+entry. If you were bound to `$HOME` by mistake, any decisions recorded during that time live in
+*that* directory and will go with it. If the dry-run lists a data dir you might want, copy it
+aside first (`cp -R` the path it names). Your other projects each have their own directory and
+are not affected.
+
+Then clear and re-register:
+
+```bash
+codevira untrack -y "$HOME"
+codevira register-all
+```
+
+Restart the IDE afterwards.
+
+(`codevira doctor` will not catch this one: its checks cover the *current* binding and whether
+`global.db` opens, not what is registered inside it.)
 
 If an IDE then shows the wrong project, doesn't show codevira at all, or memory looks missing,
 it's almost always a stale IDE-config entry rather than lost data. Two fixes cover most cases:

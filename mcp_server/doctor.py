@@ -31,6 +31,7 @@ Checks shipped in v2.0:
   C10 watcher_status          — file watcher is running (or last-known-good)
   C11 engine_kill_switch      — CODEVIRA_ENGINE env var sanity
   C12 crash_log_size          — recent crash log is reasonable size
+  C13 registry_rows           — every global.db row points at a real project
 """
 
 from __future__ import annotations
@@ -1038,6 +1039,122 @@ def check_decision_collisions() -> CheckResult:
     return CheckResult("decision_collisions", _PASS, "no decision-id collisions")
 
 
+# ── C13 registry_rows ──────────────────────────────────────────────────────
+#
+# Nothing inspected the ROWS inside global.db until 4.2.1. C3 checks the
+# CURRENT binding and C5 checks that global.db opens; neither looks at what is
+# registered in it. That gap is why the 4.2.0 upgrade guidance had to tell
+# users to run `codevira register-all --dry-run` and read the output
+# themselves — doctor genuinely could not see the problem.
+#
+# The row this catches is the one that broke a real machine: `$HOME` got
+# registered as a project (codevira's own home is ~/.codevira, so $HOME always
+# carries the marker), and the nesting rule then discarded every genuine
+# project beneath it as a "nested sub-store" — 1 found, 11 excluded.
+
+
+def _bad_registry_rows() -> "list[tuple[str, str]]":
+    """Rows in global.db whose path cannot be a project: (path, reason).
+
+    Two kinds, and the second is why this cannot just call
+    ``is_invalid_project_root``:
+
+      1. A refused root — ``$HOME``, a system directory. The path exists, so
+         it is not a ghost; ``check_ghost_projects`` will never see it.
+      2. A path inside codevira's OWN home — a data directory registered as
+         though it were a project. ``is_invalid_project_root`` currently
+         allows these, and is not being changed to refuse them here: it has a
+         blast radius of 186 files and sits under nearly every code path, so
+         tightening it is its own piece of work with its own migration. The
+         rule lives here, where it affects one check.
+
+    A row whose directory is simply gone is NOT reported — that is a ghost,
+    and ``check_ghost_projects`` owns it. Two checks claiming the same row
+    would have the user fixing it twice.
+    """
+    from pathlib import Path as _P
+
+    from mcp_server._project_inventory import enumerate_projects
+    from mcp_server.paths import get_global_home, is_invalid_project_root
+
+    try:
+        home = _P(get_global_home()).resolve()
+    except Exception:  # noqa: BLE001 — a doctor check must not traceback
+        return []
+
+    bad: list[tuple[str, str]] = []
+    for e in enumerate_projects():
+        if not e.in_global_db or not e.canonical_path:
+            continue
+        raw = e.canonical_path
+        try:
+            path = _P(raw).resolve()
+        except Exception:  # noqa: BLE001
+            continue
+        if path == home or home in path.parents:
+            bad.append((raw, "a codevira data directory, not a project"))
+            continue
+        if not path.is_dir():
+            continue  # a ghost — check_ghost_projects owns it
+        reason = is_invalid_project_root(path)
+        if reason:
+            bad.append((raw, reason.rstrip(".")))
+    return bad
+
+
+def check_registry_rows() -> CheckResult:
+    """C13 — every row in global.db points at something that can be a project."""
+    try:
+        bad = _bad_registry_rows()
+    except Exception as e:  # noqa: BLE001
+        return CheckResult(
+            "registry_rows", _WARN, f"could not read the project registry: {e}"
+        )
+    if not bad:
+        return CheckResult(
+            "registry_rows", _PASS, "every registered project path is a real project"
+        )
+    head = bad[0][0]
+    return CheckResult(
+        "registry_rows",
+        _WARN,
+        f"{len(bad)} registered path(s) cannot be a project (e.g. {head})",
+        fix_command="codevira doctor --fix && codevira register-all",
+        details="\n".join(f"{p}  —  {why}" for p, why in bad),
+    )
+
+
+def _autofix_registry_rows() -> "str | None":
+    """Auto-fixer for ``registry_rows``: drop the bad rows from global.db.
+
+    REMOVES ROWS ONLY. It deliberately does not call ``codevira untrack``,
+    which also deletes the project's DATA DIRECTORY — a user wrongly bound to
+    ``$HOME`` recorded their decisions into that directory, so untracking it
+    as a "fix" would delete the memory the fix exists to recover. Registry
+    rows are bookkeeping and are rebuilt by ``codevira register-all``;
+    decisions are not rebuildable.
+
+    Re-registration is left to the user. It rewrites every detected IDE's
+    config, which is a larger action than this fixer should take on its own,
+    and the check's fix_command names it.
+    """
+    from mcp_server.cli_projects import _delete_project_row
+
+    bad = _bad_registry_rows()
+    if not bad:
+        return None
+    removed = [p for p, _ in bad if _delete_project_row(p)]
+    if not removed:
+        return None
+    shown = ", ".join(removed[:2]) + (
+        f" (+{len(removed) - 2})" if len(removed) > 2 else ""
+    )
+    return (
+        f"removed {len(removed)} unusable registry row(s): {shown} — "
+        "no data directory was touched; run `codevira register-all` to re-register"
+    )
+
+
 _CHECKS: tuple[Callable[[], CheckResult], ...] = (
     check_python_version,
     check_codevira_data_dir,
@@ -1057,6 +1174,7 @@ _CHECKS: tuple[Callable[[], CheckResult], ...] = (
     # v2.2.0: check_codeindex_freshness + check_semantic_search_health
     # removed (chromadb deleted in Phase E).
     check_ghost_projects,  # rc.4 (Bug 21c)
+    check_registry_rows,  # 4.2.1 — nothing inspected the ROWS in global.db
     check_crash_log_size,
     check_merge_driver,  # v3.7.0 — cross-engineer decision-log merge driver
     check_claude_binding_conflict,  # v3.7.1 — bare global vs scoped entries
@@ -1133,6 +1251,7 @@ def _autofix_claude_binding() -> str | None:
 # Only checks with an entry here are touched by `codevira doctor --fix`.
 _AUTOFIXERS: dict[str, Callable[[], "str | None"]] = {
     "claude_binding_conflict": _autofix_claude_binding,
+    "registry_rows": _autofix_registry_rows,
 }
 
 

@@ -10,6 +10,59 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ## [Unreleased]
 
 
+## [4.2.1] — 2026-09-15
+
+**`codevira doctor --fix` now performs the 4.2.0 recovery itself.** 4.2.0
+shipped the `$HOME` fix but left affected users three commands to run in the
+right order — and one of them, `codevira untrack`, deletes a project's data
+directory if you skip its dry-run. That is a bad thing to ask of someone whose
+memory has already gone missing.
+
+### Added — C13 `registry_rows`, and an auto-fixer for it
+
+`codevira doctor` had twelve checks and **none of them looked at the registry**.
+C3 checks the *current* binding; C5 checks that `global.db` opens. Neither reads
+the rows inside it. That is why a single bad row could make `register-all`
+discover one project and discard eleven real ones while doctor reported 20 pass
+/ 0 warn / 0 fail — it was not that doctor disagreed, it was that nothing it ran
+could see the problem.
+
+C13 flags any registered path that cannot be a project:
+
+- a **refused root** — `$HOME`, a system directory. The path exists, so
+  `check_ghost_projects` never sees it.
+- a path inside **codevira's own home** — a data directory registered as though
+  it were a project. Found on a real machine, where one project was registered
+  twice, the second row pointing at its own data dir.
+
+`codevira doctor --fix` removes those rows. The recovery is now:
+
+```bash
+codevira doctor --fix && codevira register-all
+```
+
+**The fixer removes registry rows and never a data directory, and it never
+calls `untrack`.** A user wrongly bound to `$HOME` recorded their decisions
+*into* `$HOME`'s data directory; untracking it as a "fix" would delete the
+memory the fix exists to recover. Rows are bookkeeping and `register-all`
+rebuilds them — decisions are not rebuildable. Three tests hold that line,
+including one that plants a decision in the data dir and asserts it survives.
+
+Re-registration is deliberately left to you: it rewrites every detected IDE's
+config, which is a larger action than an auto-fixer should take unprompted.
+
+**Not changed:** `is_invalid_project_root()` still allows paths inside
+`~/.codevira`, so the codevira-home rule lives in C13 rather than there.
+Tightening it is the more complete fix and it is not in this release —
+`get_impact` puts its blast radius at **186 files**, which makes it its own
+piece of work with its own migration rather than a rider on a patch.
+
+*(Tests: `tests/test_doctor_registry_rows.py` — 14. Six mutations each turn it
+red, including one that makes the fixer delete the data directory. The ghost
+boundary test initially passed with its guard removed, because
+`is_invalid_project_root` allows every non-existent path; it now stubs that
+function so the guard is actually exercised.)*
+
 ## [4.2.0] — 2026-09-15
 
 **If you run codevira across more than one project, upgrade.** A single rogue

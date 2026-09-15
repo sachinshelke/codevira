@@ -10,7 +10,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ## [Unreleased]
 
 
-## [4.2.0] — 2026-09-10
+## [4.2.0] — 2026-09-15
 
 **If you run codevira across more than one project, upgrade.** A single rogue
 registration at `$HOME` could make `register-all` discover exactly one project

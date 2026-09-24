@@ -72,11 +72,11 @@ from typing import Any
 from mcp_server.engine.events import EventType, HookEvent
 from mcp_server.engine.policy import Policy, PolicyVerdict
 from mcp_server.engine.signals import SignalContext
+from mcp_server.storage.paths import sessions_path
 
 _CACHE_REL = ".codevira-cache"
 _ACTIVE_FILENAME = "active_sessions.jsonl"
 _OUTCOMES_FILENAME = "enforcer_outcomes.jsonl"
-_SESSIONS_REL = ".codevira/sessions.jsonl"
 
 _DEFAULT_MODE = "block"
 _MODES = ("off", "warn", "block")
@@ -383,7 +383,9 @@ def _session_log_written(project_root: Path, started_at: float) -> bool:
     rather than id is the cleanest cross-walk we can do without modifying
     the sessions.jsonl schema.
     """
-    path = project_root / _SESSIONS_REL
+    # Resolve through the store, not ``project_root``: a linked worktree's
+    # write_session_log lands in the MAIN worktree's ``.codevira/`` (D00012A).
+    path = sessions_path(project_root)
     if not path.exists():
         return False
     try:

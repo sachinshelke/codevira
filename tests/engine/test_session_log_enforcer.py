@@ -323,6 +323,42 @@ class TestStopEnforcement:
         assert verdict.is_allowing()
         assert verdict.metadata.get("log_present") is True
 
+    def test_worktree_log_in_shared_store_allows(
+        self, git_project: Path, tmp_path: Path
+    ) -> None:
+        """A linked worktree's session log lands in the MAIN worktree's store
+        (D00012A), so the enforcer must look there, not in the worktree's own
+        ``.codevira/`` — otherwise every worktree session is blocked forever.
+        """
+        from mcp_server.storage.paths import sessions_path
+
+        wt = tmp_path / "wt"
+        subprocess.run(
+            ["git", "worktree", "add", "-q", str(wt), "-b", "feature"],
+            cwd=str(git_project),
+            check=True,
+        )
+        policy = SessionLogEnforcer()
+        ts = _ts_after_head(wt)
+        policy.evaluate(
+            _make_event(EventType.SESSION_START, wt, session_id="s1", timestamp=ts),
+            None,
+        )
+        _git_commit(wt, "feat: shipped from a worktree", at_epoch=ts + 10)
+        # write_session_log resolves through the shared store, i.e. main's copy
+        assert (
+            sessions_path(wt).resolve()
+            == (git_project / ".codevira" / "sessions.jsonl").resolve()
+        )
+        _write_session_log_entry(git_project, ts_epoch=ts + 5)
+
+        verdict = policy.evaluate(
+            _make_event(EventType.STOP, wt, session_id="s1"),
+            None,
+        )
+        assert verdict.is_allowing()
+        assert verdict.metadata.get("log_present") is True
+
     def test_stale_log_before_session_does_not_satisfy(
         self,
         git_project: Path,

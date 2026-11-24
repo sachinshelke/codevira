@@ -255,12 +255,15 @@ def cmd_init() -> None:
 
     print("  Building code index ...")
     try:
-        from indexer.index_codebase import cmd_full_rebuild
+        from indexer.index_codebase import cmd_full_rebuild, index_write_guard
 
         _os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
         _os.environ.setdefault("HF_HUB_VERBOSITY", "error")
         # Suppress stderr noise (BertModel LOAD REPORT, HF_TOKEN warnings)
-        with contextlib.redirect_stderr(io.StringIO()):
+        with (
+            contextlib.redirect_stderr(io.StringIO()),
+            index_write_guard(timeout=_INDEX_WAIT_SECONDS),
+        ):
             cmd_full_rebuild()
     except Exception as e:
         print(f"  skipped ({e})")
@@ -481,6 +484,12 @@ def cmd_init() -> None:
     print()
 
 
+#: How long `codevira index` waits for another process's reindex. Bounded because
+#: the post-commit hook runs it: a commit must not hang on a busy watcher. SQLite
+#: already made it wait this long before it could fail.
+_INDEX_WAIT_SECONDS = 30.0
+
+
 def cmd_index(full: bool = False, quiet: bool = False, verbose: bool = False) -> None:
     """Run the indexer (incremental by default, or --full for complete rebuild).
 
@@ -490,7 +499,11 @@ def cmd_index(full: bool = False, quiet: bool = False, verbose: bool = False) ->
         verbose: emit per-file decisions for debugging silent 0-chunk results
                  (Bug H fix, 2026-05-17). Cannot be combined with quiet.
     """
-    from indexer.index_codebase import cmd_full_rebuild, cmd_incremental
+    from indexer.index_codebase import (
+        cmd_full_rebuild,
+        cmd_incremental,
+        index_write_guard,
+    )
     from mcp_server.paths import get_project_root, is_invalid_project_root
 
     # v1.8.1 hardening: cmd_full_rebuild/cmd_incremental both call
@@ -514,10 +527,18 @@ def cmd_index(full: bool = False, quiet: bool = False, verbose: bool = False) ->
         print("Error: --quiet and --verbose are mutually exclusive.", file=sys.stderr)
         sys.exit(1)
 
-    if full:
-        cmd_full_rebuild(verbose=verbose)
-    else:
-        cmd_incremental(quiet=quiet, verbose=verbose)
+    with index_write_guard(timeout=_INDEX_WAIT_SECONDS) as held:
+        if not held and not quiet:
+            print(
+                f"Warning: another Codevira process has been indexing this project "
+                f"for over {_INDEX_WAIT_SECONDS:.0f}s. Continuing alongside it; if "
+                f"this fails with 'database is locked', run `codevira index` again.",
+                file=sys.stderr,
+            )
+        if full:
+            cmd_full_rebuild(verbose=verbose)
+        else:
+            cmd_incremental(quiet=quiet, verbose=verbose)
 
 
 def cmd_status(check_stale: bool = False, show_global: bool = False) -> None:

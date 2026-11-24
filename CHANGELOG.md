@@ -24,6 +24,18 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - A decision in `write_session_log` may carry the `id` of one already recorded.
   The response reports `decision_ids`, how much was `stored`, and `warnings`.
 
+- **The file watcher piled up threads and kept the CPU busy**
+  ([#19](https://github.com/sachinshelke/codevira/issues/19)). Once a reindex
+  took longer than the 2 s debounce, every save queued another thread behind it
+  and each ran its own pass. There is now at most one reindex running, plus one
+  more if files changed meanwhile. The circuit breaker is checked again after
+  waiting, and a save made while it is open is indexed when it closes.
+- **Several Codevira processes on one project no longer collide on the index.**
+  Reindexes are serialized across processes with a file lock, which the OS
+  releases if its holder dies. `codevira index` waits up to 30 s for one.
+- A file whose reindex failed was marked as indexed and not picked up again
+  until its next change.
+
 
 ## [4.2.1] — 2026-09-15
 

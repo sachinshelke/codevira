@@ -1,15 +1,23 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import logging
+import os
 import sys
 import time
 import hashlib
 import threading
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 from mcp_server.paths import get_data_dir, get_project_root
 from indexer.sqlite_graph import SQLiteGraph
+
+try:
+    import fcntl
+except ImportError:  # Windows
+    fcntl = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
@@ -396,16 +404,92 @@ def _print_decisions(console, result: dict, verbose: bool) -> None:
         )
 
 
-def _locked_incremental(quiet: bool) -> None:
+#: How often a process waiting for another one's reindex looks again.
+_INDEX_LOCK_POLL_SECONDS = 0.1
+
+
+@contextlib.contextmanager
+def index_write_guard(timeout: float | None = None) -> Iterator[bool]:
+    """Hold the right to write this project's graph.db.
+
+    ``_index_write_lock`` covers one process. Every MCP server, CLI call and
+    post-commit hook on a project is another one, and without this they met
+    inside SQLite, waiting out its 30 s busy timeout and then failing with
+    "database is locked" (issue #19). The file lock is released by the OS if
+    its holder dies.
+
+    Degrades to the in-process lock alone where file locking is unavailable
+    (Windows, some network filesystems, an unwritable or unresolvable data
+    dir): the reindex itself reports those, and SQLite still arbitrates.
+
+    Args:
+        timeout: give up waiting for another process after this many seconds.
+            None waits as long as it takes.
+
+    Yields:
+        False only when ``timeout`` expired; the body then runs WITHOUT the
+        cross-process lock and must decide what to do about that.
+    """
+    with _index_write_lock:
+        fd = _open_index_lock()
+        if fd is None:
+            yield True
+            return
+        try:
+            yield _take_index_lock(fd, timeout)
+        finally:
+            os.close(fd)  # also releases the lock
+
+
+def _open_index_lock() -> int | None:
+    """Open this project's index lock file, or None if it can't be locked."""
+    if fcntl is None:
+        return None
+    try:
+        path = get_data_dir() / "graph" / "index.lock"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
+    except (OSError, ValueError) as exc:
+        _watcher_logger.debug("index lock unavailable: %s", exc)
+        return None
+
+
+def _take_index_lock(fd: int, timeout: float | None) -> bool:
+    """Wait for the lock. False only if ``timeout`` ran out."""
+    deadline = None if timeout is None else time.monotonic() + timeout
+    while True:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except BlockingIOError:
+            if deadline is not None and time.monotonic() >= deadline:
+                return False
+            time.sleep(_INDEX_LOCK_POLL_SECONDS)
+        except OSError as exc:  # this filesystem can't lock
+            _watcher_logger.debug("index lock unsupported: %s", exc)
+            return True
+
+
+def _locked_incremental(
+    quiet: bool, should_run: Callable[[], bool] | None = None
+) -> bool:
     """Run an incremental reindex under the index write lock.
 
     The watcher calls this rather than ``cmd_incremental`` directly so the
     acquisition is a module-level, testable step instead of a line buried in a
     closure inside ``start_background_watcher``. ``cmd_incremental`` does not
     take the lock itself, so there is no re-entrancy here.
+
+    ``should_run`` is asked once the lock is held: waiting for it can take
+    minutes, and the answer from before the wait may no longer be true.
+
+    Returns whether the reindex ran.
     """
-    with _index_write_lock:
+    with index_write_guard():
+        if should_run is not None and not should_run():
+            return False
         cmd_incremental(quiet=quiet)
+        return True
 
 
 def cmd_full_rebuild(verbose: bool = False, quiet: bool = False):
@@ -578,25 +662,22 @@ def cmd_incremental(
         f"[bold cyan]Incremental update:[/bold cyan] {len(changed_items)} {file_label}"
     )
 
-    indexed_any = False
-
     # Graph-only: update file hashes, then regenerate the graph. Until 4.0.1
     # this was the `else` of `if collection is not None:`, where `collection`
     # could only ever be None — the branch that assigned it was gated on
     # `_check_search_deps()`, constant-False since v2.2.0. Both the gate and
     # the ~100-line Chroma delete/add loop (with its per-file circuit
     # breaker) are deleted; this was always the path that actually ran.
+    # Hashes LAST: they are what says a file is indexed. Written first, a
+    # failed graph update left the file looking up to date for ever after.
+    result = generate_graph_sqlite(
+        str(_project_root()),
+        str(db.db_path),
+        collect_decisions=verbose and not quiet,
+    )
+    _print_decisions(console, result, verbose)
     for fpath, fhash in changed_items:
         db.update_file_hash(fpath, fhash)
-        indexed_any = True
-
-    if indexed_any:
-        result = generate_graph_sqlite(
-            str(_project_root()),
-            str(db.db_path),
-            collect_decisions=verbose and not quiet,
-        )
-        _print_decisions(console, result, verbose)
 
     db.close()
     return 0
@@ -608,6 +689,119 @@ _watcher_logger = logging.getLogger("codevira.watcher")
 # This prevents rapid saves (auto-formatters, IDE auto-save) from triggering
 # dozens of reindex cycles.
 DEBOUNCE_SECONDS = 2.0
+
+
+WATCHER_THREAD_NAME = "codevira-watcher-reindex"
+
+
+class ReindexCoalescer:
+    """Turn any number of file events into at most one reindex at a time.
+
+    At any moment there is at most one timer waiting OR one reindex running,
+    never a queue. A request that arrives mid-run is remembered as one more
+    pass, because a file saved after the run scanned it would otherwise be
+    missed.
+
+    Cancelling a timer cannot give this guarantee on its own: cancel() does
+    nothing once the timer has fired, which is how saves used to stack up
+    threads behind a slow reindex (issue #19).
+    """
+
+    def __init__(self, quiet: bool) -> None:
+        self._quiet = quiet
+        self._lock = threading.Lock()
+        self._timer: threading.Timer | None = None
+        self._running = False
+        self._again = False
+
+    def request(self) -> None:
+        """Ask for a reindex once the files have been quiet for a moment."""
+        with self._lock:
+            if self._running:
+                self._again = True
+            else:
+                self._arm(DEBOUNCE_SECONDS)
+
+    def cancel(self) -> None:
+        """Drop the pending pass, if any. A running one finishes."""
+        with self._lock:
+            self._again = False
+            if self._timer is not None:
+                self._timer.cancel()
+
+    def _arm(self, delay: float) -> None:
+        """(Re)start the one timer. Call with ``_lock`` held."""
+        if self._timer is not None:
+            self._timer.cancel()
+        self._timer = threading.Timer(delay, self._run)
+        self._timer.name = WATCHER_THREAD_NAME
+        self._timer.daemon = True
+        self._timer.start()
+
+    def _run(self) -> None:
+        with self._lock:
+            if self._running:  # this timer fired before it could be cancelled
+                self._again = True
+                return
+            self._running = True
+            self._again = False
+        retry_in: float | None = None
+        try:
+            retry_in = self._reindex()
+        finally:
+            with self._lock:
+                self._running = False
+                if retry_in is not None:
+                    self._arm(max(retry_in, DEBOUNCE_SECONDS))
+                elif self._again:
+                    self._arm(DEBOUNCE_SECONDS)
+
+    def _reindex(self) -> float | None:
+        """Reindex once.
+
+        Returns seconds until it is worth trying again when the circuit breaker
+        refused, so the change that asked is not lost; otherwise None.
+        """
+        try:
+            if _watcher_circuit_should_run():
+                _watcher_logger.debug(
+                    "File change detected — running incremental reindex"
+                )
+                # Blocking on the lock is deliberate: skipping would drop the
+                # change. Only this one thread ever waits here.
+                if _locked_incremental(self._quiet, _watcher_circuit_should_run):
+                    _watcher_logger.debug("Incremental reindex complete")
+                    _watcher_circuit_record_success()
+                    return None
+            status = watcher_circuit_status()
+            _watcher_logger.warning(
+                "Background watcher circuit OPEN (%d failures, "
+                "%.0fs until retry); skipping reindex.",
+                status["consecutive_failures"],
+                status["seconds_until_retry"],
+            )
+            return float(status["seconds_until_retry"])
+        except Exception as e:  # noqa: BLE001 — a watcher must outlive one failure
+            _watcher_circuit_record_failure(e)
+            status = watcher_circuit_status()
+            if status["open"]:
+                _watcher_logger.warning(
+                    "Background reindex failed (failure #%d): %s — "
+                    "circuit OPEN; backing off %.0fs",
+                    status["consecutive_failures"],
+                    e,
+                    status["seconds_until_retry"],
+                )
+            else:
+                _watcher_logger.warning(
+                    "Background reindex failed (failure #%d): %s",
+                    status["consecutive_failures"],
+                    e,
+                )
+            from mcp_server._safe_crash import safe_log_crash
+
+            safe_log_crash(e, context="background watcher: incremental reindex")
+            return None
 
 
 def start_background_watcher(quiet: bool = True):
@@ -646,70 +840,16 @@ def start_background_watcher(quiet: bool = True):
     extensions = config.get("file_extensions", [".py", ".ts", ".tsx", ".go", ".rs"])
     skip_dirs = config.get("skip_dirs", ["node_modules", ".venv", "__pycache__"])
 
-    class DebouncedHandler(FileSystemEventHandler):
-        def __init__(self):
-            super().__init__()
-            self._timer: threading.Timer | None = None
-            self._lock = threading.Lock()
+    coalescer = ReindexCoalescer(quiet)
 
+    class DebouncedHandler(FileSystemEventHandler):
         def _schedule_reindex(self, src_path: str):
             abs_path = Path(src_path)
             if not any(abs_path.suffix == ext for ext in extensions):
                 return
             if any(skip in abs_path.parts for skip in skip_dirs):
                 return
-
-            with self._lock:
-                # Cancel any pending timer and restart the debounce window
-                if self._timer is not None:
-                    self._timer.cancel()
-                self._timer = threading.Timer(DEBOUNCE_SECONDS, self._do_reindex)
-                self._timer.daemon = True
-                self._timer.start()
-
-        def _do_reindex(self):
-            # Circuit-breaker gate (Pillar 3.2): if too many consecutive
-            # failures, skip until the backoff window elapses.
-            if not _watcher_circuit_should_run():
-                status = watcher_circuit_status()
-                _watcher_logger.warning(
-                    "Background watcher circuit OPEN (%d failures, "
-                    "%.0fs until retry); skipping reindex.",
-                    status["consecutive_failures"],
-                    status["seconds_until_retry"],
-                )
-                return
-            try:
-                _watcher_logger.debug(
-                    "File change detected — running incremental reindex"
-                )
-                # Blocks if a background full rebuild is in flight — see
-                # _index_write_lock. Blocking is deliberate: skipping would
-                # drop the file change entirely, and the debounce timer means
-                # at most one reindex can ever be queued behind the lock.
-                _locked_incremental(quiet)
-                _watcher_logger.debug("Incremental reindex complete")
-                _watcher_circuit_record_success()
-            except Exception as e:
-                _watcher_circuit_record_failure(e)
-                status = watcher_circuit_status()
-                if status["open"]:
-                    _watcher_logger.warning(
-                        "Background reindex failed (failure #%d): %s — "
-                        "circuit OPEN; backing off %.0fs",
-                        status["consecutive_failures"],
-                        e,
-                        status["seconds_until_retry"],
-                    )
-                else:
-                    _watcher_logger.warning(
-                        "Background reindex failed (failure #%d): %s",
-                        status["consecutive_failures"],
-                        e,
-                    )
-                from mcp_server._safe_crash import safe_log_crash
-
-                safe_log_crash(e, context="background watcher: incremental reindex")
+            coalescer.request()
 
         def on_modified(self, event):
             if not event.is_directory:
@@ -787,9 +927,8 @@ def start_background_full_index(callback=None) -> "threading.Thread":
     """Start a full index rebuild in a background daemon thread.
 
     This is used by auto_init.py to build the index without blocking tool calls.
-    Holds ``_index_write_lock`` for the whole rebuild, so a watcher-driven
-    incremental cannot interleave with it. Both sides acquire it since
-    4.0.1; before that only this one did.
+    Holds ``index_write_guard`` for the whole rebuild, so a watcher-driven
+    incremental, in this process or another, cannot interleave with it.
 
     Args:
         callback: Optional callable invoked when indexing completes.
@@ -808,7 +947,7 @@ def start_background_full_index(callback=None) -> "threading.Thread":
             _bg_total_files = 0
 
         try:
-            with _index_write_lock:
+            with index_write_guard():
                 # quiet=True: this thread lives inside the MCP server process,
                 # where stdout is the JSON-RPC transport. See cmd_full_rebuild.
                 cmd_full_rebuild(quiet=True)

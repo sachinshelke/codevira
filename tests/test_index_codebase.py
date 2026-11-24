@@ -45,6 +45,24 @@ from indexer.index_codebase import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _restore_watchdog():
+    """Undo the fakes these tests install ON the real watchdog modules.
+
+    ``patch.dict(sys.modules)`` restores which modules are loaded, not the
+    attributes set on them, so with watchdog installed a MagicMock Observer
+    outlived this file and every later test watched nothing.
+    """
+    import watchdog.events
+    import watchdog.observers
+
+    observer = watchdog.observers.Observer
+    handler = watchdog.events.FileSystemEventHandler
+    yield
+    watchdog.observers.Observer = observer
+    watchdog.events.FileSystemEventHandler = handler
+
+
 @contextlib.contextmanager
 def _mock_rich():
     """Swap rich's Console / Table / Panel for MagicMocks — reversibly.

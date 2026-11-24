@@ -9,6 +9,21 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Fixed
+
+- **`write_session_log` discarded most of what it was given.** It requires
+  `decisions`, `files_changed` and `next_steps`, and since 2.2.0 it stored none
+  of them while answering "logged". All three are now kept. Each decision is
+  also recorded, so `search_decisions` finds it, unless it repeats one that is
+  already there, in which case the log links to it. `get_session_context` shows
+  the latest log's next steps. Logs written before this release cannot be
+  recovered; decisions made with `record_decision` were never affected.
+
+### Added
+
+- A decision in `write_session_log` may carry the `id` of one already recorded.
+  The response reports `decision_ids`, how much was `stored`, and `warnings`.
+
 
 ## [4.2.1] — 2026-09-15
 

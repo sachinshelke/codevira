@@ -947,8 +947,17 @@ def get_session_context(since: str | None = None) -> dict:
                     "session_id": s["session_id"],
                     "summary": _truncate(s.get("summary"), 100),
                     "phase": s.get("phase"),
+                    # Only when present, so older logs render as before. Next
+                    # steps come from the newest log alone: older ones are
+                    # usually done, and this brief has a token budget.
+                    **({"task": _truncate(s["task"], 100)} if s.get("task") else {}),
+                    **(
+                        {"next_steps": [_truncate(n, 120) for n in s["next_steps"][:3]]}
+                        if i == 0 and s.get("next_steps")
+                        else {}
+                    ),
                 }
-                for s in recent_sessions
+                for i, s in enumerate(recent_sessions)
             ],
             "recent_decisions": [
                 {

@@ -985,9 +985,10 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="write_session_log",
             description=(
-                "Write a structured session log to .agents/logs/YYYY-MM-DD/. "
-                "Called by the Documenter at the end of every session. "
-                "Feeds search_decisions() with institutional memory."
+                "Write a structured session log at the end of a session. Stores "
+                "everything passed in; next_steps are shown to the next session. "
+                "Each decision is searchable afterwards: pass its id if you "
+                "already called record_decision, otherwise its text."
             ),
             inputSchema={
                 "type": "object",
@@ -1035,6 +1036,10 @@ async def list_tools() -> list[Tool]:
                         "items": {
                             "type": "object",
                             "properties": {
+                                "id": {
+                                    "type": "string",
+                                    "description": "An already recorded decision",
+                                },
                                 "file_path": {"type": "string"},
                                 "decision": {"type": "string"},
                                 "context": {"type": "string"},

@@ -340,7 +340,7 @@ complete_phase · update_next_action · write_session_log
 | `mark_decision_outdated(decision_id, reason)` | Retire a decision that's simply no longer true (no successor) so it stops surfacing. Reversible via `set_decision_flag`. `do_not_revert` needs `force=True`. |
 | `reaffirm_decision(decision_id)` | Re-confirm a soft-expired `do_not_revert` lock. |
 | `set_decision_flag(decision_id, …)` | Toggle `do_not_revert` / tags / `is_outdated`. |
-| `write_session_log` | Structured session record. |
+| `write_session_log` | Session record: task, decisions, files changed, next steps. |
 
 **Roadmap** — `get_roadmap` · `get_phase` · `add_phase` · `update_phase_status` ·
 `update_next_action` · `complete_phase` · `defer_phase` · `bulk_import_phases`.

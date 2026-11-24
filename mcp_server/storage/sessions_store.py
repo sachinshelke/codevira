@@ -15,6 +15,9 @@ Schema (one record per session-log call):
     "phase":        "1",              # optional
     "summary":      "...",            # optional
     "decision_ids": ["D000001"],      # decisions written during this session
+    "decisions":    [{"decision": "...", "id": "D000001"}],  # as the caller sent them
+    "files_changed": ["auth.py"],
+    "next_steps":   ["..."],
     "outcome":      "...",            # optional
   }
 
@@ -35,6 +38,13 @@ from mcp_server.storage import jsonl_store, origin, paths, sanitize
 logger = logging.getLogger(__name__)
 
 
+def _scrub(value: Any) -> Any:
+    """Scrub secrets from a string, or from each string in a list."""
+    if isinstance(value, list):
+        return [_scrub(v) for v in value]
+    return sanitize.scrub_sensitive(value) if isinstance(value, str) else value
+
+
 def write(
     session_id: str,
     *,
@@ -45,8 +55,15 @@ def write(
     outcome: str | None = None,
     task_type: str | None = None,
     skill_ids: list[str] | None = None,
+    decisions: list[dict[str, Any]] | None = None,
+    files_changed: list[str] | None = None,
+    next_steps: list[str] | None = None,
 ) -> str:
     """Append a single session log; return generated id.
+
+    ``decisions`` is kept verbatim beside ``decision_ids``: an id may point at
+    a decision this log only repeats, and the context sent with the repeat
+    lives nowhere else.
 
     v3.1.0 M5: ``task_type`` and ``skill_ids`` are additive (optional)
     fields. Legacy v3.0.x readers tolerate their absence. They feed
@@ -71,6 +88,9 @@ def write(
         "phase": phase,
         "summary": sanitize.scrub_sensitive(summary) if summary else summary,
         "decision_ids": list(decision_ids or []),
+        "decisions": [{k: _scrub(v) for k, v in d.items()} for d in (decisions or [])],
+        "files_changed": [_scrub(f) for f in (files_changed or [])],
+        "next_steps": [_scrub(n) for n in (next_steps or [])],
         "outcome": outcome,
         # v3.1.0 M5
         "task_type": task_type,

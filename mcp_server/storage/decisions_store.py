@@ -52,6 +52,7 @@ from mcp_server.storage import (
     manifest,
     origin,
     paths,
+    reconcile,
     sanitize,
     text as text_util,
     uid as uid_mod,
@@ -246,6 +247,63 @@ def get(decision_id: str) -> dict[str, Any] | None:
     for rec in _read_merged():
         if str(rec.get("id")) == decision_id:
             return rec
+    return None
+
+
+#: Below this many characters a text matching only the START of a decision is
+#: too weak a signal to call it the same decision.
+_RESTATEMENT_MIN_PREFIX = 30
+
+_SUPERSEDES_PREFIX_RE = re.compile(r"^\[supersedes [^\]]*\]\s*", re.IGNORECASE)
+
+
+def _restatement_key(text: str) -> str:
+    """Case-, spacing- and end-punctuation-insensitive form of a decision."""
+    text = _SUPERSEDES_PREFIX_RE.sub("", text.strip())
+    return " ".join(text.lower().split()).rstrip(" .!;:")
+
+
+def find_restatement(text: str, file_path: str | None = None) -> str | None:
+    """Return the id of the active decision that ``text`` merely repeats.
+
+    Used by ``write_session_log``: agents record a decision, then repeat it in
+    the log. Deliberately NARROWER than ``check_conflict``, whose token-set
+    similarity calls "timeout is 30" and "timeout is 60" duplicates. A missed
+    match costs a visible twin; a false one hides a decision, so only these
+    count as a repeat:
+
+    - the same text, ignoring case, spacing and end punctuation;
+    - its opening, cut with an explicit ellipsis;
+    - its complete first sentence, unless the rest negates it.
+
+    Decisions about two different files are never the same decision, and
+    superseded or outdated ones are never matched.
+    """
+    truncated = text.rstrip().endswith(("…", "..."))
+    key = _restatement_key(text.rstrip().rstrip("…").rstrip("."))
+    if not key:
+        return None
+
+    for rec in reversed(_read_merged()):
+        if rec.get("is_superseded") or rec.get("superseded_by"):
+            continue
+        if rec.get("is_outdated"):
+            continue
+        other_path = rec.get("file_path")
+        if file_path and other_path and file_path != other_path:
+            continue
+        other = _restatement_key(str(rec.get("decision") or ""))
+        if key == other:
+            return str(rec.get("id"))
+        if len(key) < _RESTATEMENT_MIN_PREFIX or not other.startswith(key):
+            continue
+        if truncated:
+            return str(rec.get("id"))
+        rest = other[len(key) :]
+        if rest[:2] in (". ", "! ", "; ") and not reconcile.negation_disagrees(
+            reconcile._tokenize(key), reconcile._tokenize(other)
+        ):
+            return str(rec.get("id"))
     return None
 
 

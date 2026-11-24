@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 # 4.0.1: removed this module's own `_get_db()` + the SQLiteGraph/get_data_dir
@@ -21,6 +22,100 @@ from typing import Any
 # data. Use write_session_log directly.
 
 
+#: The fields a decision inside a session log may carry, besides ``id``.
+_DECISION_FIELDS = (
+    "file_path",
+    "symbol",
+    "context",
+    "do_not_revert",
+    "tags",
+    "alternatives_considered",
+    "would_re_examine_if",
+)
+
+_DECISION_ID_RE = re.compile(r"D[0-9A-Za-z]{6,}")
+
+
+def _as_list(value: Any) -> list[Any]:
+    """A caller's lone value is a list of one, never a list of its characters."""
+    if value is None:
+        return []
+    return list(value) if isinstance(value, (list, tuple)) else [value]
+
+
+def _conflict_warning(decision_id: str, text: str, file_path: str | None) -> str | None:
+    """Name the locked decisions a newly recorded one may contradict."""
+    from mcp_server.tools.check_conflict import check_conflict
+
+    hits = [
+        str(c.get("decision_id"))
+        for c in check_conflict(text, file_path=file_path)["conflicts"]
+        if c.get("decision_id") != decision_id
+    ]
+    if not hits:
+        return None
+    return (
+        f"{decision_id} may conflict with {', '.join(hits)}. Both are kept; use "
+        f"supersede_decision(old_id, new_decision, reason) to retire one."
+    )
+
+
+def _keep_decision(
+    item: Any, session_id: str
+) -> tuple[dict[str, Any] | None, str | None, list[str]]:
+    """Link or record one decision from a session log.
+
+    Never goes through ``record_decision``: its supersede-on-write would let a
+    terse repeat in the log replace the detailed decision it repeats.
+
+    Returns ``(entry to store in the log, decision id, warnings)``.
+    """
+    from mcp_server.storage import decisions_store
+
+    if isinstance(item, str):
+        bare = item.strip()
+        item = {"id": bare} if _DECISION_ID_RE.fullmatch(bare) else {"decision": bare}
+    if not isinstance(item, dict):
+        return None, None, [f"Ignored a decision that is not an object: {item!r}"]
+
+    given = str(item.get("id") or "").strip()
+    text = item.get("decision")
+    text = text.strip() if isinstance(text, str) else ""
+    entry = {k: item[k] for k in ("id", "decision", *_DECISION_FIELDS) if item.get(k)}
+    warnings: list[str] = []
+
+    if given:
+        if decisions_store.get(given):
+            return entry, given, warnings
+        warnings.append(f"No decision {given} in this project.")
+        if not text:
+            return entry, None, warnings
+    if not text:
+        return None, None, ["Ignored a decision with no `decision` text and no `id`."]
+
+    fields = {k: item.get(k) for k in _DECISION_FIELDS}
+    fields["do_not_revert"] = item.get("do_not_revert") is True
+    fields["tags"] = _as_list(fields["tags"])
+    fields["alternatives_considered"] = (
+        _as_list(fields["alternatives_considered"]) or None
+    )
+    path = fields["file_path"]
+    try:
+        did = decisions_store.find_restatement(text, path)
+        if did is None:
+            did = decisions_store.record(text, session_id=session_id, **fields)
+            clash = _conflict_warning(did, text, path)
+            if clash:
+                warnings.append(clash)
+    except Exception as exc:  # noqa: BLE001 — the log must still be written
+        warnings.append(
+            f"Could not record the decision {text[:60]!r} ({exc}). Its text is kept "
+            f"in this session log; call record_decision to make it searchable."
+        )
+        return entry, None, warnings
+    return {**entry, "id": did}, did, warnings
+
+
 def write_session_log(
     session_id: str,
     task: str,
@@ -31,12 +126,13 @@ def write_session_log(
     task_type: str | None = None,
     skill_ids: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Write a structured session log (v2.2.0: appends to sessions.jsonl).
+    """Write a structured session log (appends to sessions.jsonl).
 
-    v2.1.x had session_id collision detection (auto-suffix); v2.2.0
-    keeps the SAME session_id semantics (no auto-suffix; the
-    sessions.jsonl format is append-only with timestamps, so multiple
-    entries for the same session_id naturally coexist as audit trail).
+    Everything passed in is stored. Each decision is also made searchable: an
+    ``id`` links an existing one, a repeat of an active decision links to it
+    (see ``decisions_store.find_restatement``), anything else is recorded.
+
+    Multiple logs for one ``session_id`` coexist as an audit trail.
 
     ``task_type`` / ``skill_ids`` (4.0 Step 2.4): ``sessions_store.write``
     has accepted both since v3.1.x, but neither this signature nor the MCP
@@ -45,29 +141,55 @@ def write_session_log(
     exactly that field. Skill induction could therefore never fire, no
     matter how much the project was used. Both default to None so existing
     callers are unaffected.
+
+    Returns:
+        ``{status, session_id, requested_session_id, collision_resolved,
+        decision_ids, stored: {files_changed, decisions, next_steps},
+        [warnings]}``.
     """
     from mcp_server.storage import sessions_store
 
+    kept: list[dict[str, Any]] = []
+    decision_ids: list[str] = []
+    warnings: list[str] = []
+    for item in _as_list(decisions):
+        entry, did, notes = _keep_decision(item, session_id)
+        warnings.extend(notes)
+        if entry is not None:
+            kept.append(entry)
+        if did is not None and did not in decision_ids:
+            decision_ids.append(did)
+
+    files = [str(f) for f in _as_list(files_changed)]
+    steps = [str(n) for n in _as_list(next_steps)]
     sessions_store.write(
         session_id=session_id,
         task=task,
         phase=phase,
         summary=None,
-        decision_ids=[
-            d.get("id")
-            for d in (decisions or [])
-            if isinstance(d, dict) and d.get("id")
-        ],
+        decision_ids=decision_ids,
+        decisions=kept,
+        files_changed=files,
+        next_steps=steps,
         task_type=task_type,
         skill_ids=skill_ids,
     )
 
-    return {
+    response: dict[str, Any] = {
         "status": f"Session {session_id} logged to .codevira/sessions.jsonl.",
         "session_id": session_id,
         "requested_session_id": session_id,
         "collision_resolved": False,
+        "decision_ids": decision_ids,
+        "stored": {
+            "files_changed": len(files),
+            "decisions": len(kept),
+            "next_steps": len(steps),
+        },
     }
+    if warnings:
+        response["warnings"] = warnings
+    return response
 
 
 def search_decisions(

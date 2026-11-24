@@ -1,0 +1,1273 @@
+#!/usr/bin/env python3
+"""codevira-memory: back up and restore a project's Codevira memory.
+
+    codevira-memory                          menu
+    codevira-memory backup [FOLDER]          back up one project (default: this folder)
+    codevira-memory backup --all             back up every project Codevira knows
+    codevira-memory restore [FOLDER]         bring memory back: after a rename or move, or after loss
+    codevira-memory list                     show backups
+    codevira-memory check [BACKUP]           test that backups are intact
+    codevira-memory selftest                 prove this script still works with the installed Codevira
+
+Restore only ever COMBINES. Records newer than the backup are kept. Nothing is
+deleted; whatever gets replaced is moved to a before-restore folder first.
+
+A stopgap until Codevira itself handles renames (decision D00014D).
+"""
+
+import argparse
+import glob
+import gzip
+import hashlib
+import json
+import os
+import re
+import shutil
+import sqlite3
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+HOME = Path.home()
+CODEVIRA = Path(os.environ.get("CODEVIRA_HOME") or HOME / ".codevira")
+BACKUPS = Path(
+    os.environ.get("CODEVIRA_BACKUP_DIR") or HOME / "Documents" / "Codevira-Backups"
+)
+LOGS = ("decisions.jsonl", "sessions.jsonl", "outcomes.jsonl", "skills.jsonl")
+MARKER = ".restored-after-rename"
+GZIP_OVER = 5_000_000  # the code graph is large and compresses well
+
+
+class Stop(Exception):
+    """Refuse, having changed nothing further."""
+
+
+# ---------------------------------------------------------------- codevira itself
+
+
+def codevira_python():
+    exe = shutil.which("codevira") or str(HOME / ".local/bin/codevira")
+    try:
+        first = Path(exe).resolve().read_text(errors="replace").splitlines()[0]
+    except (OSError, IndexError):
+        raise Stop("Codevira is not installed, so its memory can't be read") from None
+    py = first[2:].strip().split(" ")[0]
+    if not first.startswith("#!") or not Path(py).exists():
+        raise Stop(f"can't find the Python that runs Codevira (looked in {exe})")
+    return py
+
+
+def in_codevira(project, code, *args):
+    """Run code inside Codevira's own Python, bound to `project`. Returns its JSON answer."""
+    env = {
+        **os.environ,
+        "CODEVIRA_PROJECT_DIR": str(project),
+        "CODEVIRA_NO_WATCHER": "1",
+    }
+    r = subprocess.run(
+        [codevira_python(), "-I", "-c", code, *map(str, args)],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(project),
+        timeout=300,
+    )
+    if r.returncode:
+        raise Stop(
+            "Codevira's own code failed: "
+            + (r.stderr.strip().splitlines() or ["no message"])[-1]
+        )
+    return json.loads(r.stdout.strip().splitlines()[-1])
+
+
+def path_key(p):
+    return in_codevira(
+        "/",
+        "import json,sys;from mcp_server.paths import _sanitize_path_key as k;"
+        "print(json.dumps(k(sys.argv[1])))",
+        p,
+    )
+
+
+SUMMARY = r"""
+import json
+from mcp_server.storage import decisions_store as d, paths as p
+from mcp_server.storage.jsonl_store import read_all
+from mcp_server.paths import get_data_dir
+m = d._read_merged(); rm = {}; f = get_data_dir() / "roadmap.yaml"
+if f.is_file():
+    import yaml; rm = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+c = p.codevira_dir(); n = lambda x: len(read_all(c / x))
+print(json.dumps({"decision records": n("decisions.jsonl"), "current decisions": len(m),
+  "protected decisions": sum(1 for x in m if x.get("do_not_revert")), "session logs": n("sessions.jsonl"),
+  "outcomes": n("outcomes.jsonl"), "skills": n("skills.jsonl"),
+  "finished roadmap phases": len(rm.get("completed_phases") or []),
+  "_next": ((rm.get("current_phase") or {}).get("next_action") or "")}))
+"""
+
+MERGE = r"""
+import hashlib, json, sys
+from pathlib import Path
+from mcp_server.cli_repair import _union_dedup
+from mcp_server.storage import decisions_store, id_repair, jsonl_store
+live_dir, backup_dir, stray_dir = (Path(x) if x else None for x in sys.argv[1:4])
+def read(d, name):
+    f = d / name if d else None
+    return jsonl_store.read_records_and_malformed(f) if f and f.is_file() else ([], [])
+canon = lambda r: json.dumps(r, sort_keys=True, ensure_ascii=False)
+IDS = ("id", "_amendment_to_id", "superseded_by", "supersedes")
+out, remap, live_remap, since = {}, {}, {}, []
+def renumber(rows, taken, rec):
+    # A store that restarted at D000001 gets ids that can't clash; its own amendments follow.
+    local = {}
+    for r in rows:
+        i = r.get("id")
+        if i and not r.get("_amendment_to_id") and i in taken:
+            local[i] = i[0] + hashlib.sha1(canon({k: v for k, v in r.items() if k not in IDS}).encode()).hexdigest()[:12]
+    rec.update(local)
+    return [{k: (local.get(v, v) if k in IDS and isinstance(v, str) else v) for k, v in r.items()} for r in rows]
+def refs(rows, rec):
+    for r in rows:
+        if isinstance(r.get("decision_id"), str): r["decision_id"] = rec.get(r["decision_id"], r["decision_id"])
+        if isinstance(r.get("decision_ids"), list): r["decision_ids"] = [rec.get(x, x) for x in r["decision_ids"]]
+    return rows
+for name in ("decisions.jsonl", "skills.jsonl", "sessions.jsonl", "outcomes.jsonl"):
+    back, back_bad = read(backup_dir, name); stray, stray_bad = read(stray_dir, name)
+    if not (back or stray or back_bad or stray_bad): continue
+    keyed = name in ("decisions.jsonl", "skills.jsonl")
+    live = live_dir / name
+    if not live.exists(): live.touch()
+    seen = {"added_back": 0, "added_stray": 0}
+    def combine(cur):
+        b = {canon(r) for r in back}
+        fresh = keyed and back and cur and not (b & {canon(r) for r in cur})
+        if fresh:
+            cur = renumber(cur, {r.get("id") for r in back}, live_remap)
+            since.append(min(r.get("ts") or "" for r in cur))
+        elif live_remap and not keyed:  # logs of the restarted store only, never the original ones
+            cur = [refs([r], live_remap)[0] if canon(r) not in b and (r.get("ts") or "") >= since[0] else r for r in cur]
+        if keyed: extra = renumber(stray, {r.get("id") for r in back + cur}, remap)
+        else: extra = refs(stray, remap)
+        have = {canon(r) for r in cur}
+        seen["added_back"] = len(b - have); seen["added_stray"] = len({canon(r) for r in extra} - have - b)
+        rows = _union_dedup(back, cur, extra)
+        if name == "decisions.jsonl": rows = id_repair.normalize(rows)["records"]
+        return {"records": rows}
+    jsonl_store.transform_all(live, combine, should_write=lambda r: bool(seen["added_back"] or seen["added_stray"]))
+    lost = [x for x in [*back_bad, *stray_bad] if x not in jsonl_store.read_records_and_malformed(live)[1]]
+    if lost:  # lines nobody can parse are still somebody's data
+        with jsonl_store._file_lock(live, exclusive=True), open(live, "a", encoding="utf-8") as fh:
+            fh.write("".join(x + "\n" for x in lost))
+    out[name] = seen
+if any(v["added_back"] or v["added_stray"] for v in out.values()): decisions_store.rebuild_indexes()
+print(json.dumps(out))
+"""
+
+
+def summary(project):
+    return in_codevira(project, SUMMARY)
+
+
+# ---------------------------------------------------------------- files
+
+
+def sha(p):
+    h = hashlib.sha256()
+    with open(p, "rb") as f:
+        for b in iter(lambda: f.read(1 << 20), b""):
+            h.update(b)
+    return h.hexdigest()
+
+
+def is_db(p):
+    return p.suffix in (".db", ".sqlite")
+
+
+def db_copy(src, dst):
+    """SQLite's own online backup: safe while Codevira has the file open."""
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    a = sqlite3.connect(str(src), timeout=30)
+    b = sqlite3.connect(str(dst))
+    try:
+        a.backup(b)
+    finally:
+        b.close()
+        a.close()
+
+
+def copy_tree(src, dst):
+    dst.mkdir(parents=True, exist_ok=True)
+    for p in sorted(src.rglob("*")):
+        rel = p.relative_to(src)
+        if (
+            p.name.endswith(("-wal", "-shm", ".lock", ".tmp"))
+            or p.name == ".DS_Store"
+            or p.is_symlink()
+        ):
+            continue
+        t = dst / rel
+        if p.is_dir():
+            t.mkdir(parents=True, exist_ok=True)
+        elif is_db(p):
+            db_copy(p, t)
+        elif p.is_file():
+            t.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(p, t)
+
+
+def squeeze(root):
+    for p in list(root.rglob("*")):
+        if p.is_file() and is_db(p) and p.stat().st_size > GZIP_OVER:
+            with open(p, "rb") as f, gzip.open(f"{p}.gz", "wb", compresslevel=3) as g:
+                shutil.copyfileobj(f, g)
+            p.unlink()
+
+
+def unsqueeze(root):
+    for p in list(root.rglob("*.gz")):
+        if is_db(p.with_suffix("")):
+            with gzip.open(p, "rb") as g, open(p.with_suffix(""), "wb") as f:
+                shutil.copyfileobj(g, f)
+            p.unlink()
+
+
+def edit_yaml(path, *keys_value):
+    """Set one (possibly nested) key, using Codevira's YAML library."""
+    if path.is_file():
+        in_codevira(
+            "/",
+            "import json,os,sys,yaml;f=sys.argv[1];d=yaml.safe_load(open(f,encoding='utf-8')) or {};"
+            "n=d\nfor k in sys.argv[2:-2]: n=n.setdefault(k,{})\n"
+            "n[sys.argv[-2]]=sys.argv[-1];t=f+'.tmp'\n"
+            "with open(t,'w',encoding='utf-8') as o: yaml.safe_dump(d,o,sort_keys=False,allow_unicode=True)\n"
+            "os.replace(t,f);print('1')",
+            path,
+            *keys_value,
+        )
+
+
+def count_lines(p):
+    return (
+        sum(1 for x in p.read_text(encoding="utf-8").splitlines() if x.strip())
+        if p.is_file()
+        else 0
+    )
+
+
+def size(p):
+    return sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
+
+
+def mb(n):
+    return f"{n / 1e6:.0f} MB"
+
+
+# ---------------------------------------------------------------- projects and backups
+
+
+def find_project(folder):
+    p = Path(folder).expanduser().resolve()
+    if not p.is_dir():
+        raise Stop(f"{p} is not a folder")
+    if (
+        str(folder) == "."
+    ):  # run from somewhere inside a project; a folder you name is used exactly as named
+        p = next(
+            (q for q in (p, *p.parents) if (q / ".codevira").is_dir() and q != HOME), p
+        )
+    if p == HOME or len(p.parts) < 4:
+        raise Stop(f"{p} is not a project folder")
+    if (p / ".git").is_file():
+        main = (
+            (p / ".git")
+            .read_text(errors="replace")
+            .replace("gitdir:", "")
+            .strip()
+            .split("/.git/")[0]
+        )
+        raise Stop(
+            f"{p} is a linked work folder; its memory lives in the main folder: {main}"
+        )
+    return p
+
+
+def records(d):
+    f = d / "decisions.jsonl"
+    return set(f.read_text(encoding="utf-8").splitlines()) if f.is_file() else set()
+
+
+def same_folder(a, b):
+    return a.exists() and b.exists() and os.path.samefile(a, b)
+
+
+def moves():
+    f = BACKUPS / ".moves.json"
+    return json.loads(f.read_text()) if f.is_file() else []
+
+
+def note_move(old, new):
+    f = BACKUPS / ".moves.json"
+    f.write_text(
+        json.dumps(
+            moves() + [[str(old), str(new), time.strftime("%Y-%m-%d %H:%M:%S")]],
+            indent=1,
+        )
+        + "\n"
+    )
+
+
+def central_for(project):
+    """The folder Codevira keeps outside the project, found by its own record of the path."""
+    for m in glob.glob(str(CODEVIRA / "projects" / "*" / "metadata.json")):
+        try:
+            if json.loads(Path(m).read_text()).get("original_path") == str(project):
+                return Path(m).parent
+        except (OSError, ValueError):
+            continue
+    p = CODEVIRA / "projects" / path_key(project)
+    return p if p.is_dir() else None
+
+
+def open_backup(b):
+    """Describe a backup. Also reads the layout used before this script existed."""
+    b = Path(b)
+    if (b / "manifest.json").is_file():
+        return {**json.loads((b / "manifest.json").read_text()), "dir": b}
+    centrals = (
+        [p for p in (b / "central").iterdir() if p.is_dir()]
+        if (b / "central").is_dir()
+        else []
+    )
+    if not centrals or not (b / "in-project/.codevira").is_dir():
+        return None
+    try:
+        meta = json.loads((centrals[0] / "metadata.json").read_text())
+    except (OSError, ValueError):
+        return None
+    # YYYYMMDD-HHMMSS from the folder name
+    t = re.search(r"(\d{8})-(\d{6})$", b.name)
+    taken = (
+        time.strftime(
+            "%Y-%m-%d %H:%M:%S", time.strptime("".join(t.groups()), "%Y%m%d%H%M%S")
+        )
+        if t
+        else "?"
+    )
+    return {
+        "project": meta["original_path"],
+        "taken": taken,
+        "central_key": centrals[0].name,
+        "connections": [],
+        "counts": {},
+        "dir": b,
+    }
+
+
+def all_backups():
+    out = [
+        open_backup(p)
+        for p in (BACKUPS.iterdir() if BACKUPS.is_dir() else [])
+        if p.is_dir() and not p.name.startswith(".") and not p.name.endswith(".partial")
+    ]
+    return sorted((x for x in out if x), key=lambda x: x["taken"])
+
+
+def verify(b):
+    """Problems found in a backup; empty means intact."""
+    bad, sums = [], b / "SHA256SUMS"
+    if not sums.is_file():
+        return ["no checksum list"]
+    listed = set()
+    for line in sums.read_text().splitlines():
+        want, _, name = line.partition("  ")
+        listed.add(os.path.normpath(name))
+        f = b / name
+        if not f.is_file():
+            bad.append(f"missing {name}")
+        elif sha(f) != want:
+            bad.append(f"changed {name}")
+    for f in (b / "in-project").rglob("*.jsonl"):
+        if os.path.normpath(f.relative_to(b)) not in listed:
+            bad.append(f"unlisted {f.relative_to(b)}")
+    return bad
+
+
+def unreadable(d):
+    """Lines Codevira itself can't read. Copied faithfully all the same."""
+    out = []
+    for f in sorted(d.glob("*.jsonl")):
+        for i, line in enumerate(
+            f.read_text(encoding="utf-8", errors="replace").splitlines(), 1
+        ):
+            try:
+                json.loads(line) if line.strip() else None
+            except ValueError:
+                out.append(f"{f.name} line {i}")
+    return out
+
+
+# ---------------------------------------------------------------- editor connections
+
+
+def surfaces(project):
+    """(label, file, project-scoped?) for every editor settings file that can hold a Codevira entry."""
+    return [
+        ("Claude Code", HOME / ".claude.json", True),
+        ("Claude Code", HOME / ".claude.json", False),
+        (
+            "Claude Desktop",
+            HOME / "Library/Application Support/Claude/claude_desktop_config.json",
+            False,
+        ),
+        ("Antigravity", HOME / ".gemini/antigravity/mcp_config.json", False),
+        ("Antigravity (shared)", HOME / ".gemini/config/mcp_config.json", False),
+        ("Cursor", HOME / ".cursor/mcp.json", False),
+        ("project .mcp.json", Path(project) / ".mcp.json", False),
+        ("project .cursor", Path(project) / ".cursor/mcp.json", False),
+    ]
+
+
+def load_json(p):
+    try:
+        d = json.loads(p.read_text(encoding="utf-8"))
+        return d if isinstance(d, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def save_json(p, d):
+    p = p.resolve()
+    mode = p.stat().st_mode & 0o777
+    fd, t = tempfile.mkstemp(prefix=f".{p.name}.", dir=str(p.parent))
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(d, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+        f.flush()
+        os.fsync(f.fileno())
+    os.chmod(t, mode)
+    os.replace(t, p)
+
+
+def servers_in(d, scoped, project, create=False):
+    if scoped:
+        pr = d.setdefault("projects", {}) if create else d.get("projects") or {}
+        d = pr.setdefault(str(project), {}) if create else pr.get(str(project)) or {}
+    return d.setdefault("mcpServers", {}) if create else d.get("mcpServers") or {}
+
+
+def pinned(entry, project):
+    e = entry if isinstance(entry, dict) else {}
+    return (
+        str(project) in (e.get("args") or [])
+        or (e.get("env") or {}).get("CODEVIRA_PROJECT_DIR") == str(project)
+        or e.get("cwd") == str(project)
+    )
+
+
+def repoint(entry, old, new):
+    e = json.loads(json.dumps(entry))
+    e["args"] = [str(new) if a == str(old) else a for a in e.get("args") or []]
+    if (e.get("env") or {}).get("CODEVIRA_PROJECT_DIR") == str(old):
+        e["env"]["CODEVIRA_PROJECT_DIR"] = str(new)
+    if e.get("cwd") == str(old):
+        e["cwd"] = str(new)
+    return e
+
+
+def connections(project):
+    out = []
+    for label, f, scoped in surfaces(project):
+        for k, v in servers_in(load_json(f) or {}, scoped, project).items():
+            if k.startswith("codevira") and pinned(v, project):
+                out.append(
+                    {
+                        "where": label,
+                        "file": f.name if label.startswith("project") else str(f),
+                        "scoped": scoped,
+                        "name": k,
+                        "entry": v,
+                    }
+                )
+    return out
+
+
+def connection_name(new, old_names):
+    """Keep the name the project's own agent files call; only otherwise use one built from the folder."""
+    used = set()
+    for f in [
+        *(new / ".claude").glob("agents/*.md"),
+        *(new / ".claude").glob("settings*.json"),
+    ]:
+        used |= set(
+            re.findall(
+                r"mcp__(codevira-[a-z0-9-]+?)__",
+                f.read_text(encoding="utf-8", errors="replace"),
+            )
+        )
+    for n in old_names:
+        if n in used:
+            return n, used
+    if used:
+        return sorted(used)[0], used
+    return "codevira-" + re.sub(r"[^a-z0-9]", "-", new.name.lower()).strip("-"), used
+
+
+def move_connections(old, new, recorded, notes):
+    live_old = connections(old)
+    names = [c["name"] for c in live_old] + [c["name"] for c in recorded]
+    name, used = connection_name(new, names)
+    if len(used) > 1:
+        notes.append(
+            f"This project's agent files use more than one Codevira name ({', '.join(sorted(used))}); kept {name}."
+        )
+    touched = []
+    for label, f, scoped in surfaces(new):
+        rec = [c for c in recorded if c["where"] == label and c["scoped"] == scoped]
+        d = load_json(f)
+        if d is None:
+            if f.exists():
+                notes.append(
+                    f"Couldn't read {f}; its Codevira connection was not changed."
+                )
+            continue
+        src = servers_in(d, scoped, old)
+        hits = [
+            k for k, v in src.items() if k.startswith("codevira") and pinned(v, old)
+        ]
+        entry = src[hits[0]] if hits else (rec[0]["entry"] if rec else None)
+        rec_old = (
+            old
+            if hits
+            else next(
+                (x for x in (entry or {}).get("args") or [] if x.startswith("/")), old
+            )
+        )
+        have = [
+            k
+            for k, v in servers_in(d, scoped, new).items()
+            if k.startswith("codevira") and pinned(v, new)
+        ]
+        stale = [k for k in hits if str(old) != str(new)]
+        if not stale and (have or entry is None):
+            continue
+        for k in stale:
+            src.pop(k)
+        if not have and entry is not None:
+            servers_in(d, scoped, new, create=True)[name] = repoint(entry, rec_old, new)
+        save_json(f, d)
+        touched.append((label, f, scoped))
+    if touched:
+        time.sleep(
+            float(os.environ.get("CODEVIRA_MEMORY_SETTLE", "3"))
+        )  # an open editor may rewrite its settings
+        for label, f, scoped in touched:
+            s = servers_in(load_json(f) or {}, scoped, new)
+            if not any(
+                k.startswith("codevira") and pinned(v, new) for k, v in s.items()
+            ):
+                notes.append(
+                    f"{label} overwrote its settings. Quit it and run this restore again."
+                )
+    codex = HOME / ".codex/config.toml"
+    if str(old) != str(new) and codex.is_file():
+        for block in re.split(r"(?m)^(?=\[)", codex.read_text(errors="replace")):
+            if block.startswith("[mcp_servers.codevira") and str(old) in block:
+                notes.append(
+                    "Codex still points at the old folder; its settings are not changed by this script."
+                )
+    return touched
+
+
+# ---------------------------------------------------------------- backup
+
+
+def backup(folder):
+    project = find_project(folder)
+    mem = project / ".codevira"
+    if not mem.is_dir():
+        raise Stop(f"{project} has no Codevira memory")
+    os.umask(0o077)
+    BACKUPS.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    final = BACKUPS / f"{project.name}_{stamp}"
+    n = 1
+    while final.exists() or Path(f"{final}.partial").exists():
+        n += 1
+        final = BACKUPS / f"{project.name}_{n}_{stamp}"
+    part = Path(f"{final}.partial")
+    part.mkdir()
+    central = central_for(project)
+
+    def prints():
+        return {
+            str(f): sha(f)
+            for d in (mem, central)
+            if d
+            for f in sorted(d.rglob("*"))
+            if f.is_file()
+            and not f.is_symlink()
+            and f.suffix in (".jsonl", ".yaml", ".json")
+        }
+
+    for _ in range(6):
+        for d in ("in-project", "central"):
+            shutil.rmtree(part / d, ignore_errors=True)
+        before = prints()
+        copy_tree(mem, part / "in-project/.codevira")
+        if central:
+            copy_tree(central, part / "central" / central.name)
+        if prints() == before:
+            break
+        time.sleep(2)
+    else:
+        shutil.rmtree(part)
+        raise Stop("the memory kept changing while being copied; try again in a minute")
+    if (project / ".codevira-cache").is_dir():
+        copy_tree(project / ".codevira-cache", part / "in-project/.codevira-cache")
+    if (CODEVIRA / "global.db").is_file():
+        db_copy(CODEVIRA / "global.db", part / "global/global.db")
+    if central and (CODEVIRA / "snapshots" / central.name).is_dir():
+        copy_tree(CODEVIRA / "snapshots" / central.name, part / "earlier-snapshots")
+
+    for f in part.rglob("*"):
+        if f.is_file() and is_db(f):
+            c = sqlite3.connect(str(f))
+            ok = c.execute("pragma integrity_check").fetchone()[0]
+            c.close()
+            if ok != "ok":
+                raise Stop(
+                    f"{f.name} failed its integrity check; partial copy left in {part}"
+                )
+    squeeze(part)
+    counts = summary(project)
+    (part / "manifest.json").write_text(
+        json.dumps(
+            {
+                "format": 2,
+                "project": str(project),
+                "taken": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "central_key": central.name if central else None,
+                "counts": counts,
+                "connections": connections(project),
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+    rows = [
+        f"{sha(f)}  {f.relative_to(part)}"
+        for f in sorted(part.rglob("*"))
+        if f.is_file()
+    ]
+    (part / "SHA256SUMS").write_text("\n".join(rows) + "\n")
+    bad = verify(part)
+    if bad:
+        raise Stop(f"the copy did not verify ({bad[0]}); partial copy left in {part}")
+    os.rename(part, final)
+    print(f"\n  Backed up {project.name}  ->  {final}  ({mb(size(final))})")
+    for k, v in counts.items():
+        if not k.startswith("_"):
+            print(f"    {k:<26}{v}")
+    broken = unreadable(final / "in-project/.codevira")
+    if broken:
+        print(
+            f"  NOTE  Codevira can't read {len(broken)} line(s) in this project ({broken[0]}); copied as they are."
+        )
+    return final
+
+
+def backup_all():
+    with tempfile.TemporaryDirectory() as t:
+        db_copy(CODEVIRA / "global.db", Path(t) / "g.db")
+        c = sqlite3.connect(str(Path(t) / "g.db"))
+        rows = [r[0] for r in c.execute("select path from projects order by path")]
+        c.close()
+    failed = []
+    for p in rows:
+        path = Path(p)
+        if CODEVIRA in path.parents or not (path / ".codevira").is_dir():
+            print(f"  skipped {p} (no Codevira memory there)")
+            continue
+        try:
+            backup(p)
+        except Exception as e:  # one project must never stop the others
+            failed.append(p)
+            print(f"  FAILED {p}: {e}")
+    print(f"\n  All backups together: {mb(size(BACKUPS))}")
+    if failed:
+        raise Stop(f"{len(failed)} project(s) were not backed up: {', '.join(failed)}")
+
+
+# ---------------------------------------------------------------- restore
+
+
+def places(b):
+    """Where this project has lived: the backup's folder, then every rename restored since."""
+    out = [Path(b["project"])]
+    for f, t, _ in moves():
+        if Path(f) == out[-1]:
+            out.append(Path(t))
+    return out
+
+
+def still_project(p, theirs):
+    return (
+        (p / ".git").exists()
+        or bool(theirs)
+        and len(records(p / ".codevira") & theirs) >= len(theirs) / 2
+    )
+
+
+def pick_backup(project):
+    """The newest backup of this project. A copy that still exists elsewhere keeps its own backups."""
+    here, best = records(project / ".codevira"), None
+    for b in all_backups():
+        theirs = records(b["dir"] / "in-project/.codevira")
+        share = len(here & theirs) / len(theirs) if theirs else 0
+        end = places(b)[-1]
+        mine = end == project
+        if not mine and share < 0.5:
+            continue
+        elsewhere = (
+            not mine and not same_folder(end, project) and still_project(end, theirs)
+        )
+        rank = (mine, not elsewhere, share)
+        if best is None or rank >= best[0]:
+            best = (rank, b)
+    return best[1] if best else None
+
+
+def restore(folder, source=None, yes=False):
+    new = Path(folder).expanduser().resolve()
+    if not new.is_dir():
+        raise Stop(f"{new} is not a folder")
+    new = find_project(new)
+    b = open_backup(Path(source).expanduser().resolve()) if source else pick_backup(new)
+    if not b:
+        raise Stop(
+            f"no backup matches {new}. Choose one with --from (see: codevira-memory list)"
+        )
+    bad = verify(b["dir"])
+    if bad:
+        raise Stop(f"backup {b['dir'].name} is damaged: {bad[0]}")
+    past = places(b)
+    old = past[-1]
+    moved = old != new
+    past = [p for p in dict.fromkeys(past) if p != new and not same_folder(p, new)]
+    mem, bmem = new / ".codevira", b["dir"] / "in-project/.codevira"
+    theirs = records(bmem)
+    for p in list(past):
+        if p != old and (p / ".git").exists() and not records(p / ".codevira") & theirs:
+            past.remove(p)  # a different project now uses that name; leave it alone
+        elif still_project(p, theirs):
+            raise Stop(
+                f"{p} still holds the project. If you haven't renamed it yet, rename first. "
+                f"If {new.name} is a separate copy, it should keep its own memory."
+            )
+    stray = [p / ".codevira" for p in past if (p / ".codevira").is_dir()]
+    strays = sum(count_lines(d / f) for d in stray for f in LOGS)
+    projects = CODEVIRA / "projects"
+    backup_key, old_key, new_key = (
+        b["central_key"],
+        path_key(old) if moved else None,
+        path_key(new),
+    )
+    if old == Path(b["project"]) and moved and backup_key:
+        old_key = backup_key
+    bcentral = b["dir"] / "central" / backup_key if backup_key else None
+    outside = bool(
+        bcentral and (bcentral / "config.yaml").is_file()
+    )  # else the data lives inside the project
+    old_dir, new_dir = projects / (old_key or "-"), projects / new_key
+    rekey = outside and moved
+    name_is_new = moved
+
+    print(f"\n  Project   {new}\n  Backup    {b['dir'].name}  (taken {b['taken']})")
+    if moved:
+        print(
+            f"  Was       {old}"
+            + ("  (same folder, new spelling)" if same_folder(old, new) else "")
+        )
+    for f in LOGS:
+        want, have = count_lines(bmem / f), count_lines(mem / f)
+        if want or have:
+            print(f"    {f:<18} backup {want:>5}   folder {have:>5}")
+    if strays:
+        print(
+            f"  {strays} record(s) were written to the old path after the rename; they will be brought over."
+        )
+    if not yes and input("\n  Restore now? Type yes: ").strip().lower() != "yes":
+        raise Stop("cancelled")
+
+    os.umask(0o077)
+    notes = []
+    safe = (
+        b["dir"].parent / f"before-restore_{new.name}_{time.strftime('%Y%m%d-%H%M%S')}"
+    )
+    n = 1
+    while safe.exists():
+        n += 1
+        safe = safe.with_name(f"{safe.name.split('#')[0]}#{n}")
+    safe.mkdir()
+    if mem.is_dir():
+        copy_tree(mem, safe / "in-project/.codevira")
+    if (CODEVIRA / "global.db").is_file():
+        db_copy(CODEVIRA / "global.db", safe / "global.db")
+    (safe / "connections.json").write_text(
+        json.dumps([c for p in [new, old, *past] for c in connections(p)], indent=2)
+    )
+
+    # 1. memory inside the project: put back missing files, then combine the record logs
+    mem.mkdir(exist_ok=True)
+    for f in sorted(bmem.rglob("*")):
+        t = mem / f.relative_to(bmem)
+        plain = (
+            f.with_suffix("") if f.suffix == ".gz" and is_db(f.with_suffix("")) else f
+        )
+        if (
+            f.is_file()
+            and f.name not in LOGS
+            and not (mem / plain.relative_to(bmem)).exists()
+        ):
+            t.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(f, t)
+    unsqueeze(mem)
+    if name_is_new:
+        edit_yaml(mem / "config.yaml", "project_name", new.name)
+    back = brought = 0
+    for d in stray or [""]:
+        for v in in_codevira(new, MERGE, mem, bmem, d).values():
+            back, brought = back + v["added_back"], brought + v["added_stray"]
+
+    # 2. data Codevira keeps outside the project, filed under the folder's current name
+    if rekey:
+        live = (
+            old_dir
+            if (old_dir / "config.yaml").is_file()
+            and (old_dir / "roadmap.yaml").is_file()
+            else bcentral
+        )
+        stage = projects / f".{new_key}.staging"
+        shutil.rmtree(stage, ignore_errors=True)
+        copy_tree(live, stage)
+        unsqueeze(stage)
+        edit_yaml(stage / "config.yaml", "project", "name", new.name)
+        edit_yaml(stage / "roadmap.yaml", "project", new.name)
+        meta = load_json(stage / "metadata.json") or {}
+        meta.update(path_key=new_key, original_path=str(new))
+        (stage / "metadata.json").write_text(json.dumps(meta, indent=2) + "\n")
+        (stage / MARKER).write_text(
+            f"{old_key}\n{time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+        )
+        placeholder, edited = bmem / "roadmap.yaml", mem / "roadmap.yaml"
+        if (
+            placeholder.is_file()
+            and edited.is_file()
+            and placeholder.read_bytes() != edited.read_bytes()
+        ):
+            shutil.copy2(edited, stage / "roadmap.edited-after-rename.yaml")
+            notes.append(
+                f"The roadmap was edited after the rename. The real roadmap is back; the edit is saved as "
+                f"{new_dir / 'roadmap.edited-after-rename.yaml'}"
+            )
+        if new_dir.exists():
+            shutil.move(str(new_dir), str(safe / f"{new_key}.auto-created"))
+        os.rename(stage, new_dir)
+        if old_dir.is_dir() and old_dir != new_dir:
+            shutil.move(str(old_dir), str(safe / old_key))
+    elif outside:
+        for f in sorted(bcentral.rglob("*")):
+            t = new_dir / f.relative_to(bcentral)
+            plain = (
+                t.with_suffix("")
+                if f.suffix == ".gz" and is_db(f.with_suffix(""))
+                else t
+            )
+            if f.is_file() and f.name != MARKER and not plain.exists():
+                t.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(f, t)
+                if f.name == "metadata.json":
+                    meta = load_json(t) or {}
+                    meta.update(path_key=new_key, original_path=str(new))
+                    t.write_text(json.dumps(meta, indent=2) + "\n")
+        if new_dir.is_dir():
+            unsqueeze(new_dir)
+    if (
+        backup_key
+        and (b["dir"] / "earlier-snapshots").is_dir()
+        and not (CODEVIRA / "snapshots" / new_key).exists()
+    ):
+        copy_tree(b["dir"] / "earlier-snapshots", CODEVIRA / "snapshots" / new_key)
+    if not outside and (new_dir / "config.yaml").is_file():
+        notes.append(
+            f"{new_dir} was created for this folder and hides its own roadmap. Moved aside."
+        )
+        shutil.move(str(new_dir), str(safe / f"{new_key}.auto-created"))
+
+    # 3. Codevira's list of projects
+    gone = list(dict.fromkeys([*([old] if moved else []), *past]))
+    if gone and (CODEVIRA / "global.db").is_file():
+        c = sqlite3.connect(str(CODEVIRA / "global.db"), timeout=30)
+        with c:
+            for p in gone:
+                if c.execute(
+                    "select 1 from projects where path=?", (str(p),)
+                ).fetchone():
+                    c.execute("delete from projects where path=?", (str(new),))
+                    c.execute(
+                        "update projects set path=?, name=? where path=?",
+                        (str(new), new.name, str(p)),
+                    )
+        c.close()
+
+    # 4. editor connections, this project's Codevira entry only
+    touched = []
+    for p in gone or [new]:
+        touched += move_connections(p, new, b["connections"], notes)
+
+    # 5. take the stray store off the old path, so it can't be mistaken for a project
+    for i, d in enumerate(stray):
+        shutil.move(str(d), str(safe / f"stray-from-{d.parent.name}-{i}"))
+    if moved:
+        note_move(old, new)
+    links = {
+        g
+        for p in gone
+        for g in glob.glob(str(new / ".git/worktrees/*/gitdir"))
+        if Path(g).read_text().startswith(f"{p}/")
+    }
+    if links:
+        notes.append(
+            f"{len(links)} linked work folder(s) still point at the old name. Until Git repairs them "
+            f"(git worktree repair), Codevira sessions in those folders can't reach this memory."
+        )
+
+    # 6. prove it
+    now, want = summary(new), b["counts"] or {}
+    if not want:  # older backup without stored counts
+        want = {
+            "decision records": count_lines(bmem / "decisions.jsonl"),
+            "session logs": count_lines(bmem / "sessions.jsonl"),
+            "outcomes": count_lines(bmem / "outcomes.jsonl"),
+            "skills": count_lines(bmem / "skills.jsonl"),
+        }
+    failed = []
+    print(f"\n  {'':<28}{'backup':>8}{'now':>8}")
+    for k, v in want.items():
+        if k.startswith("_"):
+            continue
+        # Newer work can retire or unprotect a decision, so those two may legitimately fall.
+        soft = (
+            k in ("current decisions", "protected decisions")
+            and now["decision records"] > want["decision records"]
+        )
+        ok = now[k] >= v or soft
+        failed += [] if ok else [k]
+        print(f"    {k:<26}{v:>8}{now[k]:>8}   {'ok' if ok else 'LOWER'}")
+    if rekey and not now["_next"]:
+        failed.append("roadmap")
+    if back or brought:
+        print(
+            f"  Put back {back} lost record(s); brought over {brought} from the old path."
+        )
+    if touched:
+        print("  Connected: " + ", ".join(sorted({t[0] for t in touched})))
+    for t in notes:
+        print(f"  NOTE  {t}")
+    print(f"  What was there before: {safe}")
+    if failed:
+        raise Stop(
+            "restore finished but these are lower than the backup: " + ", ".join(failed)
+        )
+    print("\n  RESTORED. Restart any editor that has this project open.")
+
+
+# ---------------------------------------------------------------- self test
+
+
+def selftest():
+    """Build a throwaway project, rename it, lose records, write to the old path, and restore it."""
+    with tempfile.TemporaryDirectory(prefix="codevira-selftest-") as t:
+        t = Path(t).resolve()
+        home = t / "home"
+        (home / ".codevira/projects").mkdir(parents=True)
+        (home / "Documents").mkdir()
+        old, new = t / "work/Old-Name", t / "work/New-Name"
+        env = {
+            **os.environ,
+            "HOME": str(home),
+            "CODEVIRA_HOME": str(home / ".codevira"),
+            "CODEVIRA_MEMORY_SETTLE": "0",
+            "CODEVIRA_BACKUP_DIR": str(home / "Documents/b"),
+            "CODEVIRA_NO_WATCHER": "1",
+        }
+        env.pop("CODEVIRA_PROJECT_DIR", None)
+        py = codevira_python()
+
+        def run(*a, ok=True):
+            r = subprocess.run(
+                [py, __file__, *map(str, a)], env=env, capture_output=True, text=True
+            )
+            if (r.returncode == 0) != ok:
+                raise Stop(
+                    f"selftest step {a} {'failed' if ok else 'should have been refused'}:\n{r.stdout}{r.stderr}"
+                )
+            return r.stdout + r.stderr
+
+        def inside(project, code):
+            r = subprocess.run(
+                [py, "-I", "-c", code],
+                cwd=str(project if project.is_dir() else t),
+                capture_output=True,
+                text=True,
+                env={**env, "CODEVIRA_PROJECT_DIR": str(project)},
+            )
+            if r.returncode:
+                raise Stop(f"selftest: {r.stderr.strip().splitlines()[-1]}")
+            return r.stdout.strip()
+
+        rec = "from mcp_server.storage import decisions_store as d;d.record(decision={!r},do_not_revert={})"
+        read = (
+            "from mcp_server.storage import decisions_store as d;"
+            "print(sorted((x['decision'],bool(x.get('do_not_revert'))) for x in d._read_merged()))"
+        )
+        (old / ".git").mkdir(parents=True)
+        (old / "code.py").write_text("x=1\n")
+        (old / ".codevira").mkdir()
+        (old / ".codevira/config.yaml").write_text(
+            "schema_version: 1\nproject_name: Old-Name\n"
+        )
+        (old / ".codevira/roadmap.yaml").write_text(
+            "project: Old-Name\ncurrent_phase: {next_action: placeholder}\n"
+        )
+        for i in range(6):
+            inside(old, rec.format(f"decision {i}", i == 2))
+        key = inside(
+            old,
+            f"from mcp_server.paths import _sanitize_path_key as k;print(k({str(old)!r}))",
+        )
+        c = home / ".codevira/projects" / key
+        c.mkdir(exist_ok=True)
+        (c / "config.yaml").write_text(
+            "project: {name: Old-Name, watched_dirs: [apps]}\n"
+        )
+        (c / "roadmap.yaml").write_text(
+            "project: Old-Name\ncurrent_phase: {next_action: the real next step}\ncompleted_phases: [{number: 1}]\n"
+        )
+        (c / "metadata.json").write_text(
+            json.dumps({"path_key": key, "original_path": str(old)})
+        )
+        entry = {"command": "codevira", "args": ["--project-dir", str(old)]}
+        (home / ".claude.json").write_text(
+            json.dumps(
+                {
+                    "keep": 1,
+                    "projects": {
+                        str(old): {
+                            "mcpServers": {"codevira-old-name": entry, "other": {}}
+                        }
+                    },
+                }
+            )
+        )
+        g = sqlite3.connect(str(home / ".codevira/global.db"))
+        g.execute(
+            "create table if not exists projects(path text primary key,name text not null,language text,git_remote text,last_synced_at text)"
+        )
+        g.execute(
+            "insert or replace into projects(path,name) values(?,?)",
+            (str(old), "Old-Name"),
+        )
+        g.commit()
+        g.close()
+
+        run("backup", old)
+        before = inside(old, read)
+        (new).mkdir()
+        (new / ".git").mkdir()
+        run(
+            "restore",
+            new,
+            "--from",
+            glob.glob(str(home / "Documents/b/Old*"))[0],
+            "--yes",
+            ok=False,
+        )  # not renamed yet
+        shutil.rmtree(new)
+        os.rename(old, new)
+        inside(new, rec.format("made after the rename", False))
+        f = new / ".codevira/decisions.jsonl"
+        L = f.read_text().splitlines()
+        f.write_text("\n".join(L[:1] + L[3:]) + "\n")  # lose two records, one protected
+        old.mkdir()
+        inside(old, rec.format("stray on the old path", True))  # a server left running
+        run("restore", new, "--yes")
+        after = inside(new, read)
+        want = sorted(
+            eval(before)
+            + [("made after the rename", False), ("stray on the old path", True)]
+        )
+        if eval(after) != want:
+            raise Stop(
+                f"selftest: memory differs after restore\n  want {want}\n  got  {after}"
+            )
+        s = in_codevira_env(py, new, env)
+        if s["_next"] != "the real next step" or s["finished roadmap phases"] != 1:
+            raise Stop("selftest: the roadmap did not come back")
+        d = json.loads((home / ".claude.json").read_text())
+        n = d["projects"][str(new)]["mcpServers"]
+        if (
+            [v["args"][-1] for v in n.values()] != [str(new)]
+            or "codevira-old-name" in d["projects"][str(old)]["mcpServers"]
+            or "other" not in d["projects"][str(old)]["mcpServers"]
+            or d["keep"] != 1
+        ):
+            raise Stop("selftest: the editor connection did not move cleanly")
+        snap = f.read_bytes()
+        run("restore", new, "--yes")  # a second run must change nothing
+        if f.read_bytes() != snap:
+            raise Stop("selftest: a second restore changed the memory")
+        damaged = Path(glob.glob(str(home / "Documents/b/Old*"))[0])
+        with open(damaged / "in-project/.codevira/decisions.jsonl", "a") as o:
+            o.write("{}\n")
+        run(
+            "restore", new, "--from", damaged, "--yes", ok=False
+        )  # a damaged backup must be refused
+    print("  Self test passed: this script works with the installed Codevira.")
+
+
+def in_codevira_env(py, project, env):
+    r = subprocess.run(
+        [py, "-I", "-c", SUMMARY],
+        cwd=str(project),
+        capture_output=True,
+        text=True,
+        env={**env, "CODEVIRA_PROJECT_DIR": str(project)},
+    )
+    return json.loads(r.stdout.strip().splitlines()[-1])
+
+
+# ---------------------------------------------------------------- menu
+
+
+def show_list():
+    bs = all_backups()
+    if not bs:
+        print(f"  No backups in {BACKUPS}")
+    for b in bs:
+        n = count_lines(b["dir"] / "in-project/.codevira/decisions.jsonl")
+        print(
+            f"  {b['taken']}   {n:>5} decision records   {mb(size(b['dir'])):>7}   {b['dir'].name}   (from {b['project']})"
+        )
+    if bs:
+        print(f"\n  All backups together: {mb(size(BACKUPS))}   in {BACKUPS}")
+    return bs
+
+
+def check(target=None):
+    one = open_backup(Path(target).expanduser().resolve()) if target else None
+    if target and not one:
+        raise Stop(f"{target} is not a backup")
+    failed = []
+    for b in [one] if one else all_backups():
+        bad = verify(b["dir"])
+        failed += [b["dir"].name] if bad else []
+        print(
+            f"  {'DAMAGED' if bad else 'intact '}  {b['dir'].name}"
+            + (f"   {bad[0]}" if bad else "")
+        )
+    if failed:
+        raise Stop(f"{len(failed)} damaged backup(s)")
+
+
+def ask_folder():
+    s = input(
+        "  Project folder (drag it here, or press Enter for this folder): "
+    ).strip()
+    return s.strip("'\"").replace("\\ ", " ") or os.getcwd()
+
+
+def menu():
+    print(
+        "\n  Codevira memory\n    1  Back up one project\n    2  Back up every project\n"
+        "    3  Restore a project (after a rename, or lost memory)\n    4  Show backups\n    5  Check backups are intact\n"
+    )
+    pick = input("  Choose 1-5: ").strip()
+    if pick == "1":
+        backup(ask_folder())
+    elif pick == "2":
+        backup_all()
+    elif pick == "3":
+        folder = ask_folder()
+        source = None
+        if not pick_backup(find_project(folder)):
+            bs = show_list()
+            if not bs:
+                return
+            source = (
+                BACKUPS
+                / input(
+                    "  No backup matches by itself. Type the backup name to use: "
+                ).strip()
+            )
+        restore(folder, source)
+    elif pick == "4":
+        show_list()
+    elif pick == "5":
+        check()
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        prog="codevira-memory",
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sub = ap.add_subparsers(dest="cmd")
+    p = sub.add_parser("backup")
+    p.add_argument("folder", nargs="?", default=".")
+    p.add_argument("--all", action="store_true")
+    p = sub.add_parser("restore")
+    p.add_argument("folder", nargs="?", default=".")
+    p.add_argument("--from", dest="source")
+    p.add_argument("--yes", action="store_true")
+    sub.add_parser("list")
+    p = sub.add_parser("check")
+    p.add_argument("backup", nargs="?")
+    sub.add_parser("selftest")
+    a = ap.parse_args()
+    try:
+        if a.cmd == "backup":
+            backup_all() if a.all else backup(a.folder)
+        elif a.cmd == "restore":
+            restore(a.folder, a.source, a.yes)
+        elif a.cmd == "list":
+            show_list()
+        elif a.cmd == "check":
+            check(a.backup)
+        elif a.cmd == "selftest":
+            selftest()
+        else:
+            menu()
+    except Stop as e:
+        print(f"\n  STOP: {e}", file=sys.stderr)
+        return 1
+    except (KeyboardInterrupt, EOFError):
+        print("\n  Cancelled.", file=sys.stderr)
+        return 1
+    except Exception as e:
+        if os.environ.get("CODEVIRA_MEMORY_DEBUG"):
+            raise
+        print(
+            f"\n  STOP: unexpected problem ({type(e).__name__}: {e}). Nothing was deleted; anything replaced is in "
+            f"the newest before-restore folder in {BACKUPS}.",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

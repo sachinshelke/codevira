@@ -47,7 +47,11 @@ def _is_duplicate(
 class SQLiteGraph:
     def __init__(self, db_path: str | Path):
         self.db_path = Path(db_path)
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        # Never resurrect a project folder that was moved/renamed away while a
+        # background thread still held this path.
+        from mcp_server.paths import mkdir_in_project
+
+        mkdir_in_project(self.db_path.parent)
         # 30s timeout (up from sqlite3 default of 5s): the background watcher's
         # reindex thread and any concurrent MCP server connection both write to
         # this graph.db. v1.8.0 fixed the same race for GlobalDB; v1.8.1 ports

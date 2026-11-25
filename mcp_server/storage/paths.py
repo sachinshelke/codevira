@@ -33,7 +33,11 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from mcp_server.paths import get_project_root, is_invalid_project_root
+from mcp_server.paths import (
+    get_project_root,
+    is_invalid_project_root,
+    require_project_root,
+)
 
 CODEVIRA_DIR_NAME = ".codevira"
 CODEVIRA_CACHE_DIR_NAME = ".codevira-cache"
@@ -315,6 +319,9 @@ def ensure_dirs(project_root: Path | None = None) -> None:
     Raises:
         ValueError: with a WHAT + WHY + FIX message if the resolved root
             is a forbidden system directory or ``$HOME``.
+        ProjectFolderMissingError: (a ``ValueError``) if the resolved root
+            is not an existing directory — the folder was moved, renamed or
+            deleted. Nothing is created.
     """
     root = (project_root if project_root is not None else get_project_root()).resolve()
     rejection = is_invalid_project_root(root)
@@ -328,6 +335,9 @@ def ensure_dirs(project_root: Path | None = None) -> None:
             f"server's env block, or run codevira from inside a real "
             f"project directory."
         )
+    # Before anything is created: mkdir(parents=True) would otherwise rebuild a
+    # project folder that was moved/renamed away and start a second store.
+    require_project_root(root)
     codevira_dir(root).mkdir(parents=True, exist_ok=True)
     codevira_cache_dir(root).mkdir(parents=True, exist_ok=True)
 

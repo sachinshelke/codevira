@@ -39,6 +39,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from mcp_server.paths import mkdir_in_project
 from mcp_server.storage import jsonl_store, paths
 
 logger = logging.getLogger(__name__)
@@ -266,7 +267,7 @@ def _merge_into_file(target_path: Path, block: str) -> None:
     If target_path exists with codevira markers, replaces only the marked
     section.
     """
-    target_path.parent.mkdir(parents=True, exist_ok=True)
+    mkdir_in_project(target_path.parent)
 
     existing_text: str | None = None
     if not target_path.is_file():
@@ -362,7 +363,7 @@ def _mdc_document(block: str, project_name: str | None) -> str:
 def _write_owned_mdc(target_path: Path, block: str, project_name: str | None) -> None:
     """Write a fully codevira-owned ``.mdc`` (frontmatter + block); atomic +
     idempotent (no mtime churn when unchanged)."""
-    target_path.parent.mkdir(parents=True, exist_ok=True)
+    mkdir_in_project(target_path.parent)
     new_content = _mdc_document(block, project_name)
     if target_path.is_file() and target_path.read_text(encoding="utf-8") == new_content:
         return

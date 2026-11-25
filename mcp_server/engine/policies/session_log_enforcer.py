@@ -72,6 +72,7 @@ from typing import Any
 from mcp_server.engine.events import EventType, HookEvent
 from mcp_server.engine.policy import Policy, PolicyVerdict
 from mcp_server.engine.signals import SignalContext
+from mcp_server.paths import mkdir_in_project
 from mcp_server.storage.paths import sessions_path
 
 _CACHE_REL = ".codevira-cache"
@@ -149,7 +150,7 @@ class SessionLogEnforcer(Policy):
             return PolicyVerdict.allow()
         try:
             active_path = _active_path(event.project_root)
-            active_path.parent.mkdir(parents=True, exist_ok=True)
+            mkdir_in_project(active_path.parent, event.project_root)
             record = {
                 "session_id": event.session_id,
                 "started_at": event.timestamp or time.time(),
@@ -157,7 +158,7 @@ class SessionLogEnforcer(Policy):
             }
             with active_path.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(record) + "\n")
-        except OSError as exc:
+        except (OSError, ValueError) as exc:  # ValueError: project folder gone
             return PolicyVerdict.allow(
                 metadata={
                     "policy": self.name,
@@ -306,7 +307,7 @@ def _record_outcome(
     """
     try:
         path = _outcomes_path(project_root)
-        path.parent.mkdir(parents=True, exist_ok=True)
+        mkdir_in_project(path.parent, project_root)
         try:
             if path.stat().st_size >= _OUTCOMES_MAX_BYTES:
                 path.replace(path.with_suffix(path.suffix + ".1"))
@@ -321,8 +322,9 @@ def _record_outcome(
         }
         with path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(record) + "\n")
-    except OSError:
-        # Disk full / permissions / read-only FS — enforcement still works.
+    except (OSError, ValueError):
+        # Disk full / permissions / read-only FS / project folder gone —
+        # enforcement still works.
         return
 
 

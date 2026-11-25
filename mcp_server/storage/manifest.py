@@ -164,7 +164,9 @@ def incremental_add(manifest_path: Path, decision: dict[str, Any]) -> None:
     """
     from mcp_server.storage import atomic
 
-    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    from mcp_server.paths import mkdir_in_project
+
+    mkdir_in_project(manifest_path.parent)
     lock_path = manifest_path.with_suffix(manifest_path.suffix + ".lock")
 
     with atomic.file_lock(lock_path):

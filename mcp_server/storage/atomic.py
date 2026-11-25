@@ -68,6 +68,8 @@ import time
 from collections.abc import Iterator
 from pathlib import Path
 
+from mcp_server.paths import mkdir_in_project
+
 logger = logging.getLogger(__name__)
 
 
@@ -118,7 +120,7 @@ def atomic_write_bytes(
     mode: int | None = None,
 ) -> int:
     """Atomically write ``content`` (bytes) to ``path``. See ``atomic_write_text``."""
-    path.parent.mkdir(parents=True, exist_ok=True)
+    mkdir_in_project(path.parent)
     fd, raw_tmp = tempfile.mkstemp(
         prefix=f".{path.name}.",
         suffix=".tmp",
@@ -199,7 +201,7 @@ def file_lock(path: Path, *, exclusive: bool = True) -> Iterator[None]:
             # read-modify-write here
             ...
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
+    mkdir_in_project(path.parent)
     if not path.exists():
         proc_lock = _process_lock_for(path)
         with proc_lock:

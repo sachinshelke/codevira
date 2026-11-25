@@ -36,7 +36,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from mcp_server.paths import get_global_home, get_project_root
+from mcp_server.paths import get_global_home, get_project_root, project_root_exists
 
 CODEVIRA_DIR_NAME = ".codevira"
 DEFAULT_TRACKING_MODE = "hint"
@@ -273,3 +273,81 @@ def opt_in_hint_payload(tool_name: str) -> dict:
         ),
         "fix_command": "codevira init",
     }
+
+
+# ── Vanished-project gate ──────────────────────────────────────────────────
+#
+# A long-lived server pinned with --project-dir keeps running after the user
+# moves/renames the folder. Without this gate its next write recreated the old
+# path, started a NEW store at D000001 and reported success: memory silently
+# split in two. This runs BEFORE the opt-in gate on purpose — opt-in positives
+# are cached for the process and a centralized marker outlives the folder, so
+# opt-in alone can never notice the folder is gone.
+
+# Roots for which THIS process has seen an in-repo ``.codevira``. If it later
+# disappears while the folder itself exists (another program recreated the
+# folder with, say, only a ``.claude/`` in it), writes must refuse even though
+# a centralized marker still says "opted in". A project that only ever had the
+# centralized marker is never added, so it keeps working.
+_seen_in_repo_store: set[Path] = set()
+
+
+def _folder_gone_payload(
+    root: Path | str, message: str, fix_command: str
+) -> dict[str, object]:
+    """The loud refusal returned for BOTH read and write tools."""
+    return {
+        "error": "project_folder_missing",
+        "recorded": False,
+        "message": message,
+        "project_root": str(root),
+        "fix_command": fix_command,
+    }
+
+
+def project_folder_gate(tool_name: str) -> dict[str, object] | None:
+    """Refusal payload when the bound project's folder (or memory) is gone.
+
+    Returns ``None`` when the call may proceed. Must run AFTER project
+    re-binding, so a client that reports the new folder keeps working, and
+    needs no restart once the folder comes back (nothing is cached except the
+    "seen an in-repo store" fact). Cost: two ``stat`` calls.
+    """
+    try:
+        root = get_project_root()
+    except OSError:
+        # cwd itself was deleted (Linux): there is no root to name.
+        return _folder_gone_payload(
+            "(unknown)",
+            "The folder this codevira server was started in no longer exists "
+            "(moved, renamed or deleted), so nothing was saved. Reopen the "
+            "project from its new location.",
+            "codevira doctor",
+        )
+    if not project_root_exists(root):
+        return _folder_gone_payload(
+            root,
+            f"The project folder {root} no longer exists (it was moved, "
+            f"renamed or deleted), so nothing was saved and no memory was "
+            f"read. This codevira server is still pointing at the old path. "
+            f"Fix: reopen the project from its new location (restart your AI "
+            f"tool in that folder). The memory moves with the folder.",
+            "codevira doctor",
+        )
+    try:
+        in_repo = _config_marker(root).parent.is_dir()
+    except OSError:
+        return None
+    if in_repo:
+        _seen_in_repo_store.add(root)
+    elif root in _seen_in_repo_store and classify_tool(tool_name) == "write":
+        return _folder_gone_payload(
+            root,
+            f"The project's memory is no longer in {root}: its .codevira "
+            f"folder is gone (the folder was likely deleted and recreated by "
+            f"another program), so nothing was saved. Fix: restore the "
+            f".codevira folder (git checkout / backup), or run `codevira init` "
+            f"here to start a fresh store.",
+            "codevira init",
+        )
+    return None

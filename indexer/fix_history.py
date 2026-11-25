@@ -125,6 +125,10 @@ def _connect_locked(project_root: Path) -> tuple[sqlite3.Connection, threading.R
         if cached is not None:
             lock = _db_locks[pr]  # invariant: paired with cache entry
             return cached, lock
+        # A moved/renamed project must not mint a fixes.db under its old key.
+        from mcp_server.paths import require_project_root
+
+        require_project_root(pr)
         db_path = _db_path(pr)
         db_path.parent.mkdir(parents=True, exist_ok=True)
         # 5-second busy_timeout: another process holding the DB lock

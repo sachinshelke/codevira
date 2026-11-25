@@ -346,7 +346,9 @@ def promote_skill_to_playbook(
     # Write the markdown. atomic_write_text covers crash-safety.
     from mcp_server.storage import atomic
 
-    dest.parent.mkdir(parents=True, exist_ok=True)
+    from mcp_server.paths import mkdir_in_project
+
+    mkdir_in_project(dest.parent)
     body = _render_playbook_markdown(skill, task_type=task_type)
     try:
         atomic.atomic_write_text(dest, body)

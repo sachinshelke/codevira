@@ -1683,6 +1683,18 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     # tool call's file_path drive which project's memory we use.
     _maybe_bind_from_tool_path(arguments)
 
+    # Vanished-project gate: the bound folder may have been moved, renamed or
+    # deleted since this long-lived server started. Runs after re-binding (a
+    # client that reports the new folder keeps working) and BEFORE the opt-in
+    # gate, whose cached positives and centralized marker outlive the folder.
+    # Deliberately NOT fail-open: an unreadable answer must not become a write
+    # that recreates the old path and splits memory.
+    from mcp_server.opt_in import project_folder_gate
+
+    _gone = project_folder_gate(name)
+    if _gone is not None:
+        return [TextContent(type="text", text=json.dumps(_gone, indent=2))]
+
     # Opt-in gate (v3.7.0, D1-D4): the PRIMARY chokepoint. If the user never
     # `codevira init`-ed this project (and auto_adopt mode is off), no tool
     # adopts or mutates it — reads return an inert payload + hint, writes

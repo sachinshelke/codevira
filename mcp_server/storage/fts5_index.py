@@ -42,6 +42,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from mcp_server.paths import mkdir_in_project
 from mcp_server.storage import jsonl_store
 
 logger = logging.getLogger(__name__)
@@ -97,7 +98,7 @@ CREATE TABLE IF NOT EXISTS {_META_TABLE} (
 
 def _connect(path: Path) -> sqlite3.Connection:
     """Open or create the FTS5 SQLite database with sensible defaults."""
-    path.parent.mkdir(parents=True, exist_ok=True)
+    mkdir_in_project(path.parent)
     conn = sqlite3.connect(str(path))
     conn.row_factory = sqlite3.Row
     # WAL mode reduces contention when the watcher writes concurrently

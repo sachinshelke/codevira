@@ -254,6 +254,12 @@ def log_crash(
         project_path: Project directory, if known.
     """
     try:
+        # A project folder that was moved/renamed/deleted is an expected state,
+        # not a codevira bug: background work degrades quietly.
+        from mcp_server.paths import ProjectFolderMissingError
+
+        if isinstance(error, ProjectFolderMissingError):
+            return
         # P5 (bounded resources): rate-limit identical crashes so a stuck
         # watcher can't fill the log with 41 copies of the same error.
         suppress, sentinel = _should_rate_limit(error)

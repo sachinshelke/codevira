@@ -78,6 +78,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
+from mcp_server.paths import mkdir_in_project
 from mcp_server.storage import jsonl_store, origin, paths, sanitize
 
 
@@ -386,7 +387,7 @@ def commit_session(session_id: str) -> dict[str, Any]:
         }
 
     dest = paths.working_archived_path(session_id)
-    dest.parent.mkdir(parents=True, exist_ok=True)
+    mkdir_in_project(dest.parent)
     for rec in entries:
         jsonl_store.append(dest, rec)
     return {

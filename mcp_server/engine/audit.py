@@ -48,6 +48,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from mcp_server.paths import mkdir_in_project
+
 _CACHE_REL = ".codevira-cache"
 _FILENAME = "enforcement.jsonl"
 
@@ -92,7 +94,7 @@ def record(
     """
     try:
         p = path(project_root)
-        p.parent.mkdir(parents=True, exist_ok=True)
+        mkdir_in_project(p.parent, project_root)
 
         try:
             if p.stat().st_size >= _MAX_BYTES:

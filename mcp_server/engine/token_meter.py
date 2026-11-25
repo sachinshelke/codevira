@@ -220,9 +220,15 @@ def _persist_session_summary(project_root: "Path", summary: dict[str, Any]) -> N
     import time
     from pathlib import Path as _Path
 
-    from mcp_server.paths import _sanitize_path_key, get_global_home
+    from mcp_server.paths import (
+        _sanitize_path_key,
+        get_global_home,
+        require_project_root,
+    )
 
     pr = _Path(project_root).resolve()
+    # Don't mint a data dir under the key of a project folder that is gone.
+    require_project_root(pr)
     key = _sanitize_path_key(pr)
     data_dir = get_global_home() / "projects" / key
     log_dir = data_dir / "logs"

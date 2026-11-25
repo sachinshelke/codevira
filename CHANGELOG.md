@@ -11,6 +11,22 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Fixed
 
+- **A server whose project folder was moved or renamed no longer recreates the
+  old folder and splits your memory in two.** A running server pinned with
+  `--project-dir /x/OLD` kept serving after `/x/OLD` was renamed to `/x/NEW`;
+  its next `record_decision` recreated `/x/OLD`, started a fresh store at
+  `D000001` and answered `recorded: true`. Now every tool call first checks the
+  bound folder (after any client re-binding, before the opt-in gate) and
+  returns `{"error": "project_folder_missing", "recorded": false, ...}` for
+  read and write tools alike; the next call works again, without a restart, as
+  soon as the folder is back or the client reports the new one. If another
+  program recreates the folder empty after this server had seen its in-repo
+  `.codevira`, writes refuse too (a centralized marker no longer masks that).
+  Underneath, `ensure_dirs` and `get_data_dir` raise `ProjectFolderMissingError`
+  (a `ValueError`) for a root that does not exist, every project-root writer
+  goes through one guarded `mkdir`, and hooks and background work degrade
+  quietly (no crash-log entries). Servers already running keep the old
+  behaviour until restarted.
 
 - **The roadmap now moves with the project.** It was read and written in the
   centralized data dir (`~/.codevira/projects/<key derived from the absolute
@@ -32,7 +48,6 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   the old centralized dir is keyed by the old path and is not adopted.
   The legacy in-repo to centralized migration no longer copies the roadmap.
 
-
 - **`write_session_log` discarded most of what it was given.** It requires
   `decisions`, `files_changed` and `next_steps`, and since 2.2.0 it stored none
   of them while answering "logged". All three are now kept. Each decision is
@@ -40,11 +55,6 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   already there, in which case the log links to it. `get_session_context` shows
   the latest log's next steps. Logs written before this release cannot be
   recovered; decisions made with `record_decision` were never affected.
-
-### Added
-
-- A decision in `write_session_log` may carry the `id` of one already recorded.
-  The response reports `decision_ids`, how much was `stored`, and `warnings`.
 
 - **The file watcher piled up threads and kept the CPU busy**
   ([#19](https://github.com/sachinshelke/codevira/issues/19)). Once a reindex
@@ -58,6 +68,10 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - A file whose reindex failed was marked as indexed and not picked up again
   until its next change.
 
+### Added
+
+- A decision in `write_session_log` may carry the `id` of one already recorded.
+  The response reports `decision_ids`, how much was `stored`, and `warnings`.
 
 ## [4.2.1] — 2026-09-15
 

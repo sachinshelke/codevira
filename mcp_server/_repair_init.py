@@ -84,6 +84,7 @@ def repair_incomplete_init(data_dir: Path, project_root: Path) -> dict:
     # Lazy imports — keep the cold path light + avoid import cycles.
     from mcp_server.detect import auto_detect_project
     from mcp_server.auto_init import _write_config, _write_metadata
+    from mcp_server.paths import mkdir_in_project
 
     detected_cache: dict | None = None
 
@@ -96,14 +97,14 @@ def repair_incomplete_init(data_dir: Path, project_root: Path) -> dict:
     # (1) config.yaml — without this, ensure_project_initialized() will keep
     # firing background init on every tool call. Required gate.
     if not (data_dir / "config.yaml").is_file():
-        data_dir.mkdir(parents=True, exist_ok=True)
+        mkdir_in_project(data_dir, project_root)
         _write_config(data_dir, _detected(), project_root)
         repaired["config_written"] = True
 
     # (2) metadata.json — needed by `codevira projects` inventory + git_remote
     # rename-resilient lookup.
     if not (data_dir / "metadata.json").is_file():
-        data_dir.mkdir(parents=True, exist_ok=True)
+        mkdir_in_project(data_dir, project_root)
         _write_metadata(data_dir, project_root)
         repaired["metadata_written"] = True
 

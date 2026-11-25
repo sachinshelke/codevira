@@ -496,6 +496,74 @@ def is_invalid_project_root(p: Path) -> str | None:
     return None
 
 
+class ProjectFolderMissingError(ValueError):
+    """The project's folder no longer exists (moved, renamed or deleted).
+
+    Subclasses ``ValueError`` on purpose (locked D000140): background work that
+    already catches ``ValueError`` degrades quietly, while tool calls turn it
+    into a loud ``project_folder_missing`` refusal. It is never swallowed into
+    an empty-but-successful result.
+    """
+
+    def __init__(self, project_root: Path | str, detail: str | None = None) -> None:
+        self.project_root = str(project_root)
+        super().__init__(
+            detail
+            or (
+                f"The project folder {self.project_root} no longer exists "
+                f"(it was moved, renamed or deleted), so nothing was saved. "
+                f"Fix: reopen the project from its new location (restart the "
+                f"AI tool in that folder) so codevira follows it."
+            )
+        )
+
+
+def project_root_exists(project_root: Path | str) -> bool:
+    """True iff ``project_root`` is an existing directory.
+
+    The one shared predicate behind every "refuse to recreate a vanished
+    project" guard. Deliberately separate from :func:`is_invalid_project_root`,
+    which allows non-existent paths on purpose (doctor C13 inspects them).
+    """
+    try:
+        return Path(project_root).is_dir()
+    except OSError:
+        return False
+
+
+def require_project_root(project_root: Path | str) -> None:
+    """Raise :class:`ProjectFolderMissingError` unless the folder exists."""
+    if not project_root_exists(project_root):
+        raise ProjectFolderMissingError(project_root)
+
+
+def mkdir_in_project(directory: Path, project_root: Path | None = None) -> None:
+    """``directory.mkdir(parents=True, exist_ok=True)`` that never resurrects
+    a vanished project root.
+
+    ``mkdir(parents=True)`` silently rebuilds every missing ancestor, so a
+    writer whose project folder was renamed away would recreate the old path
+    and start a second, empty store. Costs nothing when ``directory`` already
+    exists. ``project_root`` defaults to the current project root; a directory
+    outside that root is created as before.
+
+    Raises:
+        ProjectFolderMissingError: ``directory`` lies inside a project root
+            that no longer exists.
+    """
+    if directory.is_dir():
+        return
+    root = project_root if project_root is not None else get_project_root()
+    if not project_root_exists(root):
+        try:
+            directory.resolve().relative_to(Path(root).resolve())
+        except ValueError:
+            pass  # not inside the project — nothing of ours to resurrect
+        else:
+            raise ProjectFolderMissingError(root)
+    directory.mkdir(parents=True, exist_ok=True)
+
+
 def is_ephemeral_project_path(p: Path) -> bool:
     """Return True if ``p`` lives under an OS temp directory.
 
@@ -598,6 +666,9 @@ def get_data_dir() -> Path:
     crash class. Now raises ``ValueError`` with the rejection reason
     instead. Callers that need graceful degradation should call
     ``is_invalid_project_root(p)`` first.
+
+    Also raises :class:`ProjectFolderMissingError` (a ``ValueError``) when the
+    project root no longer exists on disk.
     """
     project_root = get_project_root()
 
@@ -608,6 +679,12 @@ def get_data_dir() -> Path:
             f"(root resolved to {project_root}). Set CODEVIRA_PROJECT_DIR "
             f"or cd into a real project subdirectory."
         )
+
+    # A vanished root must refuse on EVERY path, including the cached fast path
+    # below: a long-lived server pinned to a folder the user has since renamed
+    # would otherwise keep handing out the dead key's data dir, and callers
+    # would write graph.db / roadmap / logs under it.
+    require_project_root(project_root)
 
     # Fast path — already resolved for this root.
     #

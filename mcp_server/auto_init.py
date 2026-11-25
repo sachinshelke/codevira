@@ -231,9 +231,14 @@ def _run_background_init(
         detected = auto_detect_project(project_root)
 
         # Step 2: Create data directory structure
-        (data_dir / "graph").mkdir(parents=True, exist_ok=True)
-        (data_dir / "codeindex").mkdir(parents=True, exist_ok=True)
-        (data_dir / "logs").mkdir(parents=True, exist_ok=True)
+        # This runs on a background thread: the folder may have been moved or
+        # renamed since the thread started, and mkdir(parents=True) would
+        # silently rebuild it. Refuse (caught below; no crash-log entry).
+        from mcp_server.paths import mkdir_in_project, require_project_root
+
+        require_project_root(project_root)
+        for _sub in ("graph", "codeindex", "logs"):
+            mkdir_in_project(data_dir / _sub, project_root)
 
         # Step 3: Write config.yaml
         _write_config(data_dir, detected, project_root)

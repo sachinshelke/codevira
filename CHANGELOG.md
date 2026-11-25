@@ -11,6 +11,28 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Fixed
 
+
+- **The roadmap now moves with the project.** It was read and written in the
+  centralized data dir (`~/.codevira/projects/<key derived from the absolute
+  path>/`), unlike decisions, sessions, outcomes and skills, which live in
+  `<project>/.codevira/`. Renaming a project folder changed the key, and
+  `get_roadmap` silently served the placeholder written in-project at init; a
+  later `codevira prune --orphans` would then delete the only real copy. The
+  roadmap is now always `<project>/.codevira/roadmap.yaml` (a linked git
+  worktree uses the main worktree's, like the rest of the memory), so
+  `codevira export setup` bundles it too, and JSON `codevira export` fills its
+  `phases` table from it (`table_sources.phases == "roadmap"`).
+  An existing centralized roadmap is adopted once, non-destructively, on first
+  roadmap access or server start: it wins over a differing in-project file
+  (which is kept as `roadmap.yaml.before-adoption`, numbered if that exists),
+  the in-project file is written and fsynced first, and the centralized file is
+  renamed to `roadmap.yaml.moved-into-project`, never deleted. If an older
+  codevira still running recreates the centralized file, it is ignored and
+  reported once. A project already renamed before upgrading is not repaired:
+  the old centralized dir is keyed by the old path and is not adopted.
+  The legacy in-repo to centralized migration no longer copies the roadmap.
+
+
 - **`write_session_log` discarded most of what it was given.** It requires
   `decisions`, `files_changed` and `next_steps`, and since 2.2.0 it stored none
   of them while answering "logged". All three are now kept. Each decision is

@@ -118,6 +118,38 @@ def _dump_table_as_json(conn: sqlite3.Connection, table: str) -> list[dict[str, 
         return []
 
 
+def _roadmap_phase_rows(roadmap_file: Path) -> list[dict[str, Any]] | None:
+    """Rows for the ``phases`` table, read from the roadmap file.
+
+    One row per phase (current, upcoming, deferred, completed) with a ``state``
+    field. Returns ``None`` when there is no usable roadmap (missing or not a
+    YAML mapping) so the caller keeps the legacy sqlite fallback. Read-only:
+    nothing is written, unlike ``tools.roadmap._load_roadmap``.
+    """
+    import yaml
+
+    if not roadmap_file.is_file():
+        return None
+    try:
+        raw = yaml.safe_load(roadmap_file.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, yaml.YAMLError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+
+    from mcp_server.tools.roadmap import _normalize_roadmap
+
+    data = _normalize_roadmap(raw)
+    rows: list[dict[str, Any]] = [{**data["current_phase"], "state": "current"}]
+    for key, state in (
+        ("upcoming_phases", "upcoming"),
+        ("deferred", "deferred"),
+        ("completed_phases", "completed"),
+    ):
+        rows.extend({**phase, "state": state} for phase in data[key])
+    return rows
+
+
 def export_decisions_to_path(
     out_path: Path,
     *,
@@ -164,6 +196,12 @@ def export_decisions_to_path(
             raise
         graph_db_path = None  # JSON + decisions tier: JSONL alone is fine.
 
+    # The export can run before any server start: make sure a pre-4.2.1
+    # centralized roadmap is in the project before the `phases` table reads it.
+    from mcp_server.migrate import adopt_centralized_roadmap
+
+    adopt_centralized_roadmap()
+
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -199,9 +237,17 @@ def export_decisions_to_path(
             }
             for table in tables_to_dump:
                 jsonl_path = jsonl_sources.get(table)
+                roadmap_rows = (
+                    _roadmap_phase_rows(storage_paths.roadmap_path())
+                    if table == "phases"
+                    else None
+                )
                 if jsonl_path is not None and jsonl_path.is_file():
                     rows = _jsonl_read_all(jsonl_path)
                     source = "jsonl"
+                elif roadmap_rows is not None:
+                    rows = roadmap_rows
+                    source = "roadmap"
                 elif conn is not None:
                     rows = _dump_table_as_json(conn, table)
                     source = "sqlite-legacy"

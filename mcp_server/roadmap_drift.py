@@ -179,7 +179,10 @@ def _resolve_reference_time(
                 candidates.append(parsed)
 
     # Fallback / additional signal: roadmap.yaml mtime
-    rp = roadmap_path or (project_root / ".codevira" / "roadmap.yaml")
+    from mcp_server.storage import paths as storage_paths
+
+    # Same file the roadmap tools use (a linked worktree resolves to main's).
+    rp = roadmap_path or storage_paths.roadmap_path(project_root)
     if rp.exists():
         try:
             mtime = datetime.fromtimestamp(rp.stat().st_mtime, tz=timezone.utc)

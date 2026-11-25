@@ -14,6 +14,9 @@ Full planning lifecycle:
 
 from __future__ import annotations
 
+import contextlib
+import threading
+from collections.abc import Iterator
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -22,10 +25,34 @@ import yaml
 
 from mcp_server.paths import get_data_dir, get_project_root
 from mcp_server.storage import atomic
+from mcp_server.storage import paths as storage_paths
+
+# True on a thread while it holds the roadmap lock (the lock is not re-entrant).
+_lock_state = threading.local()
 
 
 def _roadmap_file() -> Path:
-    return get_data_dir() / "roadmap.yaml"
+    """The roadmap lives IN the project (``<project>/.codevira/roadmap.yaml``).
+
+    It used to sit in the data dir, which for a centralized project is keyed by
+    the project's absolute path — so renaming the folder silently swapped the
+    real roadmap for the init-time placeholder. ``get_data_dir()`` is still
+    called first: it refuses an invalid/unresolvable root, and a tool on such a
+    root must keep raising loudly (D000140) instead of resolving a path.
+    """
+    get_data_dir()
+    return storage_paths.roadmap_path()
+
+
+def _adopt_centralized_roadmap() -> None:
+    """One-time, non-destructive move of a pre-4.2.1 centralized roadmap in.
+
+    Cheap when there is nothing to do (a couple of stats). See
+    ``migrate.adopt_centralized_roadmap`` for the rules.
+    """
+    from mcp_server.migrate import adopt_centralized_roadmap
+
+    adopt_centralized_roadmap(lock_held=getattr(_lock_state, "held", False))
 
 
 def _roadmap_lock_path() -> Path:
@@ -181,6 +208,7 @@ def _normalize_roadmap(data: Any) -> dict[str, Any]:
 
 def _load_roadmap() -> dict:
     roadmap_file = _roadmap_file()
+    _adopt_centralized_roadmap()
     if not roadmap_file.exists():
         stub = _create_stub_roadmap()
         # Opt-in gate (v3.7.0, D1-D4): don't PERSIST a roadmap stub (a write,
@@ -262,7 +290,18 @@ def _roadmap_lock() -> Any:
     concurrent calls dropped one update each — the same lost-update
     bug we fixed for manifest in round-2.
     """
-    return atomic.file_lock(_roadmap_lock_path())
+    return _locked()
+
+
+@contextlib.contextmanager
+def _locked() -> Iterator[None]:
+    # Adoption happens in _load_roadmap(), inside this lock (lock_held=True).
+    with atomic.file_lock(_roadmap_lock_path()):
+        _lock_state.held = True
+        try:
+            yield
+        finally:
+            _lock_state.held = False
 
 
 # ─────────────────────────────────────────────

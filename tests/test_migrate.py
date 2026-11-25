@@ -162,7 +162,7 @@ class TestDetectMigrationNeeded:
 class TestMigrateToCentralized:
     """Test the full migration pipeline."""
 
-    def test_copies_config_and_roadmap(self, tmp_path, monkeypatch):
+    def test_copies_config_but_leaves_roadmap_in_project(self, tmp_path, monkeypatch):
         from mcp_server.migrate import migrate_to_centralized
 
         project = _create_legacy_project(tmp_path, "mig-config", with_roadmap=True)
@@ -171,12 +171,16 @@ class TestMigrateToCentralized:
         result = migrate_to_centralized(project)
 
         assert result["migrated"] is True
-        assert result["files_copied"] >= 2
+        assert result["files_copied"] >= 1
 
         key = _sanitize_path_key(project)
         centralized = fake_home / "projects" / key
         assert (centralized / "config.yaml").exists()
-        assert (centralized / "roadmap.yaml").exists()
+        # The roadmap is memory: it stays in the project (it moves with the
+        # folder). A centralized copy is keyed by absolute path and is stranded
+        # by a rename, so migration no longer makes one.
+        assert not (centralized / "roadmap.yaml").exists()
+        assert (project / ".codevira" / "roadmap.yaml").read_text() == "phases: []\n"
 
     def test_sqlite_backup_for_graph_db(self, tmp_path, monkeypatch):
         from mcp_server.migrate import migrate_to_centralized

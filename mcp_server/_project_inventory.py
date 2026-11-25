@@ -211,7 +211,12 @@ def _inspect_disk(
     has_config = config_path.is_file()
     has_graph = graph_db.is_file()
     has_codeindex = codeindex_dir.is_dir() and any(codeindex_dir.iterdir())
-    has_roadmap = (slug_dir / "roadmap.yaml").is_file()
+    # The live roadmap is in the project now; what a slug dir can still hold is
+    # a pre-4.2.1 one, or the copy kept after it was moved into the project.
+    # Both are real state, so neither makes the dir look like empty litter.
+    has_roadmap = (slug_dir / "roadmap.yaml").is_file() or (
+        slug_dir / "roadmap.yaml.moved-into-project"
+    ).is_file()
 
     canonical_path: str | None = None
     git_remote: str | None = None

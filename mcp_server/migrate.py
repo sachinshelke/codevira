@@ -14,8 +14,10 @@ Key behaviors:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
+import os
 import shutil
 import sqlite3
 from datetime import datetime, timezone
@@ -135,11 +137,10 @@ def migrate_to_centralized(project_root: Path) -> dict:
     shutil.copy2(src_config, dst_config)
     files_copied += 1
 
-    # 2. Copy roadmap.yaml (may not exist)
-    src_roadmap = legacy / "roadmap.yaml"
-    if src_roadmap.exists():
-        shutil.copy2(src_roadmap, centralized / "roadmap.yaml")
-        files_copied += 1
+    # 2. roadmap.yaml is deliberately NOT copied. It is memory, not a derived
+    #    artifact: it lives in <project>/.codevira/ and moves with the folder.
+    #    A centralized copy would be keyed by the absolute path, go stale the
+    #    moment the in-repo file changes, and be stranded by a rename.
 
     # 2b. Copy EVERY remaining store file/dir (v3.7.1 fix).
     #
@@ -701,13 +702,190 @@ def _mig_v380_worktree_memory_merge(project_root: Path) -> bool:
     return True
 
 
+#: Roadmap-adoption problems already reported by THIS process (one warning per
+#: kind and file, not one per tool call).
+_ROADMAP_WARNED: set[str] = set()
+
+_ROADMAP_MOVED_SUFFIX = ".moved-into-project"
+
+
+def _warn_roadmap_once(kind: str, central: Path, message: str, *args: object) -> None:
+    """Log a roadmap-adoption warning at most once per process per file."""
+    key = f"{kind}:{central}"
+    if key in _ROADMAP_WARNED:
+        return
+    _ROADMAP_WARNED.add(key)
+    logger.warning(message, *args)
+
+
+def _fsync_dir(directory: Path) -> None:
+    """Best-effort fsync of a directory so a rename inside it is durable."""
+    try:
+        fd = os.open(str(directory), os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass  # some filesystems (and Windows) cannot fsync a directory
+    finally:
+        os.close(fd)
+
+
+def _unused_backup_path(dest: Path) -> Path:
+    """``roadmap.yaml.before-adoption``, else ``.1``, ``.2`` ... — never an existing file."""
+    base = dest.with_name(dest.name + ".before-adoption")
+    candidate = base
+    n = 0
+    while os.path.lexists(candidate):
+        n += 1
+        candidate = base.with_name(f"{base.name}.{n}")
+    return candidate
+
+
+def adopt_centralized_roadmap(
+    project_root: Path | None = None, *, lock_held: bool = False
+) -> str:
+    """Adopt a roadmap that lives in the centralized dir into ``<project>/.codevira/``.
+
+    Until 4.2.1 the roadmap was read and written at ``get_data_dir()/roadmap.yaml``,
+    i.e. ``~/.codevira/projects/<key derived from the absolute path>/``. Rename the
+    folder and the key changed, so the roadmap was silently replaced by the
+    placeholder written in-project at init. The roadmap now always lives at
+    ``storage.paths.roadmap_path()``; this moves an existing centralized one there,
+    ONCE and NON-DESTRUCTIVELY (D00011Z):
+
+    * the centralized file is the one users have been reading and writing, so it
+      wins; a differing in-project file is first kept as
+      ``roadmap.yaml.before-adoption`` (numbered suffix, never overwritten);
+    * the in-project file is written atomically and fsynced BEFORE the
+      centralized one is renamed to ``roadmap.yaml.moved-into-project`` (never
+      deleted), so a crash in between loses nothing and a rerun converges;
+    * once the ``.moved-into-project`` file exists a new centralized
+      ``roadmap.yaml`` (an older codevira still running) is never adopted — it is
+      only reported, once per process;
+    * only the MAIN checkout's own centralized dir (key of its own path) is
+      considered, never a worktree's or another project's.
+
+    Runs under the roadmap lock (pass ``lock_held=True`` when the caller already
+    holds it). Never raises for an ordinary failure.
+
+    Returns ``"adopted"``, ``"none"`` (nothing to do), ``"stale"`` (an old process
+    recreated the file; ignored), ``"unreadable"`` (centralized file is not a YAML
+    mapping; both files left alone) or ``"failed"``.
+    """
+    try:
+        return _adopt_centralized_roadmap(project_root, lock_held)
+    except Exception as e:  # noqa: BLE001 — adoption must never block a tool or startup
+        logger.warning("roadmap adoption failed (will retry next access): %s", e)
+        return "failed"
+
+
+def _adopt_centralized_roadmap(project_root: Path | None, lock_held: bool) -> str:
+    from mcp_server.paths import (
+        _sanitize_path_key,
+        get_global_home,
+        get_project_root,
+        is_invalid_project_root,
+    )
+    from mcp_server.storage import atomic
+    from mcp_server.storage import paths as store_paths
+
+    root = Path(project_root) if project_root is not None else get_project_root()
+    main_root = store_paths._main_worktree_root(root)
+    if is_invalid_project_root(main_root):
+        return "none"
+    central_dir = get_global_home() / "projects" / _sanitize_path_key(main_root)
+    central = central_dir / "roadmap.yaml"
+    # The centralized dir must be a real store (config.yaml): otherwise the
+    # data dir was the in-repo one and this file is not what users were reading.
+    if not central.is_file() or not (central_dir / "config.yaml").is_file():
+        return "none"
+
+    dest = store_paths.roadmap_path(root)
+    # Same sidecar lock tools.roadmap._roadmap_lock_path() takes.
+    lock = (
+        contextlib.nullcontext()
+        if lock_held
+        else atomic.file_lock(dest.with_suffix(dest.suffix + ".lock"))
+    )
+    with lock:
+        if not central.is_file():  # another process finished while we waited
+            return "none"
+        moved = central_dir / (central.name + _ROADMAP_MOVED_SUFFIX)
+        if moved.exists():
+            _warn_roadmap_once(
+                "stale",
+                central,
+                "A roadmap was already moved into the project, but %s exists "
+                "again (an older codevira still running?). Keeping %s and "
+                "ignoring it.",
+                central,
+                dest,
+            )
+            return "stale"
+
+        import yaml
+
+        raw = central.read_bytes()
+        try:
+            parsed = yaml.safe_load(raw.decode("utf-8"))
+        except (UnicodeDecodeError, yaml.YAMLError):
+            parsed = None
+        if not isinstance(parsed, dict):
+            _warn_roadmap_once(
+                "unreadable",
+                central,
+                "Not adopting %s: it is not a readable YAML mapping. Leaving it "
+                "and %s untouched.",
+                central,
+                dest,
+            )
+            return "unreadable"
+
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            current: bytes | None = dest.read_bytes()
+        except FileNotFoundError:
+            current = None
+        if current is not None and current != raw:
+            atomic.atomic_write_bytes(_unused_backup_path(dest), current)
+        atomic.atomic_write_bytes(dest, raw)  # fsynced, then atomically renamed
+        _fsync_dir(dest.parent)
+        try:
+            os.replace(central, moved)
+        except OSError as e:
+            _warn_roadmap_once(
+                "failed",
+                central,
+                "Adopted %s into %s but could not rename it to %s (%s); will retry.",
+                central,
+                dest,
+                moved,
+                e,
+            )
+            return "failed"
+        _fsync_dir(central_dir)
+        logger.info("Moved roadmap %s -> %s", central, dest)
+        return "adopted"
+
+
+def _mig_v421_adopt_centralized_roadmap(project_root: Path) -> bool:
+    """Startup hook for :func:`adopt_centralized_roadmap` (self-guarding, cheap)."""
+    return adopt_centralized_roadmap(project_root) == "adopted"
+
+
 # Ordered ledger of named startup migrations. APPEND new entries; never rename
 # or renumber an existing one — the name is the idempotency key.
 #: Migrations that must run on EVERY start, never sealed by the ledger. They
 #: are cheap, idempotent and self-guarding (they no-op when there is nothing to
 #: do), and they heal conditions that can first appear long after the upgrade.
 _ALWAYS_RERUN = frozenset(
-    {"v371_recover_orphaned_memory", "v380_worktree_memory_merge"}
+    {
+        "v371_recover_orphaned_memory",
+        "v380_worktree_memory_merge",
+        "v421_adopt_centralized_roadmap",
+    }
 )
 
 _STARTUP_MIGRATIONS = (
@@ -717,6 +895,10 @@ _STARTUP_MIGRATIONS = (
     # Then fold any worktree-local store into the main worktree's store, so the
     # collision repair below operates on the fully-merged decision log.
     ("v380_worktree_memory_merge", _mig_v380_worktree_memory_merge),
+    # Then move a pre-4.2.1 centralized roadmap into the project (it moves with
+    # the folder, centralized copies do not). Runs every start: an older codevira
+    # can recreate the centralized file after the move.
+    ("v421_adopt_centralized_roadmap", _mig_v421_adopt_centralized_roadmap),
     ("v370_repair_collisions", _mig_v370_repair_collisions),
     ("v370_merge_driver", _mig_v370_merge_driver),
     ("v370_dedupe_registration", _mig_v370_dedupe_registration),

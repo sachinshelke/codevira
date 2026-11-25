@@ -1314,7 +1314,11 @@ def cmd_generate_graph():
 def cmd_bootstrap_roadmap():
     from indexer.graph_generator import generate_roadmap_stub
 
-    roadmap_file = get_data_dir() / "roadmap.yaml"
+    from mcp_server.storage.paths import roadmap_path
+
+    # The roadmap lives in the project (it moves with the folder), not the
+    # data dir, which a centralized project keys by absolute path.
+    roadmap_file = roadmap_path()
     if roadmap_file.exists():
         print(f"Roadmap already exists at {roadmap_file}")
         return

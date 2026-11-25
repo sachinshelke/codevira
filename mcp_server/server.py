@@ -2216,8 +2216,11 @@ def main():
     # merely launching an IDE in an un-init'd project adopts it at startup.
     # Fail-open so the gate never blocks server startup.
     try:
-        from mcp_server.opt_in import activation_allowed
+        from mcp_server.opt_in import activation_allowed, project_folder_gate
 
+        # Remember that this project has an in-repo store NOW, so a folder
+        # recreated without it is noticed even before the first tool call.
+        project_folder_gate("get_session_context")
         _opted_in = activation_allowed()
     except Exception:
         _opted_in = True

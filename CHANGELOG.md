@@ -27,6 +27,8 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   goes through one guarded `mkdir`, and hooks and background work degrade
   quietly (no crash-log entries). Servers already running keep the old
   behaviour until restarted.
+- A linked git worktree whose main checkout was moved or renamed refuses to save,
+  naming `git worktree repair`, instead of starting a second memory of its own.
 
 - **The roadmap now moves with the project.** It was read and written in the
   centralized data dir (`~/.codevira/projects/<key derived from the absolute

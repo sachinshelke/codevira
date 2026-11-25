@@ -518,6 +518,16 @@ class ProjectFolderMissingError(ValueError):
         )
 
 
+def broken_worktree_message(worktree: Path | str, main: Path | str) -> str:
+    """WHAT / WHY / FIX for a linked worktree whose main checkout has moved."""
+    return (
+        f"{worktree} is a linked git worktree whose main checkout {main} is no "
+        f"longer there (it was moved, renamed or deleted). Its memory lives in "
+        f"the main checkout, so nothing was saved. Fix: run `git worktree "
+        f"repair {worktree}` from the main checkout's new location."
+    )
+
+
 def project_root_exists(project_root: Path | str) -> bool:
     """True iff ``project_root`` is an existing directory.
 

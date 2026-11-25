@@ -36,7 +36,12 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from mcp_server.paths import get_global_home, get_project_root, project_root_exists
+from mcp_server.paths import (
+    broken_worktree_message,
+    get_global_home,
+    get_project_root,
+    project_root_exists,
+)
 
 CODEVIRA_DIR_NAME = ".codevira"
 DEFAULT_TRACKING_MODE = "hint"
@@ -311,7 +316,7 @@ def project_folder_gate(tool_name: str) -> dict[str, object] | None:
     Returns ``None`` when the call may proceed. Must run AFTER project
     re-binding, so a client that reports the new folder keeps working, and
     needs no restart once the folder comes back (nothing is cached except the
-    "seen an in-repo store" fact). Cost: two ``stat`` calls.
+    "seen an in-repo store" fact). Cost: a few ``stat`` calls.
     """
     try:
         root = get_project_root()
@@ -333,6 +338,15 @@ def project_folder_gate(tool_name: str) -> dict[str, object] | None:
             f"Fix: reopen the project from its new location (restart your AI "
             f"tool in that folder). The memory moves with the folder.",
             "codevira doctor",
+        )
+    from mcp_server.storage.paths import missing_main_worktree
+
+    main = missing_main_worktree(root)
+    if main is not None:
+        return _folder_gone_payload(
+            root,
+            broken_worktree_message(root, main),
+            f"git worktree repair {root}",
         )
     try:
         in_repo = _config_marker(root).parent.is_dir()

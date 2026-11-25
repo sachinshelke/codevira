@@ -793,7 +793,9 @@ def _adopt_centralized_roadmap(project_root: Path | None, lock_held: bool) -> st
 
     root = Path(project_root) if project_root is not None else get_project_root()
     main_root = store_paths._main_worktree_root(root)
-    if is_invalid_project_root(main_root):
+    # A vanished root has nothing to adopt into, and taking the lock would
+    # recreate it.
+    if is_invalid_project_root(main_root) or not main_root.is_dir():
         return "none"
     central_dir = get_global_home() / "projects" / _sanitize_path_key(main_root)
     central = central_dir / "roadmap.yaml"

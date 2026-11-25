@@ -855,3 +855,113 @@ def test_end_to_end_rename_while_server_runs(tmp_path):
         assert second["decision_id"] == "D000002", second
     finally:
         srv.close()
+
+
+def test_folder_recreated_before_the_first_call_is_noticed(tmp_path):
+    """The store is remembered at startup, not only once a tool has run."""
+    from mcp_server.paths import _sanitize_path_key
+
+    old = _make_project(tmp_path / "OLD")
+    home = tmp_path / "home"
+    central = home / "projects" / _sanitize_path_key(old)
+    central.mkdir(parents=True)
+    (central / "config.yaml").write_text("project: {}\n")  # outlives the folder
+    srv = _StdioServer(old, home)
+    try:
+        old.rename(tmp_path / "NEW")
+        (old / ".claude").mkdir(parents=True)  # another program
+        res = srv.tool("record_decision", {"decision": "lost?"})
+        assert res["error"] == "project_folder_missing", res
+        assert not (old / ".codevira").exists()
+    finally:
+        srv.close()
+
+
+# ── Linked git worktrees, and the roadmap adoption (integration) ──────────
+
+
+def _git(cwd, *args):
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+    )
+
+
+@pytest.fixture()
+def worktree(tmp_path, monkeypatch):
+    """A main checkout with memory, and a linked worktree outside it."""
+    main = tmp_path / "MAIN"
+    (main / ".codevira").mkdir(parents=True)
+    (main / ".codevira" / "config.yaml").write_text("schema_version: 1\n")
+    _git(main, "init", "-q")
+    (main / "a.txt").write_text("a")
+    _git(main, "add", "a.txt")
+    _git(main, "commit", "-qm", "x")
+    _git(main, "worktree", "add", "-q", str(tmp_path / "WT"))
+    monkeypatch.setenv("CODEVIRA_PROJECT_DIR", str(tmp_path / "WT"))
+    return main, tmp_path / "WT"
+
+
+def _call_tool(name, args):
+    from mcp_server.server import call_tool
+
+    return json.loads(asyncio.run(call_tool(name, args))[0].text)
+
+
+def test_worktree_of_a_renamed_main_refuses_instead_of_starting_a_store(
+    worktree, tmp_path
+):
+    from mcp_server.storage import decisions_store
+
+    main, wt = worktree
+    decisions_store.record("shared decision")
+    os.rename(main, tmp_path / "MOVED")
+    res = _call_tool("record_decision", {"decision": "lost?"})
+    assert res["error"] == "project_folder_missing" and res["recorded"] is False
+    assert "git worktree repair" in res["fix_command"]
+    with pytest.raises(ValueError, match="git worktree repair"):
+        decisions_store.record("lost?")
+    assert not main.exists()
+    assert not (wt / ".codevira").exists()
+
+    _git(tmp_path / "MOVED", "worktree", "repair", str(wt))
+    assert decisions_store.record("after repair") == "D000002"
+    log = (tmp_path / "MOVED/.codevira/decisions.jsonl").read_text()
+    assert "shared decision" in log and "after repair" in log
+
+
+def test_worktree_is_not_fooled_by_a_recreated_main_folder(worktree, tmp_path):
+    main, wt = worktree
+    os.rename(main, tmp_path / "MOVED")
+    (main / ".claude").mkdir(parents=True)  # another program
+    res = _call_tool("record_decision", {"decision": "lost?"})
+    assert res["error"] == "project_folder_missing"
+    assert not (main / ".codevira").exists()
+
+
+def test_healthy_and_isolated_worktrees_still_write(worktree, tmp_path, monkeypatch):
+    from mcp_server.storage import decisions_store
+
+    main, wt = worktree
+    assert decisions_store.record("one") == "D000001"
+    assert (main / ".codevira/decisions.jsonl").exists()
+    os.rename(main, tmp_path / "MOVED")
+    monkeypatch.setenv("CODEVIRA_WORKTREE_ISOLATED", "1")
+    assert decisions_store.record("own") == "D000001"
+    assert (wt / ".codevira/decisions.jsonl").exists()
+
+
+def test_adoption_does_not_recreate_a_vanished_project(tmp_path):
+    from mcp_server.migrate import adopt_centralized_roadmap
+    from mcp_server.paths import _sanitize_path_key, get_global_home
+
+    gone = tmp_path / "GONE"
+    central = get_global_home() / "projects" / _sanitize_path_key(gone)
+    central.mkdir(parents=True)
+    (central / "config.yaml").write_text("project: {}\n")
+    (central / "roadmap.yaml").write_text("project: GONE\n")
+    assert adopt_centralized_roadmap(gone) == "none"
+    assert not gone.exists()
+    assert (central / "roadmap.yaml").exists()

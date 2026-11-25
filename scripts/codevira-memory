@@ -37,6 +37,9 @@ BACKUPS = Path(
 )
 LOGS = ("decisions.jsonl", "sessions.jsonl", "outcomes.jsonl", "skills.jsonl")
 MARKER = ".restored-after-rename"
+ADOPTED = (
+    "roadmap.yaml.moved-into-project"  # left by a Codevira that keeps it in the project
+)
 GZIP_OVER = 5_000_000  # the code graph is large and compresses well
 
 
@@ -97,6 +100,8 @@ from mcp_server.storage import decisions_store as d, paths as p
 from mcp_server.storage.jsonl_store import read_all
 from mcp_server.paths import get_data_dir
 m = d._read_merged(); rm = {}; f = get_data_dir() / "roadmap.yaml"
+if not f.is_file() or f.with_name(f.name + ".moved-into-project").exists():
+    f = p.roadmap_path()  # newer Codevira keeps the roadmap inside the project
 if f.is_file():
     import yaml; rm = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
 c = p.codevira_dir(); n = lambda x: len(read_all(c / x))
@@ -841,12 +846,25 @@ def restore(folder, source=None, yes=False):
         for v in in_codevira(new, MERGE, mem, bmem, d).values():
             back, brought = back + v["added_back"], brought + v["added_stray"]
 
+    # A Codevira that keeps the roadmap in the project adopts an outside copy once. An
+    # old one from the backup must not count if the project's has moved on since.
+    ours, then = mem / "roadmap.yaml", bmem / "roadmap.yaml"
+    keep_project_roadmap = (
+        ours.is_file()
+        and (not then.is_file() or ours.read_bytes() != then.read_bytes())
+        and in_codevira(
+            "/",
+            "import json,mcp_server.migrate as m;"
+            "print(json.dumps(hasattr(m,'adopt_centralized_roadmap')))",
+        )
+    )
+
     # 2. data Codevira keeps outside the project, filed under the folder's current name
     if rekey:
         live = (
             old_dir
             if (old_dir / "config.yaml").is_file()
-            and (old_dir / "roadmap.yaml").is_file()
+            and any((old_dir / n).is_file() for n in ("roadmap.yaml", ADOPTED))
             else bcentral
         )
         stage = projects / f".{new_key}.staging"
@@ -854,6 +872,14 @@ def restore(folder, source=None, yes=False):
         copy_tree(live, stage)
         unsqueeze(stage)
         edit_yaml(stage / "config.yaml", "project", "name", new.name)
+        if (
+            live == bcentral
+            and keep_project_roadmap
+            and (stage / "roadmap.yaml").is_file()
+        ):
+            os.replace(stage / "roadmap.yaml", stage / ADOPTED)
+        if (stage / ADOPTED).is_file():
+            edit_yaml(mem / "roadmap.yaml", "project", new.name)
         edit_yaml(stage / "roadmap.yaml", "project", new.name)
         meta = load_json(stage / "metadata.json") or {}
         meta.update(path_key=new_key, original_path=str(new))
@@ -863,7 +889,8 @@ def restore(folder, source=None, yes=False):
         )
         placeholder, edited = bmem / "roadmap.yaml", mem / "roadmap.yaml"
         if (
-            placeholder.is_file()
+            not (stage / ADOPTED).is_file()
+            and placeholder.is_file()
             and edited.is_file()
             and placeholder.read_bytes() != edited.read_bytes()
         ):
@@ -885,6 +912,10 @@ def restore(folder, source=None, yes=False):
                 if f.suffix == ".gz" and is_db(f.with_suffix(""))
                 else t
             )
+            if f.name == "roadmap.yaml" and keep_project_roadmap:
+                t = plain = (
+                    new_dir / ADOPTED
+                )  # never let an old copy replace a newer one
             if f.is_file() and f.name != MARKER and not plain.exists():
                 t.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(f, t)

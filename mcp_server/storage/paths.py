@@ -34,6 +34,8 @@ import os
 from pathlib import Path
 
 from mcp_server.paths import (
+    ProjectFolderMissingError,
+    broken_worktree_message,
     get_project_root,
     is_invalid_project_root,
     require_project_root,
@@ -41,6 +43,16 @@ from mcp_server.paths import (
 
 CODEVIRA_DIR_NAME = ".codevira"
 CODEVIRA_CACHE_DIR_NAME = ".codevira-cache"
+
+
+def _main_worktree_isolated() -> bool:
+    """Whether the user asked for per-worktree memory."""
+    return os.environ.get("CODEVIRA_WORKTREE_ISOLATED", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
 
 
 def _main_worktree_root(project_root: Path) -> Path:
@@ -65,12 +77,7 @@ def _main_worktree_root(project_root: Path) -> Path:
     # bare `== "1"` meant CODEVIRA_WORKTREE_ISOLATED=true silently did
     # nothing: the user asked for per-worktree memory and kept getting the
     # shared store, with no error either way.
-    if os.environ.get("CODEVIRA_WORKTREE_ISOLATED", "").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-        "on",
-    ):
+    if _main_worktree_isolated():
         return project_root
     git_path = project_root / ".git"
     try:
@@ -90,6 +97,33 @@ def _main_worktree_root(project_root: Path) -> Path:
     except (OSError, ValueError):
         pass
     return project_root
+
+
+def missing_main_worktree(project_root: Path) -> Path | None:
+    """The main checkout a linked worktree points at, if that link is broken.
+
+    Moving or renaming the main checkout leaves each linked worktree's ``.git``
+    file naming the old path until ``git worktree repair``. The shared store
+    can't be found through it, and writing anywhere else would start a second
+    one. None for an ordinary checkout, a working link, or an isolated worktree.
+    """
+    if _main_worktree_isolated():
+        return None
+    try:
+        git_path = project_root / ".git"
+        if not git_path.is_file():
+            return None
+        text = git_path.read_text(encoding="utf-8").strip()
+        if not text.startswith("gitdir:"):
+            return None
+        gitdir = Path(text.split("gitdir:", 1)[1].strip())
+        if not gitdir.is_absolute():
+            gitdir = (project_root / gitdir).resolve()
+        if gitdir.parent.name != "worktrees" or gitdir.parent.parent.name != ".git":
+            return None  # a submodule, not a worktree
+        return None if gitdir.is_dir() else gitdir.parent.parent.parent
+    except (OSError, ValueError):
+        return None
 
 
 def codevira_dir(project_root: Path | None = None) -> Path:
@@ -338,6 +372,9 @@ def ensure_dirs(project_root: Path | None = None) -> None:
     # Before anything is created: mkdir(parents=True) would otherwise rebuild a
     # project folder that was moved/renamed away and start a second store.
     require_project_root(root)
+    main = missing_main_worktree(root)
+    if main is not None:
+        raise ProjectFolderMissingError(root, broken_worktree_message(root, main))
     codevira_dir(root).mkdir(parents=True, exist_ok=True)
     codevira_cache_dir(root).mkdir(parents=True, exist_ok=True)
 

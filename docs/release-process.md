@@ -19,6 +19,8 @@ This process replaces trust with evidence.
 | **G1.5** | MCP round-trip | `tests/integration/test_mcp_roundtrip.py` | `make release-gauntlet` |
 | **G1.6** | Help text vs constants | `tests/integration/test_help_text_consistency.py` | `make release-gauntlet` |
 | **G1.7** | Sandboxed-parent MCP | `tests/integration/test_sandboxed_parent.py` | `make release-gauntlet` |
+| **G1.8** | Docs cite real subcommands | `tests/integration/test_docs_subcommands_exist.py` | `make release-gauntlet` |
+| **G1.9** | CI passed on this commit | `scripts/check_ci_green.sh` exit 0 (push first, wait for CI) | `make release-gauntlet` + publish hook |
 | **G2** | First-contact e2e (4 fixtures) | `make test-e2e` exit 0 | `make release-gauntlet` + GitHub Actions |
 | **G2.5** | Cold-install wheel smoke | `scripts/cold_install_smoke.sh` exit 0 | `make release-gauntlet` |
 | **G3** | Real-IDE smoke | `scripts/check_real_ide_smoke.sh` exit 0 | `make release-gauntlet` |

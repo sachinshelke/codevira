@@ -48,6 +48,18 @@ make test-unit
 
 Pass criterion: exit code 0, no test failures or unexpected skips.
 
+### G1.9 — CI is green on this commit
+
+```bash
+scripts/check_ci_green.sh
+```
+
+Pass criterion: exit 0. Push first and wait for CI: exit 2 means it could
+not be checked, is recorded as `"skipped"`, and blocks publishing. 4.2.0
+was published over a CI that had been red for four days, because every
+gate ran on one local interpreter. The evidence also records the commit,
+and the hook refuses to publish any other.
+
 ### G2 — First-contact e2e
 
 ```bash

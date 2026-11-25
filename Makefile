@@ -167,6 +167,14 @@ release-gauntlet:
 		&& echo "  ✓ G1.8 passed" \
 		|| (echo "  ✗ G1.8 FAILED — release blocked (a doc tells users to run a dead subcommand — the `codevira report` class)"; exit 1)
 	@echo ""
+	@echo "▸ G1.9 — CI is green on this commit (scripts/check_ci_green.sh)"
+	@scripts/check_ci_green.sh; \
+		case "$$?" in \
+			0) echo "  ✓ G1.9 passed" && echo true > .release-evidence/.g19.tmp ;; \
+			2) echo "  ✗ G1.9 skipped — PUBLISH WILL BE BLOCKED" && echo '"skipped"' > .release-evidence/.g19.tmp ;; \
+			*) echo "  ✗ G1.9 FAILED — release blocked (4.2.0 was published over a red CI)"; exit 1 ;; \
+		esac
+	@echo ""
 	@echo "▸ G2 — First-contact e2e"
 	@$(MAKE) test-e2e && echo "  ✓ G2 passed" || (echo "  ✗ G2 FAILED — release blocked"; exit 1)
 	@echo ""
@@ -238,7 +246,8 @@ release-gauntlet:
 	@echo "Writing evidence to $(EVIDENCE_FILE) ..."
 	@G3_RESULT=$$(cat .release-evidence/.g3.tmp); \
 	G4_RESULT=$$(cat .release-evidence/.g4.tmp); \
-	printf '{\n  "version": "%s",\n  "timestamp": "%s",\n  "G1_unit_tests": true,\n  "G1_5_mcp_roundtrip": true,\n  "G1_6_help_text_consistency": true,\n  "G1_7_sandboxed_parent": true,\n  "G1_8_docs_subcommands": true,\n  "G2_first_contact": true,\n  "G2_5_cold_install_smoke": true,\n  "G3_real_ide_smoke": %s,\n  "G4_crash_log_clean": %s,\n  "G5_human_confirmed": false,\n  "note": "G5 must be set true by hand after maintainer verification on a real machine."\n}\n' "$(VERSION)" "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$$G3_RESULT" "$$G4_RESULT" > $(EVIDENCE_FILE)
+	G19_RESULT=$$(cat .release-evidence/.g19.tmp); \
+	printf '{\n  "version": "%s",\n  "commit": "%s",\n  "timestamp": "%s",\n  "G1_unit_tests": true,\n  "G1_5_mcp_roundtrip": true,\n  "G1_6_help_text_consistency": true,\n  "G1_7_sandboxed_parent": true,\n  "G1_8_docs_subcommands": true,\n  "G1_9_ci_green": %s,\n  "G2_first_contact": true,\n  "G2_5_cold_install_smoke": true,\n  "G3_real_ide_smoke": %s,\n  "G4_crash_log_clean": %s,\n  "G5_human_confirmed": false,\n  "note": "G5 must be set true by hand after maintainer verification on a real machine."\n}\n' "$(VERSION)" "$$(git rev-parse HEAD 2>/dev/null)" "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$$G19_RESULT" "$$G3_RESULT" "$$G4_RESULT" > $(EVIDENCE_FILE)
 	@rm -f .release-evidence/.g3.tmp .release-evidence/.g4.tmp
 	@echo ""
 	@echo "✓ Gauntlet complete for v$(VERSION)"

@@ -240,6 +240,7 @@ def _evidence(tmp_path, **overrides):
     """Write an all-passing evidence file, with fields overridden."""
     gates = {
         "G1_unit_tests": True,
+        "G1_9_ci_green": True,
         "G2_first_contact": True,
         "G3_real_ide_smoke": True,
         "G4_crash_log_clean": True,
@@ -325,6 +326,7 @@ def test_a_gate_the_hook_never_heard_of_is_still_enforced(tmp_path):
     "missing",
     [
         "G1_unit_tests",
+        "G1_9_ci_green",
         "G2_first_contact",
         "G3_real_ide_smoke",
         "G4_crash_log_clean",
@@ -338,6 +340,7 @@ def test_a_gate_absent_from_the_evidence_blocks(missing, tmp_path):
     evidence_dir.mkdir(exist_ok=True)
     gates = {
         "G1_unit_tests": True,
+        "G1_9_ci_green": True,
         "G2_first_contact": True,
         "G3_real_ide_smoke": True,
         "G4_crash_log_clean": True,
@@ -383,6 +386,7 @@ def test_provenance_fields_are_not_mistaken_for_gates(tmp_path):
         json.dumps(
             {
                 "G1_unit_tests": True,
+                "G1_9_ci_green": True,
                 "G2_first_contact": True,
                 "G3_real_ide_smoke": True,
                 "G4_crash_log_clean": True,
@@ -396,6 +400,28 @@ def test_provenance_fields_are_not_mistaken_for_gates(tmp_path):
     assert _run("twine upload dist/*", tmp_path).returncode == _ALLOW
 
 
+def _commit(tmp_path, text):
+    (tmp_path / "f").write_text(text)
+    git = ["git", "-c", "user.email=t@t", "-c", "user.name=t"]
+    subprocess.run([*git, "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run([*git, "add", "f"], cwd=tmp_path, check=True)
+    subprocess.run([*git, "commit", "-qm", text], cwd=tmp_path, check=True)
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=tmp_path, capture_output=True, text=True
+    ).stdout.strip()
+
+
+def test_evidence_for_another_commit_blocks(tmp_path):
+    """Gates that passed, then one more commit: that is not what was tested."""
+    tested = _commit(tmp_path, "one")
+    _evidence(tmp_path, commit=tested)
+    assert _run("twine upload dist/*", tmp_path).returncode == _ALLOW
+    _commit(tmp_path, "two")
+    result = _run("twine upload dist/*", tmp_path)
+    assert result.returncode == _BLOCK
+    assert tested[:7] in result.stderr and "not HEAD" in result.stderr
+
+
 def test_blocks_release_when_g5_not_confirmed(tmp_path):
     evidence_dir = tmp_path / ".release-evidence"
     evidence_dir.mkdir()
@@ -403,6 +429,7 @@ def test_blocks_release_when_g5_not_confirmed(tmp_path):
         json.dumps(
             {
                 "G1_unit_tests": True,
+                "G1_9_ci_green": True,
                 "G2_first_contact": True,
                 "G3_real_ide_smoke": True,
                 "G4_crash_log_clean": True,

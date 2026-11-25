@@ -430,11 +430,13 @@ fi
 # being silently unguarded. Deviations need an entry in TOLERATED with a
 # stated reason, and the required set must be PRESENT — enumerating only
 # what is there would let an empty {} pass with zero failing gates.
-ALL_PASS=$(EVIDENCE_FILE="$EVIDENCE_FILE" python3 -c '
+HEAD_COMMIT=$(git -C "$(dirname "$EVIDENCE_DIR")" rev-parse HEAD 2>/dev/null || true)
+ALL_PASS=$(EVIDENCE_FILE="$EVIDENCE_FILE" HEAD_COMMIT="$HEAD_COMMIT" python3 -c '
 import json, os
 
 REQUIRED = (
     "G1_unit_tests",
+    "G1_9_ci_green",
     "G2_first_contact",
     "G3_real_ide_smoke",
     "G4_crash_log_clean",
@@ -465,6 +467,11 @@ try:
         for k, v in sorted(gates.items())
         if v is not True and v not in TOLERATED.get(k, ())
     ]
+    # Evidence describes ONE commit. Gates that passed before a later commit
+    # say nothing about it.
+    tested, head = d.get("commit"), os.environ.get("HEAD_COMMIT")
+    if tested and head and tested != head:
+        problems.append("tested commit %s is not HEAD %s" % (tested[:7], head[:7]))
     print("all_pass" if not problems else "FAILED: " + ", ".join(problems))
 except Exception:
     print("parse_error")

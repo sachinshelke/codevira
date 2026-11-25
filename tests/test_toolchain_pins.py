@@ -16,11 +16,16 @@ Two files that must match by hand will eventually not. This asserts it.
 
 from __future__ import annotations
 
+import ast
 import re
-import tomllib
 from pathlib import Path
 
 import pytest
+
+try:
+    import tomllib  # Python 3.11+
+except ModuleNotFoundError:  # Python 3.10 — stdlib tomllib absent
+    import tomli as tomllib  # type: ignore[no-redef]
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -87,3 +92,33 @@ class TestRuffIsPinnedIdentically:
             f"the venv has ruff {installed} but the project pins {want}. "
             "Re-install the dev extra: pip install -e '.[dev]'"
         )
+
+
+def test_no_unguarded_tomllib_import() -> None:
+    """``requires-python`` says 3.10, whose stdlib has no tomllib.
+
+    One bare import in this very file stopped the whole 3.10 CI job at
+    collection, so nothing at all was tested on 3.10 for 4.2.0, and no local run
+    on a newer Python could show it.
+    """
+    bare = []
+    for folder in ("mcp_server", "indexer", "tests", "scripts"):
+        for path in sorted((REPO / folder).rglob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            guarded = {
+                id(child)
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Try) and node.handlers
+                for stmt in node.body
+                for child in ast.walk(stmt)
+            }
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    names = [a.name for a in node.names]
+                elif isinstance(node, ast.ImportFrom):
+                    names = [node.module]
+                else:
+                    continue
+                if "tomllib" in names and id(node) not in guarded:
+                    bare.append(f"{path.relative_to(REPO)}:{node.lineno}")
+    assert not bare, f"import tomllib without a tomli fallback: {bare}"

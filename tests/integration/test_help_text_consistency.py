@@ -167,8 +167,12 @@ class TestHelpTextConsistency:
         Cheap to enforce; catches version-bump misses.
         """
         from pathlib import Path
-        import tomllib
         import mcp_server
+
+        try:
+            import tomllib  # Python 3.11+
+        except ModuleNotFoundError:  # Python 3.10
+            import tomli as tomllib  # type: ignore[no-redef]
 
         repo_root = Path(__file__).resolve().parents[2]
         with open(repo_root / "pyproject.toml", "rb") as f:

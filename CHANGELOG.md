@@ -70,6 +70,12 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - A file whose reindex failed was marked as indexed and not picked up again
   until its next change.
 
+### Changed
+
+- Releases can no longer be published over a failing or unchecked CI (G1.9), or
+  with evidence gathered for a different commit. 4.2.0 was: its Python 3.10 CI
+  job stopped at a test-only import and ran nothing.
+
 ### Added
 
 - A decision in `write_session_log` may carry the `id` of one already recorded.

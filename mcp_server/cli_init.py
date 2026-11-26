@@ -285,6 +285,9 @@ def cmd_init(*, yes: bool = False, dry_run: bool = False, shared: bool = False) 
             "# ignored so concurrent writes don't collide on generated files)\n"
             ".codevira/digest.jsonl\n"
             ".codevira/manifest.yaml\n"
+            # Lock files, and the copy kept when a roadmap moves into the project.
+            ".codevira/*.lock\n"
+            ".codevira/roadmap.yaml.before-adoption*\n"
         )
         if not existing.endswith("\n") and existing:
             existing += "\n"

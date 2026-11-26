@@ -23,6 +23,14 @@ _SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("bearer", re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._\-+/=]{8,}")),
     ("password", re.compile(r"(?i)\bpassword\s*[:=]\s*\S+")),
     ("aws-akia", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
+    # Vendor tokens with a fixed prefix. Underscores and hyphens keep these out
+    # of the base64 rule below, so without them a GitHub token went through whole.
+    (
+        "github-token",
+        re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_\w{30,})"),
+    ),
+    ("slack-token", re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}")),
+    ("anthropic-key", re.compile(r"\bsk-ant-[A-Za-z0-9_-]{20,}")),
     # Long hex / base64 blob — 32+ chars of plausible token material.
     ("long-token", re.compile(r"\b[A-Fa-f0-9]{32,}\b")),
     # ONE pattern over the FULL base64 alphabet, including `/`. Whether a

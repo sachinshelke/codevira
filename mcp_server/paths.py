@@ -563,7 +563,13 @@ def mkdir_in_project(directory: Path, project_root: Path | None = None) -> None:
     """
     if directory.is_dir():
         return
-    root = project_root if project_root is not None else get_project_root()
+    try:
+        root = project_root if project_root is not None else get_project_root()
+    except (OSError, ValueError):
+        # No project to protect (e.g. the cwd itself was deleted): this is a
+        # plain directory, so create it as any absolute path would be.
+        directory.mkdir(parents=True, exist_ok=True)
+        return
     if not project_root_exists(root):
         try:
             directory.resolve().relative_to(Path(root).resolve())

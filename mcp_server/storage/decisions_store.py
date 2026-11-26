@@ -367,7 +367,14 @@ def record(
     # Normalize tags: lowercase, strip whitespace, dedup, sort
     # (lowercase normalization is the same rule manifest.incremental_add
     # applies; doing it here keeps the on-disk record clean too).
-    norm_tags = sorted({str(t).strip().lower() for t in (tags or []) if str(t).strip()})
+    # Tags reach AGENTS.md and the committed log like the text does: scrub them.
+    norm_tags = sorted(
+        {
+            sanitize.scrub_sensitive(str(t).strip().lower())
+            for t in (tags or [])
+            if str(t).strip()
+        }
+    )
 
     # v3.1.x: scrub api-key / Bearer / password / AWS AKIA / long hex /
     # long base64 BEFORE persisting. A user prompt or stack trace pasted
@@ -537,7 +544,11 @@ def record_many(
             continue
 
         norm_tags = sorted(
-            {str(t).strip().lower() for t in (r.get("tags") or []) if str(t).strip()}
+            {
+                sanitize.scrub_sensitive(str(t).strip().lower())
+                for t in (r.get("tags") or [])
+                if str(t).strip()
+            }
         )
         # v3.7.1: scrub secrets, exactly as record() does. This path skipped
         # sanitization entirely, so an API key pasted into a bulk-imported

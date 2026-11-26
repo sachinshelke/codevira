@@ -33,7 +33,10 @@ _DECISION_FIELDS = (
     "would_re_examine_if",
 )
 
-_DECISION_ID_RE = re.compile(r"D[0-9A-Za-z]{6,}")
+# A real id always has a digit; "Deprecated" is a decision, not an id.
+_DECISION_ID_RE = re.compile(r"D(?=[0-9A-Za-z]*[0-9])[0-9A-Za-z]{6,}")
+
+_TRUE_WORDS = frozenset({"true", "yes", "1", "on"})
 
 
 def _as_list(value: Any) -> list[Any]:
@@ -58,6 +61,34 @@ def _conflict_warning(decision_id: str, text: str, file_path: str | None) -> str
         f"{decision_id} may conflict with {', '.join(hits)}. Both are kept; use "
         f"supersede_decision(old_id, new_decision, reason) to retire one."
     )
+
+
+def _carry_into_repeat(did: str, item: dict[str, Any], lock: bool) -> list[str]:
+    """Apply a lock asked for on a repeated decision; name what else was not.
+
+    A repeat links to the decision it repeats instead of recording a twin, so
+    anything new it carries would otherwise go nowhere searchable.
+    """
+    from mcp_server.storage import decisions_store
+
+    notes: list[str] = []
+    existing = decisions_store.get(did) or {}
+    if lock and not existing.get("do_not_revert"):
+        decisions_store.mark_protected(did)
+        notes.append(f"{did} repeats an existing decision; locked it as asked.")
+    extra = [
+        k
+        for k in _DECISION_FIELDS
+        if k not in ("file_path", "do_not_revert")
+        and item.get(k)
+        and item.get(k) != existing.get(k)
+    ]
+    if extra:
+        notes.append(
+            f"{did} repeats an existing decision; its new {', '.join(extra)} "
+            f"is kept in this session log only. Use supersede_decision to change it."
+        )
+    return notes
 
 
 def _keep_decision(
@@ -94,7 +125,14 @@ def _keep_decision(
         return None, None, ["Ignored a decision with no `decision` text and no `id`."]
 
     fields = {k: item.get(k) for k in _DECISION_FIELDS}
-    fields["do_not_revert"] = item.get("do_not_revert") is True
+    lock = item.get("do_not_revert", False)
+    fields["do_not_revert"] = lock is True
+    if not isinstance(lock, bool):
+        fields["do_not_revert"] = str(lock).strip().lower() in _TRUE_WORDS
+        warnings.append(
+            f"do_not_revert={lock!r} is not true/false; read it as "
+            f"{fields['do_not_revert']}."
+        )
     fields["tags"] = _as_list(fields["tags"])
     fields["alternatives_considered"] = (
         _as_list(fields["alternatives_considered"]) or None
@@ -102,7 +140,9 @@ def _keep_decision(
     path = fields["file_path"]
     try:
         did = decisions_store.find_restatement(text, path)
-        if did is None:
+        if did is not None:
+            warnings.extend(_carry_into_repeat(did, item, fields["do_not_revert"]))
+        else:
             did = decisions_store.record(text, session_id=session_id, **fields)
             clash = _conflict_warning(did, text, path)
             if clash:

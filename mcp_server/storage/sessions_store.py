@@ -39,9 +39,11 @@ logger = logging.getLogger(__name__)
 
 
 def _scrub(value: Any) -> Any:
-    """Scrub secrets from a string, or from each string in a list."""
+    """Scrub secrets from a string, or from every string nested inside."""
     if isinstance(value, list):
         return [_scrub(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _scrub(v) for k, v in value.items()}
     return sanitize.scrub_sensitive(value) if isinstance(value, str) else value
 
 

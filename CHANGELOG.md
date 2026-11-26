@@ -72,6 +72,11 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Changed
 
+- Found by an adversarial review before release: `codevira prune --orphans`
+  keeps a data dir whose roadmap was never moved into its project, a session
+  log that repeats a decision and asks to lock it now locks it, secrets nested
+  in a session log or a tag are scrubbed, GitHub, Slack and Anthropic tokens
+  are recognised as secrets, and new lock files are ignored by git.
 - `codevira export --format sql` refuses, and writes nothing, when the JSONL
   store holds rows its legacy source lacks. On every 3.x+ project it had been
   reporting success over a dump with 0 decisions. Use the JSON export.

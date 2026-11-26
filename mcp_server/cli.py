@@ -3100,6 +3100,7 @@ def _cmd_clean_orphans(dry_run: bool = False, yes: bool = False) -> None:
 
     # (data_dir, original_path, reason)
     found: list[tuple[Path, str, str]] = []
+    kept_roadmaps: list[Path] = []
     if projects_dir.exists():
         for meta_file in sorted(projects_dir.glob("*/metadata.json")):
             try:
@@ -3119,6 +3120,14 @@ def _cmd_clean_orphans(dry_run: bool = False, yes: bool = False) -> None:
                 except (OSError, RuntimeError):
                     exists = False
                 if not exists:
+                    if (meta_file.parent / "roadmap.yaml").is_file() and not (
+                        meta_file.parent / "roadmap.yaml.moved-into-project"
+                    ).exists():
+                        # Before 4.3.0 the roadmap lived here, keyed by the path.
+                        # A project renamed before upgrading still has its only
+                        # copy in this dir, which looks exactly like an orphan.
+                        kept_roadmaps.append(meta_file.parent)
+                        continue
                     found.append(
                         (
                             meta_file.parent,
@@ -3166,6 +3175,17 @@ def _cmd_clean_orphans(dry_run: bool = False, yes: bool = False) -> None:
                 conn.close()
         except Exception as exc:
             print(f"  (warning: could not scan global.db for bare rows: {exc})")
+
+    for d in kept_roadmaps:
+        print(f"  Kept {d}")
+        print(
+            "      It holds a roadmap that was never moved into its project (the "
+            "project was probably renamed before 4.3.0). Recover it with "
+            "`scripts/codevira-memory restore <project folder>` from the codevira "
+            "repository, or copy its roadmap.yaml into <project>/.codevira/ yourself."
+        )
+    if kept_roadmaps:
+        print()
 
     total_orphans = len(found) + len(bare_global_rows)
     if total_orphans == 0:

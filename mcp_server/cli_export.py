@@ -18,7 +18,8 @@ Format choices:
     is no longer required for a JSON export.
   - **sql**: full SQL dump via SQLite's `iterdump()`. Replay against an
     empty graph.db to fully reconstruct (preserves FK relationships).
-    Legacy-only: dumps graph.db, NOT the v3.x JSONL store.
+    Legacy-only: dumps graph.db, NOT the v3.x JSONL store — so it refuses
+    whenever the JSONL store holds rows graph.db lacks.
 
 Per-target tables exported:
   - `decisions` → always
@@ -269,6 +270,32 @@ def export_decisions_to_path(
 
         elif format == "sql":
             assert conn is not None  # sql format re-raised on missing graph.db
+            # The dump reads graph.db, whose decision-tier tables v3+ never
+            # writes (D000002). Refuse before writing anything when the
+            # canonical JSONL store holds rows the dump would leave out —
+            # otherwise this reports ✓ over a "backup" with 0 decisions.
+            gaps = []
+            for table in tables_to_dump:
+                jsonl_path = jsonl_sources.get(table)
+                if jsonl_path is None or not jsonl_path.is_file():
+                    continue
+                canonical = len(_jsonl_read_all(jsonl_path))
+                in_db = 0
+                if _table_exists(conn, table):
+                    in_db = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                if canonical > in_db:
+                    gaps.append(
+                        f"{table}: {canonical} in {jsonl_path.parent.name}/"
+                        f"{jsonl_path.name}, {in_db} in graph.db"
+                    )
+            if gaps:
+                raise ValueError(
+                    "--format sql dumps the legacy graph.db, which is missing "
+                    "rows from the canonical store ("
+                    + "; ".join(gaps)
+                    + "). The SQL file would not be a backup of them. "
+                    f"Use `codevira export {target} --format json` instead."
+                )
             # SQL dump preserves schema + FK relationships. iterdump
             # yields every CREATE / INSERT in one stream — we stream
             # to a unique tmp file (mkstemp) and rename into place so

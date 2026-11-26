@@ -10,6 +10,8 @@ Covers:
   2. JSON export works with NO graph.db at all (v3.x-only project).
   3. Per-table legacy fallback to graph.db when a JSONL file is absent.
   4. SQL format still requires graph.db (legacy-only path, unchanged).
+  5. SQL format refuses when graph.db lacks rows the JSONL store holds
+     (2026-09-25: it reported ✓ with 0 of 44 decisions).
 """
 
 from __future__ import annotations
@@ -100,6 +102,65 @@ def test_sql_format_still_requires_graph_db(v3_project):
     with pytest.raises(FileNotFoundError):
         export_decisions_to_path(out, format="sql", target="decisions")
     assert not out.exists()
+
+
+def _empty_legacy_graph_db(project, monkeypatch, *, decision_rows=0):
+    """graph.db with the legacy decision-tier schema — the shape every
+    v3+ project has, since v3 never writes these tables (D000002)."""
+    db = project / "graph.db"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE decisions (id INTEGER PRIMARY KEY, decision TEXT)")
+    conn.execute("CREATE TABLE sessions (session_id TEXT PRIMARY KEY)")
+    for i in range(decision_rows):
+        conn.execute("INSERT INTO decisions (decision) VALUES (?)", (f"legacy {i}",))
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr("mcp_server.cli_export._resolve_graph_db_path", lambda: db)
+    return db
+
+
+def test_sql_export_refuses_when_graph_db_lacks_jsonl_rows(
+    v3_project, monkeypatch, capsys
+):
+    """Found 2026-09-25 on a real project: `export --format sql` printed
+    ✓ with 0 decisions while decisions.jsonl held 44. The SQL dump reads
+    graph.db, which v3+ never writes — it must refuse, not ship an empty
+    "backup"."""
+    _empty_legacy_graph_db(v3_project, monkeypatch)
+    out = v3_project / "backup.sql"
+
+    rc = cmd_export("decisions", fmt="sql", out=str(out))
+    err = capsys.readouterr().err
+
+    assert rc == 1
+    assert not out.exists()
+    assert "decisions: 2 in .codevira/decisions.jsonl, 0 in graph.db" in err
+    assert "sessions: 1 in .codevira/sessions.jsonl, 0 in graph.db" in err
+    assert "--format json" in err
+
+
+def test_sql_refusal_names_the_json_command_for_the_same_target(
+    v3_project, monkeypatch, capsys
+):
+    """`export all` also carries the code graph. Pointing its refusal at the
+    plain `export --format json` would trade one incomplete file for another."""
+    _empty_legacy_graph_db(v3_project, monkeypatch)
+    out = v3_project / "backup.sql"
+
+    assert cmd_export("all", fmt="sql", out=str(out)) == 1
+    assert "codevira export all --format json" in capsys.readouterr().err
+
+
+def test_sql_export_still_works_when_graph_db_holds_the_rows(v3_project, monkeypatch):
+    """The guard must not block a legacy project whose graph.db really
+    does hold the data (pre-v3: no JSONL store)."""
+    for name in ("decisions.jsonl", "sessions.jsonl"):
+        (v3_project / ".codevira" / name).unlink()
+    _empty_legacy_graph_db(v3_project, monkeypatch, decision_rows=3)
+    out = v3_project / "backup.sql"
+
+    assert cmd_export("decisions", fmt="sql", out=str(out)) == 0
+    assert out.read_text(encoding="utf-8").count("INSERT INTO") == 3
 
 
 def test_cmd_export_json_exit_zero_without_graph_db(v3_project, capsys):

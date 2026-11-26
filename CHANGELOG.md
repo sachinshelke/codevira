@@ -72,6 +72,9 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Changed
 
+- `codevira export --format sql` refuses, and writes nothing, when the JSONL
+  store holds rows its legacy source lacks. On every 3.x+ project it had been
+  reporting success over a dump with 0 decisions. Use the JSON export.
 - Releases can no longer be published over a failing or unchecked CI (G1.9), or
   with evidence gathered for a different commit. 4.2.0 was: its Python 3.10 CI
   job stopped at a test-only import and ran nothing.

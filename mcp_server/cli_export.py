@@ -197,7 +197,7 @@ def export_decisions_to_path(
             raise
         graph_db_path = None  # JSON + decisions tier: JSONL alone is fine.
 
-    # The export can run before any server start: make sure a pre-4.2.1
+    # The export can run before any server start: make sure a pre-4.3.0
     # centralized roadmap is in the project before the `phases` table reads it.
     from mcp_server.migrate import adopt_centralized_roadmap
 

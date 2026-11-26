@@ -108,7 +108,7 @@ def cmd_export_setup(*, out: str | None = None, dry_run: bool = False) -> int:
     prefs, rules = _read_global_learning()
 
     if not dry_run:
-        # The bundle is .codevira/ verbatim: a pre-4.2.1 roadmap still sitting in
+        # The bundle is .codevira/ verbatim: a pre-4.3.0 roadmap still sitting in
         # the centralized dir must be inside it first, or the bundle ships the
         # init-time placeholder.
         from mcp_server.migrate import adopt_centralized_roadmap

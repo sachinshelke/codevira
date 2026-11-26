@@ -45,7 +45,7 @@ def _roadmap_file() -> Path:
 
 
 def _adopt_centralized_roadmap() -> None:
-    """One-time, non-destructive move of a pre-4.2.1 centralized roadmap in.
+    """One-time, non-destructive move of a pre-4.3.0 centralized roadmap in.
 
     Cheap when there is nothing to do (a couple of stats). See
     ``migrate.adopt_centralized_roadmap`` for the rules.

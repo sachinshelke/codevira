@@ -748,7 +748,7 @@ def adopt_centralized_roadmap(
 ) -> str:
     """Adopt a roadmap that lives in the centralized dir into ``<project>/.codevira/``.
 
-    Until 4.2.1 the roadmap was read and written at ``get_data_dir()/roadmap.yaml``,
+    Until 4.3.0 the roadmap was read and written at ``get_data_dir()/roadmap.yaml``,
     i.e. ``~/.codevira/projects/<key derived from the absolute path>/``. Rename the
     folder and the key changed, so the roadmap was silently replaced by the
     placeholder written in-project at init. The roadmap now always lives at
@@ -872,7 +872,7 @@ def _adopt_centralized_roadmap(project_root: Path | None, lock_held: bool) -> st
         return "adopted"
 
 
-def _mig_v421_adopt_centralized_roadmap(project_root: Path) -> bool:
+def _mig_v430_adopt_centralized_roadmap(project_root: Path) -> bool:
     """Startup hook for :func:`adopt_centralized_roadmap` (self-guarding, cheap)."""
     return adopt_centralized_roadmap(project_root) == "adopted"
 
@@ -886,7 +886,7 @@ _ALWAYS_RERUN = frozenset(
     {
         "v371_recover_orphaned_memory",
         "v380_worktree_memory_merge",
-        "v421_adopt_centralized_roadmap",
+        "v430_adopt_centralized_roadmap",
     }
 )
 
@@ -897,10 +897,10 @@ _STARTUP_MIGRATIONS = (
     # Then fold any worktree-local store into the main worktree's store, so the
     # collision repair below operates on the fully-merged decision log.
     ("v380_worktree_memory_merge", _mig_v380_worktree_memory_merge),
-    # Then move a pre-4.2.1 centralized roadmap into the project (it moves with
+    # Then move a pre-4.3.0 centralized roadmap into the project (it moves with
     # the folder, centralized copies do not). Runs every start: an older codevira
     # can recreate the centralized file after the move.
-    ("v421_adopt_centralized_roadmap", _mig_v421_adopt_centralized_roadmap),
+    ("v430_adopt_centralized_roadmap", _mig_v430_adopt_centralized_roadmap),
     ("v370_repair_collisions", _mig_v370_repair_collisions),
     ("v370_merge_driver", _mig_v370_merge_driver),
     ("v370_dedupe_registration", _mig_v370_dedupe_registration),

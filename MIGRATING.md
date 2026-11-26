@@ -1,5 +1,27 @@
 # Migrating to Codevira
 
+## Upgrading to 4.3.0
+
+No manual steps. Restart your IDE after upgrading so its server reloads.
+
+- **The roadmap moves into the project**, to `.codevira/roadmap.yaml`, the first
+  time it is read. A copy kept in `~/.codevira/projects/<key>/` is adopted once
+  and renamed to `roadmap.yaml.moved-into-project`, never deleted. If the
+  project's own file differed, it is kept as `roadmap.yaml.before-adoption`. In
+  a team repo (`init --shared`) the roadmap is then committed like the decision
+  log.
+- **A server whose project folder is gone now refuses** with
+  `project_folder_missing` instead of saving into a recreated folder. Reopen the
+  project from its new location. A linked git worktree whose main checkout
+  moved asks for `git worktree repair`.
+- **`write_session_log` records the decisions you pass it.** Give the `id` of a
+  decision you already recorded to link it instead of recording it again.
+- **`codevira export --format sql` refuses** when it would miss decisions. Use
+  the JSON export.
+- **If you renamed a project before upgrading**, its roadmap is still under the
+  old key: run `scripts/codevira-memory restore <new folder>` from a checkout of
+  this repository.
+
 ## Upgrading to 4.1.0
 
 No migration steps, no config changes, no data conversion. Upgrade and restart

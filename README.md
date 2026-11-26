@@ -169,7 +169,7 @@ one tool is visible to every tool.
 | **Frugal by design** | Tools return summaries by default; `get_session_context()` is one ~500-token call; the server cold-starts in well under a second with no ML model to load. |
 | **Concurrent-safe** | Every write is a crash-safe atomic write behind a Posix `fcntl.flock`, so two IDEs on one project don't race. [Details](#concurrency--safety) (expand) |
 
-<sub><strong>Latest: 4.2.0.</strong> Upgrade if you use codevira in more than one project: a stray registration at <code>$HOME</code> could make <code>register-all</code> discover exactly one project and discard every real one as &ldquo;nested&rdquo; (measured on a real machine: 1 found, 11 excluded). 4.2.0 also stops background work writing false entries to the crash log &mdash; 39 of 45 entries on that machine were one harmless line &mdash; and adds <code>codevira reconcile</code> to report duplicate and contradicting decisions. Upgrading is automatic, <strong>but a registration that was already wrong is not repaired for you</strong>: run <code>codevira register-all</code> once after upgrading to recover projects that went missing. <a href="https://github.com/sachinshelke/codevira/blob/main/CHANGELOG.md">Full release notes &rarr;</a></sub>
+<sub><strong>Latest: 4.3.0.</strong> Upgrade: codevira had been quietly losing memory. <code>write_session_log</code> threw away the decisions and next steps it was given, and renaming a project folder could split its memory or replace its roadmap. 4.3.0 fixes both and the file watcher that kept the CPU busy. Restart your IDE after upgrading. <a href="https://github.com/sachinshelke/codevira/blob/main/CHANGELOG.md">Full release notes &rarr;</a></sub>
 
 ---
 

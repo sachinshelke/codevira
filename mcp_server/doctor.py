@@ -1041,7 +1041,7 @@ def check_decision_collisions() -> CheckResult:
 
 # ── C13 registry_rows ──────────────────────────────────────────────────────
 #
-# Nothing inspected the ROWS inside global.db until 4.2.1. C3 checks the
+# Nothing inspected the ROWS inside global.db until 4.3.0. C3 checks the
 # CURRENT binding and C5 checks that global.db opens; neither looks at what is
 # registered in it. That gap is why the 4.2.0 upgrade guidance had to tell
 # users to run `codevira register-all --dry-run` and read the output
@@ -1174,7 +1174,7 @@ _CHECKS: tuple[Callable[[], CheckResult], ...] = (
     # v2.2.0: check_codeindex_freshness + check_semantic_search_health
     # removed (chromadb deleted in Phase E).
     check_ghost_projects,  # rc.4 (Bug 21c)
-    check_registry_rows,  # 4.2.1 — nothing inspected the ROWS in global.db
+    check_registry_rows,  # 4.3.0 — nothing inspected the ROWS in global.db
     check_crash_log_size,
     check_merge_driver,  # v3.7.0 — cross-engineer decision-log merge driver
     check_claude_binding_conflict,  # v3.7.1 — bare global vs scoped entries

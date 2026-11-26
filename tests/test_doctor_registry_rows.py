@@ -129,7 +129,7 @@ class TestTheCheckSeesBadRows:
         deleted — it proved nothing. Stubbing makes the guard load-bearing and
         pins the boundary against the day is_invalid_project_root is tightened
         to refuse vanished paths, which is a change deliberately NOT made in
-        4.2.1 because paths.py has a blast radius of 186 files.
+        4.3.0 because paths.py has a blast radius of 186 files.
         """
         home = tmp_path / "cvhome"
         gone = tmp_path / "deleted-long-ago"

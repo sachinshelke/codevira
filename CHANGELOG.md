@@ -9,6 +9,22 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+
+## [4.3.0] — 2026-11-27
+
+**Upgrade: this release stops codevira losing memory without telling you.**
+`write_session_log` had been throwing away the decisions, files and next steps
+it was given since 2.2.0 while answering "logged", and renaming a project folder
+could split its memory in two or swap its roadmap for a placeholder. It also
+fixes the file watcher that piled up threads and kept the CPU busy
+([#19](https://github.com/sachinshelke/codevira/issues/19)).
+
+**What upgrading does not repair.** Session-log content dropped before this
+release is gone. A project renamed *before* you upgrade keeps its old roadmap
+in `~/.codevira/projects/<old key>/`; `scripts/codevira-memory restore <folder>`
+brings it back. Restart your IDE after `pipx upgrade codevira` so its server
+reloads: a 4.2.0 server still running keeps the old behaviour.
+
 ### Fixed
 
 - **A server whose project folder was moved or renamed no longer recreates the
@@ -89,7 +105,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - A decision in `write_session_log` may carry the `id` of one already recorded.
   The response reports `decision_ids`, how much was `stored`, and `warnings`.
 
-## [4.2.1] — 2026-09-15
+### Doctor can see the registry (C13)
 
 **`codevira doctor --fix` now performs the 4.2.0 recovery itself.** 4.2.0
 shipped the `$HOME` fix but left affected users three commands to run in the
@@ -97,7 +113,7 @@ right order — and one of them, `codevira untrack`, deletes a project's data
 directory if you skip its dry-run. That is a bad thing to ask of someone whose
 memory has already gone missing.
 
-### Added — C13 `registry_rows`, and an auto-fixer for it
+#### Added — C13 `registry_rows`, and an auto-fixer for it
 
 `codevira doctor` had twelve checks and **none of them looked at the registry**.
 C3 checks the *current* binding; C5 checks that `global.db` opens. Neither reads

@@ -212,7 +212,7 @@ def _inspect_disk(
     has_graph = graph_db.is_file()
     has_codeindex = codeindex_dir.is_dir() and any(codeindex_dir.iterdir())
     # The live roadmap is in the project now; what a slug dir can still hold is
-    # a pre-4.2.1 one, or the copy kept after it was moved into the project.
+    # a pre-4.3.0 one, or the copy kept after it was moved into the project.
     # Both are real state, so neither makes the dir look like empty litter.
     has_roadmap = (slug_dir / "roadmap.yaml").is_file() or (
         slug_dir / "roadmap.yaml.moved-into-project"
